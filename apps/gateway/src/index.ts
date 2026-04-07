@@ -24,6 +24,7 @@ import { OrionClient, type McpToolConfig } from './orion-client.js'
 import { runTool } from './tool-runner.js'
 import { kubernetesTools } from './builtin-tools/kubernetes.js'
 import { dockerTools } from './builtin-tools/docker.js'
+import { ArgoCDWatcher } from './argocd-watcher.js'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -85,7 +86,8 @@ if (GATEWAY_TYPE === 'cluster' && process.env.ENABLE_DOCKER === 'true') register
 
 // ── ORION client (constructed after join so credentials are resolved) ───────────
 
-let orion: OrionClient  // initialised in start()
+let orion: OrionClient           // initialised in start()
+let argoCdWatcher: ArgoCDWatcher | undefined
 
 // Tools currently active (refreshed from ORION on heartbeat)
 let activeTools: McpToolConfig[] = []
@@ -212,6 +214,14 @@ async function start() {
     console.log(`[gateway] Tool config refreshed: ${tools.length} tools`)
   })
 
+  // Start ArgoCD watcher for K8s clusters
+  if (GATEWAY_TYPE === 'cluster') {
+    argoCdWatcher = new ArgoCDWatcher(
+      async (apps) => { await orion.reportSyncStatus(apps) },
+    )
+    argoCdWatcher.start()
+  }
+
   app.listen(PORT, () => {
     console.log(`[gateway] MCP server listening on :${PORT}`)
     console.log(`[gateway] Type: ${GATEWAY_TYPE} | Environment: ${ENVIRONMENT_ID}`)
@@ -221,6 +231,7 @@ async function start() {
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('[gateway] Shutting down…')
+  argoCdWatcher?.stop()
   orion.stopHeartbeat()
   await orion.disconnect()
   process.exit(0)

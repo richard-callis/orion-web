@@ -83,4 +83,19 @@ export class OrionClient {
   stopHeartbeat() {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
   }
+
+  /** Report ArgoCD Application sync/health state to ORION */
+  async reportSyncStatus(apps: import('./argocd-watcher.js').ArgoCDApp[]): Promise<void> {
+    const res = await fetch(
+      `${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}/sync-status`,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ applications: apps }),
+      },
+    )
+    if (!res.ok) {
+      console.error(`[gateway] reportSyncStatus failed: ${res.status} ${await res.text()}`)
+    }
+  }
 }
