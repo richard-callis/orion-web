@@ -1,0 +1,14 @@
+. {
+    # Forward all non-khalis.corp queries to upstream DNS
+    forward . 1.1.1.1 8.8.8.8
+    cache 30
+    errors
+    log
+}
+
+khalis.corp {
+    # Authoritative zone for internal homelab domain
+    file /etc/coredns/zones/khalis.corp.db
+    errors
+    log
+}

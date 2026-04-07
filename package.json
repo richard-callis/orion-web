@@ -1,0 +1,14 @@
+{
+  "name": "mcc",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "apps/gateway"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace=apps/web",
+    "dev:gateway": "npm run dev --workspace=apps/gateway",
+    "build:web": "npm run build --workspace=apps/web",
+    "build:gateway": "npm run build --workspace=apps/gateway"
+  }
+}

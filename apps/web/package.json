@@ -1,0 +1,49 @@
+{
+  "name": "mission-control",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node server.ts",
+    "build": "next build && npm run build:worker",
+    "build:worker": "esbuild src/worker.ts --bundle --platform=node --outfile=worker.js --external:@prisma/client --external:@anthropic-ai/claude-code --external:@anthropic-ai/sdk --log-level=warning",
+    "start": "NODE_ENV=production node server.js",
+    "lint": "next lint",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "^1.0.0",
+    "@anthropic-ai/sdk": "^0.80.0",
+    "@hello-pangea/dnd": "^16.6.0",
+    "@kubernetes/client-node": "^0.22.0",
+    "@prisma/client": "^5.22.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "highlight.js": "^11.11.1",
+    "lucide-react": "^0.468.0",
+    "mermaid": "^11.13.0",
+    "next": "14.2.18",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-emoji": "^5.0.2",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^2.5.5",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/ws": "^8.5.13",
+    "autoprefixer": "^10.4.20",
+    "esbuild": "^0.24.2",
+    "postcss": "^8.4.49",
+    "prisma": "^5.22.0",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

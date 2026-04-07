@@ -1,0 +1,273 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Conversation {
+  id          String             @id @default(cuid())
+  title       String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  archivedAt  DateTime?
+  metadata    Json?
+  messages    Message[]
+  invocations ClaudeInvocation[]
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String       // user | assistant | tool_result | system
+  content        String       @db.Text
+  model          String?
+  inputTokens    Int?
+  outputTokens   Int?
+  createdAt      DateTime     @default(now())
+  metadata       Json?
+}
+
+model ClaudeInvocation {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  prompt         String       @db.Text
+  toolsUsed      Json
+  tokensUsed     Int?
+  durationMs     Int
+  success        Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+}
+
+model Agent {
+  id           String             @id @default(cuid())
+  name         String             @unique
+  type         String             @default("human") // claude | human | custom
+  role         String?
+  description  String?            @db.Text
+  status       String             @default("offline")
+  lastSeen     DateTime?
+  metadata     Json?              // { systemPrompt?: string }
+  messages     AgentMessage[]
+  tasks        Task[]             @relation("AssignedTasks")
+  environments AgentEnvironment[]
+}
+
+model Environment {
+  id           String             @id @default(cuid())
+  name         String             @unique
+  type         String             @default("cluster") // "cluster" | "docker" | "remote"
+  description  String?            @db.Text
+  gatewayUrl   String?
+  gatewayToken String?            // hashed token for gateway auth
+  status       String             @default("disconnected") // "connected" | "disconnected" | "error"
+  lastSeen     DateTime?
+  metadata     Json?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  tools      McpTool[]
+  agents     AgentEnvironment[]
+  joinTokens EnvironmentJoinToken[]
+}
+
+model McpTool {
+  id            String      @id @default(cuid())
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  name          String
+  description   String      @db.Text
+  inputSchema   Json        // JSON Schema { type: "object", properties: {...}, required: [...] }
+  execType      String      @default("builtin") // "builtin" | "shell" | "http"
+  execConfig    Json?       // builtin: { fn: "kubectl_get_pods" } | shell: { command: "..." } | http: { url: "..." }
+  enabled       Boolean     @default(true)
+  builtIn       Boolean     @default(false) // true = shipped with gateway binary
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([environmentId, name])
+}
+
+model AgentEnvironment {
+  id            String      @id @default(cuid())
+  agentId       String
+  agent         Agent       @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now())
+
+  @@unique([agentId, environmentId])
+}
+
+model EnvironmentJoinToken {
+  id            String       @id @default(cuid())
+  token         String       @unique  // mcg_<random> — one-time use
+  environmentId String
+  environment   Environment  @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  usedAt        DateTime?
+  expiresAt     DateTime
+  createdAt     DateTime     @default(now())
+}
+
+model AgentMessage {
+  id          String   @id @default(cuid())
+  agentId     String?
+  agent       Agent?   @relation(fields: [agentId], references: [id])
+  channel     String   @default("general")
+  content     String   @db.Text
+  messageType String   @default("text")
+  threadId    String?
+  createdAt   DateTime @default(now())
+  metadata    Json?
+}
+
+model Epic {
+  id          String    @id @default(cuid())
+  title       String
+  description String?   @db.Text
+  plan        String?   @db.Text
+  status      String    @default("active")
+  createdBy   String    @default("admin")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  features    Feature[]
+}
+
+model Feature {
+  id          String   @id @default(cuid())
+  epicId      String
+  epic        Epic     @relation(fields: [epicId], references: [id], onDelete: Cascade)
+  title       String
+  description String?  @db.Text
+  plan        String?  @db.Text
+  status      String   @default("active")
+  createdBy   String   @default("admin")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tasks       Task[]
+}
+
+model Task {
+  id             String      @id @default(cuid())
+  title          String
+  description    String?     @db.Text
+  plan           String?     @db.Text
+  status         String      @default("pending")
+  priority       String      @default("medium")
+  featureId      String?
+  feature        Feature?    @relation(fields: [featureId], references: [id], onDelete: Cascade)
+  assignedAgent  String?
+  agent          Agent?      @relation("AssignedTasks", fields: [assignedAgent], references: [id])
+  assignedUserId String?
+  assignedUser   User?       @relation("AssignedUserTasks", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  createdBy      String
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  events         TaskEvent[]
+  metadata       Json?
+}
+
+model TaskEvent {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  eventType String
+  content   String?  @db.Text
+  agentId   String?
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  target    String
+  detail    Json?
+  createdAt DateTime @default(now())
+}
+
+model SavedView {
+  id        String   @id @default(cuid())
+  name      String
+  page      String
+  filters   Json
+  createdAt DateTime @default(now())
+}
+
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model Note {
+  id        String   @id @default(cuid())
+  title     String
+  content   String   @default("") @db.Text
+  folder    String   @default("General")
+  pinned    Boolean  @default(false)
+  // "note" | "wiki" | "runbook" | "llm-context"
+  // llm-context notes are auto-injected into every agent system prompt
+  type      String   @default("note")
+  tags      Json?    // string[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id            String    @id @default(cuid())
+  username      String    @unique
+  email         String    @unique
+  name          String?
+  role          String    @default("user") // "admin" | "user" | "readonly"
+  provider      String    @default("authentik")
+  externalId    String?
+  active        Boolean   @default(true)
+  lastSeen      DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  assignedTasks Task[]    @relation("AssignedUserTasks")
+  assignedBugs  Bug[]     @relation("AssignedBugUser")
+}
+
+model Bug {
+  id             String   @id @default(cuid())
+  title          String
+  description    String?  @db.Text
+  severity       String   @default("medium") // low | medium | high | critical
+  status         String   @default("open")   // open | triaged | in_progress | resolved | closed
+  area           String?  // component/area e.g. "Traefik", "Auth", "Game Servers"
+  reportedBy     String   @default("admin")
+  assignedUserId String?
+  assignedUser   User?    @relation("AssignedBugUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model ExternalModel {
+  id          String   @id @default(cuid())
+  name        String
+  provider    String   // "openai" | "ollama" | "anthropic" | "custom"
+  baseUrl     String
+  apiKey      String?  @db.Text
+  modelId     String
+  enabled     Boolean  @default(true)
+  timeoutSecs Int      @default(120)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model OIDCProvider {
+  id           String   @id @default(cuid())
+  name         String   @default("Authentik")
+  enabled      Boolean  @default(true)
+  issuerUrl    String   @default("")
+  headerMode   Boolean  @default(true)
+  groupMapping Json?
+  updatedAt    DateTime @updatedAt
+}

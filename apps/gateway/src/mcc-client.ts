@@ -1,0 +1,86 @@
+/**
+ * Client for talking to Mission Control (MCC).
+ * Handles registration, heartbeat, and fetching tool config.
+ */
+
+export interface McpToolConfig {
+  id: string
+  name: string
+  description: string
+  inputSchema: Record<string, unknown>
+  execType: string
+  execConfig: Record<string, unknown> | null
+  enabled: boolean
+  builtIn: boolean
+}
+
+interface GatewayConfig {
+  mccUrl: string        // e.g. http://mission-control.management.svc.cluster.local
+  environmentId: string
+  gatewayToken: string
+  gatewayUrl: string    // this gateway's own URL, reported to MCC
+}
+
+export class MccClient {
+  private cfg: GatewayConfig
+  private heartbeatTimer?: ReturnType<typeof setInterval>
+
+  constructor(cfg: GatewayConfig) {
+    this.cfg = cfg
+  }
+
+  private headers() {
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${this.cfg.gatewayToken}`,
+    }
+  }
+
+  async register(): Promise<void> {
+    const res = await fetch(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}`, {
+      method: 'PUT',
+      headers: this.headers(),
+      body: JSON.stringify({ status: 'connected', gatewayUrl: this.cfg.gatewayUrl, lastSeen: new Date().toISOString() }),
+    })
+    if (!res.ok) throw new Error(`Failed to register with MCC: ${res.status} ${await res.text()}`)
+    console.log(`[gateway] Registered with MCC as environment ${this.cfg.environmentId}`)
+  }
+
+  async disconnect(): Promise<void> {
+    await fetch(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}`, {
+      method: 'PUT',
+      headers: this.headers(),
+      body: JSON.stringify({ status: 'disconnected' }),
+    }).catch(() => {})
+  }
+
+  async fetchTools(): Promise<McpToolConfig[]> {
+    const res = await fetch(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}/tools?enabled=true`, {
+      headers: this.headers(),
+    })
+    if (!res.ok) throw new Error(`Failed to fetch tools: ${res.status}`)
+    return res.json()
+  }
+
+  /** Start sending heartbeats every 30s so MCC knows we're alive */
+  startHeartbeat(onToolsChanged: (tools: McpToolConfig[]) => void, intervalMs = 30_000) {
+    this.heartbeatTimer = setInterval(async () => {
+      try {
+        await fetch(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}`, {
+          method: 'PUT',
+          headers: this.headers(),
+          body: JSON.stringify({ lastSeen: new Date().toISOString() }),
+        })
+        // Refresh tool config on every heartbeat so changes take effect within one interval
+        const tools = await this.fetchTools()
+        onToolsChanged(tools)
+      } catch (err) {
+        console.error('[gateway] Heartbeat failed:', err)
+      }
+    }, intervalMs)
+  }
+
+  stopHeartbeat() {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+  }
+}
