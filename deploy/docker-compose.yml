@@ -125,6 +125,17 @@ services:
       - "80:80"
       - "443:443"
 
+  # ── Claude Creds Refresh ───────────────────────────────────────────────────
+  claude-refresh:
+    build:
+      context: ./claude-refresh
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    volumes:
+      - orion-claude-creds:/claude-creds
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
   # ── CoreDNS ────────────────────────────────────────────────────────────────
   coredns:
     image: coredns/coredns:latest
