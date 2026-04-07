@@ -17,10 +17,12 @@ services:
       VAULT_TOKEN: ${VAULT_TOKEN}
       GITEA_URL: http://gitea:3000
       GITEA_ADMIN_TOKEN: ${GITEA_ADMIN_TOKEN}
-      ORION_FIRST_RUN: ${ORION_FIRST_RUN:-false}
+      MANAGEMENT_IP: ${MANAGEMENT_IP:-}
+      COREDNS_DIR: /etc/coredns-managed
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - orion-claude-creds:/claude-creds
+      - ./coredns:/etc/coredns-managed
     ports:
       - "3000:3000"
     labels:
@@ -129,7 +131,6 @@ services:
     command: -conf /etc/coredns/Corefile
     volumes:
       - ./coredns:/etc/coredns:ro
-      - coredns-zones:/etc/coredns/zones
     ports:
       - "53:53/udp"
       - "53:53/tcp"
@@ -139,5 +140,4 @@ volumes:
   postgres-data:
   vault-data:
   traefik-certs:
-  coredns-zones:
   orion-claude-creds:

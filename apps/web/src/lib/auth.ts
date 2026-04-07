@@ -1,4 +1,6 @@
-import { headers } from 'next/headers'
+import { getServerSession, type NextAuthOptions } from 'next-auth'
+import CredentialsProvider from 'next-auth/providers/credentials'
+import { compare } from 'bcryptjs'
 import { prisma } from './db'
 
 export interface AppUser {
@@ -10,29 +12,109 @@ export interface AppUser {
   active: boolean
 }
 
-export async function getCurrentUser(): Promise<AppUser | null> {
-  const h = headers()
-  const username = h.get('x-authentik-username') ?? h.get('x-forwarded-user')
-  const email = h.get('x-authentik-email') ?? ''
-  const name = h.get('x-authentik-name')
-  const externalId = h.get('x-authentik-uid')
+export const authOptions: NextAuthOptions = {
+  session: { strategy: 'jwt' },
+  secret: process.env.NEXTAUTH_SECRET,
+  pages: {
+    signIn: '/login',
+  },
+  providers: [
+    CredentialsProvider({
+      name: 'credentials',
+      credentials: {
+        username: { label: 'Username', type: 'text' },
+        password: { label: 'Password', type: 'password' },
+      },
+      async authorize(credentials) {
+        if (!credentials?.username || !credentials?.password) return null
 
-  if (!username) return null
+        const user = await prisma.user.findUnique({
+          where: { username: credentials.username },
+        })
 
-  // Upsert user record
-  const user = await prisma.user.upsert({
-    where: { username },
-    update: {
-      email: email || undefined,
-      name: name || undefined,
-      externalId: externalId || undefined,
-      lastSeen: new Date(),
+        if (!user || !user.active || !user.passwordHash) return null
+
+        const valid = await compare(credentials.password, user.passwordHash)
+        if (!valid) return null
+
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { lastSeen: new Date() },
+        })
+
+        return {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          username: user.username,
+          role: user.role,
+        }
+      },
+    }),
+  ],
+  callbacks: {
+    async jwt({ token, user }) {
+      if (user) {
+        token.sub = user.id
+        token.username = (user as AppUser & { username: string }).username
+        token.role = (user as AppUser & { role: string }).role
+      }
+      return token
     },
-    create: { username, email, name, externalId, role: 'user', provider: 'authentik' },
-  })
+    async session({ session, token }) {
+      if (session.user) {
+        session.user.id = token.sub as string
+        session.user.username = token.username as string
+        session.user.role = token.role as string
+      }
+      return session
+    },
+  },
+}
 
-  if (!user.active) return null
-  return user
+export async function getCurrentUser(): Promise<AppUser | null> {
+  // Primary: NextAuth JWT session
+  const session = await getServerSession(authOptions)
+  if (session?.user) {
+    return {
+      id: session.user.id,
+      username: session.user.username,
+      email: session.user.email ?? '',
+      name: session.user.name ?? null,
+      role: session.user.role,
+      active: true,
+    }
+  }
+
+  // Optional SSO fallback: header-based (only if OIDCProvider.headerMode is enabled)
+  try {
+    const { headers } = await import('next/headers')
+    const h = headers()
+    const username = h.get('x-authentik-username') ?? h.get('x-forwarded-user')
+    if (username) {
+      const ssoProvider = await prisma.oIDCProvider.findFirst()
+      if (ssoProvider?.enabled && ssoProvider?.headerMode) {
+        const user = await prisma.user.upsert({
+          where: { username },
+          update: { lastSeen: new Date() },
+          create: {
+            username,
+            email: h.get('x-authentik-email') ?? `${username}@sso`,
+            name: h.get('x-authentik-name'),
+            externalId: h.get('x-authentik-uid'),
+            role: 'user',
+            provider: 'authentik',
+          },
+        })
+        if (!user.active) return null
+        return user
+      }
+    }
+  } catch {
+    // Headers not available in this context — skip SSO fallback
+  }
+
+  return null
 }
 
 export async function requireAdmin(): Promise<AppUser> {

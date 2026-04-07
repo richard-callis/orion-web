@@ -2,6 +2,7 @@
 const nextConfig = {
   output: 'standalone',
   experimental: {
+    instrumentationHook: true,
     serverComponentsExternalPackages: ['@kubernetes/client-node', '@prisma/client', 'ws', '@anthropic-ai/claude-code']
   },
   env: {

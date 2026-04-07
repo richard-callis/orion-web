@@ -225,7 +225,8 @@ model User {
   email         String    @unique
   name          String?
   role          String    @default("user") // "admin" | "user" | "readonly"
-  provider      String    @default("authentik")
+  provider      String    @default("local") // "local" | "authentik" | "oidc"
+  passwordHash  String?
   externalId    String?
   active        Boolean   @default(true)
   lastSeen      DateTime?
@@ -233,6 +234,22 @@ model User {
   updatedAt     DateTime  @updatedAt
   assignedTasks Task[]    @relation("AssignedUserTasks")
   assignedBugs  Bug[]     @relation("AssignedBugUser")
+  sessions      Session[]
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+  @@unique([identifier, token])
 }
 
 model Bug {
