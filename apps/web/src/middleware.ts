@@ -14,33 +14,14 @@ const PUBLIC_PATHS = [
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
-  // Always allow public paths
   if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
     return NextResponse.next()
   }
 
-  // Fast path: setup-done cookie set by /api/setup/complete
-  const setupDone = req.cookies.get('__orion_setup_done')?.value === '1'
-
-  if (!setupDone) {
-    try {
-      const statusUrl = new URL('/api/setup/status', req.url)
-      const res = await fetch(statusUrl, { cache: 'no-store' })
-      const data = await res.json()
-      if (!data.completed) {
-        return NextResponse.redirect(new URL('/setup', req.url))
-      }
-    } catch {
-      // DB unreachable — fail open to avoid lockout on transient errors
-      return NextResponse.next()
-    }
-  }
-
-  // Require authenticated session
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token) {
     const loginUrl = new URL('/login', req.url)
-    loginUrl.searchParams.set('callbackUrl', req.url)
+    loginUrl.searchParams.set('callbackUrl', pathname)
     return NextResponse.redirect(loginUrl)
   }
 

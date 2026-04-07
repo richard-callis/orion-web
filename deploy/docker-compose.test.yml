@@ -1,0 +1,83 @@
+# Minimal test stack — builds ORION locally, no Traefik/CoreDNS
+# Usage: docker compose -f docker-compose.test.yml --env-file .env.test up --build
+services:
+
+  orion:
+    build:
+      context: ../apps/web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://orion:${POSTGRES_PASSWORD}@postgres:5432/orion
+      NEXTAUTH_URL: http://localhost:${ORION_PORT:-3001}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-}
+      GITEA_URL: http://gitea:3000
+      GITEA_ADMIN_TOKEN: ${GITEA_ADMIN_TOKEN:-}
+      GITEA_WEBHOOK_SECRET: ${GITEA_WEBHOOK_SECRET:-test-secret}
+      MANAGEMENT_IP: ${MANAGEMENT_IP:-127.0.0.1}
+      COREDNS_DIR: /tmp/coredns-managed
+      NODE_ENV: production
+    ports:
+      - "${ORION_PORT:-3001}:3000"
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: orion
+      POSTGRES_USER: orion
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orion"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  gitea:
+    image: gitea/gitea:latest
+    restart: unless-stopped
+    environment:
+      USER_UID: 1000
+      USER_GID: 1000
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__server__DOMAIN: localhost
+      GITEA__server__ROOT_URL: http://localhost:3002
+      GITEA__webhook__ALLOWED_HOST_LIST: orion
+    volumes:
+      - gitea-test-data:/data
+    ports:
+      - "3002:3000"
+
+  vault:
+    image: hashicorp/vault:latest
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_LOCAL_CONFIG: |
+        ui = true
+        storage "inmem" {}
+        listener "tcp" {
+          address = "0.0.0.0:8200"
+          tls_disable = true
+        }
+        api_addr = "http://vault:8200"
+    ports:
+      - "8200:8200"
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  postgres-test-data:
+  gitea-test-data:

@@ -45,19 +45,20 @@ export async function POST(
 
   // Store sync state in environment metadata
   const currentMeta = (env.metadata as Record<string, unknown>) ?? {}
+  const newMeta = JSON.parse(JSON.stringify({
+    ...currentMeta,
+    argocd: {
+      applications,
+      reportedAt: new Date().toISOString(),
+      overallHealth,
+    },
+  }))
   await prisma.environment.update({
     where: { id: params.id },
     data: {
       lastSeen: new Date(),
       status: 'connected',
-      metadata: {
-        ...currentMeta,
-        argocd: {
-          applications,
-          reportedAt: new Date().toISOString(),
-          overallHealth,
-        },
-      },
+      metadata: newMeta,
     },
   })
 

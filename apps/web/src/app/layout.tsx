@@ -1,10 +1,6 @@
 import type { Metadata } from 'next'
 import { Inter, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
-import { Sidebar } from '@/components/layout/Sidebar'
-import { Header } from '@/components/layout/Header'
-import { StatusBar } from '@/components/layout/StatusBar'
-import { BottomNav } from '@/components/layout/BottomNav'
 import { Providers } from '@/components/Providers'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
@@ -26,19 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
       <body className="flex flex-col h-[100dvh] overflow-hidden bg-bg-page text-text-primary">
         <Providers>
-          {/* Header spans full width */}
-          <Header />
-          {/* Sidebar + content row */}
-          <div className="flex flex-1 min-h-0 overflow-hidden">
-            <Sidebar />
-            <main className="flex-1 min-h-0 overflow-auto relative">
-              {children}
-            </main>
-          </div>
-          {/* Status bar spans full width — hidden on mobile */}
-          <StatusBar />
-          {/* Mobile-only bottom nav */}
-          <BottomNav />
+          {children}
         </Providers>
       </body>
     </html>

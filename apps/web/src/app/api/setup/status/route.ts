@@ -5,11 +5,15 @@ import { prisma } from '@/lib/db'
 
 export async function GET() {
   try {
-    const setting = await prisma.systemSetting.findUnique({
-      where: { key: 'setup.completed' },
+    const [completed, internalDomain] = await Promise.all([
+      prisma.systemSetting.findUnique({ where: { key: 'setup.completed' } }),
+      prisma.systemSetting.findUnique({ where: { key: 'domain.internal' } }),
+    ])
+    return NextResponse.json({
+      completed: completed?.value === true,
+      internalDomain: internalDomain?.value ?? null,
     })
-    return NextResponse.json({ completed: setting?.value === true })
   } catch {
-    return NextResponse.json({ completed: false })
+    return NextResponse.json({ completed: false, internalDomain: null })
   }
 }

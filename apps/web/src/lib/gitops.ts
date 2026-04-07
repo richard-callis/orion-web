@@ -291,7 +291,7 @@ jobs:
         run: |
           curl -s -X POST "$ORION_URL/api/webhooks/gitea" \\
             -H "Content-Type: application/json" \\
-            -d '{"action":"deploy_complete","status":"\\${{ job.status }}"}'
+            -d '{"action":"deploy_complete","status":"\${{ job.status }}"}'
         env:
           ORION_URL: \${{ secrets.ORION_URL }}
 `

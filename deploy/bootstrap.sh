@@ -20,7 +20,7 @@ fi
 
 # Substitute RPI_IP into CoreDNS zone file
 source "$DEPLOY_DIR/.env"
-sed -i "s/\${RPI_IP}/$RPI_IP/g" "$DEPLOY_DIR/coredns/zones/khalis.corp.db"
+sed -i "s/\${RPI_IP}/$RPI_IP/g" "$DEPLOY_DIR/coredns/zones/example.corp.db"
 
 # Pull latest images
 echo ""

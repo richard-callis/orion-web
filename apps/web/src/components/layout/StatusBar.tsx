@@ -29,6 +29,14 @@ const PROVIDER_LABELS: Record<string, string> = {
 export function StatusBar() {
   const [health, setHealth] = useState<Health | null>(null)
   const [models, setModels] = useState<AppModel[]>([])
+  const [domain, setDomain] = useState<string>('')
+
+  useEffect(() => {
+    fetch('/api/setup/status')
+      .then(r => r.json())
+      .then(d => { if (d.internalDomain) setDomain(d.internalDomain) })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     const check = () =>
@@ -71,7 +79,7 @@ export function StatusBar() {
       {uniqueProviders.length === 0 && (
         <span className="flex items-center gap-1.5">{dot(health?.claude)} Claude</span>
       )}
-      <span className="ml-auto opacity-40">khalis.corp</span>
+      {domain && <span className="ml-auto opacity-40">{domain}</span>}
     </div>
   )
 }
