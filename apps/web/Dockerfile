@@ -1,10 +1,14 @@
 # syntax=docker/dockerfile:1
-FROM --platform=linux/amd64 node:20-alpine AS deps
+# Multi-arch: linux/amd64 + linux/arm64
+# TARGETARCH is injected by docker buildx (amd64 or arm64)
+ARG TARGETARCH
+
+FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
-FROM --platform=linux/amd64 node:20-alpine AS builder
+FROM node:20-alpine AS builder
 WORKDIR /app
 # Install OpenSSL so Prisma detects linux-musl-openssl-3.0.x and generates the correct binary
 RUN apk add --no-cache openssl
@@ -17,7 +21,8 @@ RUN npx prisma generate
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-FROM --platform=linux/amd64 node:20-alpine AS runner
+FROM node:20-alpine AS runner
+ARG TARGETARCH
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -25,8 +30,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Install OpenSSL (Prisma), bash (Claude Code SDK requires it), curl (kubectl download)
 RUN apk add --no-cache openssl libc6-compat bash curl
 
-# Install kubectl — needed for Claude's tool calls
-RUN curl -fsSL "https://dl.k8s.io/release/v1.33.0/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl \
+# Install kubectl — architecture-aware
+RUN curl -fsSL "https://dl.k8s.io/release/v1.33.0/bin/linux/${TARGETARCH}/kubectl" \
+      -o /usr/local/bin/kubectl \
     && chmod +x /usr/local/bin/kubectl
 
 ENV SHELL=/bin/bash
