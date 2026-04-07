@@ -1,0 +1,35 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy changed services
+        run: |
+          # Find changed service directories
+          CHANGED=$(git diff --name-only HEAD~1 HEAD | grep '^services/' | cut -d/ -f1-2 | sort -u)
+
+          for SERVICE_DIR in $CHANGED; do
+            if [ -f "$SERVICE_DIR/docker-compose.yml" ]; then
+              echo "Deploying $SERVICE_DIR..."
+              cd "$SERVICE_DIR"
+              docker compose pull
+              docker compose up -d --remove-orphans
+              cd -
+            fi
+          done
+
+      - name: Report status to ORION
+        if: always()
+        run: |
+          curl -s -X POST "$ORION_URL/api/webhooks/gitea" \
+            -H "Content-Type: application/json" \
+            -d '{"action":"deploy_complete","status":"${{ job.status }}"}'
+        env:
+          ORION_URL: ${{ secrets.ORION_URL }}

@@ -5,12 +5,13 @@ import { useState } from 'react'
 import {
   LayoutDashboard, Server, Database, MessageSquare, Bot,
   Globe, Bell, KeyRound, Archive, FileText, ClipboardList,
-  ChevronLeft, ChevronRight, BookOpen, Settings2,
+  ChevronLeft, ChevronRight, BookOpen, Settings2, GitBranch,
 } from 'lucide-react'
 
 const nav = [
   { href: '/',               icon: LayoutDashboard, label: 'Dashboard' },
   { href: '/infrastructure', icon: Server,           label: 'Infrastructure' },
+  { href: '/gitops',         icon: GitBranch,        label: 'GitOps' },
   { href: '/storage',        icon: Database,         label: 'Storage' },
   { href: '/chat',           icon: MessageSquare,    label: 'Claude Chat' },
   { href: '/tasks',          icon: ClipboardList,    label: 'Tasks' },

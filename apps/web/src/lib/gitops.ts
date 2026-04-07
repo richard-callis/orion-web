@@ -147,11 +147,21 @@ export interface BootstrapRepoOptions {
   /** ORION webhook URL for PR status callbacks */
   webhookUrl?: string
   webhookSecret?: string
+  /** Environment type — determines which scaffold files are committed */
+  envType?: 'cluster' | 'docker'
 }
 
 /**
  * Called when a new environment is registered in ORION.
  * Ensures the Gitea repo exists and sets up the webhook.
+ *
+ * If `opts.envType` is provided, a full scaffold is committed:
+ *   - 'cluster' → README + argocd/appproject.yaml + argocd/root-application.yaml
+ *   - 'docker'  → README + .gitea/workflows/deploy.yml
+ *
+ * Placeholder tokens in YAML templates:
+ *   <ENV_NAME>        → opts.repoName
+ *   <GITEA_REPO_URL>  → filled in by cluster-bootstrap.ts after creation
  */
 export async function bootstrapEnvironmentRepo(opts: BootstrapRepoOptions) {
   const repoOpts: CreateRepoOptions = {
@@ -163,15 +173,14 @@ export async function bootstrapEnvironmentRepo(opts: BootstrapRepoOptions) {
 
   const repo = await ensureRepo(repoOpts)
 
-  // Scaffold a minimal directory structure with a README
-  const readme = `# ${opts.repoName}\n\nManaged by [ORION](https://github.com/richard-callis/orion-web). Do not edit manually — changes are proposed via PR.\n`
+  const files: { path: string; content: string }[] = buildScaffoldFiles(opts)
 
   try {
     await commitFiles({
       owner: opts.owner,
       repo: opts.repoName,
       branch: 'main',
-      files: [{ path: 'README.md', content: readme }],
+      files,
       message: 'chore: initial scaffold by ORION',
     })
   } catch {
@@ -184,6 +193,122 @@ export async function bootstrapEnvironmentRepo(opts: BootstrapRepoOptions) {
   }
 
   return repo
+}
+
+/** Build the scaffold file list based on environment type. */
+function buildScaffoldFiles(opts: BootstrapRepoOptions): { path: string; content: string }[] {
+  const envName = opts.repoName
+
+  if (opts.envType === 'cluster') {
+    const readme = `# ${envName}\n\nThis repo is managed by ORION. Do not edit manifests directly — propose changes via ORION.\n\n## Directory Layout\n\n\`\`\`\nclusters/<cluster-name>/\n├── namespaces/\n│   └── <namespace>.yaml\n├── deployments/\n│   └── <namespace>/\n│       └── <service>/\n│           ├── deployment.yaml\n│           ├── service.yaml\n│           ├── ingress.yaml\n│           └── pvc.yaml\n├── configs/\n│   └── <namespace>/\n│       └── <name>-configmap.yaml\n├── rbac/\n│   └── <name>-clusterrole.yaml\n├── network-policies/\n│   └── <namespace>-netpol.yaml\n└── argocd/\n    ├── appproject.yaml\n    └── root-application.yaml\n\`\`\`\n\nSee [ORION env-scaffold docs](https://github.com/richard-callis/orion-web) for the full auto-merge policy.\n`
+
+    const appProject = `apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: ${envName}
+  namespace: argocd
+spec:
+  description: "ORION-managed cluster: ${envName}"
+  sourceRepos:
+    - '<GITEA_REPO_URL>'
+  destinations:
+    - namespace: '*'
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'
+`
+
+    const rootApplication = `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ${envName}-root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: ${envName}
+  source:
+    repoURL: '<GITEA_REPO_URL>'
+    targetRevision: main
+    path: .
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+`
+
+    return [
+      { path: 'README.md', content: readme },
+      { path: 'argocd/appproject.yaml', content: appProject },
+      { path: 'argocd/root-application.yaml', content: rootApplication },
+    ]
+  }
+
+  if (opts.envType === 'docker') {
+    const readme = `# ${envName}\n\nThis repo is managed by ORION. Changes are applied via Gitea Actions runner.\n\n## Directory Layout\n\n\`\`\`\nservices/\n├── <service-name>/\n│   ├── docker-compose.yml\n│   ├── .env.example\n│   └── README.md\n└── ...\n\n.gitea/\n└── workflows/\n    └── deploy.yml\n\`\`\`\n\nSee [ORION env-scaffold docs](https://github.com/richard-callis/orion-web) for details.\n`
+
+    const deployWorkflow = `name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy changed services
+        run: |
+          # Find changed service directories
+          CHANGED=$(git diff --name-only HEAD~1 HEAD | grep '^services/' | cut -d/ -f1-2 | sort -u)
+
+          for SERVICE_DIR in $CHANGED; do
+            if [ -f "$SERVICE_DIR/docker-compose.yml" ]; then
+              echo "Deploying $SERVICE_DIR..."
+              cd "$SERVICE_DIR"
+              docker compose pull
+              docker compose up -d --remove-orphans
+              cd -
+            fi
+          done
+
+      - name: Report status to ORION
+        if: always()
+        run: |
+          curl -s -X POST "$ORION_URL/api/webhooks/gitea" \\
+            -H "Content-Type: application/json" \\
+            -d '{"action":"deploy_complete","status":"\\${{ job.status }}"}'
+        env:
+          ORION_URL: \${{ secrets.ORION_URL }}
+`
+
+    return [
+      { path: 'README.md', content: readme },
+      { path: '.gitea/workflows/deploy.yml', content: deployWorkflow },
+    ]
+  }
+
+  // Default: minimal README only (backwards-compatible)
+  return [
+    {
+      path: 'README.md',
+      content: `# ${envName}\n\nManaged by [ORION](https://github.com/richard-callis/orion-web). Do not edit manually — changes are proposed via PR.\n`,
+    },
+  ]
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
