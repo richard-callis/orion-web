@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Build Mission Control Docker image on homelab-master and distribute to all cluster nodes.
+# Build ORION Docker image on homelab-master and distribute to all cluster nodes.
 # Usage: ./build.sh [tag]
 #
 # Why this script does what it does:
@@ -15,7 +15,7 @@ set -e
 #     the pod on any of them.
 
 TAG=${1:-$(git rev-parse --short HEAD 2>/dev/null || echo "dev")}
-IMAGE="mission-control:$TAG"
+IMAGE="orion:$TAG"
 
 # All amd64 nodes that can run the pod (RPi nodes are arm64 and won't be scheduled)
 NODES=(
@@ -40,12 +40,12 @@ npx prisma generate
 
 # Build image
 echo "==> Building Docker image"
-docker build --platform linux/amd64 -t "$IMAGE" -t "mission-control:latest" .
+docker build --platform linux/amd64 -t "$IMAGE" -t "orion:latest" .
 
 # Save image once; reuse for both local import and remote distribution
 echo "==> Saving image to tarball..."
-TARBALL=$(mktemp /tmp/mission-control-XXXXXX.tar)
-docker save mission-control:latest > "$TARBALL"
+TARBALL=$(mktemp /tmp/orion-XXXXXX.tar)
+docker save orion:latest > "$TARBALL"
 
 # Import into THIS node's k3s containerd (homelab-master)
 # K3s CP nodes use /run/k3s/containerd/containerd.sock — not the system containerd
@@ -83,5 +83,5 @@ fi
 echo ""
 echo "==> Built and distributed: $IMAGE"
 echo "==> Deploying:"
-kubectl rollout restart deployment/mission-control -n management
-kubectl rollout status deployment/mission-control -n management --timeout=120s
+kubectl rollout restart deployment/orion -n management
+kubectl rollout status deployment/orion -n management --timeout=120s

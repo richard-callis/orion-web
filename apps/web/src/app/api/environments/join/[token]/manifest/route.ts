@@ -19,14 +19,14 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
   const { searchParams } = new URL(req.url)
   const gatewayType = searchParams.get('type') ?? record.environment.type ?? 'cluster'
   const reqUrl = new URL(req.url)
-  const mccUrl = `${reqUrl.protocol}//${reqUrl.host}`
+  const orionUrl = `${reqUrl.protocol}//${reqUrl.host}`
   const envName = record.environment.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
 
   const manifest = `---
-# Mission Control Gateway — auto-generated manifest
+# ORION Gateway — auto-generated manifest
 # Environment: ${record.environment.name}
 # Expires: ${record.expiresAt.toISOString()}
-# Apply with: kubectl apply -f <(curl -s '${mccUrl}/api/environments/join/${params.token}/manifest')
+# Apply with: kubectl apply -f <(curl -s '${orionUrl}/api/environments/join/${params.token}/manifest')
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -36,39 +36,39 @@ metadata:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: mcc-gateway-${envName}-join
+  name: orion-gateway-${envName}-join
   namespace: management
   annotations:
-    mcc/environment-id: "${record.environmentId}"
-    mcc/expires-at: "${record.expiresAt.toISOString()}"
+    orion/environment-id: "${record.environmentId}"
+    orion/expires-at: "${record.expiresAt.toISOString()}"
 stringData:
   join-token: "${params.token}"
-  mcc-url: "${mccUrl}"
+  orion-url: "${orionUrl}"
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mcc-gateway-${envName}
+  name: orion-gateway-${envName}
   namespace: management
   labels:
-    app: mcc-gateway-${envName}
+    app: orion-gateway-${envName}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: mcc-gateway-${envName}
+      app: orion-gateway-${envName}
   template:
     metadata:
       labels:
-        app: mcc-gateway-${envName}
+        app: orion-gateway-${envName}
     spec:
-      serviceAccountName: mcc-gateway
+      serviceAccountName: orion-gateway
       nodeSelector:
         kubernetes.io/arch: amd64
       containers:
         - name: gateway
-          image: mcc-gateway:latest
+          image: orion-gateway:latest
           imagePullPolicy: Never
           ports:
             - containerPort: 3001
@@ -77,18 +77,18 @@ spec:
               value: "3001"
             - name: GATEWAY_TYPE
               value: "${gatewayType}"
-            - name: MCC_URL
+            - name: ORION_URL
               valueFrom:
                 secretKeyRef:
-                  name: mcc-gateway-${envName}-join
-                  key: mcc-url
+                  name: orion-gateway-${envName}-join
+                  key: orion-url
             - name: JOIN_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: mcc-gateway-${envName}-join
+                  name: orion-gateway-${envName}-join
                   key: join-token
             - name: GATEWAY_URL
-              value: "http://mcc-gateway-${envName}.management.svc.cluster.local:3001"
+              value: "http://orion-gateway-${envName}.management.svc.cluster.local:3001"
           livenessProbe:
             httpGet: { path: /health, port: 3001 }
             initialDelaySeconds: 15
@@ -105,11 +105,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: mcc-gateway-${envName}
+  name: orion-gateway-${envName}
   namespace: management
 spec:
   selector:
-    app: mcc-gateway-${envName}
+    app: orion-gateway-${envName}
   ports:
     - port: 3001
       targetPort: 3001

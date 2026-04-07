@@ -12,7 +12,7 @@ interface Settings {
 }
 
 const DEFAULTS: Settings = {
-  'app.name': 'Mission Control',
+  'app.name': 'ORION',
   'app.description': '',
   'model.default': 'claude',
   'chat.historyLimit': 10,

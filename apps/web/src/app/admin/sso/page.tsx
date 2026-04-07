@@ -11,8 +11,8 @@ interface OIDCConfig {
 }
 
 const DEFAULT_MAPPING = {
-  'mcc-admins': 'admin',
-  'mcc-users': 'user',
+  'orion-admins': 'admin',
+  'orion-users': 'user',
 }
 
 export default function SSOPage() {
@@ -90,7 +90,7 @@ export default function SSOPage() {
               </span>
             </div>
             <p className="text-sm text-text-secondary">
-              Your Traefik ingress is configured with Authentik forward-auth middleware. MCC
+              Your Traefik ingress is configured with Authentik forward-auth middleware. ORION
               automatically reads authentication headers injected by Authentik — no OAuth
               redirect flow is needed.
             </p>
@@ -108,7 +108,7 @@ export default function SSOPage() {
         <div className="px-4 py-3 border-b border-border-subtle">
           <h2 className="text-sm font-semibold text-text-primary">Group Mapping</h2>
           <p className="text-xs text-text-muted mt-0.5">
-            Map Authentik group names to MCC roles. Roles: <code className="bg-bg-raised px-1 rounded">admin</code>{' '}
+            Map Authentik group names to ORION roles. Roles: <code className="bg-bg-raised px-1 rounded">admin</code>{' '}
             <code className="bg-bg-raised px-1 rounded">user</code>{' '}
             <code className="bg-bg-raised px-1 rounded">readonly</code>
           </p>
@@ -159,7 +159,7 @@ export default function SSOPage() {
           <span className="text-xs px-2 py-0.5 rounded bg-bg-raised text-text-muted">Coming Soon</span>
         </div>
         <p className="text-sm text-text-muted">
-          Direct OIDC flow for non-header-auth scenarios. Useful when running MCC outside of a Traefik/Authentik
+          Direct OIDC flow for non-header-auth scenarios. Useful when running ORION outside of a Traefik/Authentik
           environment.
         </p>
       </div>

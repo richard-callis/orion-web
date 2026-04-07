@@ -3,7 +3,7 @@ set -euo pipefail
 
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "Mission Control — Bootstrap"
+echo "ORION — Bootstrap"
 echo "==========================="
 
 # Ensure .env exists
@@ -32,20 +32,20 @@ echo ""
 echo "Starting stack..."
 docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$DEPLOY_DIR/.env" up -d
 
-# Print first-run token from MCC logs
+# Print first-run token from ORION logs
 echo ""
-echo "Waiting for MCC to start..."
+echo "Waiting for ORION to start..."
 sleep 5
-SETUP_TOKEN=$(docker compose -f "$DEPLOY_DIR/docker-compose.yml" logs mcc 2>&1 | grep "SETUP_TOKEN" | tail -1 | awk '{print $NF}')
+SETUP_TOKEN=$(docker compose -f "$DEPLOY_DIR/docker-compose.yml" logs orion 2>&1 | grep "SETUP_TOKEN" | tail -1 | awk '{print $NF}')
 
 if [[ -n "$SETUP_TOKEN" ]]; then
   echo ""
   echo "========================================"
-  echo "  MCC is ready for first-run setup"
-  echo "  Visit: https://${MCC_DOMAIN:-mcc.khalis.corp}"
+  echo "  ORION is ready for first-run setup"
+  echo "  Visit: https://${ORION_DOMAIN:-orion.khalis.corp}"
   echo "  Setup token: $SETUP_TOKEN"
   echo "========================================"
 else
   echo ""
-  echo "Stack started. Visit https://${MCC_DOMAIN:-mcc.khalis.corp} to complete setup."
+  echo "Stack started. Visit https://${ORION_DOMAIN:-orion.khalis.corp} to complete setup."
 fi

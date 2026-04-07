@@ -1,4 +1,4 @@
-name: Build MCC Web
+name: Build ORION Web
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/mcc-web
+  IMAGE_NAME: ${{ github.repository_owner }}/orion-web
 
 jobs:
   build:

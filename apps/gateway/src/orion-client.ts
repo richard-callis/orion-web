@@ -1,5 +1,5 @@
 /**
- * Client for talking to Mission Control (MCC).
+ * Client for talking to ORION.
  * Handles registration, heartbeat, and fetching tool config.
  */
 
@@ -15,13 +15,13 @@ export interface McpToolConfig {
 }
 
 interface GatewayConfig {
-  mccUrl: string        // e.g. http://mission-control.management.svc.cluster.local
+  mccUrl: string        // e.g. http://orion.management.svc.cluster.local
   environmentId: string
   gatewayToken: string
-  gatewayUrl: string    // this gateway's own URL, reported to MCC
+  gatewayUrl: string    // this gateway's own URL, reported to ORION
 }
 
-export class MccClient {
+export class OrionClient {
   private cfg: GatewayConfig
   private heartbeatTimer?: ReturnType<typeof setInterval>
 
@@ -42,8 +42,8 @@ export class MccClient {
       headers: this.headers(),
       body: JSON.stringify({ status: 'connected', gatewayUrl: this.cfg.gatewayUrl, lastSeen: new Date().toISOString() }),
     })
-    if (!res.ok) throw new Error(`Failed to register with MCC: ${res.status} ${await res.text()}`)
-    console.log(`[gateway] Registered with MCC as environment ${this.cfg.environmentId}`)
+    if (!res.ok) throw new Error(`Failed to register with ORION: ${res.status} ${await res.text()}`)
+    console.log(`[gateway] Registered with ORION as environment ${this.cfg.environmentId}`)
   }
 
   async disconnect(): Promise<void> {
@@ -62,7 +62,7 @@ export class MccClient {
     return res.json()
   }
 
-  /** Start sending heartbeats every 30s so MCC knows we're alive */
+  /** Start sending heartbeats every 30s so ORION knows we're alive */
   startHeartbeat(onToolsChanged: (tools: McpToolConfig[]) => void, intervalMs = 30_000) {
     this.heartbeatTimer = setInterval(async () => {
       try {

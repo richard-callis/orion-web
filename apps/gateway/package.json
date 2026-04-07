@@ -1,5 +1,5 @@
 {
-  "name": "mission-control-gateway",
+  "name": "orion-gateway",
   "version": "1.0.0",
   "description": "MCP Gateway — bridges AI agents to cluster/docker environments",
   "type": "module",

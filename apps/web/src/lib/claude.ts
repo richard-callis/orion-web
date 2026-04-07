@@ -20,7 +20,7 @@ function getSystemPrompt(): string {
     clusterContext = '# K3s Homelab — context file not mounted'
   }
 
-  return `You are Mission Control, an AI assistant managing a production K3s homelab cluster.
+  return `You are ORION, an AI assistant managing a production K3s homelab cluster.
 
 ${clusterContext}
 
@@ -40,7 +40,7 @@ function getPlanningSystemPrompt(targetType: string): string {
     : targetType === 'feature' ? 'feature (will be broken into backlog tasks)'
     : 'task (concrete implementation steps)'
 
-  return `You are Mission Control, a technical planning assistant for a K3s homelab infrastructure project.
+  return `You are ORION, a technical planning assistant for a K3s homelab infrastructure project.
 
 ${clusterContext}
 
@@ -293,7 +293,7 @@ async function* streamGeminiAgentChat(
 ): AsyncGenerator<StreamChunk> {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) {
-    yield { type: 'error', error: 'Gemini API key not configured — add GEMINI_API_KEY to Vault secret/mission-control' }
+    yield { type: 'error', error: 'Gemini API key not configured — add GEMINI_API_KEY to Vault secret/orion' }
     return
   }
 

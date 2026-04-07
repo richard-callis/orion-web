@@ -1,8 +1,8 @@
 services:
 
-  # ── Mission Control ────────────────────────────────────────────────────────
-  mcc:
-    image: ghcr.io/${GITHUB_ORG}/mcc-web:${MCC_VERSION:-latest}
+  # ── ORION ────────────────────────────────────────────────────────
+  orion:
+    image: ghcr.io/${GITHUB_ORG}/orion-web:${ORION_VERSION:-latest}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -10,24 +10,24 @@ services:
       vault:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://mcc:${POSTGRES_PASSWORD}@postgres:5432/mcc
-      NEXTAUTH_URL: https://${MCC_DOMAIN:-mcc.khalis.corp}
+      DATABASE_URL: postgresql://orion:${POSTGRES_PASSWORD}@postgres:5432/orion
+      NEXTAUTH_URL: https://${ORION_DOMAIN:-orion.khalis.corp}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: ${VAULT_TOKEN}
       GITEA_URL: http://gitea:3000
       GITEA_ADMIN_TOKEN: ${GITEA_ADMIN_TOKEN}
-      MCC_FIRST_RUN: ${MCC_FIRST_RUN:-false}
+      ORION_FIRST_RUN: ${ORION_FIRST_RUN:-false}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - mcc-claude-creds:/claude-creds
+      - orion-claude-creds:/claude-creds
     ports:
       - "3000:3000"
     labels:
       traefik.enable: "true"
-      traefik.http.routers.mcc.rule: "Host(`${MCC_DOMAIN:-mcc.khalis.corp}`)"
-      traefik.http.routers.mcc.entrypoints: "websecure"
-      traefik.http.services.mcc.loadbalancer.server.port: "3000"
+      traefik.http.routers.orion.rule: "Host(`${ORION_DOMAIN:-orion.khalis.corp}`)"
+      traefik.http.routers.orion.entrypoints: "websecure"
+      traefik.http.services.orion.loadbalancer.server.port: "3000"
 
   # ── Gitea ──────────────────────────────────────────────────────────────────
   gitea:
@@ -41,7 +41,7 @@ services:
       GITEA__server__ROOT_URL: https://${GITEA_DOMAIN:-gitea.khalis.corp}
       GITEA__server__SSH_DOMAIN: ${GITEA_DOMAIN:-gitea.khalis.corp}
       GITEA__server__SSH_PORT: 2222
-      GITEA__webhook__ALLOWED_HOST_LIST: mcc
+      GITEA__webhook__ALLOWED_HOST_LIST: orion
     volumes:
       - gitea-data:/data
     ports:
@@ -57,13 +57,13 @@ services:
     image: postgres:16
     restart: unless-stopped
     environment:
-      POSTGRES_DB: mcc
-      POSTGRES_USER: mcc
+      POSTGRES_DB: orion
+      POSTGRES_USER: orion
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mcc"]
+      test: ["CMD-SHELL", "pg_isready -U orion"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -140,4 +140,4 @@ volumes:
   vault-data:
   traefik-certs:
   coredns-zones:
-  mcc-claude-creds:
+  orion-claude-creds:

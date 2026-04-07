@@ -1,14 +1,14 @@
 /**
- * Mission Control Gateway — MCP Server
+ * ORION Gateway — MCP Server
  *
- * Runs alongside a cluster or Docker node. Registers with MCC, fetches tool config,
+ * Runs alongside a cluster or Docker node. Registers with ORION, fetches tool config,
  * and exposes those tools via the MCP protocol for AI agents to call.
  *
  * Environment variables:
- *   MCC_URL           — e.g. http://mission-control.management.svc.cluster.local
- *   ENVIRONMENT_ID    — Prisma ID of the Environment row in MCC
+ *   ORION_URL           — e.g. http://orion.management.svc.cluster.local
+ *   ENVIRONMENT_ID    — Prisma ID of the Environment row in ORION
  *   GATEWAY_TOKEN     — Auth token stored in Environment.gatewayToken
- *   GATEWAY_URL       — This gateway's own URL (reported to MCC), e.g. http://10.2.2.84:3001
+ *   GATEWAY_URL       — This gateway's own URL (reported to ORION), e.g. http://10.2.2.84:3001
  *   PORT              — Port to listen on (default 3001)
  *   GATEWAY_TYPE      — "cluster" | "docker" (controls which built-in tools are registered)
  */
@@ -20,14 +20,14 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-import { MccClient, type McpToolConfig } from './mcc-client.js'
+import { OrionClient, type McpToolConfig } from './orion-client.js'
 import { runTool } from './tool-runner.js'
 import { kubernetesTools } from './builtin-tools/kubernetes.js'
 import { dockerTools } from './builtin-tools/docker.js'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const MCC_URL     = process.env.MCC_URL     ?? ''
+const ORION_URL     = process.env.ORION_URL     ?? ''
 const JOIN_TOKEN  = process.env.JOIN_TOKEN  ?? ''
 const PORT        = parseInt(process.env.PORT ?? '3001', 10)
 const GATEWAY_TYPE = process.env.GATEWAY_TYPE ?? 'cluster'
@@ -36,8 +36,8 @@ const GATEWAY_URL  = process.env.GATEWAY_URL ?? `http://localhost:${PORT}`
 let ENVIRONMENT_ID = process.env.ENVIRONMENT_ID ?? ''
 let GATEWAY_TOKEN  = process.env.GATEWAY_TOKEN  ?? ''
 
-if (!MCC_URL) {
-  console.error('[gateway] FATAL: MCC_URL must be set')
+if (!ORION_URL) {
+  console.error('[gateway] FATAL: ORION_URL must be set')
   process.exit(1)
 }
 if (!JOIN_TOKEN && (!ENVIRONMENT_ID || !GATEWAY_TOKEN)) {
@@ -47,8 +47,8 @@ if (!JOIN_TOKEN && (!ENVIRONMENT_ID || !GATEWAY_TOKEN)) {
 
 /** Exchange a one-time join token for permanent credentials */
 async function joinWithToken(joinToken: string): Promise<void> {
-  console.log('[gateway] Joining MCC with join token…')
-  const res = await fetch(`${MCC_URL}/api/environments/join`, {
+  console.log('[gateway] Joining ORION with join token…')
+  const res = await fetch(`${ORION_URL}/api/environments/join`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ joinToken, gatewayUrl: GATEWAY_URL, gatewayType: GATEWAY_TYPE }),
@@ -83,17 +83,17 @@ if (GATEWAY_TYPE === 'docker')  registerBuiltins(dockerTools)
 // Cluster gateways also expose docker if desired
 if (GATEWAY_TYPE === 'cluster' && process.env.ENABLE_DOCKER === 'true') registerBuiltins(dockerTools)
 
-// ── MCC client (constructed after join so credentials are resolved) ───────────
+// ── ORION client (constructed after join so credentials are resolved) ───────────
 
-let mcc: MccClient  // initialised in start()
+let orion: OrionClient  // initialised in start()
 
-// Tools currently active (refreshed from MCC on heartbeat)
+// Tools currently active (refreshed from ORION on heartbeat)
 let activeTools: McpToolConfig[] = []
 
 // ── MCP server ────────────────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: 'mission-control-gateway', version: '1.0.0' },
+  { name: 'orion-gateway', version: '1.0.0' },
   { capabilities: { tools: {} } },
 )
 
@@ -141,7 +141,7 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   next()
 }
 
-// Health check (used by MCC, k8s probes — no auth required)
+// Health check (used by ORION, k8s probes — no auth required)
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', environmentId: ENVIRONMENT_ID, tools: activeTools.length, type: GATEWAY_TYPE })
 })
@@ -198,16 +198,16 @@ async function start() {
   // Exchange join token for permanent credentials if needed
   if (JOIN_TOKEN) await joinWithToken(JOIN_TOKEN)
 
-  // Construct MCC client now that credentials are resolved
-  mcc = new MccClient({ mccUrl: MCC_URL, environmentId: ENVIRONMENT_ID, gatewayToken: GATEWAY_TOKEN, gatewayUrl: GATEWAY_URL })
+  // Construct ORION client now that credentials are resolved
+  orion = new OrionClient({ mccUrl: ORION_URL, environmentId: ENVIRONMENT_ID, gatewayToken: GATEWAY_TOKEN, gatewayUrl: GATEWAY_URL })
 
-  // Register with MCC and fetch initial tool config
-  await mcc.register()
-  activeTools = await mcc.fetchTools()
-  console.log(`[gateway] Loaded ${activeTools.length} tools from MCC`)
+  // Register with ORION and fetch initial tool config
+  await orion.register()
+  activeTools = await orion.fetchTools()
+  console.log(`[gateway] Loaded ${activeTools.length} tools from ORION`)
 
   // Start heartbeat — refreshes tool config every 30s
-  mcc.startHeartbeat((tools) => {
+  orion.startHeartbeat((tools) => {
     activeTools = tools
     console.log(`[gateway] Tool config refreshed: ${tools.length} tools`)
   })
@@ -221,8 +221,8 @@ async function start() {
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('[gateway] Shutting down…')
-  mcc.stopHeartbeat()
-  await mcc.disconnect()
+  orion.stopHeartbeat()
+  await orion.disconnect()
   process.exit(0)
 })
 

@@ -22,21 +22,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const gatewayUrl: string = body.gatewayUrl ?? ''
   const gatewayType: string = body.gatewayType ?? env.type ?? 'cluster'
 
-  // Build the MCC base URL from the request
+  // Build the ORION base URL from the request
   const reqUrl = new URL(req.url)
-  const mccUrl = `${reqUrl.protocol}//${reqUrl.host}`
+  const orionUrl = `${reqUrl.protocol}//${reqUrl.host}`
 
   const dockerCmd = [
     'docker run -d \\',
     `  -e JOIN_TOKEN=${token} \\`,
     `  -e GATEWAY_TYPE=${gatewayType} \\`,
     gatewayUrl ? `  -e GATEWAY_URL=${gatewayUrl} \\` : null,
-    `  -e MCC_URL=${mccUrl} \\`,
+    `  -e ORION_URL=${orionUrl} \\`,
     `  --restart unless-stopped \\`,
-    `  mcc-gateway:latest`,
+    `  orion-gateway:latest`,
   ].filter(Boolean).join('\n')
 
-  const kubectlCmd = `kubectl apply -f <(curl -s '${mccUrl}/api/environments/join/${token}/manifest?type=${gatewayType}')`
+  const kubectlCmd = `kubectl apply -f <(curl -s '${orionUrl}/api/environments/join/${token}/manifest?type=${gatewayType}')`
 
-  return NextResponse.json({ token, expiresAt, dockerCmd, kubectlCmd, mccUrl })
+  return NextResponse.json({ token, expiresAt, dockerCmd, kubectlCmd, orionUrl })
 }

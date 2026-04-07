@@ -533,9 +533,9 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                     </select>
                   </div>
                   <div>
-                    <label className={labelCls}>Gateway URL <span className="text-text-muted">(how MCC will reach this gateway after deployment)</span></label>
+                    <label className={labelCls}>Gateway URL <span className="text-text-muted">(how ORION will reach this gateway after deployment)</span></label>
                     <input value={deployGatewayUrl} onChange={e => setDeployGatewayUrl(e.target.value)}
-                      placeholder="http://10.2.2.84:3001 or http://mcc-gateway.management.svc.cluster.local:3001"
+                      placeholder="http://10.2.2.84:3001 or http://orion-gateway.management.svc.cluster.local:3001"
                       className={inputCls} />
                   </div>
 

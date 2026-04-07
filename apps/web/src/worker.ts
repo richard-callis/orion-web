@@ -1,5 +1,5 @@
 /**
- * Mission Control Orchestrator — runs alongside the Next.js server.
+ * ORION Orchestrator — runs alongside the Next.js server.
  *
  * Polls for tasks assigned to AI agents and executes them using the
  * appropriate runner (Claude or Ollama), routing tool calls through the

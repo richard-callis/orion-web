@@ -51,7 +51,7 @@ export function MessageBubble({ message }: { message: Message }) {
               <span>{message.content}</span>
             ) : message.content ? (
               // Assistant messages: render markdown
-              <div className="prose-mcc">
+              <div className="prose-orion">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   rehypePlugins={[rehypeHighlight]}

@@ -1,4 +1,4 @@
-name: Build MCC Gateway
+name: Build ORION Gateway
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/mcc-gateway
+  IMAGE_NAME: ${{ github.repository_owner }}/orion-gateway
 
 jobs:
   build:

@@ -4,7 +4,7 @@ export function Header() {
       <div className="w-7 h-7 rounded bg-accent flex items-center justify-center flex-shrink-0 mr-3">
         <span className="text-white font-bold text-xs">MC</span>
       </div>
-      <span className="font-semibold text-text-primary">Mission Control</span>
+      <span className="font-semibold text-text-primary">ORION</span>
     </header>
   )
 }

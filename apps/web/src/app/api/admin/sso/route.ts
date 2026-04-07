@@ -10,7 +10,7 @@ export async function GET() {
       enabled: true,
       headerMode: true,
       issuerUrl: '',
-      groupMapping: { 'mcc-admins': 'admin', 'mcc-users': 'user' },
+      groupMapping: { 'orion-admins': 'admin', 'orion-users': 'user' },
     })
   }
   return NextResponse.json(provider)
@@ -42,7 +42,7 @@ export async function PATCH(req: NextRequest) {
       enabled:      body.enabled      ?? true,
       headerMode:   body.headerMode   ?? true,
       issuerUrl:    body.issuerUrl    ?? '',
-      groupMapping: body.groupMapping ?? { 'mcc-admins': 'admin', 'mcc-users': 'user' },
+      groupMapping: body.groupMapping ?? { 'orion-admins': 'admin', 'orion-users': 'user' },
     },
   })
   return NextResponse.json(created)

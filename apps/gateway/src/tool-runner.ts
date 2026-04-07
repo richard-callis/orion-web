@@ -1,6 +1,6 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import type { McpToolConfig } from './mcc-client.js'
+import type { McpToolConfig } from './orion-client.js'
 
 const exec = promisify(execFile)
 
