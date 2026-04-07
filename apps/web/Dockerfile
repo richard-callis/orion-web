@@ -27,13 +27,17 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Install OpenSSL (Prisma), bash (Claude Code SDK requires it), curl (kubectl download)
-RUN apk add --no-cache openssl libc6-compat bash curl
+# Install OpenSSL (Prisma), bash (Claude Code SDK requires it), curl, git
+RUN apk add --no-cache openssl libc6-compat bash curl git
 
 # Install kubectl — architecture-aware
 RUN curl -fsSL "https://dl.k8s.io/release/v1.33.0/bin/linux/${TARGETARCH}/kubectl" \
       -o /usr/local/bin/kubectl \
     && chmod +x /usr/local/bin/kubectl
+
+# Install Helm — architecture-aware
+RUN curl -fsSL "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3" \
+      | HELM_INSTALL_DIR=/usr/local/bin USE_SUDO=false bash
 
 ENV SHELL=/bin/bash
 

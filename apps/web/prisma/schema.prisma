@@ -61,7 +61,7 @@ model Agent {
 model Environment {
   id           String             @id @default(cuid())
   name         String             @unique
-  type         String             @default("cluster") // "cluster" | "docker" | "remote"
+  type         String             @default("cluster") // "cluster" | "docker"
   description  String?            @db.Text
   gatewayUrl   String?
   gatewayToken String?            // hashed token for gateway auth
@@ -71,9 +71,37 @@ model Environment {
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
 
+  // GitOps fields
+  giteaOwner   String?            // Gitea org/user that owns this env's repo
+  giteaRepo    String?            // Gitea repo name for this environment
+  argoCdUrl    String?            // ArgoCD URL (K8s clusters only)
+  policyConfig Json?              // PolicyConfig: { reviewAll?, overrides? }
+  kubeconfig   String?            @db.Text // base64 kubeconfig (K8s clusters only)
+
   tools      McpTool[]
   agents     AgentEnvironment[]
   joinTokens EnvironmentJoinToken[]
+  gitOpsPRs  GitOpsPR[]
+}
+
+/// Tracks every PR opened by the GitOps loop — open, auto-merged, or awaiting review.
+model GitOpsPR {
+  id            String      @id @default(cuid())
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  prNumber      Int
+  title         String
+  operation     String      // OperationType value
+  decision      String      // "auto" | "review"
+  status        String      @default("open") // "open" | "merged" | "closed"
+  giteaUrl      String
+  reasoning     String?     @db.Text
+  branch        String
+  mergedAt      DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([environmentId, prNumber])
 }
 
 model McpTool {

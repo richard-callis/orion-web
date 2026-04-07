@@ -17,6 +17,7 @@ services:
       VAULT_TOKEN: ${VAULT_TOKEN}
       GITEA_URL: http://gitea:3000
       GITEA_ADMIN_TOKEN: ${GITEA_ADMIN_TOKEN}
+      GITEA_WEBHOOK_SECRET: ${GITEA_WEBHOOK_SECRET}
       MANAGEMENT_IP: ${MANAGEMENT_IP:-}
       COREDNS_DIR: /etc/coredns-managed
     volumes:
