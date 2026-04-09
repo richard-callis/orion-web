@@ -222,7 +222,7 @@ async function checkToolPermission(
         userId: uid,
         environmentId,
         toolName,
-        toolArgs,
+        toolArgs: toolArgs as never,
         reason: `User's tier is below the minimum required (${requiredTierName}) for this tool group.`,
       },
     })
