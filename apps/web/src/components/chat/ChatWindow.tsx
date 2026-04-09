@@ -21,7 +21,7 @@ interface Message {
   streaming?: boolean
 }
 
-interface AppModel { id: string; name: string; provider: string; builtIn: boolean; modelId: string }
+interface AppModel { id: string; name: string; provider: string; builtIn: boolean; modelId: string; isDefault: boolean }
 
 interface Conversation {
   id: string
@@ -54,7 +54,23 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
   const [ollamaModel, setOllamaModel] = useState<string | null>(null)
   const ollamaModelRef = useRef<string | null>(null)
   const [availableModels, setAvailableModels] = useState<AppModel[]>([])
-  useEffect(() => { fetch('/api/models').then(r => r.json()).then(setAvailableModels).catch(() => {}) }, [])
+  useEffect(() => {
+    fetch('/api/models')
+      .then(r => r.json())
+      .then((models: AppModel[]) => {
+        setAvailableModels(models)
+        // Apply default model to the selector if nothing is explicitly set
+        if (ollamaModelRef.current === null) {
+          const def = models.find(m => m.isDefault)
+          if (def) {
+            const id = def.provider === 'anthropic' ? null : def.id
+            setOllamaModel(id)
+            ollamaModelRef.current = id
+          }
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   // Resolve which provider/model is active
   const currentProvider = ollamaModel === null
@@ -67,9 +83,7 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
   // Resolve which model within the current provider is selected
   const selectedModelId = currentProvider === 'anthropic'
     ? 'claude'
-    : currentProvider === 'ollama'
-      ? (availableModels.find(m => m.provider === 'ollama' && m.modelId === ollamaModel)?.id ?? currentProviderModels[0]?.id ?? '')
-      : (availableModels.find(m => m.id === ollamaModel)?.id ?? currentProviderModels[0]?.id ?? '')
+    : (availableModels.find(m => m.id === ollamaModel)?.id ?? currentProviderModels[0]?.id ?? '')
   const [streaming, setStreaming] = useState(false)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -387,7 +401,7 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
                         switchModel(null)
                       } else {
                         const first = availableModels.find(m => m.provider === provider)
-                        if (first) switchModel(first.provider === 'ollama' ? first.modelId : first.id)
+                        if (first) switchModel(first.id)
                       }
                     }}
                     className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors ${
@@ -408,7 +422,7 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
                   return (
                     <button
                       key={m.id}
-                      onClick={() => switchModel(m.provider === 'ollama' ? m.modelId : m.id)}
+                      onClick={() => switchModel(m.id)}
                       className={`px-2 py-0.5 rounded text-xs border transition-colors ${
                         isSelected
                           ? cfg.modelClass

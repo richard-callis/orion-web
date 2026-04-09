@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  await prisma.externalModel.create({
+  const created = await prisma.externalModel.create({
     data: {
       name,
       provider,
@@ -31,6 +31,13 @@ export async function POST(req: NextRequest) {
       modelId,
       enabled: true,
     },
+  })
+
+  // Automatically make the wizard-configured model the system default
+  await prisma.systemSetting.upsert({
+    where:  { key: 'model.default' },
+    update: { value: `ext:${created.id}` },
+    create: { key: 'model.default', value: `ext:${created.id}` },
   })
 
   return NextResponse.json({ ok: true })

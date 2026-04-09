@@ -1,20 +1,24 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Settings, Cpu, Users, ShieldCheck, ScrollText, Layers } from 'lucide-react'
+import { LayoutDashboard, Settings, Cpu, Users, ShieldCheck, ScrollText, Layers, ShieldAlert, UsersRound } from 'lucide-react'
+import { usePendingTools } from '@/hooks/usePendingTools'
 
 const adminNav = [
-  { href: '/admin',               icon: LayoutDashboard, label: 'Overview'     },
-  { href: '/admin/settings',      icon: Settings,        label: 'Settings'     },
-  { href: '/admin/models',        icon: Cpu,             label: 'Models'       },
-  { href: '/admin/users',         icon: Users,           label: 'Users'        },
-  { href: '/admin/environments',  icon: Layers,          label: 'Environments' },
-  { href: '/admin/sso',           icon: ShieldCheck,     label: 'SSO'          },
-  { href: '/admin/audit',         icon: ScrollText,      label: 'Audit Log'    },
+  { href: '/admin',               icon: LayoutDashboard, label: 'Overview'      },
+  { href: '/admin/settings',      icon: Settings,        label: 'Settings'      },
+  { href: '/admin/models',        icon: Cpu,             label: 'Models'        },
+  { href: '/admin/users',         icon: Users,           label: 'Users'         },
+  { href: '/admin/environments',  icon: Layers,          label: 'Environments'  },
+  { href: '/admin/agent-groups',  icon: UsersRound,      label: 'Agent Groups'  },
+  { href: '/admin/approvals',     icon: ShieldAlert,     label: 'Approvals'     },
+  { href: '/admin/sso',           icon: ShieldCheck,     label: 'SSO'           },
+  { href: '/admin/audit',         icon: ScrollText,      label: 'Audit Log'     },
 ]
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
+  const { pendingToolCount, pendingApprovalCount } = usePendingTools()
 
   return (
     <div className="absolute inset-0 flex overflow-hidden">
@@ -27,6 +31,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <nav className="flex-1 py-2 overflow-y-auto">
           {adminNav.map(({ href, icon: Icon, label }) => {
             const active = href === '/admin' ? pathname === '/admin' : pathname.startsWith(href)
+            const badge = href === '/admin/environments' ? pendingToolCount : href === '/admin/approvals' ? pendingApprovalCount : 0
             return (
               <Link
                 key={href}
@@ -38,7 +43,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 }`}
               >
                 <Icon size={15} className="flex-shrink-0" />
-                <span className="truncate">{label}</span>
+                <span className="truncate flex-1">{label}</span>
+                {badge > 0 && (
+                  <span className="min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center bg-orange-500 text-white">
+                    {badge}
+                  </span>
+                )}
               </Link>
             )
           })}

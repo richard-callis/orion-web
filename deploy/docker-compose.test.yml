@@ -20,6 +20,7 @@ services:
       GITEA_ADMIN_TOKEN: ${GITEA_ADMIN_TOKEN:-}
       GITEA_WEBHOOK_SECRET: ${GITEA_WEBHOOK_SECRET:-test-secret}
       MANAGEMENT_IP: ${MANAGEMENT_IP:-127.0.0.1}
+      ORION_CALLBACK_URL: ${ORION_CALLBACK_URL:-}
       COREDNS_DIR: /tmp/coredns-managed
       NODE_ENV: production
     ports:

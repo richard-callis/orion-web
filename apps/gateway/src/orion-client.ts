@@ -69,7 +69,7 @@ export class OrionClient {
         await fetch(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}`, {
           method: 'PUT',
           headers: this.headers(),
-          body: JSON.stringify({ lastSeen: new Date().toISOString() }),
+          body: JSON.stringify({ status: 'connected', lastSeen: new Date().toISOString() }),
         })
         // Refresh tool config on every heartbeat so changes take effect within one interval
         const tools = await this.fetchTools()

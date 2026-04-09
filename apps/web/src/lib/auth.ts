@@ -55,14 +55,26 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
+        // Fresh login — populate token from the authorized user object
         token.sub = user.id
         token.username = (user as AppUser & { username: string }).username
         token.role = (user as AppUser & { role: string }).role
+      } else if (token.sub) {
+        // Subsequent requests — verify the user still exists in the DB.
+        // If the DB was wiped the user row is gone, so we invalidate the token
+        // by clearing sub. Middleware treats token without sub as unauthenticated.
+        const dbUser = await prisma.user.findUnique({
+          where: { id: token.sub },
+          select: { id: true, active: true },
+        })
+        if (!dbUser || !dbUser.active) {
+          token.sub = undefined
+        }
       }
       return token
     },
     async session({ session, token }) {
-      if (session.user) {
+      if (session.user && token.sub) {
         session.user.id = token.sub as string
         session.user.username = token.username as string
         session.user.role = token.role as string

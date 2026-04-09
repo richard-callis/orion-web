@@ -22,21 +22,26 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const gatewayUrl: string = body.gatewayUrl ?? ''
   const gatewayType: string = body.gatewayType ?? env.type ?? 'cluster'
 
-  // Build the ORION base URL from the request
+  // Public URL (shown in UI, used by browser clients)
   const reqUrl = new URL(req.url)
-  const orionUrl = `${reqUrl.protocol}//${reqUrl.host}`
+  const orionPublicUrl = `${reqUrl.protocol}//${reqUrl.host}`
+
+  // Callback URL — what gateways and cluster nodes use to reach ORION (bypasses Cloudflare/proxies).
+  // Falls back to public URL if not configured.
+  const orionCallbackUrl = (process.env.ORION_CALLBACK_URL ?? orionPublicUrl).replace(/\/$/, '')
 
   const dockerCmd = [
     'docker run -d \\',
     `  -e JOIN_TOKEN=${token} \\`,
     `  -e GATEWAY_TYPE=${gatewayType} \\`,
     gatewayUrl ? `  -e GATEWAY_URL=${gatewayUrl} \\` : null,
-    `  -e ORION_URL=${orionUrl} \\`,
+    `  -e ORION_URL=${orionCallbackUrl} \\`,
     `  --restart unless-stopped \\`,
-    `  orion-gateway:latest`,
+    `  ghcr.io/richard-callis/orion-gateway:latest`,
   ].filter(Boolean).join('\n')
 
-  const kubectlCmd = `kubectl apply -f <(curl -s '${orionUrl}/api/environments/join/${token}/manifest?type=${gatewayType}')`
+  // Use the callback URL so the manifest curl works from cluster nodes (not blocked by Cloudflare)
+  const kubectlCmd = `kubectl apply -f <(curl -s '${orionCallbackUrl}/api/environments/join/${token}/manifest?type=${gatewayType}')`
 
-  return NextResponse.json({ token, expiresAt, dockerCmd, kubectlCmd, orionUrl })
+  return NextResponse.json({ token, expiresAt, dockerCmd, kubectlCmd, orionUrl: orionPublicUrl })
 }

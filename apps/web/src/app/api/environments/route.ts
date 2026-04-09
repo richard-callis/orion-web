@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { Prisma } from '@prisma/client'
+import { getDefaultTools } from '@/lib/default-tools'
 
 export async function GET() {
   const environments = await prisma.environment.findMany({
@@ -33,10 +35,37 @@ export async function POST(req: NextRequest) {
       giteaOwner:   body.giteaOwner   ?? null,
       giteaRepo:    body.giteaRepo    ?? null,
       policyConfig: body.policyConfig ?? undefined,
-      // kubeconfig must be base64-encoded by the client
       kubeconfig:   body.kubeconfig   ?? null,
     },
     include: { tools: true, agents: { include: { agent: true } } },
   })
-  return NextResponse.json({ ...env, gatewayToken: env.gatewayToken ? '••••' : null, kubeconfig: env.kubeconfig ? '••••' : null }, { status: 201 })
+
+  // Seed default tools based on environment type
+  const defaultTools = getDefaultTools(type)
+  if (defaultTools.length > 0) {
+    await prisma.mcpTool.createMany({
+      data: defaultTools.map(t => ({
+        environmentId: env.id,
+        name:          t.name,
+        description:   t.description,
+        inputSchema:   t.inputSchema,
+        execType:      t.execType,
+        execConfig:    t.execConfig ?? Prisma.JsonNull,
+        enabled:       true,
+        builtIn:       t.builtIn,
+        status:        'active',
+      })),
+      skipDuplicates: true,
+    })
+  }
+
+  const envWithTools = await prisma.environment.findUnique({
+    where: { id: env.id },
+    include: { tools: true, agents: { include: { agent: true } } },
+  })
+
+  return NextResponse.json(
+    { ...envWithTools, gatewayToken: envWithTools?.gatewayToken ? '••••' : null, kubeconfig: envWithTools?.kubeconfig ? '••••' : null },
+    { status: 201 }
+  )
 }

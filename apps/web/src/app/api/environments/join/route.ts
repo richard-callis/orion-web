@@ -10,7 +10,10 @@ import { randomBytes } from 'crypto'
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const { joinToken, gatewayUrl, gatewayType } = body
+  const { joinToken, gatewayType } = body
+  // Ensure gatewayUrl always has a protocol so fetch() works
+  const rawUrl: string | undefined = body.gatewayUrl
+  const gatewayUrl = rawUrl && !rawUrl.startsWith('http') ? `http://${rawUrl}` : rawUrl
 
   if (!joinToken) return NextResponse.json({ error: 'joinToken is required' }, { status: 400 })
 

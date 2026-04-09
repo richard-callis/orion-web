@@ -19,11 +19,11 @@ export const kubernetesTools = [
         selector:  { type: 'string', description: 'Label selector, e.g. app=nginx' },
       },
     },
-    async execute(args: Record<string, string>) {
+    async execute(args: Record<string, unknown>) {
       const cmdArgs = ['get', 'pods', '-o', 'wide']
-      if (args.namespace) cmdArgs.push('-n', args.namespace)
+      if (args.namespace) cmdArgs.push('-n', String(args.namespace))
       else cmdArgs.push('-A')
-      if (args.selector) cmdArgs.push('-l', args.selector)
+      if (args.selector) cmdArgs.push('-l', String(args.selector))
       return kubectl(cmdArgs)
     },
   },
@@ -73,9 +73,9 @@ export const kubernetesTools = [
       },
       required: ['resource', 'name'],
     },
-    async execute(args: Record<string, string>) {
-      const cmdArgs = ['describe', args.resource, args.name]
-      if (args.namespace) cmdArgs.push('-n', args.namespace)
+    async execute(args: Record<string, unknown>) {
+      const cmdArgs = ['describe', String(args.resource), String(args.name)]
+      if (args.namespace) cmdArgs.push('-n', String(args.namespace))
       return kubectl(cmdArgs)
     },
   },
@@ -92,12 +92,12 @@ export const kubernetesTools = [
       },
       required: ['resource'],
     },
-    async execute(args: Record<string, string>) {
-      const cmdArgs = ['get', args.resource]
-      if (args.name) cmdArgs.push(args.name)
-      if (args.namespace) cmdArgs.push('-n', args.namespace)
+    async execute(args: Record<string, unknown>) {
+      const cmdArgs = ['get', String(args.resource)]
+      if (args.name) cmdArgs.push(String(args.name))
+      if (args.namespace) cmdArgs.push('-n', String(args.namespace))
       else if (!args.name) cmdArgs.push('-A')
-      cmdArgs.push('-o', args.output ?? 'wide')
+      cmdArgs.push('-o', String(args.output ?? 'wide'))
       return kubectl(cmdArgs)
     },
   },
@@ -113,8 +113,8 @@ export const kubernetesTools = [
       },
       required: ['kind', 'name', 'namespace'],
     },
-    async execute(args: Record<string, string>) {
-      return kubectl(['rollout', 'restart', `${args.kind}/${args.name}`, '-n', args.namespace])
+    async execute(args: Record<string, unknown>) {
+      return kubectl(['rollout', 'restart', `${args.kind}/${args.name}`, '-n', String(args.namespace)])
     },
   },
   {
@@ -126,9 +126,9 @@ export const kubernetesTools = [
         namespace: { type: 'string', description: 'Namespace (omit for all namespaces)' },
       },
     },
-    async execute(args: Record<string, string>) {
+    async execute(args: Record<string, unknown>) {
       const cmdArgs = ['top', 'pods']
-      if (args.namespace) cmdArgs.push('-n', args.namespace)
+      if (args.namespace) cmdArgs.push('-n', String(args.namespace))
       else cmdArgs.push('-A')
       return kubectl(cmdArgs)
     },

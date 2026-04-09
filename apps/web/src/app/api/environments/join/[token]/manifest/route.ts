@@ -18,9 +18,18 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
 
   const { searchParams } = new URL(req.url)
   const gatewayType = searchParams.get('type') ?? record.environment.type ?? 'cluster'
-  const reqUrl = new URL(req.url)
-  const orionUrl = `${reqUrl.protocol}//${reqUrl.host}`
+
+  // ORION_CALLBACK_URL = the URL gateways use to reach ORION (LAN/internal, not behind Cloudflare).
+  // Falls back to NEXTAUTH_URL, then the request host (which may be wrong inside Docker).
+  const orionUrl = (process.env.ORION_CALLBACK_URL ?? process.env.NEXTAUTH_URL ?? (() => {
+    const u = new URL(req.url); return `${u.protocol}//${u.host}`
+  })()).replace(/\/$/, '')
   const envName = record.environment.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+
+  // Use the environment's configured gatewayUrl if set; otherwise fall back to NodePort default.
+  // For bare clusters (no ingress), the user sets gatewayUrl to http://<node-ip>:30001 when
+  // creating the environment, and the NodePort service below exposes the gateway on that port.
+  const gatewayUrl = record.environment.gatewayUrl ?? `http://<node-ip>:30001`
 
   const manifest = `---
 # ORION Gateway — auto-generated manifest
@@ -31,6 +40,75 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: management
+
+---
+# ServiceAccount + RBAC — gateway needs read access to cluster resources
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orion-gateway
+  namespace: management
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: orion-gateway
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "pods/exec", "services", "endpoints", "configmaps", "namespaces", "nodes", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: orion-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: orion-gateway
+subjects:
+  - kind: ServiceAccount
+    name: orion-gateway
+    namespace: management
+
+---
+# Scoped Role — lets the gateway patch its own join secret to persist permanent credentials
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: orion-gateway-secret-writer
+  namespace: management
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "patch"]
+    resourceNames: ["orion-gateway-${envName}-join"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: orion-gateway-secret-writer
+  namespace: management
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: orion-gateway-secret-writer
+subjects:
+  - kind: ServiceAccount
+    name: orion-gateway
+    namespace: management
 
 ---
 apiVersion: v1
@@ -44,6 +122,8 @@ metadata:
 stringData:
   join-token: "${params.token}"
   orion-url: "${orionUrl}"
+  environment-id: ""
+  gateway-token: ""
 
 ---
 apiVersion: apps/v1
@@ -64,12 +144,10 @@ spec:
         app: orion-gateway-${envName}
     spec:
       serviceAccountName: orion-gateway
-      nodeSelector:
-        kubernetes.io/arch: amd64
       containers:
         - name: gateway
-          image: orion-gateway:latest
-          imagePullPolicy: Never
+          image: ghcr.io/richard-callis/orion-gateway:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 3001
           env:
@@ -88,7 +166,21 @@ spec:
                   name: orion-gateway-${envName}-join
                   key: join-token
             - name: GATEWAY_URL
-              value: "http://orion-gateway-${envName}.management.svc.cluster.local:3001"
+              value: "${gatewayUrl}"
+            - name: ENVIRONMENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: orion-gateway-${envName}-join
+                  key: environment-id
+                  optional: true
+            - name: GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: orion-gateway-${envName}-join
+                  key: gateway-token
+                  optional: true
+            - name: GATEWAY_SECRET_NAME
+              value: "orion-gateway-${envName}-join"
           livenessProbe:
             httpGet: { path: /health, port: 3001 }
             initialDelaySeconds: 15
@@ -108,11 +200,13 @@ metadata:
   name: orion-gateway-${envName}
   namespace: management
 spec:
+  type: NodePort
   selector:
     app: orion-gateway-${envName}
   ports:
     - port: 3001
       targetPort: 3001
+      nodePort: 30001
 `
 
   return new NextResponse(manifest, {

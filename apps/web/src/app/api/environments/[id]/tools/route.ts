@@ -6,7 +6,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const enabledOnly = searchParams.get('enabled') === 'true'
 
   const tools = await prisma.mcpTool.findMany({
-    where: { environmentId: params.id, ...(enabledOnly ? { enabled: true } : {}) },
+    where: {
+      environmentId: params.id,
+      ...(enabledOnly ? { enabled: true, status: 'active' } : {}),
+    },
     orderBy: [{ builtIn: 'desc' }, { name: 'asc' }],
   })
   return NextResponse.json(tools)

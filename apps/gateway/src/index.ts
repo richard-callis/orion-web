@@ -13,7 +13,11 @@
  *   GATEWAY_TYPE      — "cluster" | "docker" (controls which built-in tools are registered)
  */
 
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import express, { type Request, type Response, type NextFunction } from 'express'
+
+const execFileAsync = promisify(execFile)
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import {
@@ -28,11 +32,13 @@ import { ArgoCDWatcher } from './argocd-watcher.js'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const ORION_URL     = process.env.ORION_URL     ?? ''
-const JOIN_TOKEN  = process.env.JOIN_TOKEN  ?? ''
-const PORT        = parseInt(process.env.PORT ?? '3001', 10)
-const GATEWAY_TYPE = process.env.GATEWAY_TYPE ?? 'cluster'
-const GATEWAY_URL  = process.env.GATEWAY_URL ?? `http://localhost:${PORT}`
+const ORION_URL          = process.env.ORION_URL          ?? ''
+const JOIN_TOKEN         = process.env.JOIN_TOKEN         ?? ''
+const PORT               = parseInt(process.env.PORT ?? '3001', 10)
+const GATEWAY_TYPE       = process.env.GATEWAY_TYPE       ?? 'cluster'
+const rawGatewayUrl      = process.env.GATEWAY_URL        ?? `http://localhost:${PORT}`
+const GATEWAY_URL        = rawGatewayUrl.startsWith('http') ? rawGatewayUrl : `http://${rawGatewayUrl}`
+const GATEWAY_SECRET_NAME = process.env.GATEWAY_SECRET_NAME ?? ''
 
 let ENVIRONMENT_ID = process.env.ENVIRONMENT_ID ?? ''
 let GATEWAY_TOKEN  = process.env.GATEWAY_TOKEN  ?? ''
@@ -62,6 +68,25 @@ async function joinWithToken(joinToken: string): Promise<void> {
   ENVIRONMENT_ID = data.environmentId
   GATEWAY_TOKEN  = data.apiToken
   console.log(`[gateway] Joined as environment "${data.environmentName}" (${ENVIRONMENT_ID})`)
+  await persistCredentials()
+}
+
+/** Persist permanent credentials into the K8s Secret so restarts skip re-join */
+async function persistCredentials(): Promise<void> {
+  if (!GATEWAY_SECRET_NAME || !ENVIRONMENT_ID || !GATEWAY_TOKEN) return
+  const patch = JSON.stringify({ stringData: { 'environment-id': ENVIRONMENT_ID, 'gateway-token': GATEWAY_TOKEN } })
+  try {
+    await execFileAsync('kubectl', [
+      'patch', 'secret', GATEWAY_SECRET_NAME,
+      '-n', 'management',
+      '--type=merge',
+      '-p', patch,
+    ])
+    console.log(`[gateway] Credentials persisted to secret ${GATEWAY_SECRET_NAME}`)
+  } catch (err) {
+    // Non-fatal — gateway still works this session; log and continue
+    console.warn('[gateway] Could not persist credentials to secret:', err instanceof Error ? err.message : String(err))
+  }
 }
 
 // ── Built-in tool registry ────────────────────────────────────────────────────
@@ -197,8 +222,12 @@ app.post('/mcp/message', async (req, res) => {
 // ── Startup ───────────────────────────────────────────────────────────────────
 
 async function start() {
-  // Exchange join token for permanent credentials if needed
-  if (JOIN_TOKEN) await joinWithToken(JOIN_TOKEN)
+  // Use persisted credentials if available, otherwise exchange join token
+  if (ENVIRONMENT_ID && GATEWAY_TOKEN) {
+    console.log(`[gateway] Using persisted credentials for environment ${ENVIRONMENT_ID}`)
+  } else if (JOIN_TOKEN) {
+    await joinWithToken(JOIN_TOKEN)
+  }
 
   // Construct ORION client now that credentials are resolved
   orion = new OrionClient({ mccUrl: ORION_URL, environmentId: ENVIRONMENT_ID, gatewayToken: GATEWAY_TOKEN, gatewayUrl: GATEWAY_URL })
@@ -228,12 +257,14 @@ async function start() {
   })
 }
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
+// Graceful shutdown — do NOT call disconnect() here.
+// On rolling deploys the new pod registers before the old one shuts down,
+// so calling disconnect() would race and mark the env as disconnected.
+// The heartbeat self-heals status within 30s anyway.
+process.on('SIGTERM', () => {
   console.log('[gateway] Shutting down…')
   argoCdWatcher?.stop()
   orion.stopHeartbeat()
-  await orion.disconnect()
   process.exit(0)
 })
 

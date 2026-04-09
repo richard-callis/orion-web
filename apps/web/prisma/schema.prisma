@@ -56,6 +56,8 @@ model Agent {
   messages     AgentMessage[]
   tasks        Task[]             @relation("AssignedTasks")
   environments AgentEnvironment[]
+  agentGroups  AgentGroupMember[]
+  toolRestrictions ToolAgentRestriction[]
 }
 
 model Environment {
@@ -82,6 +84,8 @@ model Environment {
   agents     AgentEnvironment[]
   joinTokens EnvironmentJoinToken[]
   gitOpsPRs  GitOpsPR[]
+  toolGroups ToolGroup[]
+  userTiers  EnvironmentUserTier[]
 }
 
 /// Tracks every PR opened by the GitOps loop — open, auto-merged, or awaiting review.
@@ -115,8 +119,14 @@ model McpTool {
   execConfig    Json?       // builtin: { fn: "kubectl_get_pods" } | shell: { command: "..." } | http: { url: "..." }
   enabled       Boolean     @default(true)
   builtIn       Boolean     @default(false) // true = shipped with gateway binary
+  status        String      @default("active") // "active" | "pending" | "rejected"
+  proposedBy    String?     // conversationId that triggered the proposal
+  proposedAt    DateTime?
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
+
+  toolGroups        ToolGroupTool[]
+  agentRestrictions ToolAgentRestriction[]
 
   @@unique([environmentId, name])
 }
@@ -263,6 +273,7 @@ model User {
   assignedTasks Task[]    @relation("AssignedUserTasks")
   assignedBugs  Bug[]     @relation("AssignedBugUser")
   sessions      Session[]
+  environmentTiers EnvironmentUserTier[]
 }
 
 model Session {
@@ -315,4 +326,116 @@ model OIDCProvider {
   headerMode   Boolean  @default(true)
   groupMapping Json?
   updatedAt    DateTime @updatedAt
+}
+
+// ─── Tool Groups ──────────────────────────────────────────────────────────────
+// Groups of tools within an environment. Each group has a minimum user tier.
+// Ungrouped tools = no tier restriction (any user can trigger them via chat).
+
+model ToolGroup {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  environmentId String
+  environment   Environment          @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  minimumTier   String   @default("viewer") // "viewer" | "operator" | "admin"
+  tools         ToolGroupTool[]
+  agentAccess   AgentGroupToolAccess[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([environmentId, name])
+}
+
+model ToolGroupTool {
+  toolGroupId String
+  toolId      String
+  toolGroup   ToolGroup @relation(fields: [toolGroupId], references: [id], onDelete: Cascade)
+  tool        McpTool   @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  @@id([toolGroupId, toolId])
+}
+
+// ─── Agent Groups ─────────────────────────────────────────────────────────────
+// Global named groups of agents. Agent groups are granted access to tool groups.
+
+model AgentGroup {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  members     AgentGroupMember[]
+  toolAccess  AgentGroupToolAccess[]
+  createdAt   DateTime @default(now())
+}
+
+model AgentGroupMember {
+  agentGroupId String
+  agentId      String
+  agentGroup   AgentGroup @relation(fields: [agentGroupId], references: [id], onDelete: Cascade)
+  agent        Agent      @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  @@id([agentGroupId, agentId])
+}
+
+model AgentGroupToolAccess {
+  agentGroupId String
+  toolGroupId  String
+  agentGroup   AgentGroup @relation(fields: [agentGroupId], references: [id], onDelete: Cascade)
+  toolGroup    ToolGroup  @relation(fields: [toolGroupId], references: [id], onDelete: Cascade)
+  @@id([agentGroupId, toolGroupId])
+}
+
+// ─── Tool-level agent restrictions ────────────────────────────────────────────
+// If a tool has ANY entries here, ONLY those specific agents may execute it.
+// Human users in chat are always blocked from restricted tools.
+
+model ToolAgentRestriction {
+  toolId  String
+  agentId String
+  tool    McpTool @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  agent   Agent   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  @@id([toolId, agentId])
+}
+
+// ─── User tiers per environment ───────────────────────────────────────────────
+// Controls what tool groups a human user can trigger via chat.
+// viewer < operator < admin. Admins (User.role=admin) bypass all tier checks.
+
+model EnvironmentUserTier {
+  id            String   @id @default(cuid())
+  userId        String
+  environmentId String
+  tier          String   @default("viewer") // "viewer" | "operator" | "admin"
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  @@unique([userId, environmentId])
+}
+
+// ─── Tool approval requests ───────────────────────────────────────────────────
+// Created when a user's chat request requires a tool above their tier.
+// Admin approves → one-time grant is created; user retries and it succeeds.
+
+model ToolApprovalRequest {
+  id             String   @id @default(cuid())
+  conversationId String
+  userId         String
+  environmentId  String
+  toolName       String
+  toolArgs       Json     @default("{}")
+  reason         String?
+  status         String   @default("pending") // "pending" | "approved" | "denied"
+  approvedBy     String?
+  adminNote      String?
+  createdAt      DateTime @default(now())
+  resolvedAt     DateTime?
+}
+
+// One-time execution grant — created when admin approves a ToolApprovalRequest.
+// Consumed when the user retries the same tool call.
+model ToolExecutionGrant {
+  id             String   @id @default(cuid())
+  userId         String
+  environmentId  String
+  toolName       String
+  expiresAt      DateTime
+  usedAt         DateTime?
+  createdAt      DateTime @default(now())
 }

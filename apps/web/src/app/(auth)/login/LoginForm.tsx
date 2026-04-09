@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, FormEvent } from 'react'
+import { useState, FormEvent } from 'react'
 import { signIn } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AlertTriangle, Loader2 } from 'lucide-react'
@@ -14,14 +14,6 @@ export default function LoginForm() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-
-  // If setup hasn't been completed yet, redirect to the wizard
-  useEffect(() => {
-    fetch('/api/setup/status')
-      .then(r => r.json())
-      .then(d => { if (!d.completed) router.replace('/setup') })
-      .catch(() => {})
-  }, [router])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()

@@ -7,6 +7,7 @@ import {
   Globe, Bell, KeyRound, Archive, FileText, ClipboardList,
   ChevronLeft, ChevronRight, BookOpen, Settings2, GitBranch,
 } from 'lucide-react'
+import { usePendingTools } from '@/hooks/usePendingTools'
 
 const nav = [
   { href: '/',               icon: LayoutDashboard, label: 'Dashboard' },
@@ -27,8 +28,9 @@ const nav = [
 export function Sidebar() {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
+  const { count: pendingCount } = usePendingTools()
 
-  const NavLink = ({ href, icon: Icon, label }: { href: string; icon: React.ElementType; label: string }) => {
+  const NavLink = ({ href, icon: Icon, label, badge }: { href: string; icon: React.ElementType; label: string; badge?: number }) => {
     const active = href === '/' ? pathname === '/' : pathname.startsWith(href)
     return (
       <Link
@@ -43,7 +45,12 @@ export function Sidebar() {
         }`}
       >
         <Icon size={18} className="flex-shrink-0" />
-        {!collapsed && <span className="truncate">{label}</span>}
+        {!collapsed && <span className="truncate flex-1">{label}</span>}
+        {badge ? (
+          <span className={`flex-shrink-0 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center bg-orange-500 text-white ${collapsed ? 'absolute ml-3 -mt-3' : ''}`}>
+            {badge}
+          </span>
+        ) : null}
       </Link>
     )
   }
@@ -57,7 +64,7 @@ export function Sidebar() {
 
       {/* Divider + Admin link */}
       <div className="border-t border-border-subtle">
-        <NavLink href="/admin" icon={Settings2} label="Administration" />
+        <NavLink href="/admin" icon={Settings2} label="Administration" badge={pendingCount || undefined} />
       </div>
 
       {/* Collapse toggle at bottom */}

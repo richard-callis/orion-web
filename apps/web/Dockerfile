@@ -30,9 +30,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Install OpenSSL (Prisma), bash (Claude Code SDK requires it), curl, git
 RUN apk add --no-cache openssl libc6-compat bash curl git
 
-# Install kubectl — architecture-aware
-RUN curl -fsSL "https://dl.k8s.io/release/v1.33.0/bin/linux/${TARGETARCH}/kubectl" \
-      -o /usr/local/bin/kubectl \
+# Install kubectl — architecture-aware, fetch stable version dynamically
+RUN ARCH=${TARGETARCH:-amd64} \
+    && KUBECTL_VERSION=$(curl -fsSL https://dl.k8s.io/release/stable.txt) \
+    && curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" \
+         -o /usr/local/bin/kubectl \
     && chmod +x /usr/local/bin/kubectl
 
 # Install Helm — architecture-aware

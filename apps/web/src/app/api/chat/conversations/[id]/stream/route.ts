@@ -2,12 +2,17 @@ import { NextRequest } from 'next/server'
 import { createSSEStream } from '@/lib/sse'
 import { streamClaudeResponse, streamAgentChat, streamOllamaChat, streamGeminiChat, type AgentContextConfig } from '@/lib/claude'
 import { prisma } from '@/lib/db'
+import { getToken } from 'next-auth/jwt'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const { prompt, ollamaModel: explicitOllamaModel } = await req.json()
   const { id: conversationId } = params
+
+  // Get the current user from session (used for permission checks in tool loop)
+  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+  const userId = token?.sub as string | undefined
 
   // Verify conversation exists and get metadata
   const convo = await prisma.conversation.findUnique({ where: { id: conversationId } })
@@ -17,21 +22,32 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const meta = convo.metadata as Record<string, unknown> | null
 
-  // Resolve effective model: explicit selection > planModel from conversation metadata > default (claude)
+  // Resolve effective model: explicit selection > planModel > system default > built-in Claude
   const planModel = meta?.planModel as string | undefined
   // claude / claude:* IDs → use Claude; everything else → try to route to Ollama/Gemini
-  const rawModel = explicitOllamaModel ?? (planModel && !planModel.startsWith('claude') ? planModel : undefined)
-  // Route: gemini:* → Gemini; ext:* → look up from DB (Ollama); ollama:* or bare name → Ollama; else → claude
+  let rawModel = explicitOllamaModel ?? (planModel && !planModel.startsWith('claude') ? planModel : undefined)
+  // If nothing selected, check system default
+  if (!rawModel) {
+    const defaultSetting = await prisma.systemSetting.findUnique({ where: { key: 'model.default' } })
+    const def = defaultSetting?.value as string | undefined
+    // Only use default if it's not a claude:* model (those are resolved below as Claude)
+    if (def && !def.startsWith('claude:')) rawModel = def
+  }
+  // Route: gemini:* → Gemini; ext:* → look up from DB; ollama:* or bare name → Ollama
+  // claude:* or no model → Claude (built-in)
   const geminiModel = rawModel?.startsWith('gemini:') ? rawModel.slice('gemini:'.length) : undefined
   let ollamaModel: string | undefined
   let ollamaBaseUrl: string | undefined
-  if (!geminiModel && rawModel) {
+  if (!geminiModel && rawModel && !rawModel.startsWith('claude:')) {
     if (rawModel.startsWith('ext:')) {
       const extId = rawModel.slice('ext:'.length)
       const ext = await prisma.externalModel.findUnique({ where: { id: extId } })
-      if (ext && ext.provider === 'ollama') {
-        ollamaModel  = ext.modelId
-        ollamaBaseUrl = ext.baseUrl ?? undefined
+      if (ext) {
+        if (ext.provider === 'ollama') {
+          ollamaModel   = ext.modelId
+          ollamaBaseUrl = ext.baseUrl ?? undefined
+        }
+        // other ext providers (openai-compatible, custom) can be added here
       }
     } else {
       ollamaModel = rawModel.startsWith('ollama:') ? rawModel.slice('ollama:'.length) : rawModel
@@ -75,15 +91,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       : m.content,
   }))
 
+  const abortCtrl = new AbortController()
+
   return createSSEStream((send, close) => {
     ;(async () => {
       const generator = agentSystemPrompt
         ? streamAgentChat(prompt, conversationId, agentSystemPrompt, history, agentContextConfig)
         : ollamaModel
-        ? streamOllamaChat(prompt, conversationId, history, ollamaModel, ollamaBaseUrl)
+        ? streamOllamaChat(prompt, conversationId, history, ollamaModel, ollamaBaseUrl, abortCtrl.signal, userId)
         : geminiModel
-        ? streamGeminiChat(prompt, conversationId, history, geminiModel)
-        : streamClaudeResponse(prompt, conversationId, history, planTarget)
+        ? streamGeminiChat(prompt, conversationId, history, geminiModel, abortCtrl.signal)
+        : streamClaudeResponse(prompt, conversationId, history, planTarget, undefined, undefined, abortCtrl.signal)
       for await (const chunk of generator) {
         send(chunk.type, chunk)
         if (chunk.type === 'done' || chunk.type === 'error') {
@@ -93,6 +111,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
     })()
 
-    return () => {} // cleanup if client disconnects
+    // Called when the client disconnects or aborts — cancels the in-flight Ollama request
+    return () => abortCtrl.abort()
   })
 }

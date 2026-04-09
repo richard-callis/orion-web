@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Trash2, Check, X, RefreshCw, Lock, AlertTriangle } from 'lucide-react'
+import { Plus, Trash2, Check, X, RefreshCw, Lock, AlertTriangle, Star } from 'lucide-react'
 
 interface ExternalModel {
   id: string
@@ -52,6 +52,7 @@ const BUILT_INS = [
     description: 'claude-sonnet-4-6 · via Claude Code SDK',
     settingsHref: '/admin/settings',
     healthKey: 'claude' as const,
+    defaultModelId: 'claude:claude-sonnet-4-6',
   },
 ]
 
@@ -289,18 +290,23 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
 }
 
 export default function ModelsPage() {
-  const [models, setModels]   = useState<ExternalModel[]>([])
-  const [health, setHealth]   = useState<Health | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [modal, setModal]     = useState<'add' | ExternalModel | null>(null)
+  const [models, setModels]           = useState<ExternalModel[]>([])
+  const [health, setHealth]           = useState<Health | null>(null)
+  const [loading, setLoading]         = useState(true)
+  const [modal, setModal]             = useState<'add' | ExternalModel | null>(null)
+  const [defaultModelId, setDefaultModelId] = useState<string | null>(null)
+  const [settingDefault, setSettingDefault] = useState<string | null>(null)
 
   const load = useCallback(() => {
     Promise.all([
       fetch('/api/admin/models').then(r => r.json()),
       fetch('/api/health').then(r => r.json()).catch(() => null),
-    ]).then(([data, h]) => {
+      fetch('/api/models').then(r => r.json()).catch(() => []),
+    ]).then(([data, h, allModels]) => {
       setModels(data)
       setHealth(h)
+      const def = (allModels as Array<{ id: string; isDefault: boolean }>).find(m => m.isDefault)
+      setDefaultModelId(def?.id ?? null)
       setLoading(false)
     }).catch(() => setLoading(false))
   }, [])
@@ -314,6 +320,19 @@ export default function ModelsPage() {
     e.stopPropagation()
     const res = await fetch(`/api/admin/models/${m.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !m.enabled }) })
     if (res.ok) { const updated: ExternalModel = await res.json(); setModels(prev => prev.map(x => x.id === m.id ? updated : x)) }
+  }
+
+  const setDefault = async (e: React.MouseEvent, modelId: string) => {
+    e.stopPropagation()
+    setSettingDefault(modelId)
+    const newDefault = defaultModelId === modelId ? null : modelId
+    await fetch('/api/admin/models/default', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modelId: newDefault }),
+    }).catch(() => {})
+    setDefaultModelId(newDefault)
+    setSettingDefault(null)
   }
 
   return (
@@ -338,19 +357,37 @@ export default function ModelsPage() {
       <div className="space-y-3">
         <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wide">Built-in</h2>
         <div className="rounded-lg border border-border-subtle bg-bg-card overflow-hidden divide-y divide-border-subtle">
-          {BUILT_INS.map(b => (
-            <div key={b.id} className="flex items-center gap-4 px-4 py-3">
-              <Lock size={13} className="text-text-muted flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-text-primary">{b.name}</p>
-                <p className="text-xs text-text-muted mt-0.5 truncate">{b.description}</p>
+          {BUILT_INS.map(b => {
+            const isDefault = defaultModelId === b.defaultModelId
+            return (
+              <div key={b.id} className="flex items-center gap-4 px-4 py-3">
+                <Lock size={13} className="text-text-muted flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-text-primary">{b.name}</p>
+                    {isDefault && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-accent/15 text-accent">Default</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-text-muted mt-0.5 truncate">{b.description}</p>
+                </div>
+                <StatusBadge ok={health?.[b.healthKey]} />
+                <button
+                  onClick={e => setDefault(e, b.defaultModelId)}
+                  title={isDefault ? 'Clear default' : 'Set as default'}
+                  className={`p-1 rounded transition-colors ${isDefault ? 'text-accent' : 'text-text-muted hover:text-accent'}`}
+                >
+                  {settingDefault === b.defaultModelId
+                    ? <RefreshCw size={13} className="animate-spin" />
+                    : <Star size={13} fill={isDefault ? 'currentColor' : 'none'} />
+                  }
+                </button>
+                {b.settingsHref && (
+                  <a href={b.settingsHref} className="text-xs text-accent hover:underline">Configure</a>
+                )}
               </div>
-              <StatusBadge ok={health?.[b.healthKey]} />
-              {b.settingsHref && (
-                <a href={b.settingsHref} className="text-xs text-accent hover:underline">Configure</a>
-              )}
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 
@@ -377,35 +414,58 @@ export default function ModelsPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-border-subtle bg-bg-raised">
                 <tr>
-                  {['Name', 'Provider', 'Base URL', 'Model ID', 'Connection', 'Enabled'].map(h => (
+                  {['', 'Name', 'Provider', 'Base URL', 'Model ID', 'Connection', 'Enabled'].map(h => (
                     <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-text-muted">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-border-subtle">
-                {models.map(m => (
-                  <tr
-                    key={m.id}
-                    onClick={() => setModal(m)}
-                    className="hover:bg-bg-raised transition-colors cursor-pointer"
-                    title="Click to edit"
-                  >
-                    <td className="px-4 py-3 text-text-primary font-medium">{m.name}</td>
-                    <td className="px-4 py-3 text-text-secondary text-xs">{PROVIDER_LABELS[m.provider] ?? m.provider}</td>
-                    <td className="px-4 py-3 text-text-muted font-mono text-xs truncate max-w-[160px]">{m.baseUrl}</td>
-                    <td className="px-4 py-3 text-text-secondary font-mono text-xs">{m.modelId}</td>
-                    <td className="px-4 py-3">
-                      <StatusBadge ok={health?.externalModels?.[`ext:${m.id}`]} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <button onClick={e => toggleEnabled(e, m)} title="Toggle enabled">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${m.enabled ? 'bg-status-healthy/15 text-status-healthy' : 'bg-bg-raised text-text-muted'}`}>
-                          {m.enabled ? 'Enabled' : 'Disabled'}
-                        </span>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {models.map(m => {
+                  const extId = `ext:${m.id}`
+                  const isDefault = defaultModelId === extId
+                  return (
+                    <tr
+                      key={m.id}
+                      onClick={() => setModal(m)}
+                      className="hover:bg-bg-raised transition-colors cursor-pointer"
+                      title="Click to edit"
+                    >
+                      <td className="pl-4 py-3">
+                        <button
+                          onClick={e => setDefault(e, extId)}
+                          title={isDefault ? 'Clear default' : 'Set as default'}
+                          className={`p-1 rounded transition-colors ${isDefault ? 'text-accent' : 'text-text-muted hover:text-accent'}`}
+                        >
+                          {settingDefault === extId
+                            ? <RefreshCw size={13} className="animate-spin" />
+                            : <Star size={13} fill={isDefault ? 'currentColor' : 'none'} />
+                          }
+                        </button>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-text-primary font-medium">{m.name}</span>
+                          {isDefault && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-accent/15 text-accent">Default</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-text-secondary text-xs">{PROVIDER_LABELS[m.provider] ?? m.provider}</td>
+                      <td className="px-4 py-3 text-text-muted font-mono text-xs truncate max-w-[160px]">{m.baseUrl}</td>
+                      <td className="px-4 py-3 text-text-secondary font-mono text-xs">{m.modelId}</td>
+                      <td className="px-4 py-3">
+                        <StatusBadge ok={health?.externalModels?.[extId]} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <button onClick={e => toggleEnabled(e, m)} title="Toggle enabled">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${m.enabled ? 'bg-status-healthy/15 text-status-healthy' : 'bg-bg-raised text-text-muted'}`}>
+                            {m.enabled ? 'Enabled' : 'Disabled'}
+                          </span>
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

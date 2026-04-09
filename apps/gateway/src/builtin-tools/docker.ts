@@ -63,8 +63,8 @@ export const dockerTools = [
       },
       required: ['container'],
     },
-    async execute(args: Record<string, string>) {
-      return docker(['inspect', args.container])
+    async execute(args: Record<string, unknown>) {
+      return docker(['inspect', String(args.container)])
     },
   },
 ]

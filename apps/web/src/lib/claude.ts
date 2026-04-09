@@ -11,24 +11,45 @@ export const ALLOWED_TOOLS = [
   'Bash(kubectl top:*)',
 ]
 
-function getSystemPrompt(): string {
+function getSystemPrompt(toolNames: string[] = []): string {
   const claudeMdPath = process.env.CLAUDE_MD_PATH ?? '/claude-config/CLAUDE.md'
   let clusterContext = ''
   try {
     clusterContext = fs.readFileSync(claudeMdPath, 'utf8')
   } catch {
-    clusterContext = '# K3s Homelab — context file not mounted'
+    clusterContext = '# Homelab cluster — no context file mounted'
   }
 
-  return `You are ORION, an AI assistant managing a production K3s homelab cluster.
+  if (toolNames.length === 0) {
+    return `You are ORION, an AI assistant for homelab infrastructure management.
 
-${clusterContext}
+No gateway is connected right now. You cannot run commands or query the cluster.
+When asked about cluster state, be honest: say you have no gateway connected and cannot run commands.
+Do not list commands you would hypothetically run. Do not invent output. Just say you don't have access.`
+  }
 
-CRITICAL RESTRICTIONS:
-- You may ONLY run: kubectl get, kubectl describe, kubectl logs, kubectl top
-- NEVER run: kubectl delete, kubectl exec, kubectl apply, kubectl create, kubectl patch, rm, curl to external hosts
-- NEVER suggest destructive operations without explicit user confirmation
-- Always include namespace (-n flag) in kubectl commands`
+  return `You are ORION, an AI assistant managing homelab infrastructure.
+
+CURRENT STATE — READ THIS CAREFULLY:
+You have ${toolNames.length} tools connected and working RIGHT NOW: ${toolNames.join(', ')}.
+This is the authoritative system state. Any earlier messages in this conversation that claimed "no gateway connected" or "I can't run commands" were from a previous state — they are now WRONG. Ignore them.
+
+Tool usage rules:
+- Call tools immediately when you need real data. Do not ask permission first.
+- NEVER make up or hallucinate command output. Always use a tool and return its real result.
+- If a tool fails, report the actual error message.
+- If a tool has optional parameters (flags, filters, selectors), USE THEM to give the best answer. Do not default to bare invocations when flags would give more complete or relevant results.
+- If an initial tool result does not fully answer the question, run it again with better options (e.g. scan a specific port, increase verbosity, filter by namespace). Never just say "it wasn't found" without checking more thoroughly first.
+- You may call the same tool multiple times in one turn if needed to get complete information.
+- If you need a capability that isn't in the tool list, use propose_tool to request it.
+
+Safety — do NOT use tools in ways that would harm the homelab:
+- No mass deletion (kubectl delete all, docker rm -f on everything, rm -rf on broad paths)
+- No commands that would take down core services (DNS, ingress, auth)
+- No writing or overwriting production secrets or credentials
+- Everything else that is informational, diagnostic, or a targeted change is fair game — use your judgement.
+
+${clusterContext}`
 }
 
 function getPlanningSystemPrompt(targetType: string): string {
@@ -40,14 +61,9 @@ function getPlanningSystemPrompt(targetType: string): string {
     : targetType === 'feature' ? 'feature (will be broken into backlog tasks)'
     : 'task (concrete implementation steps)'
 
-  return `You are ORION, a technical planning assistant for a K3s homelab infrastructure project.
+  return `You are ORION, a technical planning assistant for a homelab infrastructure project.
 
 ${clusterContext}
-
-CRITICAL RESTRICTIONS (always enforced):
-- You may ONLY run: kubectl get, kubectl describe, kubectl logs, kubectl top
-- NEVER run: kubectl delete, kubectl exec, kubectl apply, kubectl create, kubectl patch, rm, or curl to external hosts
-- Always include namespace (-n flag) in kubectl commands
 
 PLANNING MODE — you are creating a plan for a ${scope}:
 - Run kubectl commands freely to inspect the cluster and gather information before planning
@@ -119,14 +135,316 @@ export interface AgentContextConfig {
   llm?: string             // "claude:<model-id>" | "ollama:<model-id>" | "gemini:<model-id>" | "ext:<cuid>" — defaults to Claude Sonnet
 }
 
+// ── Permission check ─────────────────────────────────────────────────────────
+
+const TIER_RANK: Record<string, number> = { viewer: 0, operator: 1, admin: 2 }
+
+async function checkToolPermission(
+  toolName: string,
+  toolArgs: Record<string, unknown>,
+  environmentId: string,
+  conversationId: string,
+  userId: string | undefined,
+): Promise<{ allowed: boolean; reason?: string }> {
+  // No userId — treat as unauthenticated viewer
+  const uid = userId ?? '__anon__'
+
+  // Check if tool is agent-restricted (only specific agents may run it)
+  const restrictionCount = await prisma.toolAgentRestriction.count({
+    where: { tool: { name: toolName, environmentId } },
+  })
+  if (restrictionCount > 0) {
+    return { allowed: false, reason: `\`${toolName}\` is restricted to specific agents only and cannot be called from human chat.` }
+  }
+
+  // Check if caller is a global admin — admins bypass all tier checks
+  if (userId) {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } })
+    if (user?.role === 'admin') return { allowed: true }
+  }
+
+  // Find which tool groups this tool belongs to (in this environment)
+  const toolGroupMemberships = await prisma.toolGroupTool.findMany({
+    where: { tool: { name: toolName, environmentId } },
+    include: { toolGroup: true },
+  })
+
+  // No group membership = unrestricted
+  if (toolGroupMemberships.length === 0) return { allowed: true }
+
+  // Get user's tier in this environment (default: viewer)
+  const tierRecord = userId
+    ? await prisma.environmentUserTier.findUnique({ where: { userId_environmentId: { userId, environmentId } } })
+    : null
+  const userTierRank = TIER_RANK[tierRecord?.tier ?? 'viewer'] ?? 0
+
+  // Check if user meets minimum tier for ANY of the groups this tool is in
+  // (tool is accessible if the user qualifies for at least one of the groups)
+  const blocked = toolGroupMemberships.every(m => {
+    const required = TIER_RANK[m.toolGroup.minimumTier] ?? 0
+    return userTierRank < required
+  })
+
+  if (!blocked) return { allowed: true }
+
+  // User is blocked — check for a one-time execution grant
+  const grant = userId ? await prisma.toolExecutionGrant.findFirst({
+    where: {
+      userId,
+      environmentId,
+      toolName,
+      usedAt:    null,
+      expiresAt: { gt: new Date() },
+    },
+  }) : null
+
+  if (grant) {
+    // Consume the grant
+    await prisma.toolExecutionGrant.update({ where: { id: grant.id }, data: { usedAt: new Date() } })
+    return { allowed: true }
+  }
+
+  // Create an approval request
+  const minRequired = toolGroupMemberships.reduce((min, m) => {
+    const r = TIER_RANK[m.toolGroup.minimumTier] ?? 0
+    return r > min ? r : min
+  }, 0)
+  const requiredTierName = Object.entries(TIER_RANK).find(([, v]) => v === minRequired)?.[0] ?? 'operator'
+
+  // Don't create duplicate pending requests for the same tool in this conversation
+  const existing = await prisma.toolApprovalRequest.findFirst({
+    where: { conversationId, toolName, status: 'pending' },
+  })
+  if (!existing) {
+    await prisma.toolApprovalRequest.create({
+      data: {
+        conversationId,
+        userId: uid,
+        environmentId,
+        toolName,
+        toolArgs,
+        reason: `User's tier is below the minimum required (${requiredTierName}) for this tool group.`,
+      },
+    })
+  }
+
+  return {
+    allowed: false,
+    reason: `\`${toolName}\` requires **${requiredTierName}** access in this environment. An approval request has been submitted — an administrator can approve it, after which you can retry.`,
+  }
+}
+
 export async function* streamOllamaChat(
   prompt: string,
   conversationId: string,
   history: Array<{ role: string; content: string }>,
   model: string,
   baseUrl?: string,
+  abortSignal?: AbortSignal,
+  userId?: string,
 ): AsyncGenerator<StreamChunk> {
-  yield* streamOllamaAgentChat(prompt, conversationId, getSystemPrompt(), history, model, baseUrl)
+  // Load tools from the first connected gateway (if any)
+  const { GatewayClient } = await import('./agent-runner/gateway-client')
+  type GatewayTool = import('./agent-runner/types').GatewayTool
+  let gatewayTools: GatewayTool[] = []
+  let gatewayClient: InstanceType<typeof GatewayClient> | null = null
+
+  const connectedEnv = await prisma.environment.findFirst({
+    where: { status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
+  })
+  if (connectedEnv?.gatewayUrl && connectedEnv.gatewayToken) {
+    gatewayClient = new GatewayClient(connectedEnv.gatewayUrl, connectedEnv.gatewayToken)
+    try {
+      gatewayTools = await gatewayClient.listTools()
+    } catch {
+      // Gateway unreachable — proceed without tools
+    }
+  }
+
+  // No gateway — fall through to regular streaming chat with an honest system prompt
+  if (!gatewayTools.length || !gatewayClient) {
+    yield* streamOllamaAgentChat(prompt, conversationId, getSystemPrompt([]), history, model, baseUrl, undefined, abortSignal)
+    return
+  }
+
+  // Tools available — run agentic loop (non-streaming turns with tool execution)
+  const systemPrompt = getSystemPrompt(gatewayTools.map(t => t.name))
+  yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, history, model, baseUrl, gatewayTools, gatewayClient, connectedEnv!.id, abortSignal, userId)
+}
+
+interface OllamaMsg {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string
+  tool_calls?: Array<{ function: { name: string; arguments: string | Record<string, unknown> } }>
+}
+
+async function* streamOllamaToolLoop(
+  prompt: string,
+  conversationId: string,
+  systemPrompt: string,
+  history: Array<{ role: string; content: string }>,
+  model: string,
+  baseUrl: string | undefined,
+  tools: import('./agent-runner/types').GatewayTool[],
+  gateway: import('./agent-runner/gateway-client').GatewayClient,
+  environmentId: string,
+  abortSignal?: AbortSignal,
+  userId?: string,
+): AsyncGenerator<StreamChunk> {
+  const { GatewayClient: _GC } = await import('./agent-runner/gateway-client')
+  void _GC
+
+  let ollamaUrl = baseUrl
+  let timeoutSecs = 120
+  if (!ollamaUrl) {
+    const extModel = await prisma.externalModel.findFirst({ where: { provider: 'ollama', modelId: model, enabled: true } })
+      ?? await prisma.externalModel.findFirst({ where: { provider: 'ollama', enabled: true } })
+    if (!extModel?.baseUrl) { yield { type: 'error', error: 'No Ollama model configured' }; return }
+    ollamaUrl = extModel.baseUrl
+    timeoutSecs = extModel.timeoutSecs ?? 120
+  }
+
+  // Synthetic propose_tool — handled locally, never forwarded to the gateway
+  const proposeToolDef = {
+    type: 'function',
+    function: {
+      name: 'propose_tool',
+      description: 'Propose a new tool to be added to this environment\'s gateway. Use this when you need a command that isn\'t available. A human must approve it before you can use it.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name:        { type: 'string', description: 'snake_case tool name, e.g. kubectl_get_pods' },
+          description: { type: 'string', description: 'What the tool does' },
+          command:     { type: 'string', description: 'Shell command with {param} placeholders, e.g. kubectl get pods -n {namespace}' },
+          parameters:  { type: 'object', description: 'Parameter definitions — keys are param names, values have type and description' },
+          reason:      { type: 'string', description: 'Why this tool is needed right now' },
+        },
+        required: ['name', 'description', 'command'],
+      },
+    },
+  }
+
+  const ollamaToolDefs = [
+    ...tools.map(t => ({
+      type: 'function',
+      function: { name: t.name, description: t.description, parameters: t.inputSchema },
+    })),
+    proposeToolDef,
+  ]
+
+  const messages: OllamaMsg[] = [
+    { role: 'system', content: systemPrompt },
+    ...history.map(m => ({ role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant', content: m.content })),
+    { role: 'user', content: prompt },
+  ]
+
+  const start = Date.now()
+  let totalText = ''
+  const MAX_TURNS = 15
+
+  try {
+    for (let turn = 0; turn < MAX_TURNS; turn++) {
+      const fetchSignal = abortSignal
+        ? AbortSignal.any([abortSignal, AbortSignal.timeout(timeoutSecs * 1000)])
+        : AbortSignal.timeout(timeoutSecs * 1000)
+
+      const res = await fetch(`${ollamaUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, messages, stream: false, tools: ollamaToolDefs }),
+        signal: fetchSignal,
+      })
+      if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`)
+      const data = await res.json() as { message: OllamaMsg; done: boolean }
+      const assistantMsg = data.message
+      messages.push(assistantMsg)
+
+      if (assistantMsg.tool_calls?.length) {
+        for (const toolCall of assistantMsg.tool_calls) {
+          const fn = toolCall.function
+          const args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : fn.arguments as Record<string, unknown>
+
+          // Handle propose_tool locally
+          if (fn.name === 'propose_tool') {
+            yield { type: 'tool_call', tool: 'propose_tool', input: JSON.stringify(args) }
+            let result: string
+            try {
+              const toolName = String(args.name ?? '').trim().replace(/\s+/g, '_')
+              const parameters = (args.parameters as Record<string, { type: string; description?: string }> | undefined) ?? {}
+              // Build inputSchema from parameters
+              const inputSchema = {
+                type: 'object',
+                properties: Object.fromEntries(
+                  Object.entries(parameters).map(([k, v]) => [k, { type: v.type ?? 'string', description: v.description }])
+                ),
+                required: Object.keys(parameters),
+              }
+              await prisma.mcpTool.create({
+                data: {
+                  environmentId: environmentId,
+                  name:        toolName,
+                  description: String(args.description ?? ''),
+                  inputSchema: inputSchema,
+                  execType:    'shell',
+                  execConfig:  { command: String(args.command ?? '') },
+                  enabled:     false,
+                  builtIn:     false,
+                  status:      'pending',
+                  proposedBy:  conversationId,
+                  proposedAt:  new Date(),
+                },
+              })
+              result = `Tool '${toolName}' has been proposed and is awaiting human approval. Once approved it will be available for use. Reason recorded: ${args.reason ?? 'not specified'}`
+            } catch (err) {
+              result = `Failed to propose tool: ${err instanceof Error ? err.message : String(err)}`
+            }
+            yield { type: 'tool_result', tool: 'propose_tool', output: result }
+            messages.push({ role: 'tool', content: result })
+            continue
+          }
+
+          yield { type: 'tool_call', tool: fn.name, input: typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments) }
+
+          // Permission check — must happen before forwarding to gateway
+          const perm = await checkToolPermission(fn.name, args, environmentId, conversationId, userId)
+          let result: string
+          if (!perm.allowed) {
+            result = `Permission denied: ${perm.reason}`
+          } else {
+            try {
+              result = await gateway.executeTool(fn.name, args)
+            } catch (err) {
+              result = `Error: ${err instanceof Error ? err.message : String(err)}`
+            }
+          }
+          yield { type: 'tool_result', tool: fn.name, output: result }
+          messages.push({ role: 'tool', content: result })
+        }
+        continue
+      }
+
+      if (assistantMsg.content) {
+        totalText = assistantMsg.content
+        yield { type: 'text', content: assistantMsg.content }
+      }
+      break
+    }
+
+    const MAX_STORE_CHARS = 4000
+    const savedContent = totalText.length > MAX_STORE_CHARS
+      ? totalText.slice(0, MAX_STORE_CHARS) + '\n[…truncated for storage]'
+      : totalText
+    await Promise.all([
+      prisma.message.create({ data: { conversationId, role: 'user', content: prompt } }),
+      prisma.message.create({ data: { conversationId, role: 'assistant', content: savedContent } }),
+      prisma.claudeInvocation.create({ data: { conversationId, prompt, toolsUsed: tools.map(t => t.name), durationMs: Date.now() - start, success: true } }),
+    ])
+    yield { type: 'done' }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await prisma.claudeInvocation.create({ data: { conversationId, prompt, toolsUsed: [], durationMs: Date.now() - start, success: false } }).catch(() => {})
+    yield { type: 'error', error: `Ollama error: ${msg}` }
+  }
 }
 
 export async function* streamAgentChat(
@@ -195,8 +513,9 @@ async function* streamOllamaAgentChat(
   systemPrompt: string,
   history: Array<{ role: string; content: string }>,
   model: string,
-  resolvedBaseUrl?: string,  // pre-resolved from ext: lookup — skips second DB query
+  resolvedBaseUrl?: string,     // pre-resolved from ext: lookup — skips second DB query
   resolvedTimeoutSecs?: number,
+  abortSignal?: AbortSignal,
 ): AsyncGenerator<StreamChunk> {
   let ollamaUrl = resolvedBaseUrl
   let timeoutSecs = resolvedTimeoutSecs ?? 120
@@ -220,11 +539,16 @@ async function* streamOllamaAgentChat(
   ]
 
   try {
+    const timeoutSignal = AbortSignal.timeout(timeoutSecs * 1000)
+    const fetchSignal = abortSignal
+      ? AbortSignal.any([abortSignal, timeoutSignal])
+      : timeoutSignal
+
     const res = await fetch(`${ollamaUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, messages, stream: true }),
-      signal: AbortSignal.timeout(timeoutSecs * 1000),
+      signal: fetchSignal,
     })
 
     if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`)
@@ -280,8 +604,9 @@ export async function* streamGeminiChat(
   conversationId: string,
   history: Array<{ role: string; content: string }>,
   model: string,
+  abortSignal?: AbortSignal,
 ): AsyncGenerator<StreamChunk> {
-  yield* streamGeminiAgentChat(prompt, conversationId, getSystemPrompt(), history, model)
+  yield* streamGeminiAgentChat(prompt, conversationId, getSystemPrompt(), history, model, abortSignal)
 }
 
 async function* streamGeminiAgentChat(
@@ -290,6 +615,7 @@ async function* streamGeminiAgentChat(
   systemPrompt: string,
   history: Array<{ role: string; content: string }>,
   model: string,
+  abortSignal?: AbortSignal,
 ): AsyncGenerator<StreamChunk> {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) {
@@ -310,6 +636,10 @@ async function* streamGeminiAgentChat(
 
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`
+    const timeoutSignal = AbortSignal.timeout(120000)
+    const fetchSignal = abortSignal
+      ? AbortSignal.any([abortSignal, timeoutSignal])
+      : timeoutSignal
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -317,7 +647,7 @@ async function* streamGeminiAgentChat(
         systemInstruction: { parts: [{ text: systemPrompt }] },
         contents,
       }),
-      signal: AbortSignal.timeout(120000),
+      signal: fetchSignal,
     })
 
     if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
@@ -484,7 +814,8 @@ export async function* streamClaudeResponse(
   previousMessages: Array<{ role: string; content: string }> = [],
   planTarget?: { type: string; id: string } | null,
   agentSystemPrompt?: string,
-  overrides?: { maxTurns?: number; allowedTools?: string[]; model?: string }
+  overrides?: { maxTurns?: number; allowedTools?: string[]; model?: string },
+  abortSignal?: AbortSignal,
 ): AsyncGenerator<StreamChunk> {
   const start = Date.now()
   const toolsUsed: string[] = []
@@ -524,6 +855,7 @@ export async function* streamClaudeResponse(
     })
 
     for await (const msg of response) {
+      if (abortSignal?.aborted) break
       if (msg.type === 'assistant') {
         const assistantMsg = msg as SDKAssistantMessage
         for (const block of assistantMsg.message.content) {
