@@ -4,6 +4,9 @@
 
 :root {
   color-scheme: dark;
+  /* Fonts loaded via @fontsource-variable (bundled woff2, no CDN dependency) */
+  --font-inter: "Inter Variable", system-ui, sans-serif;
+  --font-jetbrains: "JetBrains Mono Variable", ui-monospace, monospace;
 }
 
 * {

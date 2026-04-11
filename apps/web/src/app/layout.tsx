@@ -1,10 +1,9 @@
 import type { Metadata } from 'next'
-import { Inter, JetBrains_Mono } from 'next/font/google'
+// Bundled woff2 fonts — no CDN dependency at build time
+import '@fontsource-variable/inter'
+import '@fontsource-variable/jetbrains-mono'
 import './globals.css'
 import { Providers } from '@/components/Providers'
-
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
-const jetbrains = JetBrains_Mono({ subsets: ['latin'], variable: '--font-jetbrains' })
 
 export const metadata: Metadata = {
   title: 'ORION',
@@ -19,7 +18,7 @@ export const viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
+    <html lang="en">
       <body className="flex flex-col h-[100dvh] overflow-hidden bg-bg-page text-text-primary">
         <Providers>
           {children}
