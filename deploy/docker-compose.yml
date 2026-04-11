@@ -8,7 +8,7 @@ services:
       postgres:
         condition: service_healthy
       vault:
-        condition: service_healthy
+        condition: service_started
     environment:
       DATABASE_URL: postgresql://orion:${POSTGRES_PASSWORD}@postgres:5432/orion
       NEXTAUTH_URL: https://${ORION_DOMAIN:-orion.khalis.corp}
@@ -20,17 +20,41 @@ services:
       GITEA_WEBHOOK_SECRET: ${GITEA_WEBHOOK_SECRET}
       MANAGEMENT_IP: ${MANAGEMENT_IP:-}
       COREDNS_DIR: /etc/coredns-managed
+      LOCALHOST_JOIN_TOKEN: ${LOCALHOST_JOIN_TOKEN}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - orion-claude-creds:/claude-creds
       - ./coredns:/etc/coredns-managed
     ports:
       - "3000:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     labels:
       traefik.enable: "true"
       traefik.http.routers.orion.rule: "Host(`${ORION_DOMAIN:-orion.khalis.corp}`)"
       traefik.http.routers.orion.entrypoints: "websecure"
       traefik.http.services.orion.loadbalancer.server.port: "3000"
+
+  # ── Local Gateway ─────────────────────────────────────────────────────────────
+  gateway:
+    image: ghcr.io/${GITHUB_ORG}/orion-gateway:${ORION_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      orion:
+        condition: service_healthy
+    environment:
+      ORION_URL: http://orion:3000
+      JOIN_TOKEN: ${LOCALHOST_JOIN_TOKEN}
+      GATEWAY_TYPE: localhost
+      GATEWAY_URL: http://gateway:3001
+      GATEWAY_CREDS_FILE: /gateway-creds/credentials.json
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - gateway-creds:/gateway-creds
 
   # ── Gitea ──────────────────────────────────────────────────────────────────
   gitea:
@@ -71,15 +95,29 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Vault init — fixes data dir ownership for vault user (uid=100) ────────────
+  vault-init:
+    image: alpine
+    restart: "no"
+    command: ["sh", "-c", "chown -R 100:1000 /vault/data && echo 'vault data dir ready'"]
+    volumes:
+      - vault-data:/vault/data
+
   # ── Vault ──────────────────────────────────────────────────────────────────
   vault:
     image: hashicorp/vault:latest
     restart: unless-stopped
+    # Override the default "server -dev" CMD — use production mode with config only
+    command: server
+    depends_on:
+      vault-init:
+        condition: service_completed_successfully
     cap_add:
       - IPC_LOCK
     environment:
       VAULT_LOCAL_CONFIG: |
         ui = true
+        disable_mlock = true
         storage "raft" {
           path = "/vault/data"
           node_id = "mgmt-rpi"
@@ -93,7 +131,8 @@ services:
     volumes:
       - vault-data:/vault/data
     healthcheck:
-      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      # exit 0 = active, exit 1 = uninitialized, exit 2 = sealed — all mean vault is running
+      test: ["CMD-SHELL", "vault status -address=http://127.0.0.1:8200; [ $? -le 2 ]"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -153,3 +192,4 @@ volumes:
   vault-data:
   traefik-certs:
   orion-claude-creds:
+  gateway-creds:

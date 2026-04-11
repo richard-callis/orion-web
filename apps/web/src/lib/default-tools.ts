@@ -182,8 +182,61 @@ export const DOCKER_DEFAULT_TOOLS: DefaultTool[] = [
   },
 ]
 
+export const LOCALHOST_DEFAULT_TOOLS: DefaultTool[] = [
+  // Docker tools — localhost gateway mounts the Docker socket
+  ...DOCKER_DEFAULT_TOOLS,
+
+  // Host shell access
+  {
+    name: 'shell_exec',
+    description: 'Run a shell command on the ORION management host',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command:      { type: 'string', description: 'The shell command to run' },
+        timeout_secs: { type: 'number', description: 'Max seconds to wait (default 30)' },
+      },
+      required: ['command'],
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'shell_exec' },
+    builtIn: true,
+  },
+
+  // File read
+  {
+    name: 'file_read',
+    description: 'Read a file from the ORION management host filesystem',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path:      { type: 'string', description: 'Absolute path to the file' },
+        max_bytes: { type: 'number', description: 'Maximum bytes to read (default 65536)' },
+      },
+      required: ['path'],
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'file_read' },
+    builtIn: true,
+  },
+
+  // System info
+  {
+    name: 'system_info',
+    description: 'Show CPU, memory, disk usage, and uptime for the ORION management host',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'system_info' },
+    builtIn: true,
+  },
+]
+
 export function getDefaultTools(type: string): DefaultTool[] {
-  if (type === 'cluster') return KUBERNETES_DEFAULT_TOOLS
-  if (type === 'docker')  return DOCKER_DEFAULT_TOOLS
+  if (type === 'cluster')   return KUBERNETES_DEFAULT_TOOLS
+  if (type === 'docker')    return DOCKER_DEFAULT_TOOLS
+  if (type === 'localhost') return LOCALHOST_DEFAULT_TOOLS
   return []
 }

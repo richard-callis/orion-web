@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
   if (!body.name?.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 })
 
-  const VALID_TYPES = ['cluster', 'docker']
+  const VALID_TYPES = ['cluster', 'docker', 'localhost']
   const type = body.type ?? 'cluster'
   if (!VALID_TYPES.includes(type)) {
     return NextResponse.json({ error: `type must be one of: ${VALID_TYPES.join(', ')}` }, { status: 400 })

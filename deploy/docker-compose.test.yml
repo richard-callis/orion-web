@@ -23,8 +23,34 @@ services:
       ORION_CALLBACK_URL: ${ORION_CALLBACK_URL:-}
       COREDNS_DIR: /tmp/coredns-managed
       NODE_ENV: production
+      LOCALHOST_JOIN_TOKEN: ${LOCALHOST_JOIN_TOKEN}
     ports:
       - "${ORION_PORT:-3001}:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ── Local Gateway ────────────────────────────────────────────────────────────
+  gateway:
+    build:
+      context: ../apps/gateway
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      orion:
+        condition: service_healthy
+    environment:
+      ORION_URL: http://orion:3000
+      JOIN_TOKEN: ${LOCALHOST_JOIN_TOKEN}
+      GATEWAY_TYPE: localhost
+      GATEWAY_URL: http://gateway:3001
+      GATEWAY_CREDS_FILE: /gateway-creds/credentials.json
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - gateway-creds:/gateway-creds
 
   postgres:
     image: postgres:16
@@ -82,3 +108,4 @@ services:
 volumes:
   postgres-test-data:
   gitea-test-data:
+  gateway-creds:

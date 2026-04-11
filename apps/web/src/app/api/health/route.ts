@@ -42,6 +42,6 @@ export async function GET() {
     } catch { extHealth[`ext:${m.id}`] = false }
   }))
 
-  const healthy = k8s && db
+  const healthy = db  // k8s optional — not available in Docker-only deployments
   return NextResponse.json({ k8s, db, claude, externalModels: extHealth }, { status: healthy ? 200 : 503 })
 }
