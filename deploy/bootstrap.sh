@@ -63,6 +63,9 @@ if grep -q "^NEXTAUTH_SECRET=change-me" "$DEPLOY_DIR/.env"; then
   echo "Generated NEXTAUTH_SECRET."
 fi
 
+# ── Fix coredns dir ownership (ORION runs as uid=1001, needs write access) ────
+chown -R 1001:1001 "$DEPLOY_DIR/coredns" 2>/dev/null || true
+
 # ── Validate required vars ────────────────────────────────────────────────────
 source "$DEPLOY_DIR/.env"
 MISSING=()
