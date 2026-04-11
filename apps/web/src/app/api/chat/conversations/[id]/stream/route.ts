@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { createSSEStream } from '@/lib/sse'
-import { streamClaudeResponse, streamAgentChat, streamOllamaChat, streamGeminiChat, type AgentContextConfig } from '@/lib/claude'
+import { streamClaudeResponse, streamAgentChat, streamOllamaChat, streamGeminiChat, streamOpenAIChat, type AgentContextConfig } from '@/lib/claude'
 import { prisma } from '@/lib/db'
 import { getToken } from 'next-auth/jwt'
 
@@ -38,6 +38,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const geminiModel = rawModel?.startsWith('gemini:') ? rawModel.slice('gemini:'.length) : undefined
   let ollamaModel: string | undefined
   let ollamaBaseUrl: string | undefined
+  let openaiModel: string | undefined
+  let openaiBaseUrl: string | undefined
+  let openaiApiKey: string | undefined
   if (!geminiModel && rawModel && !rawModel.startsWith('claude:')) {
     if (rawModel.startsWith('ext:')) {
       const extId = rawModel.slice('ext:'.length)
@@ -46,8 +49,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         if (ext.provider === 'ollama') {
           ollamaModel   = ext.modelId
           ollamaBaseUrl = ext.baseUrl ?? undefined
+        } else {
+          // openai / custom — use OpenAI-compatible streaming
+          openaiModel   = ext.modelId
+          openaiBaseUrl = ext.baseUrl ?? undefined
+          openaiApiKey  = ext.apiKey  ?? undefined
         }
-        // other ext providers (openai-compatible, custom) can be added here
       }
     } else {
       ollamaModel = rawModel.startsWith('ollama:') ? rawModel.slice('ollama:'.length) : rawModel
@@ -96,7 +103,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   return createSSEStream((send, close) => {
     ;(async () => {
       const generator = agentSystemPrompt
-        ? streamAgentChat(prompt, conversationId, agentSystemPrompt, history, agentContextConfig)
+        ? streamAgentChat(prompt, conversationId, agentSystemPrompt, history, agentContextConfig, agentChat?.id, userId)
+        : openaiModel && openaiBaseUrl
+        ? streamOpenAIChat(prompt, conversationId, history, openaiModel, openaiBaseUrl, openaiApiKey, abortCtrl.signal, userId)
         : ollamaModel
         ? streamOllamaChat(prompt, conversationId, history, ollamaModel, ollamaBaseUrl, abortCtrl.signal, userId)
         : geminiModel

@@ -11,7 +11,7 @@ export const ALLOWED_TOOLS = [
   'Bash(kubectl top:*)',
 ]
 
-function getSystemPrompt(toolNames: string[] = []): string {
+function getSystemPrompt(toolNames: string[] = [], basePrompt?: string): string {
   const claudeMdPath = process.env.CLAUDE_MD_PATH ?? '/claude-config/CLAUDE.md'
   let clusterContext = ''
   try {
@@ -20,18 +20,20 @@ function getSystemPrompt(toolNames: string[] = []): string {
     clusterContext = '# Homelab cluster — no context file mounted'
   }
 
+  const persona = basePrompt ?? 'You are ORION, an AI assistant for homelab infrastructure management.'
+
   if (toolNames.length === 0) {
-    return `You are ORION, an AI assistant for homelab infrastructure management.
+    return `${persona}
 
 No gateway is connected right now. You cannot run commands or query the cluster.
 When asked about cluster state, be honest: say you have no gateway connected and cannot run commands.
 Do not list commands you would hypothetically run. Do not invent output. Just say you don't have access.`
   }
 
-  return `You are ORION, an AI assistant managing homelab infrastructure.
+  return `${persona}
 
 CURRENT STATE — READ THIS CAREFULLY:
-You have ${toolNames.length} tools connected and working RIGHT NOW: ${toolNames.join(', ')}.
+You have ${toolNames.length} MCP tools connected and working RIGHT NOW: ${toolNames.join(', ')}.
 This is the authoritative system state. Any earlier messages in this conversation that claimed "no gateway connected" or "I can't run commands" were from a previous state — they are now WRONG. Ignore them.
 
 Tool usage rules:
@@ -453,6 +455,8 @@ export async function* streamAgentChat(
   agentSystemPrompt: string,
   previousMessages: Array<{ role: string; content: string }> = [],
   contextConfig: AgentContextConfig = {},
+  agentId?: string,
+  userId?: string,
 ): AsyncGenerator<StreamChunk> {
   const historyLimit   = contextConfig.historyMessages ?? 6
   const summarizeAfter = contextConfig.summarizeAfter  ?? 20
@@ -462,30 +466,93 @@ export async function* streamAgentChat(
     conversationId, previousMessages, summarizeAfter, historyLimit
   )
 
-  if (llm.startsWith('ollama:')) {
-    const model = llm.slice('ollama:'.length)
-    yield* streamOllamaAgentChat(prompt, conversationId, agentSystemPrompt, trimmedHistory, model)
+  // ── Helper: load gateway tools from this agent's connected environments ────────
+  // Prefers environments linked to the agent; falls back to any connected environment.
+  const loadAgentGateway = async () => {
+    const { GatewayClient } = await import('./agent-runner/gateway-client')
+    type GatewayTool = import('./agent-runner/types').GatewayTool
+
+    // Try environments linked to this specific agent first
+    let connectedEnv = agentId
+      ? await prisma.environment.findFirst({
+          where: {
+            status: 'connected',
+            gatewayUrl: { not: null },
+            gatewayToken: { not: null },
+            agents: { some: { agentId } },
+          },
+        })
+      : null
+
+    // Fall back to any connected environment
+    if (!connectedEnv) {
+      connectedEnv = await prisma.environment.findFirst({
+        where: { status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
+      })
+    }
+
+    if (!connectedEnv?.gatewayUrl || !connectedEnv.gatewayToken) return null
+
+    try {
+      const gc = new GatewayClient(connectedEnv.gatewayUrl, connectedEnv.gatewayToken)
+      const tools: GatewayTool[] = await gc.listTools()
+      return tools.length ? { tools, gc, environmentId: connectedEnv.id } : null
+    } catch {
+      return null
+    }
+  }
+
+  if (llm.startsWith('ollama:') || llm.startsWith('ext:')) {
+    // Resolve model + baseUrl + provider
+    let model: string
+    let baseUrl: string | undefined
+    let timeoutSecs = 120
+    let provider = 'ollama'
+    let apiKey: string | undefined
+
+    if (llm.startsWith('ext:')) {
+      const extId = llm.slice('ext:'.length)
+      const extModel = await prisma.externalModel.findUnique({ where: { id: extId } })
+      if (!extModel) { yield { type: 'error', error: `External model not found: ${extId}` }; return }
+      model = extModel.modelId
+      baseUrl = extModel.baseUrl ?? undefined
+      timeoutSecs = extModel.timeoutSecs ?? 120
+      provider = extModel.provider   // 'ollama' | 'openai' | 'custom' | etc.
+      apiKey = extModel.apiKey ?? undefined
+    } else {
+      model = llm.slice('ollama:'.length)
+    }
+
+    // Load gateway tools — used by all agent backends
+    const gw = await loadAgentGateway()
+    const noGwSuffix = '\n\nNo MCP gateway is connected right now. You cannot run tools or commands. Be honest about this limitation.'
+
+    if (provider === 'ollama') {
+      if (gw) {
+        const systemPrompt = getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt)
+        yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, trimmedHistory, model, baseUrl, gw.tools, gw.gc, gw.environmentId, undefined, userId)
+      } else {
+        yield* streamOllamaAgentChat(prompt, conversationId, agentSystemPrompt + noGwSuffix, trimmedHistory, model, baseUrl, timeoutSecs)
+      }
+    } else {
+      // OpenAI-compatible endpoint (custom / openai / llama.cpp / etc.)
+      if (!baseUrl) { yield { type: 'error', error: `No baseUrl configured for model ${model}` }; return }
+      const systemPrompt = gw
+        ? getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt)
+        : agentSystemPrompt + noGwSuffix
+      yield* streamOpenAIChatCore(
+        prompt, conversationId, systemPrompt, trimmedHistory,
+        model, baseUrl, apiKey,
+        gw?.tools ?? [], gw?.gc ?? null, gw?.environmentId,
+        undefined, userId,
+      )
+    }
     return
   }
 
   if (llm.startsWith('gemini:')) {
     const model = llm.slice('gemini:'.length)
     yield* streamGeminiAgentChat(prompt, conversationId, agentSystemPrompt, trimmedHistory, model)
-    return
-  }
-
-  if (llm.startsWith('ext:')) {
-    const extId = llm.slice('ext:'.length)
-    const extModel = await prisma.externalModel.findUnique({ where: { id: extId } })
-    if (!extModel) {
-      yield { type: 'error', error: `External model not found: ${extId}` }
-      return
-    }
-    if (extModel.provider === 'ollama') {
-      yield* streamOllamaAgentChat(prompt, conversationId, agentSystemPrompt, trimmedHistory, extModel.modelId, extModel.baseUrl, extModel.timeoutSecs ?? 120)
-      return
-    }
-    yield { type: 'error', error: `Unsupported external model provider: ${extModel.provider}` }
     return
   }
 
@@ -596,6 +663,206 @@ async function* streamOllamaAgentChat(
       data: { conversationId, prompt, toolsUsed: [], durationMs: Date.now() - start, success: false },
     }).catch(() => {})
     yield { type: 'error', error: `Ollama error: ${msg}` }
+  }
+}
+
+// ── OpenAI-compatible chat (custom / openai providers) ────────────────────────
+
+export async function* streamOpenAIChat(
+  prompt: string,
+  conversationId: string,
+  history: Array<{ role: string; content: string }>,
+  model: string,
+  baseUrl: string,
+  apiKey?: string,
+  abortSignal?: AbortSignal,
+  userId?: string,
+): AsyncGenerator<StreamChunk> {
+  // Load gateway tools
+  const { GatewayClient } = await import('./agent-runner/gateway-client')
+  type GatewayTool = import('./agent-runner/types').GatewayTool
+  let gatewayTools: GatewayTool[] = []
+  let gatewayClient: InstanceType<typeof GatewayClient> | null = null
+
+  const connectedEnv = await prisma.environment.findFirst({
+    where: { status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
+  })
+  if (connectedEnv?.gatewayUrl && connectedEnv.gatewayToken) {
+    gatewayClient = new GatewayClient(connectedEnv.gatewayUrl, connectedEnv.gatewayToken)
+    try { gatewayTools = await gatewayClient.listTools() } catch { /* proceed without tools */ }
+  }
+
+  const systemPrompt = getSystemPrompt(gatewayTools.map(t => t.name))
+  yield* streamOpenAIChatCore(
+    prompt, conversationId, systemPrompt, history,
+    model, baseUrl, apiKey,
+    gatewayTools.length ? gatewayTools : [],
+    gatewayTools.length ? gatewayClient : null,
+    connectedEnv?.id,
+    abortSignal, userId,
+  )
+}
+
+async function* streamOpenAIChatCore(
+  prompt: string,
+  conversationId: string,
+  systemPrompt: string,
+  history: Array<{ role: string; content: string }>,
+  model: string,
+  baseUrl: string,
+  apiKey: string | undefined,
+  tools: import('./agent-runner/types').GatewayTool[],
+  gateway: import('./agent-runner/gateway-client').GatewayClient | null,
+  environmentId: string | undefined,
+  abortSignal?: AbortSignal,
+  userId?: string,
+): AsyncGenerator<StreamChunk> {
+  const start = Date.now()
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+
+  // OpenAI tool schema format
+  const openaiTools = tools.map(t => ({
+    type: 'function' as const,
+    function: { name: t.name, description: t.description, parameters: t.inputSchema },
+  }))
+
+  type OAIMessage = { role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }
+  const messages: OAIMessage[] = [
+    { role: 'system', content: systemPrompt },
+    ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })),
+    { role: 'user', content: prompt },
+  ]
+
+  let totalText = ''
+  const toolsUsed: string[] = []
+
+  try {
+    // Agentic loop — handles tool calls until model returns a final text response
+    for (let turn = 0; turn < 10; turn++) {
+      const body: Record<string, unknown> = { model, messages, stream: true }
+      if (openaiTools.length) body.tools = openaiTools
+
+      const timeoutSignal = AbortSignal.timeout(120_000)
+      const fetchSignal = abortSignal ? AbortSignal.any([abortSignal, timeoutSignal]) : timeoutSignal
+
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: fetchSignal,
+      })
+      if (!res.ok) throw new Error(`OpenAI-compatible API ${res.status}: ${await res.text()}`)
+      if (!res.body) throw new Error('No response body')
+
+      // Parse SSE stream
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      let turnText = ''
+      const pendingToolCalls: Array<{ id: string; name: string; argsRaw: string }> = []
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6).trim()
+          if (data === '[DONE]') continue
+          try {
+            const chunk = JSON.parse(data) as {
+              choices?: Array<{
+                delta?: {
+                  content?: string
+                  tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>
+                }
+                finish_reason?: string
+              }>
+            }
+            const delta = chunk.choices?.[0]?.delta
+            if (!delta) continue
+
+            // Accumulate text
+            if (delta.content) {
+              turnText += delta.content
+              totalText += delta.content
+              yield { type: 'text', content: delta.content }
+            }
+
+            // Accumulate tool call fragments
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const idx = tc.index
+                if (!pendingToolCalls[idx]) {
+                  pendingToolCalls[idx] = { id: tc.id ?? `tc_${idx}`, name: tc.function?.name ?? '', argsRaw: '' }
+                }
+                if (tc.function?.name) pendingToolCalls[idx].name = tc.function.name
+                if (tc.function?.arguments) pendingToolCalls[idx].argsRaw += tc.function.arguments
+              }
+            }
+          } catch { /* skip malformed chunk */ }
+        }
+      }
+
+      // If no tool calls, we're done
+      if (!pendingToolCalls.length) break
+
+      // Execute tool calls
+      const assistantToolCalls = pendingToolCalls.map(tc => ({
+        id: tc.id, type: 'function' as const,
+        function: { name: tc.name, arguments: tc.argsRaw },
+      }))
+      messages.push({ role: 'assistant', content: turnText, tool_calls: assistantToolCalls })
+
+      for (const tc of pendingToolCalls) {
+        yield { type: 'tool_call', tool: tc.name, input: tc.argsRaw }
+        toolsUsed.push(tc.name)
+
+        let result: string
+        if (gateway && environmentId) {
+          try {
+            const args = JSON.parse(tc.argsRaw || '{}') as Record<string, unknown>
+            const perm = await checkToolPermission(tc.name, args, environmentId, conversationId, userId)
+            if (!perm.allowed) {
+              result = `Permission denied: ${perm.reason}`
+            } else {
+              result = await gateway.executeTool(tc.name, args)
+            }
+          } catch (e) {
+            result = `Error: ${e instanceof Error ? e.message : String(e)}`
+          }
+        } else {
+          result = 'No gateway connected'
+        }
+
+        yield { type: 'tool_result', tool: tc.name, output: result }
+        messages.push({ role: 'tool', content: result, tool_call_id: tc.id })
+      }
+    }
+
+    const MAX_STORE = 4000
+    const savedContent = totalText.length > MAX_STORE
+      ? totalText.slice(0, MAX_STORE) + '\n[…truncated for storage]'
+      : totalText
+
+    await Promise.all([
+      prisma.message.create({ data: { conversationId, role: 'user', content: prompt } }),
+      prisma.message.create({ data: { conversationId, role: 'assistant', content: savedContent } }),
+      prisma.claudeInvocation.create({
+        data: { conversationId, prompt, toolsUsed, durationMs: Date.now() - start, success: true },
+      }),
+    ])
+    yield { type: 'done' }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await prisma.claudeInvocation.create({
+      data: { conversationId, prompt, toolsUsed: [], durationMs: Date.now() - start, success: false },
+    }).catch(() => {})
+    yield { type: 'error', error: `OpenAI API error: ${msg}` }
   }
 }
 
