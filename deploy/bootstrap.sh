@@ -41,6 +41,9 @@ if [[ "$RESET" == "true" ]]; then
   echo "Stopping stack and removing volumes..."
   $COMPOSE down -v --remove-orphans 2>/dev/null || true
   echo "Volumes wiped. Continuing with fresh start..."
+  # Clear generated tokens so they are recreated against the fresh data
+  sed -i '/^GITEA_ADMIN_TOKEN=/d' "$DEPLOY_DIR/.env"
+  echo "GITEA_ADMIN_TOKEN=" >> "$DEPLOY_DIR/.env"
 fi
 
 # ── Ensure .env exists ────────────────────────────────────────────────────────
