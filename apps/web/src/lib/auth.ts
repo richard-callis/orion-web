@@ -15,9 +15,9 @@ export interface AppUser {
 export const authOptions: NextAuthOptions = {
   session: { strategy: 'jwt' },
   secret: process.env.NEXTAUTH_SECRET,
-  // Allow access from any host (IP, domain, etc.) — spread avoids TS excess-property check
-  // trustHost is supported at runtime in next-auth v4 but not reflected in its types.
-  ...{ trustHost: true },
+  // Don't require HTTPS cookies — allows login from plain HTTP (IP access, local setup).
+  // NEXTAUTH_URL starting with https normally forces __Secure- prefix which HTTP drops silently.
+  useSecureCookies: false,
   pages: {
     signIn: '/login',
   },
