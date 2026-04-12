@@ -346,10 +346,10 @@ function Step3Git({ onNext }: { onNext: () => void }) {
 
       {error && <ErrorBanner message={error} />}
 
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         {GIT_PROVIDERS.map(p => (
           <label key={p.value}
-            className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors
+            className={`flex items-center gap-3 px-3 py-2 rounded-lg border cursor-pointer transition-colors
               ${providerType === p.value
                 ? 'border-accent bg-accent/5'
                 : 'border-border-subtle hover:border-text-muted'}`}>
@@ -359,14 +359,14 @@ function Step3Git({ onNext }: { onNext: () => void }) {
               value={p.value}
               checked={providerType === p.value}
               onChange={() => { setProviderType(p.value); setUrl(''); setToken('') }}
-              className="mt-0.5 accent-accent flex-shrink-0"
+              className="accent-accent flex-shrink-0"
             />
-            <div>
+            <div className="min-w-0">
               <div className="text-sm font-medium text-text-primary flex items-center gap-1.5">
-                <GitBranch size={12} className="text-text-muted" />
+                <GitBranch size={11} className="text-text-muted flex-shrink-0" />
                 {p.label}
               </div>
-              <div className="text-[11px] text-text-muted mt-0.5">{p.description}</div>
+              <div className="text-[10px] text-text-muted truncate">{p.description}</div>
             </div>
           </label>
         ))}
@@ -782,26 +782,28 @@ export default function SetupWizard() {
   }
 
   return (
-    <div className="w-full max-w-lg space-y-2">
-      <div className="text-center mb-6">
+    <div className="w-full max-w-lg flex flex-col" style={{ maxHeight: '100dvh', padding: '1rem 0' }}>
+      <div className="text-center mb-4 flex-shrink-0">
         <div className="text-2xl font-bold tracking-tight text-text-primary">ORION</div>
         <div className="text-xs text-text-muted mt-0.5">First-run setup</div>
       </div>
 
-      <div className="flex justify-center">
+      <div className="flex justify-center flex-shrink-0">
         <ProgressBar current={step} />
       </div>
 
-      <div className="bg-bg-surface border border-border-subtle rounded-xl p-6">
-        {step === 1 && <Step1Token onNext={next} />}
-        {step === 2 && <Step2Admin onNext={next} />}
-        {step === 3 && <Step3Git onNext={next} />}
-        {step === 4 && <Step4Domain onNext={next} />}
-        {step === 5 && <Step5AI onNext={next} />}
-        {step === 6 && <Step6Vault onComplete={handleComplete} />}
+      <div className="bg-bg-surface border border-border-subtle rounded-xl overflow-y-auto flex-1 min-h-0">
+        <div className="p-6">
+          {step === 1 && <Step1Token onNext={next} />}
+          {step === 2 && <Step2Admin onNext={next} />}
+          {step === 3 && <Step3Git onNext={next} />}
+          {step === 4 && <Step4Domain onNext={next} />}
+          {step === 5 && <Step5AI onNext={next} />}
+          {step === 6 && <Step6Vault onComplete={handleComplete} />}
+        </div>
       </div>
 
-      <p className="text-center text-[11px] text-text-muted">
+      <p className="text-center text-[11px] text-text-muted mt-2 flex-shrink-0">
         Step {step} of 6 — <span className="text-text-primary">{STEPS[step - 1]}</span>
       </p>
     </div>
