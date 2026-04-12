@@ -116,6 +116,27 @@ echo ""
 echo "Starting stack..."
 GITHUB_ORG="${GITHUB_ORG}" $COMPOSE up -d
 
+# ── Create Gitea admin user (bundled profile only) ────────────────────────────
+if [[ "${GIT_PROVIDER:-gitea-bundled}" == "gitea-bundled" ]]; then
+  echo ""
+  echo "Waiting for Gitea to start (up to 60s)..."
+  for i in $(seq 1 12); do
+    STATUS=$(GITHUB_ORG="${GITHUB_ORG}" $COMPOSE exec -T gitea curl -sf http://localhost:3000/api/healthz 2>/dev/null && echo "ok" || echo "")
+    [[ "$STATUS" == "ok" ]] && break
+    sleep 5
+  done
+
+  echo "Creating Gitea admin user (${GITEA_ADMIN_USER:-gitea-admin})..."
+  GITHUB_ORG="${GITHUB_ORG}" $COMPOSE exec -T --user git gitea \
+    gitea admin user create \
+      --admin \
+      --username "${GITEA_ADMIN_USER:-gitea-admin}" \
+      --password "${GITEA_ADMIN_PASSWORD}" \
+      --email "admin@local" \
+      --must-change-password false 2>&1 \
+    | grep -v "^$" || true
+fi
+
 # ── Print setup token from ORION logs ─────────────────────────────────────────
 echo ""
 echo "Waiting for ORION to start (up to 30s)..."
