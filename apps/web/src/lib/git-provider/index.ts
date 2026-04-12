@@ -156,7 +156,7 @@ export async function getGitProvider(): Promise<GitProvider> {
   })
 
   if (setting) {
-    _cached = createProvider(setting.value as GitProviderConfig)
+    _cached = createProvider(setting.value as unknown as GitProviderConfig)
     return _cached
   }
 

@@ -111,8 +111,10 @@ export async function POST(req: NextRequest) {
 
   await prisma.systemSetting.upsert({
     where:  { key: 'git.provider.config' },
-    update: { value: config as unknown as object },
-    create: { key: 'git.provider.config', value: config as unknown as object },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    update: { value: config as any },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    create: { key: 'git.provider.config', value: config as any },
   })
 
   // Invalidate the in-process provider cache so the new config is picked up immediately
