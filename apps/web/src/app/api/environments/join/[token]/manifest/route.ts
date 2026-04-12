@@ -20,10 +20,17 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
   const gatewayType = searchParams.get('type') ?? record.environment.type ?? 'cluster'
 
   // ORION_CALLBACK_URL = the URL gateways use to reach ORION (LAN/internal, not behind Cloudflare).
-  // Falls back to NEXTAUTH_URL, then the request host (which may be wrong inside Docker).
-  const orionUrl = (process.env.ORION_CALLBACK_URL ?? process.env.NEXTAUTH_URL ?? (() => {
-    const u = new URL(req.url); return `${u.protocol}//${u.host}`
-  })()).replace(/\/$/, '')
+  // Falls back to x-forwarded-host (Traefik), then MANAGEMENT_IP, then NEXTAUTH_URL.
+  const forwardedHost = req.headers.get('x-forwarded-host')
+  const forwardedProto = req.headers.get('x-forwarded-proto') ?? 'http'
+  const managementIp = process.env.MANAGEMENT_IP
+  const orionUrl = (
+    process.env.ORION_CALLBACK_URL ??
+    (forwardedHost ? `${forwardedProto}://${forwardedHost}` : null) ??
+    (managementIp ? `http://${managementIp}:3000` : null) ??
+    process.env.NEXTAUTH_URL ??
+    (() => { const u = new URL(req.url); return `${u.protocol}//${u.host}` })()
+  ).replace(/\/$/, '')
   const envName = record.environment.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
 
   // Use the environment's configured gatewayUrl if set; otherwise fall back to NodePort default.

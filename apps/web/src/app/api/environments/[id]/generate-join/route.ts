@@ -22,12 +22,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const gatewayUrl: string = body.gatewayUrl ?? ''
   const gatewayType: string = body.gatewayType ?? env.type ?? 'cluster'
 
-  // Public URL (shown in UI, used by browser clients)
+  // Public URL — prefer the request Host header, but it may be 0.0.0.0 inside Docker.
+  // Use x-forwarded-host (set by Traefik) when available, then MANAGEMENT_IP, then request host.
   const reqUrl = new URL(req.url)
-  const orionPublicUrl = `${reqUrl.protocol}//${reqUrl.host}`
+  const forwardedHost = req.headers.get('x-forwarded-host')
+  const forwardedProto = req.headers.get('x-forwarded-proto') ?? reqUrl.protocol.replace(':', '')
+  const managementIp = process.env.MANAGEMENT_IP
+  const orionPublicUrl = forwardedHost
+    ? `${forwardedProto}://${forwardedHost}`
+    : managementIp
+    ? `http://${managementIp}:3000`
+    : `${reqUrl.protocol}//${reqUrl.host}`
 
   // Callback URL — what gateways and cluster nodes use to reach ORION (bypasses Cloudflare/proxies).
-  // Falls back to public URL if not configured.
   const orionCallbackUrl = (process.env.ORION_CALLBACK_URL ?? orionPublicUrl).replace(/\/$/, '')
 
   const dockerCmd = [
