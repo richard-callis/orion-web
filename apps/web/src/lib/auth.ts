@@ -15,9 +15,22 @@ export interface AppUser {
 export const authOptions: NextAuthOptions = {
   session: { strategy: 'jwt' },
   secret: process.env.NEXTAUTH_SECRET,
-  // Don't require HTTPS cookies — allows login from plain HTTP (IP access, local setup).
-  // NEXTAUTH_URL starting with https normally forces __Secure- prefix which HTTP drops silently.
-  useSecureCookies: false,
+  // Use plain (non-__Secure-prefixed) cookie names so the app works over both HTTP and HTTPS.
+  // Consistent names are set here AND in the middleware getToken call so they always agree.
+  cookies: {
+    sessionToken: {
+      name: 'next-auth.session-token',
+      options: { httpOnly: true, sameSite: 'lax' as const, path: '/', secure: false },
+    },
+    callbackUrl: {
+      name: 'next-auth.callback-url',
+      options: { sameSite: 'lax' as const, path: '/', secure: false },
+    },
+    csrfToken: {
+      name: 'next-auth.csrf-token',
+      options: { httpOnly: true, sameSite: 'lax' as const, path: '/', secure: false },
+    },
+  },
   pages: {
     signIn: '/login',
   },

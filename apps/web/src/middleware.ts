@@ -33,7 +33,8 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+  // Cookie name must match what auth.ts configures (no __Secure- prefix — works over HTTP and HTTPS)
+  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET, cookieName: 'next-auth.session-token' })
   if (!token || !token.sub) {
     const loginUrl = new URL('/login', req.url)
     loginUrl.searchParams.set('callbackUrl', pathname)
