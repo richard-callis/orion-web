@@ -2,7 +2,16 @@
 set -euo pipefail
 
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMPOSE="docker compose -f $DEPLOY_DIR/docker-compose.yml --env-file $DEPLOY_DIR/.env"
+
+# Activate the gitea profile if GIT_PROVIDER is gitea-bundled (or unset, for backwards compat)
+source "$DEPLOY_DIR/.env" 2>/dev/null || true
+GIT_PROVIDER="${GIT_PROVIDER:-gitea-bundled}"
+PROFILE_FLAGS=""
+if [[ "$GIT_PROVIDER" == "gitea-bundled" ]]; then
+  PROFILE_FLAGS="--profile gitea"
+fi
+
+COMPOSE="docker compose -f $DEPLOY_DIR/docker-compose.yml --env-file $DEPLOY_DIR/.env $PROFILE_FLAGS"
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 RESET=false

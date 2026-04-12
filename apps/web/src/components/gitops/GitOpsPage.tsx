@@ -12,8 +12,8 @@ interface EnvironmentRef {
   id: string
   name: string
   type: string
-  giteaOwner: string | null
-  giteaRepo: string | null
+  gitOwner: string | null
+  gitRepo: string | null
 }
 
 interface GitOpsPR {
@@ -23,7 +23,7 @@ interface GitOpsPR {
   operation: string
   decision: 'auto' | 'review'
   status: 'open' | 'merged' | 'closed'
-  giteaUrl: string
+  prUrl: string
   branch: string
   reasoning: string | null
   createdAt: string
@@ -52,8 +52,8 @@ interface Environment {
   name: string
   type: string
   status: string | null
-  giteaOwner: string | null
-  giteaRepo: string | null
+  gitOwner: string | null
+  gitRepo: string | null
   argoCdUrl: string | null
   gitOpsPRs?: GitOpsPR[]
   metadata?: {
@@ -260,7 +260,7 @@ function OpenPRsTable({ prs }: { prs: GitOpsPR[] }) {
               </td>
               <td className="px-4 py-3 max-w-[260px]">
                 <a
-                  href={pr.giteaUrl}
+                  href={pr.prUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-accent hover:underline truncate block"
@@ -285,7 +285,7 @@ function OpenPRsTable({ prs }: { prs: GitOpsPR[] }) {
               </td>
               <td className="px-4 py-3">
                 <a
-                  href={pr.giteaUrl}
+                  href={pr.prUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-border-subtle bg-bg-raised text-text-secondary hover:text-text-primary hover:border-accent transition-colors"
@@ -357,7 +357,7 @@ function EnvironmentCard({
   openPrCount: number
   onBootstrap: (id: string, name: string) => void
 }) {
-  const hasRepo = !!(env.giteaOwner && env.giteaRepo)
+  const hasRepo = !!(env.gitOwner && env.gitRepo)
 
   const statusDot =
     env.status === 'connected' ? 'bg-status-healthy' :
@@ -388,7 +388,7 @@ function EnvironmentCard({
       <div className="flex items-center gap-1.5 text-xs text-text-muted">
         <GitBranch size={12} className="flex-shrink-0" />
         {hasRepo ? (
-          <span className="font-mono">{env.giteaOwner}/{env.giteaRepo}</span>
+          <span className="font-mono">{env.gitOwner}/{env.gitRepo}</span>
         ) : (
           <span className="italic text-text-muted/60">No repo configured</span>
         )}

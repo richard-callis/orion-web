@@ -2,11 +2,11 @@
 
 import { useState, useEffect, FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertTriangle, Check, Copy, Loader2, Eye, EyeOff, ChevronRight, Shield } from 'lucide-react'
+import { AlertTriangle, Check, Copy, Loader2, Eye, EyeOff, ChevronRight, Shield, GitBranch } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Step = 1 | 2 | 3 | 4 | 5
+type Step = 1 | 2 | 3 | 4 | 5 | 6
 
 interface VaultResult {
   keys: string[]
@@ -43,7 +43,7 @@ function CopyButton({ value }: { value: string }) {
 
 // ── Progress indicator ────────────────────────────────────────────────────────
 
-const STEPS = ['Token', 'Admin', 'Domain', 'AI Provider', 'Vault']
+const STEPS = ['Token', 'Admin', 'Git', 'Domain', 'AI', 'Vault']
 
 function ProgressBar({ current }: { current: Step }) {
   return (
@@ -64,7 +64,7 @@ function ProgressBar({ current }: { current: Step }) {
               </span>
             </div>
             {i < STEPS.length - 1 && (
-              <div className={`h-px w-8 mx-1 mb-4 transition-colors ${done ? 'bg-accent' : 'bg-border-subtle'}`} />
+              <div className={`h-px w-6 mx-1 mb-4 transition-colors ${done ? 'bg-accent' : 'bg-border-subtle'}`} />
             )}
           </div>
         )
@@ -206,9 +206,222 @@ function Step2Admin({ onNext }: { onNext: () => void }) {
   )
 }
 
-// ── Step 3: Domain configuration ──────────────────────────────────────────────
+// ── Step 3: Git provider ──────────────────────────────────────────────────────
 
-function Step3Domain({ onNext }: { onNext: () => void }) {
+type GitProviderType = 'gitea-bundled' | 'gitea' | 'github' | 'gitlab'
+
+const GIT_PROVIDERS: { value: GitProviderType; label: string; description: string }[] = [
+  {
+    value: 'gitea-bundled',
+    label: 'Gitea (included)',
+    description: 'Deploy Gitea alongside ORION — best for a fresh homelab setup',
+  },
+  {
+    value: 'gitea',
+    label: 'Gitea (external)',
+    description: 'Connect to an existing Gitea instance',
+  },
+  {
+    value: 'github',
+    label: 'GitHub',
+    description: 'Use GitHub repos for GitOps (public or private)',
+  },
+  {
+    value: 'gitlab',
+    label: 'GitLab',
+    description: 'Use GitLab (gitlab.com or self-hosted)',
+  },
+]
+
+function Step3Git({ onNext }: { onNext: () => void }) {
+  const [providerType, setProviderType] = useState<GitProviderType>('gitea-bundled')
+  const [url, setUrl] = useState('')
+  const [token, setToken] = useState('')
+  const [adminUser, setAdminUser] = useState('')
+  const [adminPassword, setAdminPassword] = useState('')
+  const [org, setOrg] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const isBundled = providerType === 'gitea-bundled'
+  const needsUrl   = providerType === 'gitea' || providerType === 'gitlab'
+  const needsToken = !isBundled
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+
+    const body: Record<string, string> = { type: providerType, org }
+    if (isBundled) {
+      body.adminUser     = adminUser
+      body.adminPassword = adminPassword
+    } else {
+      body.token = token
+      if (needsUrl) body.url = url
+    }
+
+    const res = await fetch('/api/setup/git-provider', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    setLoading(false)
+    if (!res.ok) {
+      const data = await res.json()
+      setError(data.error ?? 'Failed to configure git provider')
+    } else {
+      sessionStorage.setItem('orion_setup_step', '4')
+      onNext()
+    }
+  }
+
+  async function skip() {
+    await fetch('/api/setup/git-provider', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skip: true }),
+    })
+    sessionStorage.setItem('orion_setup_step', '4')
+    onNext()
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-5">
+      <div>
+        <h2 className="text-base font-semibold text-text-primary mb-1">Git provider</h2>
+        <p className="text-xs text-text-muted">
+          ORION uses Git to manage infrastructure changes — every cluster change is a PR with full audit trail.
+        </p>
+      </div>
+
+      {error && <ErrorBanner message={error} />}
+
+      <div className="space-y-2">
+        {GIT_PROVIDERS.map(p => (
+          <label key={p.value}
+            className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors
+              ${providerType === p.value
+                ? 'border-accent bg-accent/5'
+                : 'border-border-subtle hover:border-text-muted'}`}>
+            <input
+              type="radio"
+              name="gitProvider"
+              value={p.value}
+              checked={providerType === p.value}
+              onChange={() => { setProviderType(p.value); setUrl(''); setToken('') }}
+              className="mt-0.5 accent-accent flex-shrink-0"
+            />
+            <div>
+              <div className="text-sm font-medium text-text-primary flex items-center gap-1.5">
+                <GitBranch size={12} className="text-text-muted" />
+                {p.label}
+              </div>
+              <div className="text-[11px] text-text-muted mt-0.5">{p.description}</div>
+            </div>
+          </label>
+        ))}
+      </div>
+
+      <div className="space-y-4 pt-1">
+        {/* Bundled Gitea: need admin credentials to bootstrap the API token */}
+        {isBundled && (
+          <>
+            <div className="text-[11px] text-text-muted bg-bg-raised border border-border-subtle rounded-lg px-3 py-2.5">
+              Gitea is included in the ORION stack. Enter the admin credentials you want to use —
+              ORION will configure Gitea automatically.
+            </div>
+            <div>
+              <label className={labelCls}>Gitea admin username <span className="text-status-error">*</span></label>
+              <input type="text" value={adminUser} onChange={e => setAdminUser(e.target.value)}
+                className={inputCls} placeholder="admin" required autoFocus />
+            </div>
+            <div>
+              <label className={labelCls}>Gitea admin password <span className="text-status-error">*</span></label>
+              <input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)}
+                className={inputCls} required />
+            </div>
+          </>
+        )}
+
+        {/* URL for self-hosted providers */}
+        {needsUrl && (
+          <div>
+            <label className={labelCls}>
+              {providerType === 'gitlab' ? 'GitLab URL' : 'Gitea URL'}{' '}
+              <span className="text-status-error">*</span>
+            </label>
+            <input type="url" value={url} onChange={e => setUrl(e.target.value)}
+              className={inputCls}
+              placeholder={providerType === 'gitlab' ? 'https://gitlab.com' : 'https://gitea.example.com'}
+              required />
+          </div>
+        )}
+
+        {/* API token for external providers */}
+        {needsToken && (
+          <div>
+            <label className={labelCls}>
+              {providerType === 'github' ? 'Personal access token' : 'API token'}{' '}
+              <span className="text-status-error">*</span>
+            </label>
+            <input type="password" value={token} onChange={e => setToken(e.target.value)}
+              className={inputCls + ' font-mono text-xs'}
+              placeholder={providerType === 'github' ? 'ghp_…' : 'Paste token'}
+              required />
+            {providerType === 'github' && (
+              <p className="text-[11px] text-text-muted mt-1">
+                Needs: repo, admin:repo_hook
+              </p>
+            )}
+            {providerType === 'gitlab' && (
+              <p className="text-[11px] text-text-muted mt-1">
+                Needs: api scope (personal access token or group token)
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Org / namespace */}
+        <div>
+          <label className={labelCls}>
+            {providerType === 'gitlab' ? 'Namespace / group' : 'Organisation or username'}{' '}
+            <span className="text-status-error">*</span>
+          </label>
+          <input type="text" value={org} onChange={e => setOrg(e.target.value)}
+            className={inputCls}
+            placeholder={
+              providerType === 'github'
+                ? 'my-org'
+                : providerType === 'gitlab'
+                ? 'my-group or username'
+                : 'orion'
+            }
+            required />
+          <p className="text-[11px] text-text-muted mt-1">
+            Environment repos will be created under this owner
+          </p>
+        </div>
+      </div>
+
+      <div className="flex gap-3">
+        <button type="button" onClick={skip}
+          className="flex-1 py-2 text-sm text-text-muted border border-border-subtle rounded-lg hover:border-text-muted transition-colors">
+          Skip for now
+        </button>
+        <button type="submit" disabled={loading}
+          className="flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-lg bg-accent text-white hover:bg-accent/90 disabled:opacity-60 transition-colors">
+          {loading && <Loader2 size={14} className="animate-spin" />}
+          {loading ? 'Connecting…' : <>Continue <ChevronRight size={14} /></>}
+        </button>
+      </div>
+    </form>
+  )
+}
+
+// ── Step 4: Domain configuration ──────────────────────────────────────────────
+
+function Step4Domain({ onNext }: { onNext: () => void }) {
   const [internalDomain, setInternalDomain] = useState('')
   const [publicDomain, setPublicDomain] = useState('')
   const [managementIp, setManagementIp] = useState('')
@@ -236,7 +449,7 @@ function Step3Domain({ onNext }: { onNext: () => void }) {
       const data = await res.json()
       setError(data.error ?? 'Failed to save domain configuration')
     } else {
-      sessionStorage.setItem('orion_setup_step', '4')
+      sessionStorage.setItem('orion_setup_step', '5')
       onNext()
     }
   }
@@ -284,16 +497,16 @@ function Step3Domain({ onNext }: { onNext: () => void }) {
   )
 }
 
-// ── Step 4: AI provider ───────────────────────────────────────────────────────
+// ── Step 5: AI provider ───────────────────────────────────────────────────────
 
-const PROVIDERS = [
+const AI_PROVIDERS = [
   { value: 'anthropic', label: 'Anthropic', defaultUrl: 'https://api.anthropic.com', defaultModel: 'claude-opus-4-6' },
   { value: 'openai', label: 'OpenAI', defaultUrl: 'https://api.openai.com/v1', defaultModel: 'gpt-4o' },
   { value: 'ollama', label: 'Ollama (local)', defaultUrl: 'http://ollama:11434', defaultModel: 'llama3' },
   { value: 'custom', label: 'Custom (OpenAI-compatible)', defaultUrl: '', defaultModel: '' },
 ]
 
-function Step4AI({ onNext }: { onNext: () => void }) {
+function Step5AI({ onNext }: { onNext: () => void }) {
   const [provider, setProvider] = useState('anthropic')
   const [name, setName] = useState('Default')
   const [baseUrl, setBaseUrl] = useState('https://api.anthropic.com')
@@ -304,7 +517,7 @@ function Step4AI({ onNext }: { onNext: () => void }) {
 
   function selectProvider(val: string) {
     setProvider(val)
-    const p = PROVIDERS.find(p => p.value === val)
+    const p = AI_PROVIDERS.find(p => p.value === val)
     if (p) { setBaseUrl(p.defaultUrl); setModelId(p.defaultModel) }
   }
 
@@ -322,7 +535,7 @@ function Step4AI({ onNext }: { onNext: () => void }) {
       const data = await res.json()
       setError(data.error ?? 'Failed to save AI provider')
     } else {
-      sessionStorage.setItem('orion_setup_step', '5')
+      sessionStorage.setItem('orion_setup_step', '6')
       onNext()
     }
   }
@@ -333,7 +546,7 @@ function Step4AI({ onNext }: { onNext: () => void }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ skip: true }),
     })
-    sessionStorage.setItem('orion_setup_step', '5')
+    sessionStorage.setItem('orion_setup_step', '6')
     onNext()
   }
 
@@ -353,7 +566,7 @@ function Step4AI({ onNext }: { onNext: () => void }) {
           <label className={labelCls}>Provider</label>
           <select value={provider} onChange={e => selectProvider(e.target.value)}
             className={inputCls}>
-            {PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+            {AI_PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
           </select>
         </div>
         <div>
@@ -391,9 +604,9 @@ function Step4AI({ onNext }: { onNext: () => void }) {
   )
 }
 
-// ── Step 5: Vault initialization ──────────────────────────────────────────────
+// ── Step 6: Vault initialization ──────────────────────────────────────────────
 
-function Step5Vault({ onComplete }: { onComplete: () => void }) {
+function Step6Vault({ onComplete }: { onComplete: () => void }) {
   const [vaultResult, setVaultResult] = useState<VaultResult | null>(null)
   const [confirmed, setConfirmed] = useState(false)
   const [error, setError] = useState('')
@@ -463,7 +676,6 @@ function Step5Vault({ onComplete }: { onComplete: () => void }) {
         </div>
       ) : (
         <div className="space-y-4">
-          {/* Key display */}
           <div className="rounded-lg border border-status-warning/40 bg-status-warning/5 p-4 space-y-3">
             <div className="flex items-center gap-2 text-status-warning text-xs font-semibold">
               <Shield size={13} />
@@ -508,13 +720,12 @@ export default function SetupWizard() {
   const router = useRouter()
   const [step, setStep] = useState<Step>(1)
 
-  // Restore step from sessionStorage on page load
   useEffect(() => {
     const saved = sessionStorage.getItem('orion_setup_step')
     if (saved) setStep(parseInt(saved) as Step)
   }, [])
 
-  function next() { setStep(s => (s < 5 ? (s + 1) as Step : s)) }
+  function next() { setStep(s => (s < 6 ? (s + 1) as Step : s)) }
 
   function handleComplete() {
     sessionStorage.removeItem('orion_setup_step')
@@ -535,13 +746,14 @@ export default function SetupWizard() {
       <div className="bg-bg-surface border border-border-subtle rounded-xl p-6">
         {step === 1 && <Step1Token onNext={next} />}
         {step === 2 && <Step2Admin onNext={next} />}
-        {step === 3 && <Step3Domain onNext={next} />}
-        {step === 4 && <Step4AI onNext={next} />}
-        {step === 5 && <Step5Vault onComplete={handleComplete} />}
+        {step === 3 && <Step3Git onNext={next} />}
+        {step === 4 && <Step4Domain onNext={next} />}
+        {step === 5 && <Step5AI onNext={next} />}
+        {step === 6 && <Step6Vault onComplete={handleComplete} />}
       </div>
 
       <p className="text-center text-[11px] text-text-muted">
-        Step {step} of 5 — <span className="text-text-primary">{STEPS[step - 1]}</span>
+        Step {step} of 6 — <span className="text-text-primary">{STEPS[step - 1]}</span>
       </p>
     </div>
   )

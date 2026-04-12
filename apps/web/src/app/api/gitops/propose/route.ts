@@ -31,9 +31,9 @@ export async function POST(req: NextRequest) {
 
   const env = await prisma.environment.findUnique({ where: { id: environmentId } })
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
-  if (!env.giteaOwner || !env.giteaRepo) {
+  if (!env.gitOwner || !env.gitRepo) {
     return NextResponse.json(
-      { error: 'Environment has no Gitea repo configured. Run bootstrap first.' },
+      { error: 'Environment has no git repo configured. Run bootstrap first.' },
       { status: 422 },
     )
   }
@@ -41,8 +41,8 @@ export async function POST(req: NextRequest) {
   const policy = (env.policyConfig ?? {}) as PolicyConfig
 
   const result = await proposeChange({
-    owner: env.giteaOwner,
-    repo: env.giteaRepo,
+    owner: env.gitOwner,
+    repo: env.gitRepo,
     title,
     reasoning,
     operationDescription,
@@ -54,12 +54,12 @@ export async function POST(req: NextRequest) {
   await prisma.gitOpsPR.create({
     data: {
       environmentId,
-      prNumber:  result.pr.number,
-      title:     result.pr.title,
+      prNumber:  result.prNumber,
+      title,
       operation: result.classification.operation,
       decision:  result.classification.decision,
       status:    result.merged ? 'merged' : 'open',
-      giteaUrl:  result.pr.html_url,
+      prUrl:     result.prUrl,
       reasoning,
       branch:    result.branch,
       mergedAt:  result.merged ? new Date() : null,
@@ -67,8 +67,8 @@ export async function POST(req: NextRequest) {
   })
 
   return NextResponse.json({
-    prNumber:   result.pr.number,
-    prUrl:      result.pr.html_url,
+    prNumber:   result.prNumber,
+    prUrl:      result.prUrl,
     merged:     result.merged,
     decision:   result.classification.decision,
     operation:  result.classification.operation,

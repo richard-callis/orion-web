@@ -74,8 +74,9 @@ model Environment {
   updatedAt    DateTime           @updatedAt
 
   // GitOps fields
-  giteaOwner   String?            // Gitea org/user that owns this env's repo
-  giteaRepo    String?            // Gitea repo name for this environment
+  gitProvider  String?            // "gitea-bundled" | "gitea" | "github" | "gitlab" (inherits global if null)
+  gitOwner     String?            // org/user that owns this env's repo
+  gitRepo      String?            // repo name for this environment
   argoCdUrl    String?            // ArgoCD URL (K8s clusters only)
   policyConfig Json?              // PolicyConfig: { reviewAll?, overrides? }
   kubeconfig   String?            @db.Text // base64 kubeconfig (K8s clusters only)
@@ -98,7 +99,7 @@ model GitOpsPR {
   operation     String      // OperationType value
   decision      String      // "auto" | "review"
   status        String      @default("open") // "open" | "merged" | "closed"
-  giteaUrl      String
+  prUrl         String
   reasoning     String?     @db.Text
   branch        String
   mergedAt      DateTime?

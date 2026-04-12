@@ -1,37 +1,45 @@
 /**
  * POST /api/webhooks/gitea
  *
- * Receives push and pull_request events from Gitea.
- * Updates GitOpsPR status when a PR is merged or closed outside of ORION
- * (e.g. human approves in the Gitea UI).
+ * Unified git webhook endpoint — handles push/PR events from Gitea, GitHub, or GitLab.
+ * The path stays /webhooks/gitea for backwards compatibility with existing webhook registrations.
  *
- * Gitea signs requests with HMAC-SHA256 using GITEA_WEBHOOK_SECRET.
+ * Updates GitOpsPR status when a PR is merged or closed outside of ORION
+ * (e.g. human approves in the web UI).
+ *
+ * Signature verification is provider-aware:
+ *   Gitea:  X-Gitea-Signature  (HMAC-SHA256 hex)
+ *   GitHub: X-Hub-Signature-256 (sha256=<hex>)
+ *   GitLab: X-Gitlab-Token     (plain secret)
  */
+
 import { NextRequest, NextResponse } from 'next/server'
-import { createHmac, timingSafeEqual } from 'crypto'
 import { prisma } from '@/lib/db'
-
-const WEBHOOK_SECRET = process.env.GITEA_WEBHOOK_SECRET ?? ''
-
-function verifySignature(body: string, signature: string): boolean {
-  if (!WEBHOOK_SECRET) return true // dev mode — skip verification
-  const expected = createHmac('sha256', WEBHOOK_SECRET).update(body).digest('hex')
-  try {
-    return timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'))
-  } catch {
-    return false
-  }
-}
+import { getGitProvider } from '@/lib/git-provider'
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
-  const signature = req.headers.get('x-gitea-signature') ?? ''
 
-  if (!verifySignature(rawBody, signature)) {
+  // Collect all relevant headers for provider-agnostic verification
+  const headers: Record<string, string> = {}
+  req.headers.forEach((value, key) => { headers[key.toLowerCase()] = value })
+
+  // Load provider config to get webhook secret and verify signature
+  const provider = await getGitProvider()
+  const setting = await prisma.systemSetting.findUnique({ where: { key: 'git.provider.config' } })
+  const secret = (setting?.value as { webhookSecret?: string } | null)?.webhookSecret
+    ?? process.env.GITEA_WEBHOOK_SECRET
+    ?? ''
+
+  if (!provider.verifyWebhookSignature(rawBody, headers, secret)) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
   }
 
-  const event = req.headers.get('x-gitea-event')
+  // Detect event type (provider-agnostic)
+  const giteaEvent  = headers['x-gitea-event']
+  const githubEvent = headers['x-github-event']
+  const gitlabEvent = headers['x-gitlab-event']
+
   let payload: Record<string, unknown>
   try {
     payload = JSON.parse(rawBody)
@@ -39,16 +47,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  if (event === 'pull_request') {
-    await handlePullRequestEvent(payload)
+  const isPR =
+    giteaEvent  === 'pull_request' ||
+    githubEvent === 'pull_request' ||
+    gitlabEvent === 'Merge Request Hook'
+
+  if (isPR) {
+    if (gitlabEvent) {
+      await handleGitLabMREvent(payload)
+    } else {
+      await handlePullRequestEvent(payload)
+    }
   }
-  // push events could trigger ArgoCD status checks in future
 
   return NextResponse.json({ ok: true })
 }
 
+/** Handle Gitea + GitHub pull_request events (same shape for our purposes) */
 async function handlePullRequestEvent(payload: Record<string, unknown>) {
   const action = payload.action as string
+  if (action !== 'closed') return
+
   const pr = payload.pull_request as Record<string, unknown> | undefined
   if (!pr) return
 
@@ -56,10 +75,9 @@ async function handlePullRequestEvent(payload: Record<string, unknown>) {
   const repoFullName = (payload.repository as Record<string, unknown>)?.full_name as string
   if (!repoFullName || !prNumber) return
 
-  // Find matching environment by Gitea repo
   const [owner, repoName] = repoFullName.split('/')
   const env = await prisma.environment.findFirst({
-    where: { giteaOwner: owner, giteaRepo: repoName },
+    where: { gitOwner: owner, gitRepo: repoName },
   })
   if (!env) return
 
@@ -68,14 +86,48 @@ async function handlePullRequestEvent(payload: Record<string, unknown>) {
   })
   if (!record) return
 
-  if (action === 'closed') {
-    const merged = pr.merged as boolean
-    await prisma.gitOpsPR.update({
-      where: { id: record.id },
-      data: {
-        status:   merged ? 'merged' : 'closed',
-        mergedAt: merged ? new Date() : null,
-      },
-    })
-  }
+  const merged = pr.merged as boolean
+  await prisma.gitOpsPR.update({
+    where: { id: record.id },
+    data: {
+      status:   merged ? 'merged' : 'closed',
+      mergedAt: merged ? new Date() : null,
+    },
+  })
+}
+
+/** Handle GitLab Merge Request Hook events */
+async function handleGitLabMREvent(payload: Record<string, unknown>) {
+  const attrs = payload.object_attributes as Record<string, unknown> | undefined
+  if (!attrs) return
+
+  const action = attrs.action as string
+  if (action !== 'close' && action !== 'merge') return
+
+  const prNumber = attrs.iid as number
+  const project  = payload.project as Record<string, unknown> | undefined
+  const pathWithNamespace = project?.path_with_namespace as string | undefined
+  if (!pathWithNamespace || !prNumber) return
+
+  const [owner, ...repoParts] = pathWithNamespace.split('/')
+  const repoName = repoParts.join('/')
+
+  const env = await prisma.environment.findFirst({
+    where: { gitOwner: owner, gitRepo: repoName },
+  })
+  if (!env) return
+
+  const record = await prisma.gitOpsPR.findUnique({
+    where: { environmentId_prNumber: { environmentId: env.id, prNumber } },
+  })
+  if (!record) return
+
+  const merged = action === 'merge'
+  await prisma.gitOpsPR.update({
+    where: { id: record.id },
+    data: {
+      status:   merged ? 'merged' : 'closed',
+      mergedAt: merged ? new Date() : null,
+    },
+  })
 }

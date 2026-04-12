@@ -20,10 +20,8 @@ import { join } from 'path'
 import { randomBytes } from 'crypto'
 import { prisma } from './db'
 import { bootstrapEnvironmentRepo } from './gitops'
-import { giteaHealthy } from './gitea'
+import { getGitProvider } from './git-provider'
 
-const GITEA_URL = (process.env.GITEA_URL ?? 'http://gitea:3000').replace(/\/$/, '')
-const GITEA_TOKEN = process.env.GITEA_ADMIN_TOKEN ?? ''
 const ORION_URL = process.env.NEXTAUTH_URL ?? 'http://localhost:3000'
 
 export type BootstrapEvent =
@@ -62,7 +60,7 @@ function runCommand(
 
 // ── ArgoCD manifests ──────────────────────────────────────────────────────────
 
-function argoCdAppProject(envName: string, giteaRepoUrl: string): string {
+function argoCdAppProject(envName: string, repoUrl: string): string {
   return `apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -71,7 +69,7 @@ metadata:
 spec:
   description: ORION-managed environment ${envName}
   sourceRepos:
-    - '${giteaRepoUrl}'
+    - '${repoUrl}'
   destinations:
     - namespace: '*'
       server: https://kubernetes.default.svc
@@ -81,7 +79,7 @@ spec:
 `
 }
 
-function argoCdApplication(envName: string, giteaRepoUrl: string): string {
+function argoCdApplication(envName: string, repoUrl: string): string {
   return `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -92,7 +90,7 @@ metadata:
 spec:
   project: ${envName}
   source:
-    repoURL: ${giteaRepoUrl}
+    repoURL: ${repoUrl}
     targetRevision: main
     path: .
   destination:
@@ -241,24 +239,25 @@ export async function bootstrapCluster(
     emit({ type: 'step', message: 'Verifying cluster connectivity...' })
     await runCommand('kubectl', ['cluster-info'], kenv, msg => emit({ type: 'log', message: msg }))
 
-    // 3. Ensure Gitea repo
-    emit({ type: 'step', message: 'Creating Gitea repository...' })
-    const giteaOwner = env.giteaOwner ?? 'orion'
-    const giteaRepo = env.giteaRepo ?? env.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+    // 3. Ensure git repo
+    emit({ type: 'step', message: 'Creating git repository...' })
+    const gitOwner = env.gitOwner ?? 'orion'
+    const gitRepo  = env.gitRepo  ?? env.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
     const orionUrl = ORION_URL.replace(/\/$/, '')
 
-    const giteaHealthCheck = await giteaHealthy()
-    if (!giteaHealthCheck) {
-      emit({ type: 'log', message: 'Gitea not reachable — skipping repo creation (will retry on next bootstrap)' })
+    const provider = await getGitProvider()
+    const providerHealthy = await provider.isHealthy()
+    if (!providerHealthy) {
+      emit({ type: 'log', message: 'Git provider not reachable — skipping repo creation (will retry on next bootstrap)' })
     } else {
       await bootstrapEnvironmentRepo({
-        owner: giteaOwner,
-        repoName: giteaRepo,
+        owner: gitOwner,
+        repoName: gitRepo,
         description: `ORION-managed K8s cluster: ${env.name}`,
         webhookUrl: `${orionUrl}/api/webhooks/gitea`,
-        webhookSecret: process.env.GITEA_WEBHOOK_SECRET ?? randomBytes(32).toString('hex'),
+        webhookSecret: randomBytes(32).toString('hex'),
       })
-      emit({ type: 'log', message: `Gitea repo: ${GITEA_URL}/${giteaOwner}/${giteaRepo}` })
+      emit({ type: 'log', message: `Git repo created: ${provider.getPRUrl(gitOwner, gitRepo, 0).replace(/\/pull\/0$/, '')}` })
     }
 
     // 4. Add Argo Helm repo
@@ -288,29 +287,17 @@ export async function bootstrapCluster(
     )
 
     // 6. Configure ArgoCD (AppProject + Application)
-    if (giteaHealthCheck && env.giteaRepo) {
+    if (providerHealthy && env.gitRepo) {
       emit({ type: 'step', message: 'Configuring ArgoCD...' })
-      const giteaRepoUrl = `${GITEA_URL}/${giteaOwner}/${giteaRepo}.git`
-
-      // Register Gitea repo credentials with ArgoCD
-      await runCommand(
-        'kubectl',
-        [
-          'create', 'secret', 'generic', `gitea-${giteaRepo}`,
-          '-n', 'argocd',
-          `--from-literal=url=${giteaRepoUrl}`,
-          `--from-literal=username=orion`,
-          `--from-literal=password=${GITEA_TOKEN}`,
-          '--dry-run=client', '-o', 'yaml',
-        ],
-        kenv,
-        () => { /* suppress */ },
-      )
+      // Use the git provider's repo URL (clone URL without .git suffix stripped for display)
+      const gitRepoCloneUrl = provider.getPRUrl(gitOwner, gitRepo, 0)
+        .replace(/\/pull\/0$/, '')
+        .replace(/\/-\/merge_requests\/0$/, '') + '.git'
 
       const appProjectYaml = join(tmpDir, 'appproject.yaml')
       const appYaml = join(tmpDir, 'application.yaml')
-      await writeFile(appProjectYaml, argoCdAppProject(env.name, giteaRepoUrl))
-      await writeFile(appYaml, argoCdApplication(env.name, giteaRepoUrl))
+      await writeFile(appProjectYaml, argoCdAppProject(env.name, gitRepoCloneUrl))
+      await writeFile(appYaml, argoCdApplication(env.name, gitRepoCloneUrl))
 
       await runCommand(
         'kubectl', ['apply', '-f', appProjectYaml],
@@ -320,7 +307,7 @@ export async function bootstrapCluster(
         'kubectl', ['apply', '-f', appYaml],
         kenv, msg => emit({ type: 'log', message: msg }),
       )
-      emit({ type: 'log', message: `ArgoCD watching: ${giteaRepoUrl}` })
+      emit({ type: 'log', message: `ArgoCD watching: ${gitRepoCloneUrl}` })
     }
 
     // 7. Deploy Gateway
@@ -340,13 +327,13 @@ export async function bootstrapCluster(
       kenv, msg => emit({ type: 'log', message: msg }),
     )
 
-    // 8. Update environment record with Gitea info + ArgoCD URL
+    // 8. Update environment record with git repo info + ArgoCD URL
     const argoCdUrl = `https://argocd.${env.name}.internal` // placeholder; real URL depends on ingress
     await prisma.environment.update({
       where: { id: environmentId },
       data: {
-        giteaOwner,
-        giteaRepo,
+        gitOwner,
+        gitRepo,
         argoCdUrl,
         status: 'connected',
       },

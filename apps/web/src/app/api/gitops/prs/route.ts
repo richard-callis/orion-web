@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'desc' },
     take: limit,
     include: {
-      environment: { select: { id: true, name: true, type: true, giteaOwner: true, giteaRepo: true } },
+      environment: { select: { id: true, name: true, type: true, gitOwner: true, gitRepo: true } },
     },
   })
 

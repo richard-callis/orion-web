@@ -15,9 +15,11 @@ services:
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: ${VAULT_TOKEN}
+      # Git provider — configured via first-run wizard (stored in DB).
+      # These env vars are used as fallback before the wizard completes.
       GITEA_URL: http://gitea:3000
-      GITEA_ADMIN_TOKEN: ${GITEA_ADMIN_TOKEN}
-      GITEA_WEBHOOK_SECRET: ${GITEA_WEBHOOK_SECRET}
+      GITEA_ADMIN_TOKEN: ${GITEA_ADMIN_TOKEN:-}
+      GITEA_WEBHOOK_SECRET: ${GITEA_WEBHOOK_SECRET:-}
       MANAGEMENT_IP: ${MANAGEMENT_IP:-}
       COREDNS_DIR: /etc/coredns-managed
       LOCALHOST_JOIN_TOKEN: ${LOCALHOST_JOIN_TOKEN}
@@ -56,26 +58,32 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - gateway-creds:/gateway-creds
 
-  # ── Gitea ──────────────────────────────────────────────────────────────────
+  # ── Gitea (optional — activate with: docker compose --profile gitea up) ────
+  # Only needed when using the bundled Gitea git provider.
+  # If connecting to GitHub, GitLab, or an external Gitea, leave this profile inactive.
   gitea:
+    profiles: [gitea]
     image: gitea/gitea:latest
     restart: unless-stopped
     environment:
       USER_UID: 1000
       USER_GID: 1000
       GITEA__database__DB_TYPE: sqlite3
-      GITEA__server__DOMAIN: ${GITEA_DOMAIN:-gitea.khalis.corp}
-      GITEA__server__ROOT_URL: https://${GITEA_DOMAIN:-gitea.khalis.corp}
-      GITEA__server__SSH_DOMAIN: ${GITEA_DOMAIN:-gitea.khalis.corp}
+      GITEA__server__DOMAIN: ${GITEA_DOMAIN:-gitea.internal}
+      GITEA__server__ROOT_URL: https://${GITEA_DOMAIN:-gitea.internal}
+      GITEA__server__SSH_DOMAIN: ${GITEA_DOMAIN:-gitea.internal}
       GITEA__server__SSH_PORT: 2222
       GITEA__webhook__ALLOWED_HOST_LIST: orion
+      # Pre-create admin user so ORION can generate an API token via basic auth during setup
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__admin__DISABLE_REGULAR_ORG_CREATION: "false"
     volumes:
       - gitea-data:/data
     ports:
       - "2222:22"
     labels:
       traefik.enable: "true"
-      traefik.http.routers.gitea.rule: "Host(`${GITEA_DOMAIN:-gitea.khalis.corp}`)"
+      traefik.http.routers.gitea.rule: "Host(`${GITEA_DOMAIN:-gitea.internal}`)"
       traefik.http.routers.gitea.entrypoints: "websecure"
       traefik.http.services.gitea.loadbalancer.server.port: "3000"
 

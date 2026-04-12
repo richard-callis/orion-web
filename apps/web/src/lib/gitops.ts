@@ -3,28 +3,21 @@
  *
  * High-level API consumed by ORION's AI agents.
  * Given a set of manifest changes, this module:
- *   1. Creates a feature branch in the environment's Gitea repo
+ *   1. Creates a feature branch in the environment's git repo
  *   2. Commits the changed files
  *   3. Evaluates the auto-merge policy
  *   4. Opens a PR (with AI reasoning as the description)
  *   5. Auto-merges or leaves for human review
  *   6. Cleans up the branch after merge
  *
- * The environment's Gitea repo is the source of truth.
- * ArgoCD (K8s) or Gitea Actions runner (Docker) picks up the merged commit.
+ * The environment's git repo is the source of truth.
+ * ArgoCD (K8s) or a CI runner (Docker) picks up the merged commit.
+ *
+ * Provider-agnostic: Gitea / GitHub / GitLab all work transparently
+ * via the GitProvider interface in lib/git-provider/.
  */
 
-import {
-  commitFiles,
-  createBranch,
-  createPR,
-  mergePR,
-  deleteBranch,
-  ensureRepo,
-  ensureWebhook,
-  type GiteaPR,
-  type CreateRepoOptions,
-} from './gitea'
+import { getGitProvider, type GitProvider } from './git-provider'
 import {
   classifyAndEvaluate,
   type PolicyConfig,
@@ -40,9 +33,9 @@ export interface ManifestChange {
 }
 
 export interface GitOpsChangeOptions {
-  /** Gitea owner (user or org) */
+  /** Repo owner (user or org) */
   owner: string
-  /** Gitea repo name */
+  /** Repo name */
   repo: string
   /** Human-readable title for the PR */
   title: string
@@ -62,7 +55,8 @@ export interface GitOpsChangeOptions {
 }
 
 export interface GitOpsChangeResult {
-  pr: GiteaPR
+  prNumber: number
+  prUrl: string
   classification: ChangeClassification
   merged: boolean
   branch: string
@@ -73,10 +67,18 @@ export interface GitOpsChangeResult {
 /**
  * Propose and (possibly) apply a GitOps change.
  *
- * Returns the PR and whether it was auto-merged.
- * If `merged === false` the PR is open in Gitea waiting for human approval.
+ * Returns the PR info and whether it was auto-merged.
+ * If `merged === false` the PR is open waiting for human approval.
  */
 export async function proposeChange(opts: GitOpsChangeOptions): Promise<GitOpsChangeResult> {
+  const provider = await getGitProvider()
+  return proposeChangeWithProvider(provider, opts)
+}
+
+export async function proposeChangeWithProvider(
+  provider: GitProvider,
+  opts: GitOpsChangeOptions,
+): Promise<GitOpsChangeResult> {
   const classification = classifyAndEvaluate(
     opts.operationDescription,
     opts.policy,
@@ -91,10 +93,10 @@ export async function proposeChange(opts: GitOpsChangeOptions): Promise<GitOpsCh
   const branch = `${opts.branchPrefix ?? 'orion/auto'}/${slug}-${Date.now()}`
 
   // 1. Create branch from main
-  await createBranch(opts.owner, opts.repo, branch, 'main')
+  await provider.createBranch(opts.owner, opts.repo, branch, 'main')
 
   // 2. Commit all changed files in one atomic commit
-  await commitFiles({
+  await provider.commitFiles({
     owner: opts.owner,
     repo: opts.repo,
     branch,
@@ -106,7 +108,7 @@ export async function proposeChange(opts: GitOpsChangeOptions): Promise<GitOpsCh
   const prBody = buildPRBody(opts.reasoning, classification)
 
   // 4. Open the PR
-  const pr = await createPR({
+  const pr = await provider.createPR({
     owner: opts.owner,
     repo: opts.repo,
     title: opts.title,
@@ -119,23 +121,24 @@ export async function proposeChange(opts: GitOpsChangeOptions): Promise<GitOpsCh
   // 5. Auto-merge if policy allows
   let merged = false
   if (classification.decision === 'auto') {
-    await mergePR({
-      owner: opts.owner,
-      repo: opts.repo,
-      index: pr.number,
-      message: `Auto-merged by ORION: ${opts.title}`,
-    })
+    await provider.mergePR(opts.owner, opts.repo, pr.number, `Auto-merged by ORION: ${opts.title}`)
     merged = true
 
     // 6. Clean up branch after merge
     try {
-      await deleteBranch(opts.owner, opts.repo, branch)
+      await provider.deleteBranch(opts.owner, opts.repo, branch)
     } catch {
       // Non-fatal — branch cleanup is best-effort
     }
   }
 
-  return { pr, classification, merged, branch }
+  return {
+    prNumber: pr.number,
+    prUrl: pr.htmlUrl,
+    classification,
+    merged,
+    branch,
+  }
 }
 
 // ── Environment repo bootstrap ────────────────────────────────────────────────
@@ -153,30 +156,28 @@ export interface BootstrapRepoOptions {
 
 /**
  * Called when a new environment is registered in ORION.
- * Ensures the Gitea repo exists and sets up the webhook.
- *
- * If `opts.envType` is provided, a full scaffold is committed:
- *   - 'cluster' → README + argocd/appproject.yaml + argocd/root-application.yaml
- *   - 'docker'  → README + .gitea/workflows/deploy.yml
- *
- * Placeholder tokens in YAML templates:
- *   <ENV_NAME>        → opts.repoName
- *   <GITEA_REPO_URL>  → filled in by cluster-bootstrap.ts after creation
+ * Ensures the git repo exists and sets up the webhook.
  */
 export async function bootstrapEnvironmentRepo(opts: BootstrapRepoOptions) {
-  const repoOpts: CreateRepoOptions = {
+  const provider = await getGitProvider()
+  return bootstrapEnvironmentRepoWithProvider(provider, opts)
+}
+
+export async function bootstrapEnvironmentRepoWithProvider(
+  provider: GitProvider,
+  opts: BootstrapRepoOptions,
+) {
+  const repo = await provider.ensureRepo({
     owner: opts.owner,
     name: opts.repoName,
     description: opts.description ?? `ORION-managed environment: ${opts.repoName}`,
     private: true,
-  }
+  })
 
-  const repo = await ensureRepo(repoOpts)
-
-  const files: { path: string; content: string }[] = buildScaffoldFiles(opts)
+  const files = buildScaffoldFiles(opts)
 
   try {
-    await commitFiles({
+    await provider.commitFiles({
       owner: opts.owner,
       repo: opts.repoName,
       branch: 'main',
@@ -187,9 +188,8 @@ export async function bootstrapEnvironmentRepo(opts: BootstrapRepoOptions) {
     // Repo may already have a README from auto_init — non-fatal
   }
 
-  // Register ORION webhook so PR merges can trigger status updates
   if (opts.webhookUrl && opts.webhookSecret) {
-    await ensureWebhook(opts.owner, opts.repoName, opts.webhookUrl, opts.webhookSecret)
+    await provider.ensureWebhook(opts.owner, opts.repoName, opts.webhookUrl, opts.webhookSecret)
   }
 
   return repo
@@ -210,7 +210,7 @@ metadata:
 spec:
   description: "ORION-managed cluster: ${envName}"
   sourceRepos:
-    - '<GITEA_REPO_URL>'
+    - '<GIT_REPO_URL>'
   destinations:
     - namespace: '*'
       server: https://kubernetes.default.svc
@@ -232,7 +232,7 @@ metadata:
 spec:
   project: ${envName}
   source:
-    repoURL: '<GITEA_REPO_URL>'
+    repoURL: '<GIT_REPO_URL>'
     targetRevision: main
     path: .
     directory:
@@ -257,52 +257,13 @@ spec:
   }
 
   if (opts.envType === 'docker') {
-    const readme = `# ${envName}\n\nThis repo is managed by ORION. Changes are applied via Gitea Actions runner.\n\n## Directory Layout\n\n\`\`\`\nservices/\n├── <service-name>/\n│   ├── docker-compose.yml\n│   ├── .env.example\n│   └── README.md\n└── ...\n\n.gitea/\n└── workflows/\n    └── deploy.yml\n\`\`\`\n\nSee [ORION env-scaffold docs](https://github.com/richard-callis/orion-web) for details.\n`
-
-    const deployWorkflow = `name: Deploy
-
-on:
-  push:
-    branches: [main]
-
-jobs:
-  deploy:
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Deploy changed services
-        run: |
-          # Find changed service directories
-          CHANGED=$(git diff --name-only HEAD~1 HEAD | grep '^services/' | cut -d/ -f1-2 | sort -u)
-
-          for SERVICE_DIR in $CHANGED; do
-            if [ -f "$SERVICE_DIR/docker-compose.yml" ]; then
-              echo "Deploying $SERVICE_DIR..."
-              cd "$SERVICE_DIR"
-              docker compose pull
-              docker compose up -d --remove-orphans
-              cd -
-            fi
-          done
-
-      - name: Report status to ORION
-        if: always()
-        run: |
-          curl -s -X POST "$ORION_URL/api/webhooks/gitea" \\
-            -H "Content-Type: application/json" \\
-            -d '{"action":"deploy_complete","status":"\${{ job.status }}"}'
-        env:
-          ORION_URL: \${{ secrets.ORION_URL }}
-`
+    const readme = `# ${envName}\n\nThis repo is managed by ORION. Changes are applied via CI runner.\n\n## Directory Layout\n\n\`\`\`\nservices/\n├── <service-name>/\n│   ├── docker-compose.yml\n│   ├── .env.example\n│   └── README.md\n└── ...\n\`\`\`\n\nSee [ORION env-scaffold docs](https://github.com/richard-callis/orion-web) for details.\n`
 
     return [
       { path: 'README.md', content: readme },
-      { path: '.gitea/workflows/deploy.yml', content: deployWorkflow },
     ]
   }
 
-  // Default: minimal README only (backwards-compatible)
   return [
     {
       path: 'README.md',

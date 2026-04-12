@@ -33,8 +33,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (body.status       !== undefined) data.status       = body.status
   if (body.lastSeen     !== undefined) data.lastSeen     = body.lastSeen ? new Date(body.lastSeen) : null
   if (body.metadata     !== undefined) data.metadata     = body.metadata
-  if (body.giteaOwner   !== undefined) data.giteaOwner   = body.giteaOwner   || null
-  if (body.giteaRepo    !== undefined) data.giteaRepo    = body.giteaRepo    || null
+  if (body.gitOwner     !== undefined) data.gitOwner     = body.gitOwner     || null
+  if (body.gitRepo      !== undefined) data.gitRepo      = body.gitRepo      || null
   if (body.argoCdUrl    !== undefined) data.argoCdUrl    = body.argoCdUrl    || null
   if (body.policyConfig !== undefined) data.policyConfig = body.policyConfig
   if (body.kubeconfig   !== undefined && body.kubeconfig !== '••••') {
