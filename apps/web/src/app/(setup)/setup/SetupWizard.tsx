@@ -244,35 +244,36 @@ function Step3Git({ onNext }: { onNext: () => void }) {
   const [loading, setLoading] = useState(false)
   const [autoSubmitting, setAutoSubmitting] = useState(false)
 
-  // On mount: fetch bootstrap config — if bundled Gitea credentials are pre-generated,
-  // auto-fill the fields and submit immediately (no user action needed)
+  // On mount: fetch bootstrap config — if bundled Gitea is detected, auto-submit
   useEffect(() => {
     fetch('/api/setup/bootstrap-config')
       .then(r => r.json())
       .then(async (d) => {
-        if (d.giteaBundled && d.giteaAdminUser && d.giteaAdminPassword) {
-          setAdminUser(d.giteaAdminUser)
-          setAdminPassword(d.giteaAdminPassword)
-          setProviderType('gitea-bundled')
-          setAutoSubmitting(true)
-          const res = await fetch('/api/setup/git-provider', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              type: 'gitea-bundled',
-              adminUser: d.giteaAdminUser,
-              adminPassword: d.giteaAdminPassword,
-              org: 'orion',
-            }),
-          })
-          setAutoSubmitting(false)
-          if (res.ok) {
-            sessionStorage.setItem('orion_setup_step', '4')
-            onNext()
-          } else {
-            const data = await res.json()
-            setError(data.error ?? 'Failed to configure bundled Gitea')
-          }
+        if (!d.giteaBundled) return
+        setProviderType('gitea-bundled')
+        setAutoSubmitting(true)
+
+        // Prefer pre-generated token; fall back to user+password
+        const body: Record<string, string> = { type: 'gitea-bundled', org: 'orion' }
+        if (d.giteaAdminToken) {
+          body.token = d.giteaAdminToken
+        } else {
+          body.adminUser     = d.giteaAdminUser
+          body.adminPassword = d.giteaAdminPassword
+        }
+
+        const res = await fetch('/api/setup/git-provider', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        setAutoSubmitting(false)
+        if (res.ok) {
+          sessionStorage.setItem('orion_setup_step', '4')
+          onNext()
+        } else {
+          const data = await res.json()
+          setError(data.error ?? 'Failed to configure bundled Gitea')
         }
       })
       .catch(() => {})

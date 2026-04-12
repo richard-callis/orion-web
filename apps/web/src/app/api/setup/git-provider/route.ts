@@ -49,31 +49,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'type and org are required' }, { status: 400 })
   }
 
-  // ── Bundled Gitea: bootstrap admin token via basic auth ───────────────────
+  // ── Bundled Gitea: use pre-generated token or bootstrap via basic auth ────
 
   let token = rawToken ?? ''
 
   if (type === 'gitea-bundled') {
-    if (!adminUser || !adminPassword) {
+    if (token) {
+      // Pre-generated token from bootstrap.sh — use directly, no basic auth needed
+    } else if (adminUser && adminPassword) {
+      // Fallback: create token via basic auth
+      const giteaProvider = new GiteaGitProvider({ url: 'http://gitea:3000', token: '' })
+      try {
+        const tokenName = `orion-admin-${Date.now()}`
+        token = await giteaProvider.createAdminToken(adminUser, adminPassword, tokenName)
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return NextResponse.json(
+          { error: `Failed to create Gitea admin token: ${msg}` },
+          { status: 502 },
+        )
+      }
+    } else {
       return NextResponse.json(
-        { error: 'adminUser and adminPassword are required for bundled Gitea' },
+        { error: 'token or adminUser+adminPassword are required for bundled Gitea' },
         { status: 400 },
-      )
-    }
-
-    const giteaProvider = new GiteaGitProvider({
-      url: 'http://gitea:3000',
-      token: '',
-    })
-
-    try {
-      const tokenName = `orion-admin-${Date.now()}`
-      token = await giteaProvider.createAdminToken(adminUser, adminPassword, tokenName)
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      return NextResponse.json(
-        { error: `Failed to create Gitea admin token: ${msg}` },
-        { status: 502 },
       )
     }
   } else {

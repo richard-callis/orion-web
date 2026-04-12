@@ -116,7 +116,7 @@ echo ""
 echo "Starting stack..."
 GITHUB_ORG="${GITHUB_ORG}" $COMPOSE up -d
 
-# ── Create Gitea admin user (bundled profile only) ────────────────────────────
+# ── Create Gitea admin user + pre-generate API token (bundled profile only) ───
 if [[ "${GIT_PROVIDER:-gitea-bundled}" == "gitea-bundled" ]]; then
   echo ""
   echo "Waiting for Gitea to start (up to 60s)..."
@@ -126,6 +126,7 @@ if [[ "${GIT_PROVIDER:-gitea-bundled}" == "gitea-bundled" ]]; then
     sleep 5
   done
 
+  # Create admin user (idempotent — ignore "already exists" error)
   echo "Creating Gitea admin user (${GITEA_ADMIN_USER:-gitea-admin})..."
   GITHUB_ORG="${GITHUB_ORG}" $COMPOSE exec -T --user git gitea \
     gitea admin user create \
@@ -133,8 +134,34 @@ if [[ "${GIT_PROVIDER:-gitea-bundled}" == "gitea-bundled" ]]; then
       --username "${GITEA_ADMIN_USER:-gitea-admin}" \
       --password "${GITEA_ADMIN_PASSWORD}" \
       --email "admin@local" \
-      --must-change-password false 2>&1 \
+      --must-change-password=false 2>&1 \
     | grep -v "^$" || true
+
+  # Generate an API token via CLI so wizard can skip basic-auth entirely
+  if ! grep -q "^GITEA_ADMIN_TOKEN=[^[:space:]]" "$DEPLOY_DIR/.env" 2>/dev/null; then
+    echo "Generating Gitea admin API token..."
+    # Delete any existing token with same name first (re-run safety)
+    GITHUB_ORG="${GITHUB_ORG}" $COMPOSE exec -T --user git gitea \
+      gitea admin user delete-token \
+        --username "${GITEA_ADMIN_USER:-gitea-admin}" \
+        --name "orion-bootstrap" 2>/dev/null || true
+
+    GITEA_TOKEN=$(GITHUB_ORG="${GITHUB_ORG}" $COMPOSE exec -T --user git gitea \
+      gitea admin user generate-access-token \
+        --username "${GITEA_ADMIN_USER:-gitea-admin}" \
+        --token-name "orion-bootstrap" \
+        --raw 2>&1 | tail -1 | tr -d '[:space:]')
+
+    if [[ -n "$GITEA_TOKEN" ]]; then
+      sed -i '/^GITEA_ADMIN_TOKEN=/d' "$DEPLOY_DIR/.env"
+      echo "GITEA_ADMIN_TOKEN=${GITEA_TOKEN}" >> "$DEPLOY_DIR/.env"
+      echo "Stored Gitea admin token in .env."
+      # Reload so ORION picks it up
+      GITHUB_ORG="${GITHUB_ORG}" $COMPOSE up -d --no-deps orion
+    else
+      echo "WARNING: Failed to generate Gitea admin token — wizard will use basic auth fallback."
+    fi
+  fi
 fi
 
 # ── Print setup token from ORION logs ─────────────────────────────────────────
