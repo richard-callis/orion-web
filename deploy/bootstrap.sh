@@ -116,6 +116,15 @@ echo ""
 echo "Starting stack..."
 GITHUB_ORG="${GITHUB_ORG}" $COMPOSE up -d
 
+# ── Wait for ORION + capture setup token (before any restarts) ────────────────
+echo ""
+echo "Waiting for ORION to start (up to 30s)..."
+for i in $(seq 1 6); do
+  SETUP_TOKEN=$(GITHUB_ORG="${GITHUB_ORG}" $COMPOSE logs orion 2>&1 | grep "SETUP_TOKEN" | tail -1 | awk '{print $NF}')
+  [[ -n "$SETUP_TOKEN" ]] && break
+  sleep 5
+done
+
 # ── Create Gitea admin user + pre-generate API token (bundled profile only) ───
 if [[ "${GIT_PROVIDER:-gitea-bundled}" == "gitea-bundled" ]]; then
   echo ""
@@ -156,22 +165,13 @@ if [[ "${GIT_PROVIDER:-gitea-bundled}" == "gitea-bundled" ]]; then
       sed -i '/^GITEA_ADMIN_TOKEN=/d' "$DEPLOY_DIR/.env"
       echo "GITEA_ADMIN_TOKEN=${GITEA_TOKEN}" >> "$DEPLOY_DIR/.env"
       echo "Stored Gitea admin token in .env."
-      # Reload so ORION picks it up
+      # Restart ORION to pick up the new token (setup token stays in DB — wizard still works)
       GITHUB_ORG="${GITHUB_ORG}" $COMPOSE up -d --no-deps orion
     else
       echo "WARNING: Failed to generate Gitea admin token — wizard will use basic auth fallback."
     fi
   fi
 fi
-
-# ── Print setup token from ORION logs ─────────────────────────────────────────
-echo ""
-echo "Waiting for ORION to start (up to 30s)..."
-for i in $(seq 1 6); do
-  SETUP_TOKEN=$(GITHUB_ORG="${GITHUB_ORG}" $COMPOSE logs orion 2>&1 | grep "SETUP_TOKEN" | tail -1 | awk '{print $NF}')
-  [[ -n "$SETUP_TOKEN" ]] && break
-  sleep 5
-done
 
 if [[ -n "${SETUP_TOKEN:-}" ]]; then
   echo ""
