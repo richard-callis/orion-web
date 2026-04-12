@@ -15,9 +15,9 @@ export interface AppUser {
 export const authOptions: NextAuthOptions = {
   session: { strategy: 'jwt' },
   secret: process.env.NEXTAUTH_SECRET,
-  // Allow access from any host (IP, domain, etc.) — NEXTAUTH_URL is used for
-  // email links/OAuth redirects only, not to gate CSRF origin checks.
-  trustHost: true,
+  // Allow access from any host (IP, domain, etc.) — spread avoids TS excess-property check
+  // trustHost is supported at runtime in next-auth v4 but not reflected in its types.
+  ...{ trustHost: true },
   pages: {
     signIn: '/login',
   },
