@@ -23,6 +23,10 @@ services:
       GITEA_ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-}
       GITEA_WEBHOOK_SECRET: ${GITEA_WEBHOOK_SECRET:-}
       MANAGEMENT_IP: ${MANAGEMENT_IP:-}
+      # URL gateways/clusters use to reach ORION (bypasses Cloudflare, works from cluster nodes).
+      # Defaults to http://<management IP>:3000 during initial setup.
+      # Override in .env with your public domain once HTTPS is configured.
+      ORION_CALLBACK_URL: ${ORION_CALLBACK_URL:-http://${MANAGEMENT_IP:-localhost}:3000}
       COREDNS_DIR: /etc/coredns-managed
       LOCALHOST_JOIN_TOKEN: ${LOCALHOST_JOIN_TOKEN}
     volumes:
