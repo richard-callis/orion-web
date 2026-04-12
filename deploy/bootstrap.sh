@@ -72,6 +72,23 @@ if grep -q "^NEXTAUTH_SECRET=change-me" "$DEPLOY_DIR/.env"; then
   echo "Generated NEXTAUTH_SECRET."
 fi
 
+# ── Auto-generate bundled Gitea admin credentials ─────────────────────────────
+if [[ "${GIT_PROVIDER:-gitea-bundled}" == "gitea-bundled" ]]; then
+  if ! grep -q "^GITEA_ADMIN_USER=" "$DEPLOY_DIR/.env" || \
+     grep -q "^GITEA_ADMIN_USER=$" "$DEPLOY_DIR/.env"; then
+    sed -i '/^GITEA_ADMIN_USER=/d' "$DEPLOY_DIR/.env"
+    echo "GITEA_ADMIN_USER=gitea-admin" >> "$DEPLOY_DIR/.env"
+    echo "Set GITEA_ADMIN_USER=gitea-admin."
+  fi
+  if ! grep -q "^GITEA_ADMIN_PASSWORD=" "$DEPLOY_DIR/.env" || \
+     grep -q "^GITEA_ADMIN_PASSWORD=$" "$DEPLOY_DIR/.env"; then
+    GITEA_PASS=$(openssl rand -hex 16)
+    sed -i '/^GITEA_ADMIN_PASSWORD=/d' "$DEPLOY_DIR/.env"
+    echo "GITEA_ADMIN_PASSWORD=${GITEA_PASS}" >> "$DEPLOY_DIR/.env"
+    echo "Generated GITEA_ADMIN_PASSWORD."
+  fi
+fi
+
 # ── Fix coredns dir ownership (ORION runs as uid=1001, needs write access) ────
 chown -R 1001:1001 "$DEPLOY_DIR/coredns" 2>/dev/null || true
 

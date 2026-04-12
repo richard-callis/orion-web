@@ -1,5 +1,4 @@
 . {
-    # Forward all non-internal queries to upstream DNS
     forward . 1.1.1.1 8.8.8.8
     cache 30
     errors
@@ -7,9 +6,8 @@
     reload
 }
 
-example.corp {
-    # Authoritative zone for internal domain — replaced by ORION setup wizard
-    file /etc/coredns/zones/example.corp.db
+lab {
+    file /etc/coredns/zones/lab.db
     errors
     log
 }

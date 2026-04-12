@@ -1,0 +1,19 @@
+; lab zone file — managed by ORION, do not edit manually
+$ORIGIN lab.
+$TTL 60
+
+@   IN  SOA  ns1.lab. admin.lab. (
+        2026041121  ; serial
+        3600        ; refresh
+        900         ; retry
+        604800      ; expire
+        60          ; minimum TTL
+    )
+
+    IN  NS   ns1.lab.
+
+; Management node
+ns1   IN  A  localhost
+orion IN  A  localhost
+gitea IN  A  localhost
+vault IN  A  localhost

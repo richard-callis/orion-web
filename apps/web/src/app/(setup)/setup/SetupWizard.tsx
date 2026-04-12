@@ -239,9 +239,44 @@ function Step3Git({ onNext }: { onNext: () => void }) {
   const [token, setToken] = useState('')
   const [adminUser, setAdminUser] = useState('')
   const [adminPassword, setAdminPassword] = useState('')
-  const [org, setOrg] = useState('')
+  const [org, setOrg] = useState('orion')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [autoSubmitting, setAutoSubmitting] = useState(false)
+
+  // On mount: fetch bootstrap config — if bundled Gitea credentials are pre-generated,
+  // auto-fill the fields and submit immediately (no user action needed)
+  useEffect(() => {
+    fetch('/api/setup/bootstrap-config')
+      .then(r => r.json())
+      .then(async (d) => {
+        if (d.giteaBundled && d.giteaAdminUser && d.giteaAdminPassword) {
+          setAdminUser(d.giteaAdminUser)
+          setAdminPassword(d.giteaAdminPassword)
+          setProviderType('gitea-bundled')
+          setAutoSubmitting(true)
+          const res = await fetch('/api/setup/git-provider', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'gitea-bundled',
+              adminUser: d.giteaAdminUser,
+              adminPassword: d.giteaAdminPassword,
+              org: 'orion',
+            }),
+          })
+          setAutoSubmitting(false)
+          if (res.ok) {
+            sessionStorage.setItem('orion_setup_step', '4')
+            onNext()
+          } else {
+            const data = await res.json()
+            setError(data.error ?? 'Failed to configure bundled Gitea')
+          }
+        }
+      })
+      .catch(() => {})
+  }, [onNext])
 
   const isBundled = providerType === 'gitea-bundled'
   const needsUrl   = providerType === 'gitea' || providerType === 'gitlab'
@@ -284,6 +319,20 @@ function Step3Git({ onNext }: { onNext: () => void }) {
     })
     sessionStorage.setItem('orion_setup_step', '4')
     onNext()
+  }
+
+  if (autoSubmitting) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-base font-semibold text-text-primary mb-1">Git provider</h2>
+        </div>
+        <div className="flex items-center gap-3 text-sm text-text-muted">
+          <Loader2 size={16} className="animate-spin text-accent flex-shrink-0" />
+          Configuring bundled Gitea…
+        </div>
+      </div>
+    )
   }
 
   return (

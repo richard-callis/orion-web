@@ -77,6 +77,9 @@ services:
       # Pre-create admin user so ORION can generate an API token via basic auth during setup
       GITEA__security__INSTALL_LOCK: "true"
       GITEA__admin__DISABLE_REGULAR_ORG_CREATION: "false"
+      GITEA__admin__ADMIN_USER: ${GITEA_ADMIN_USER:-gitea-admin}
+      GITEA__admin__ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-}
+      GITEA__admin__ADMIN_EMAIL: admin@local
     volumes:
       - gitea-data:/data
     ports:
