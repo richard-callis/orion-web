@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { prisma } from './db'
+import { getPrompt, interpolate } from './system-prompts'
 import type { SDKAssistantMessage, SDKResultMessage } from '@anthropic-ai/claude-code'
 
 // Tool allowlist — read-only kubectl only
@@ -11,69 +12,37 @@ export const ALLOWED_TOOLS = [
   'Bash(kubectl top:*)',
 ]
 
-function getSystemPrompt(toolNames: string[] = [], basePrompt?: string): string {
+function readClusterContext(): string {
   const claudeMdPath = process.env.CLAUDE_MD_PATH ?? '/claude-config/CLAUDE.md'
-  let clusterContext = ''
-  try {
-    clusterContext = fs.readFileSync(claudeMdPath, 'utf8')
-  } catch {
-    clusterContext = '# Homelab cluster — no context file mounted'
-  }
+  try { return fs.readFileSync(claudeMdPath, 'utf8') } catch { return '# Homelab cluster — no context file mounted' }
+}
 
+async function getSystemPrompt(toolNames: string[] = [], basePrompt?: string): Promise<string> {
+  const clusterContext = readClusterContext()
   const persona = basePrompt ?? 'You are ORION, an AI assistant for homelab infrastructure management.'
 
   if (toolNames.length === 0) {
-    return `${persona}
-
-No gateway is connected right now. You cannot run commands or query the cluster.
-When asked about cluster state, be honest: say you have no gateway connected and cannot run commands.
-Do not list commands you would hypothetically run. Do not invent output. Just say you don't have access.`
+    const template = await getPrompt('system.main.no-gateway')
+    return interpolate(template, { persona })
   }
 
-  return `${persona}
-
-CURRENT STATE — READ THIS CAREFULLY:
-You have ${toolNames.length} MCP tools connected and working RIGHT NOW: ${toolNames.join(', ')}.
-This is the authoritative system state. Any earlier messages in this conversation that claimed "no gateway connected" or "I can't run commands" were from a previous state — they are now WRONG. Ignore them.
-
-Tool usage rules:
-- Call tools immediately when you need real data. Do not ask permission first.
-- NEVER make up or hallucinate command output. Always use a tool and return its real result.
-- If a tool fails, report the actual error message.
-- If a tool has optional parameters (flags, filters, selectors), USE THEM to give the best answer. Do not default to bare invocations when flags would give more complete or relevant results.
-- If an initial tool result does not fully answer the question, run it again with better options (e.g. scan a specific port, increase verbosity, filter by namespace). Never just say "it wasn't found" without checking more thoroughly first.
-- You may call the same tool multiple times in one turn if needed to get complete information.
-- If you need a capability that isn't in the tool list, use propose_tool to request it.
-
-Safety — do NOT use tools in ways that would harm the homelab:
-- No mass deletion (kubectl delete all, docker rm -f on everything, rm -rf on broad paths)
-- No commands that would take down core services (DNS, ingress, auth)
-- No writing or overwriting production secrets or credentials
-- Everything else that is informational, diagnostic, or a targeted change is fair game — use your judgement.
-
-${clusterContext}`
+  const template = await getPrompt('system.main')
+  return interpolate(template, {
+    toolCount:      String(toolNames.length),
+    toolList:       toolNames.join(', '),
+    clusterContext,
+  })
 }
 
-function getPlanningSystemPrompt(targetType: string): string {
-  const claudeMdPath = process.env.CLAUDE_MD_PATH ?? '/claude-config/CLAUDE.md'
-  let clusterContext = ''
-  try { clusterContext = fs.readFileSync(claudeMdPath, 'utf8') } catch { clusterContext = '# K3s Homelab — context file not mounted' }
+async function getPlanningSystemPrompt(targetType: string): Promise<string> {
+  const clusterContext = readClusterContext()
+  const scope = targetType === 'epic'    ? 'high-level epic (will be broken into features)'
+              : targetType === 'feature' ? 'feature (will be broken into backlog tasks)'
+              :                            'task (concrete implementation steps)'
+  const generateType = targetType === 'epic' ? 'features' : 'tasks'
 
-  const scope = targetType === 'epic' ? 'high-level epic (will be broken into features)'
-    : targetType === 'feature' ? 'feature (will be broken into backlog tasks)'
-    : 'task (concrete implementation steps)'
-
-  return `You are ORION, a technical planning assistant for a homelab infrastructure project.
-
-${clusterContext}
-
-PLANNING MODE — you are creating a plan for a ${scope}:
-- Run kubectl commands freely to inspect the cluster and gather information before planning
-- Ask clarifying questions if you genuinely need more information to produce a good plan
-- When you have gathered enough information and are ready to write the final plan, produce it in full:
-  - Use clear sections: Overview, Implementation Steps, Technical Details, Risks & Mitigations
-  - Be specific and actionable — this plan will be saved and used to auto-generate ${targetType === 'epic' ? 'features' : 'tasks'}
-  - Do NOT end the plan itself with open-ended questions like "What would you like to prioritize?" — the plan should be complete and self-contained`
+  const template = await getPrompt('system.planning')
+  return interpolate(template, { scope, generateType, clusterContext })
 }
 
 export interface StreamChunk {
@@ -244,16 +213,21 @@ export async function* streamOllamaChat(
   baseUrl?: string,
   abortSignal?: AbortSignal,
   userId?: string,
+  targetEnvironmentId?: string,
 ): AsyncGenerator<StreamChunk> {
-  // Load tools from the first connected gateway (if any)
+  // Load tools from the specified (or first connected) gateway
   const { GatewayClient } = await import('./agent-runner/gateway-client')
   type GatewayTool = import('./agent-runner/types').GatewayTool
   let gatewayTools: GatewayTool[] = []
   let gatewayClient: InstanceType<typeof GatewayClient> | null = null
 
-  const connectedEnv = await prisma.environment.findFirst({
-    where: { status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
-  })
+  const connectedEnv = targetEnvironmentId
+    ? await prisma.environment.findFirst({
+        where: { id: targetEnvironmentId, status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
+      })
+    : await prisma.environment.findFirst({
+        where: { status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
+      })
   if (connectedEnv?.gatewayUrl && connectedEnv.gatewayToken) {
     gatewayClient = new GatewayClient(connectedEnv.gatewayUrl, connectedEnv.gatewayToken)
     try {
@@ -265,12 +239,12 @@ export async function* streamOllamaChat(
 
   // No gateway — fall through to regular streaming chat with an honest system prompt
   if (!gatewayTools.length || !gatewayClient) {
-    yield* streamOllamaAgentChat(prompt, conversationId, getSystemPrompt([]), history, model, baseUrl, undefined, abortSignal)
+    yield* streamOllamaAgentChat(prompt, conversationId, await getSystemPrompt([]), history, model, baseUrl, undefined, abortSignal)
     return
   }
 
   // Tools available — run agentic loop (non-streaming turns with tool execution)
-  const systemPrompt = getSystemPrompt(gatewayTools.map(t => t.name))
+  const systemPrompt = await getSystemPrompt(gatewayTools.map(t => t.name))
   yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, history, model, baseUrl, gatewayTools, gatewayClient, connectedEnv!.id, abortSignal, userId)
 }
 
@@ -457,6 +431,7 @@ export async function* streamAgentChat(
   contextConfig: AgentContextConfig = {},
   agentId?: string,
   userId?: string,
+  targetEnvironmentId?: string,
 ): AsyncGenerator<StreamChunk> {
   const historyLimit   = contextConfig.historyMessages ?? 6
   const summarizeAfter = contextConfig.summarizeAfter  ?? 20
@@ -467,22 +442,29 @@ export async function* streamAgentChat(
   )
 
   // ── Helper: load gateway tools from this agent's connected environments ────────
-  // Prefers environments linked to the agent; falls back to any connected environment.
+  // Priority: explicit @mention target > agent-linked env > any connected env.
   const loadAgentGateway = async () => {
     const { GatewayClient } = await import('./agent-runner/gateway-client')
     type GatewayTool = import('./agent-runner/types').GatewayTool
 
-    // Try environments linked to this specific agent first
-    let connectedEnv = agentId
+    // If user targeted a specific environment via @mention, use it directly
+    let connectedEnv = targetEnvironmentId
       ? await prisma.environment.findFirst({
-          where: {
-            status: 'connected',
-            gatewayUrl: { not: null },
-            gatewayToken: { not: null },
-            agents: { some: { agentId } },
-          },
+          where: { id: targetEnvironmentId, status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
         })
       : null
+
+    // Try environments linked to this specific agent
+    if (!connectedEnv && agentId) {
+      connectedEnv = await prisma.environment.findFirst({
+        where: {
+          status: 'connected',
+          gatewayUrl: { not: null },
+          gatewayToken: { not: null },
+          agents: { some: { agentId } },
+        },
+      })
+    }
 
     // Fall back to any connected environment
     if (!connectedEnv) {
@@ -529,7 +511,7 @@ export async function* streamAgentChat(
 
     if (provider === 'ollama') {
       if (gw) {
-        const systemPrompt = getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt)
+        const systemPrompt = await getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt)
         yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, trimmedHistory, model, baseUrl, gw.tools, gw.gc, gw.environmentId, undefined, userId)
       } else {
         yield* streamOllamaAgentChat(prompt, conversationId, agentSystemPrompt + noGwSuffix, trimmedHistory, model, baseUrl, timeoutSecs)
@@ -538,7 +520,7 @@ export async function* streamAgentChat(
       // OpenAI-compatible endpoint (custom / openai / llama.cpp / etc.)
       if (!baseUrl) { yield { type: 'error', error: `No baseUrl configured for model ${model}` }; return }
       const systemPrompt = gw
-        ? getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt)
+        ? await getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt)
         : agentSystemPrompt + noGwSuffix
       yield* streamOpenAIChatCore(
         prompt, conversationId, systemPrompt, trimmedHistory,
@@ -677,22 +659,27 @@ export async function* streamOpenAIChat(
   apiKey?: string,
   abortSignal?: AbortSignal,
   userId?: string,
+  targetEnvironmentId?: string,
 ): AsyncGenerator<StreamChunk> {
-  // Load gateway tools
+  // Load gateway tools from specified or first connected environment
   const { GatewayClient } = await import('./agent-runner/gateway-client')
   type GatewayTool = import('./agent-runner/types').GatewayTool
   let gatewayTools: GatewayTool[] = []
   let gatewayClient: InstanceType<typeof GatewayClient> | null = null
 
-  const connectedEnv = await prisma.environment.findFirst({
-    where: { status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
-  })
+  const connectedEnv = targetEnvironmentId
+    ? await prisma.environment.findFirst({
+        where: { id: targetEnvironmentId, status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
+      })
+    : await prisma.environment.findFirst({
+        where: { status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
+      })
   if (connectedEnv?.gatewayUrl && connectedEnv.gatewayToken) {
     gatewayClient = new GatewayClient(connectedEnv.gatewayUrl, connectedEnv.gatewayToken)
     try { gatewayTools = await gatewayClient.listTools() } catch { /* proceed without tools */ }
   }
 
-  const systemPrompt = getSystemPrompt(gatewayTools.map(t => t.name))
+  const systemPrompt = await getSystemPrompt(gatewayTools.map(t => t.name))
   yield* streamOpenAIChatCore(
     prompt, conversationId, systemPrompt, history,
     model, baseUrl, apiKey,
@@ -701,6 +688,133 @@ export async function* streamOpenAIChat(
     connectedEnv?.id,
     abortSignal, userId,
   )
+}
+
+// ── Management tool handlers ──────────────────────────────────────────────────
+
+async function handleProposeTool(argsRaw: string, environmentId: string | undefined, conversationId: string): Promise<string> {
+  try {
+    const args = JSON.parse(argsRaw || '{}') as {
+      name?: string; description?: string; inputSchema?: object;
+      execType?: string; execConfig?: object
+    }
+    if (!args.name || !args.description || !args.inputSchema) {
+      return 'Error: propose_tool requires name, description, and inputSchema'
+    }
+    if (!environmentId) return 'Error: no environment context — cannot propose a tool'
+
+    const existing = await prisma.mcpTool.findUnique({
+      where: { environmentId_name: { environmentId, name: args.name } },
+    })
+    if (existing) {
+      return `Tool "${args.name}" already exists (status: ${existing.status}).`
+    }
+
+    await prisma.mcpTool.create({
+      data: {
+        environmentId,
+        name:        args.name,
+        description: args.description,
+        inputSchema: args.inputSchema as object,
+        execType:    (args.execType as string) || 'shell',
+        execConfig:  args.execConfig as object | undefined,
+        enabled:     false,
+        builtIn:     false,
+        status:      'pending',
+        proposedBy:  conversationId,
+        proposedAt:  new Date(),
+      },
+    })
+
+    return `Tool "${args.name}" proposed successfully. An admin will review and approve it from Administration → Environments → Approvals.`
+  } catch (e) {
+    return `Error proposing tool: ${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+async function handleOrionGetEnvironment(argsRaw: string): Promise<string> {
+  try {
+    const { environment_id } = JSON.parse(argsRaw || '{}') as { environment_id?: string }
+    if (!environment_id) return 'Error: environment_id is required'
+    const env = await prisma.environment.findUnique({ where: { id: environment_id } })
+    if (!env) return `Error: environment "${environment_id}" not found`
+    return JSON.stringify({
+      id:          env.id,
+      name:        env.name,
+      type:        env.type,
+      status:      env.status,
+      gatewayUrl:  env.gatewayUrl,
+      kubeconfig:  env.kubeconfig ? '••••' : null,
+      gitOwner:  env.gitOwner,
+      gitRepo:   env.gitRepo,
+    }, null, 2)
+  } catch (e) {
+    return `Error: ${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+async function handleOrionPatchEnvironment(argsRaw: string): Promise<string> {
+  try {
+    const { environment_id, body } = JSON.parse(argsRaw || '{}') as { environment_id?: string; body?: Record<string, unknown> }
+    if (!environment_id) return 'Error: environment_id is required'
+    if (!body || typeof body !== 'object') return 'Error: body must be an object'
+
+    // Only allow safe fields to be patched
+    const ALLOWED = ['kubeconfig', 'gatewayUrl', 'gitOwner', 'gitRepo', 'description']
+    const update: Record<string, unknown> = {}
+    for (const key of ALLOWED) {
+      if (key in body) update[key] = body[key]
+    }
+    if (!Object.keys(update).length) return 'Error: no patchable fields provided'
+
+    await prisma.environment.update({ where: { id: environment_id }, data: update })
+    return `Environment "${environment_id}" updated: ${Object.keys(update).join(', ')}`
+  } catch (e) {
+    return `Error: ${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+async function handleOrionBootstrapEnvironment(argsRaw: string): Promise<string> {
+  try {
+    const { environment_id } = JSON.parse(argsRaw || '{}') as { environment_id?: string }
+    if (!environment_id) return 'Error: environment_id is required'
+
+    const env = await prisma.environment.findUnique({ where: { id: environment_id } })
+    if (!env) return `Error: environment "${environment_id}" not found`
+    if (!env.kubeconfig) return 'Error: no kubeconfig stored for this environment. Patch it first using orion_patch_environment.'
+
+    // Call the bootstrap endpoint internally
+    const baseUrl = process.env.ORION_CALLBACK_URL ?? `http://localhost:${process.env.PORT ?? 3000}`
+    const res = await fetch(`${baseUrl}/api/environments/${environment_id}/bootstrap`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-call': '1' },
+    })
+    if (!res.ok) return `Bootstrap request failed: HTTP ${res.status}`
+
+    // Collect SSE stream output
+    const reader = res.body?.getReader()
+    if (!reader) return 'Bootstrap started (no stream output)'
+    const decoder = new TextDecoder()
+    const lines: string[] = []
+    let done = false
+    while (!done) {
+      const { value, done: d } = await reader.read()
+      done = d
+      if (value) {
+        const chunk = decoder.decode(value, { stream: true })
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const evt = JSON.parse(line.slice(6)) as { type: string; message?: string }
+            if (evt.message) lines.push(`[${evt.type}] ${evt.message}`)
+          } catch { /* skip */ }
+        }
+      }
+    }
+    return lines.length ? lines.join('\n') : 'Bootstrap completed (no output captured)'
+  } catch (e) {
+    return `Error: ${e instanceof Error ? e.message : String(e)}`
+  }
 }
 
 async function* streamOpenAIChatCore(
@@ -721,11 +835,82 @@ async function* streamOpenAIChatCore(
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
 
+  // Management tools — always available, executed server-side by ORION (not the gateway)
+  const MANAGEMENT_TOOLS = [
+    {
+      type: 'function' as const,
+      function: {
+        name: 'propose_tool',
+        description: 'Propose a new MCP tool for admin review. Use this when you need a capability that isn\'t in your current tool list. The admin will be notified to approve or reject the proposal.',
+        parameters: {
+          type: 'object',
+          properties: {
+            name:        { type: 'string', description: 'snake_case tool name' },
+            description: { type: 'string', description: 'Clear one-sentence description of what the tool does' },
+            inputSchema: {
+              type: 'object',
+              description: 'JSON Schema for the tool inputs (type: object, properties, required)',
+            },
+            execType:   { type: 'string', enum: ['shell', 'http', 'builtin'], description: 'How the tool is executed' },
+            execConfig: { type: 'object', description: 'Execution config: shell={command}, http={url,method}' },
+          },
+          required: ['name', 'description', 'inputSchema'],
+        },
+      },
+    },
+    {
+      type: 'function' as const,
+      function: {
+        name: 'orion_get_environment',
+        description: 'Get the configuration and status of an ORION environment, including whether kubeconfig is stored.',
+        parameters: {
+          type: 'object',
+          properties: {
+            environment_id: { type: 'string', description: 'Environment ID' },
+          },
+          required: ['environment_id'],
+        },
+      },
+    },
+    {
+      type: 'function' as const,
+      function: {
+        name: 'orion_patch_environment',
+        description: 'Update fields on an ORION environment (e.g. save kubeconfig, update gatewayUrl).',
+        parameters: {
+          type: 'object',
+          properties: {
+            environment_id: { type: 'string', description: 'Environment ID' },
+            body:           { type: 'object', description: 'Fields to update, e.g. {"kubeconfig": "<base64>"}' },
+          },
+          required: ['environment_id', 'body'],
+        },
+      },
+    },
+    {
+      type: 'function' as const,
+      function: {
+        name: 'orion_bootstrap_environment',
+        description: 'Trigger the bootstrap process for a Kubernetes cluster environment. Deploys ArgoCD and ORION Gateway into the cluster.',
+        parameters: {
+          type: 'object',
+          properties: {
+            environment_id: { type: 'string', description: 'Environment ID' },
+          },
+          required: ['environment_id'],
+        },
+      },
+    },
+  ]
+
   // OpenAI tool schema format
-  const openaiTools = tools.map(t => ({
-    type: 'function' as const,
-    function: { name: t.name, description: t.description, parameters: t.inputSchema },
-  }))
+  const openaiTools = [
+    ...MANAGEMENT_TOOLS,
+    ...tools.map(t => ({
+      type: 'function' as const,
+      function: { name: t.name, description: t.description, parameters: t.inputSchema },
+    })),
+  ]
 
   type OAIMessage = { role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }
   const messages: OAIMessage[] = [
@@ -736,6 +921,7 @@ async function* streamOpenAIChatCore(
 
   let totalText = ''
   const toolsUsed: string[] = []
+  const toolCallLog: Array<{ tool: string; input: string; output?: string }> = []
 
   try {
     // Agentic loop — handles tool calls until model returns a final text response
@@ -823,7 +1009,18 @@ async function* streamOpenAIChatCore(
         toolsUsed.push(tc.name)
 
         let result: string
-        if (gateway && environmentId) {
+
+        // ── Management tools — handled server-side by ORION ──────────────────
+        if (tc.name === 'propose_tool') {
+          result = await handleProposeTool(tc.argsRaw, environmentId, conversationId)
+        } else if (tc.name === 'orion_get_environment') {
+          result = await handleOrionGetEnvironment(tc.argsRaw)
+        } else if (tc.name === 'orion_patch_environment') {
+          result = await handleOrionPatchEnvironment(tc.argsRaw)
+        } else if (tc.name === 'orion_bootstrap_environment') {
+          result = await handleOrionBootstrapEnvironment(tc.argsRaw)
+        } else if (gateway && environmentId) {
+          // ── Gateway tools ─────────────────────────────────────────────────
           try {
             const args = JSON.parse(tc.argsRaw || '{}') as Record<string, unknown>
             const perm = await checkToolPermission(tc.name, args, environmentId, conversationId, userId)
@@ -839,6 +1036,7 @@ async function* streamOpenAIChatCore(
           result = 'No gateway connected'
         }
 
+        toolCallLog.push({ tool: tc.name, input: tc.argsRaw, output: result })
         yield { type: 'tool_result', tool: tc.name, output: result }
         messages.push({ role: 'tool', content: result, tool_call_id: tc.id })
       }
@@ -851,7 +1049,14 @@ async function* streamOpenAIChatCore(
 
     await Promise.all([
       prisma.message.create({ data: { conversationId, role: 'user', content: prompt } }),
-      prisma.message.create({ data: { conversationId, role: 'assistant', content: savedContent } }),
+      prisma.message.create({
+        data: {
+          conversationId,
+          role: 'assistant',
+          content: savedContent,
+          metadata: toolCallLog.length ? { toolCalls: toolCallLog } : undefined,
+        },
+      }),
       prisma.claudeInvocation.create({
         data: { conversationId, prompt, toolsUsed, durationMs: Date.now() - start, success: true },
       }),
@@ -873,7 +1078,7 @@ export async function* streamGeminiChat(
   model: string,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<StreamChunk> {
-  yield* streamGeminiAgentChat(prompt, conversationId, getSystemPrompt(), history, model, abortSignal)
+  yield* streamGeminiAgentChat(prompt, conversationId, await getSystemPrompt(), history, model, abortSignal)
 }
 
 async function* streamGeminiAgentChat(
@@ -1103,7 +1308,7 @@ export async function* streamClaudeResponse(
       process.env.HOME = claudeHome
     }
 
-    const systemPrompt = agentSystemPrompt ?? (planTarget ? getPlanningSystemPrompt(planTarget.type) : getSystemPrompt())
+    const systemPrompt = agentSystemPrompt ?? (planTarget ? await getPlanningSystemPrompt(planTarget.type) : await getSystemPrompt())
 
     const fullPrompt = previousMessages.length > 0
       ? previousMessages.map(m => `${m.role}: ${m.content}`).join('\n\n') + `\n\nuser: ${prompt}`
@@ -1173,7 +1378,7 @@ Draft plan to review:
 ${totalText}`,
         options: {
           allowedTools: [],
-          customSystemPrompt: 'You are a senior technical architect. Your only job is to review and refine the draft plan provided in the prompt. Do not run any tools or commands. Do not ask for more information. Output the final plan immediately.',
+          customSystemPrompt: await getPrompt('system.plan-review'),
           maxTurns: 1,
           model: 'claude-opus-4-6',
         },

@@ -244,6 +244,16 @@ model SystemSetting {
   updatedAt DateTime @updatedAt
 }
 
+model SystemPrompt {
+  key         String   @id
+  name        String
+  description String?  @db.Text
+  category    String   @default("system")
+  content     String   @db.Text
+  variables   Json?    // Array<{ name: string; description: string }>
+  updatedAt   DateTime @updatedAt
+}
+
 model Note {
   id        String   @id @default(cuid())
   title     String

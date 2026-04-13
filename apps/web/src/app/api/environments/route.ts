@@ -11,8 +11,8 @@ export async function GET() {
       agents: { include: { agent: true } },
     },
   })
-  // Mask gateway tokens
-  return NextResponse.json(environments.map(e => ({ ...e, gatewayToken: e.gatewayToken ? '••••' : null })))
+  // Mask sensitive fields
+  return NextResponse.json(environments.map(e => ({ ...e, gatewayToken: e.gatewayToken ? '••••' : null, kubeconfig: e.kubeconfig ? '••••' : null })))
 }
 
 export async function POST(req: NextRequest) {

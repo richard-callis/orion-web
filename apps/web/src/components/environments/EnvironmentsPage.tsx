@@ -105,6 +105,14 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   const [confirmDeleteTg, setConfirmDeleteTg] = useState<string | null>(null)
   const [tgAddingTool, setTgAddingTool]   = useState<string | null>(null) // tool group id
 
+  // ── Agent linking state ───────────────────────────────────────────────────────
+  interface AllAgent { id: string; name: string; type: string; role: string | null }
+  const [allAgents, setAllAgents]       = useState<AllAgent[]>([])
+  const [agentsLoaded, setAgentsLoaded] = useState(false)
+  const [showAddAgent, setShowAddAgent] = useState(false)
+  const [agentLinking, setAgentLinking] = useState(false)
+  const [agentSearch, setAgentSearch]   = useState('')
+
   // ── User tiers state ─────────────────────────────────────────────────────────
   interface UserTier {
     userId: string; tier: string; environmentId: string
@@ -132,6 +140,11 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   const [deployResult, setDeployResult] = useState<JoinResult | null>(null)
   const [deploying, setDeploying]       = useState(false)
   const [copied, setCopied]             = useState<string | null>(null)
+
+  // SSE bootstrap log state (localhost/docker environments)
+  interface BootstrapLog { type: 'step' | 'log' | 'error' | 'done'; message: string }
+  const [bootstrapLogs, setBootstrapLogs] = useState<BootstrapLog[]>([])
+  const [bootstrapDone, setBootstrapDone] = useState(false)
 
   // Pending tool approval state
   const [approvingTool, setApprovingTool] = useState<string | null>(null)
@@ -171,7 +184,47 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
     setDeployGatewayUrl('')
     setDeployGatewayType(env.type)
     setDeployResult(null)
+    setBootstrapLogs([])
+    setBootstrapDone(false)
     setDeployModal(true)
+  }
+
+  const runLocalBootstrap = async () => {
+    if (!selected) return
+    setDeploying(true)
+    setBootstrapLogs([])
+    setBootstrapDone(false)
+    try {
+      const res = await fetch(`/api/environments/${selected.id}/deploy-gateway`, { method: 'POST' })
+      if (!res.ok || !res.body) throw new Error(`Bootstrap failed: ${res.status}`)
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n\n')
+        buf = lines.pop() ?? ''
+        for (const chunk of lines) {
+          const dataLine = chunk.split('\n').find(l => l.startsWith('data: '))
+          if (!dataLine) continue
+          try {
+            const evt = JSON.parse(dataLine.slice(6)) as BootstrapLog
+            setBootstrapLogs(prev => [...prev, evt])
+            if (evt.type === 'done' || evt.type === 'error') {
+              setBootstrapDone(true)
+              if (evt.type === 'done') reload()
+            }
+          } catch { /* ignore malformed */ }
+        }
+      }
+    } catch (e) {
+      setBootstrapLogs(prev => [...prev, { type: 'error', message: e instanceof Error ? e.message : String(e) }])
+      setBootstrapDone(true)
+    } finally {
+      setDeploying(false)
+    }
   }
 
   const generateJoinToken = async () => {
@@ -364,6 +417,40 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
   // ── User tiers ────────────────────────────────────────────────────────────────
 
+  const loadAllAgents = useCallback(async () => {
+    if (agentsLoaded) return
+    const data: AllAgent[] = await fetch('/api/agents').then(r => r.json())
+    setAllAgents(data)
+    setAgentsLoaded(true)
+  }, [agentsLoaded])
+
+  const linkAgent = async (agentId: string) => {
+    if (!selected) return
+    setAgentLinking(true)
+    try {
+      const res = await fetch(`/api/environments/${selected.id}/agents`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentId }),
+      })
+      if (!res.ok) return
+      const link = await res.json() as { id: string; agentId: string; agent: AllAgent }
+      setEnvironments(prev => prev.map(e =>
+        e.id === selected.id ? { ...e, agents: [...e.agents, { id: link.id, agentId: link.agentId, agent: link.agent }] } : e
+      ))
+      setSelected(prev => prev ? { ...prev, agents: [...prev.agents, { id: link.id, agentId: link.agentId, agent: link.agent }] } : prev)
+      setShowAddAgent(false)
+      setAgentSearch('')
+    } finally { setAgentLinking(false) }
+  }
+
+  const unlinkAgent = async (agentId: string) => {
+    if (!selected) return
+    await fetch(`/api/environments/${selected.id}/agents/${agentId}`, { method: 'DELETE' })
+    setEnvironments(prev => prev.map(e =>
+      e.id === selected.id ? { ...e, agents: e.agents.filter(a => a.agentId !== agentId) } : e
+    ))
+    setSelected(prev => prev ? { ...prev, agents: prev.agents.filter(a => a.agentId !== agentId) } : prev)
+  }
+
   const loadUserTiers = useCallback(async () => {
     if (!selected) return
     const [tiersData, usersData] = await Promise.all([
@@ -374,6 +461,10 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
     setAllUsers(usersData)
     setTiersLoaded(true)
   }, [selected])
+
+  useEffect(() => {
+    if (tab === 'agents' && !agentsLoaded) loadAllAgents()
+  }, [tab, agentsLoaded, loadAllAgents])
 
   useEffect(() => {
     if (tab === 'access' && selected && !tiersLoaded) loadUserTiers()
@@ -651,6 +742,58 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
             {tab === 'agents' && (
               <div className="space-y-4 max-w-2xl">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-text-primary">Linked Agents</p>
+                    <p className="text-xs text-text-muted mt-0.5">Agents linked here get priority routing to this environment&apos;s gateway tools</p>
+                  </div>
+                  <button
+                    onClick={() => { setShowAddAgent(v => !v); setAgentSearch(''); loadAllAgents() }}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded bg-accent text-white text-xs font-medium hover:bg-accent/90 transition-colors">
+                    <Plus size={12} /> Link Agent
+                  </button>
+                </div>
+
+                {showAddAgent && (
+                  <div className="rounded-lg border border-border-subtle bg-bg-card p-3 space-y-2">
+                    <p className="text-xs font-medium text-text-muted">Select an agent to link</p>
+                    <input
+                      value={agentSearch}
+                      onChange={e => setAgentSearch(e.target.value)}
+                      placeholder="Search agents…"
+                      className={inputCls}
+                    />
+                    <div className="max-h-48 overflow-y-auto rounded border border-border-subtle divide-y divide-border-subtle">
+                      {allAgents
+                        .filter(a =>
+                          !selected.agents.some(ae => ae.agentId === a.id) &&
+                          (agentSearch === '' || a.name.toLowerCase().includes(agentSearch.toLowerCase()))
+                        )
+                        .map(a => (
+                          <button
+                            key={a.id}
+                            onClick={() => linkAgent(a.id)}
+                            disabled={agentLinking}
+                            className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-bg-raised transition-colors disabled:opacity-50">
+                            <Bot size={13} className="text-text-muted flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium text-text-primary">{a.name}</p>
+                              <p className="text-[11px] text-text-muted">{a.role ?? a.type}</p>
+                            </div>
+                          </button>
+                        ))}
+                      {allAgents.filter(a =>
+                        !selected.agents.some(ae => ae.agentId === a.id) &&
+                        (agentSearch === '' || a.name.toLowerCase().includes(agentSearch.toLowerCase()))
+                      ).length === 0 && (
+                        <p className="px-3 py-4 text-xs text-text-muted text-center">
+                          {agentSearch ? 'No matching agents' : 'All agents are already linked'}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {selected.agents.length === 0 ? (
                   <div className="rounded-lg border border-border-subtle bg-bg-card px-4 py-10 text-center text-sm text-text-muted">
                     No agents linked to this environment.
@@ -664,6 +807,12 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                           <p className="text-sm font-medium text-text-primary">{ae.agent.name}</p>
                           <p className="text-xs text-text-muted">{ae.agent.role ?? ae.agent.type}</p>
                         </div>
+                        <button
+                          onClick={() => unlinkAgent(ae.agentId)}
+                          className="p-1 rounded text-text-muted hover:text-status-error transition-colors"
+                          title="Unlink agent">
+                          <X size={13} />
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -950,85 +1099,134 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
             </div>
 
             <div className="p-5 space-y-4">
-              {!deployResult ? (
-                <>
-                  <p className="text-xs text-text-muted">
-                    Generate a one-time join token. The gateway uses it on first boot to register itself — no manual credential copying needed.
-                  </p>
-                  <div>
-                    <label className={labelCls}>Gateway Type</label>
-                    <select value={deployGatewayType} onChange={e => setDeployGatewayType(e.target.value)} className={inputCls}>
-                      <option value="cluster">Cluster (kubectl)</option>
-                      <option value="docker">Docker Node</option>
-                      <option value="remote">Remote / Other</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={labelCls}>Gateway URL <span className="text-text-muted">(how ORION will reach this gateway after deployment)</span></label>
-                    <input value={deployGatewayUrl} onChange={e => setDeployGatewayUrl(e.target.value)}
-                      placeholder="http://10.2.2.84:3001 or http://orion-gateway.management.svc.cluster.local:3001"
-                      className={inputCls} />
-                  </div>
-
-                  <div className="flex justify-end gap-2 pt-1">
-                    <button onClick={() => { setDeployModal(false); setDeployResult(null) }}
-                      className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
-                      Cancel
-                    </button>
-                    <button onClick={generateJoinToken} disabled={deploying}
-                      className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
-                      {deploying ? <RefreshCw size={11} className="animate-spin" /> : <Rocket size={11} />}
-                      {deploying ? 'Generating…' : 'Generate Join Token'}
-                    </button>
-                  </div>
-                </>
+              {(selected.type === 'localhost' || selected.type === 'docker') ? (
+                /* ── localhost/docker: full SSE bootstrap ── */
+                bootstrapLogs.length === 0 && !deploying ? (
+                  <>
+                    <p className="text-xs text-text-muted">
+                      Deploys the gateway container, creates a Gitea repo with CI/CD scaffold, and registers a self-hosted Actions runner — all in one click.
+                    </p>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button onClick={() => { setDeployModal(false) }}
+                        className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+                        Cancel
+                      </button>
+                      <button onClick={runLocalBootstrap} disabled={deploying}
+                        className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
+                        <Rocket size={11} /> Deploy Everything
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="rounded-lg border border-border-subtle bg-bg-card overflow-hidden">
+                      <div className="max-h-72 overflow-y-auto p-3 space-y-1 font-mono text-[11px]">
+                        {bootstrapLogs.map((log, i) => (
+                          <div key={i} className={
+                            log.type === 'step'  ? 'text-accent font-semibold' :
+                            log.type === 'error' ? 'text-status-error' :
+                            log.type === 'done'  ? 'text-status-healthy font-semibold' :
+                            'text-text-muted'
+                          }>
+                            {log.type === 'step' ? `▶ ${log.message}` :
+                             log.type === 'done' ? `✓ ${log.message}` :
+                             log.type === 'error' ? `✗ ${log.message}` :
+                             `  ${log.message}`}
+                          </div>
+                        ))}
+                        {deploying && !bootstrapDone && (
+                          <div className="flex items-center gap-1.5 text-text-muted">
+                            <RefreshCw size={10} className="animate-spin" /> Running…
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {bootstrapDone && (
+                      <div className="flex justify-end pt-1">
+                        <button onClick={() => { setDeployModal(false); setBootstrapLogs([]); setBootstrapDone(false) }}
+                          className="px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 transition-colors">
+                          Done
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )
               ) : (
-                <>
-                  <div className="rounded-lg border border-status-healthy/30 bg-status-healthy/5 px-3 py-2 text-xs text-status-healthy">
-                    Token generated — expires {new Date(deployResult.expiresAt).toLocaleString()}. One-time use only.
-                  </div>
-
-                  {/* Docker command */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-medium text-text-secondary flex items-center gap-1.5">
-                        <Terminal size={11} /> Docker
-                      </label>
-                      <button onClick={() => copyToClipboard(deployResult.dockerCmd, 'docker')}
-                        className="flex items-center gap-1 text-[10px] text-text-muted hover:text-accent transition-colors">
-                        {copied === 'docker' ? <CheckCheck size={11} className="text-status-healthy" /> : <Copy size={11} />}
-                        {copied === 'docker' ? 'Copied!' : 'Copy'}
+                /* ── cluster/remote: join token flow ── */
+                !deployResult ? (
+                  <>
+                    <p className="text-xs text-text-muted">
+                      Generate a one-time join token. The gateway uses it on first boot to register itself — no manual credential copying needed.
+                    </p>
+                    <div>
+                      <label className={labelCls}>Gateway Type</label>
+                      <select value={deployGatewayType} onChange={e => setDeployGatewayType(e.target.value)} className={inputCls}>
+                        <option value="cluster">Cluster (kubectl)</option>
+                        <option value="docker">Docker Node</option>
+                        <option value="remote">Remote / Other</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>Gateway URL <span className="text-text-muted">(how ORION will reach this gateway after deployment)</span></label>
+                      <input value={deployGatewayUrl} onChange={e => setDeployGatewayUrl(e.target.value)}
+                        placeholder="http://10.2.2.84:3001 or http://orion-gateway.management.svc.cluster.local:3001"
+                        className={inputCls} />
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button onClick={() => { setDeployModal(false); setDeployResult(null) }}
+                        className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+                        Cancel
+                      </button>
+                      <button onClick={generateJoinToken} disabled={deploying}
+                        className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
+                        {deploying ? <RefreshCw size={11} className="animate-spin" /> : <Rocket size={11} />}
+                        {deploying ? 'Generating…' : 'Generate Join Token'}
                       </button>
                     </div>
-                    <pre className="text-[11px] font-mono bg-bg-raised border border-border-subtle rounded p-3 overflow-x-auto text-text-secondary whitespace-pre">
-                      {deployResult.dockerCmd}
-                    </pre>
-                  </div>
-
-                  {/* kubectl command */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-medium text-text-secondary flex items-center gap-1.5">
-                        <Server size={11} /> Kubernetes
-                      </label>
-                      <button onClick={() => copyToClipboard(deployResult.kubectlCmd, 'kubectl')}
-                        className="flex items-center gap-1 text-[10px] text-text-muted hover:text-accent transition-colors">
-                        {copied === 'kubectl' ? <CheckCheck size={11} className="text-status-healthy" /> : <Copy size={11} />}
-                        {copied === 'kubectl' ? 'Copied!' : 'Copy'}
+                  </>
+                ) : (
+                  <>
+                    <div className="rounded-lg border border-status-healthy/30 bg-status-healthy/5 px-3 py-2 text-xs text-status-healthy">
+                      Token generated — expires {new Date(deployResult.expiresAt).toLocaleString()}. One-time use only.
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-medium text-text-secondary flex items-center gap-1.5">
+                          <Terminal size={11} /> Docker
+                        </label>
+                        <button onClick={() => copyToClipboard(deployResult.dockerCmd, 'docker')}
+                          className="flex items-center gap-1 text-[10px] text-text-muted hover:text-accent transition-colors">
+                          {copied === 'docker' ? <CheckCheck size={11} className="text-status-healthy" /> : <Copy size={11} />}
+                          {copied === 'docker' ? 'Copied!' : 'Copy'}
+                        </button>
+                      </div>
+                      <pre className="text-[11px] font-mono bg-bg-raised border border-border-subtle rounded p-3 overflow-x-auto text-text-secondary whitespace-pre">
+                        {deployResult.dockerCmd}
+                      </pre>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-medium text-text-secondary flex items-center gap-1.5">
+                          <Server size={11} /> Kubernetes
+                        </label>
+                        <button onClick={() => copyToClipboard(deployResult.kubectlCmd, 'kubectl')}
+                          className="flex items-center gap-1 text-[10px] text-text-muted hover:text-accent transition-colors">
+                          {copied === 'kubectl' ? <CheckCheck size={11} className="text-status-healthy" /> : <Copy size={11} />}
+                          {copied === 'kubectl' ? 'Copied!' : 'Copy'}
+                        </button>
+                      </div>
+                      <pre className="text-[11px] font-mono bg-bg-raised border border-border-subtle rounded p-3 overflow-x-auto text-text-secondary whitespace-pre-wrap break-all">
+                        {deployResult.kubectlCmd}
+                      </pre>
+                    </div>
+                    <div className="flex justify-end pt-1">
+                      <button onClick={() => { setDeployModal(false); setDeployResult(null) }}
+                        className="px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 transition-colors">
+                        Done
                       </button>
                     </div>
-                    <pre className="text-[11px] font-mono bg-bg-raised border border-border-subtle rounded p-3 overflow-x-auto text-text-secondary whitespace-pre-wrap break-all">
-                      {deployResult.kubectlCmd}
-                    </pre>
-                  </div>
-
-                  <div className="flex justify-end pt-1">
-                    <button onClick={() => { setDeployModal(false); setDeployResult(null) }}
-                      className="px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 transition-colors">
-                      Done
-                    </button>
-                  </div>
-                </>
+                  </>
+                )
               )}
             </div>
           </div>

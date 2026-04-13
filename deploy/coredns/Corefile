@@ -6,8 +6,8 @@
     reload
 }
 
-lab {
-    file /etc/coredns/zones/lab.db
+khalis.corp {
+    file /etc/coredns/zones/khalis.corp.db
     errors
     log
 }

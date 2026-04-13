@@ -2,8 +2,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   RefreshCw, ExternalLink, CheckCircle, Server, Container,
-  GitBranch, Rocket, X, AlertCircle,
+  GitBranch, Rocket, X, AlertCircle, Copy, Check, Bot,
 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import { KpiCard } from '@/components/dashboard/KpiCard'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -55,6 +56,7 @@ interface Environment {
   gitOwner: string | null
   gitRepo: string | null
   argoCdUrl: string | null
+  kubeconfig: string | null
   gitOpsPRs?: GitOpsPR[]
   metadata?: {
     argocd?: ArgoCDState
@@ -93,40 +95,109 @@ function isToday(iso: string | null): boolean {
 function BootstrapModal({
   envId,
   envName,
+  envType,
+  hasKubeconfig,
   onClose,
 }: {
   envId: string
   envName: string
+  envType: string
+  hasKubeconfig: boolean
   onClose: () => void
 }) {
+  const isLocalhost = envType === 'localhost'
+  const isRemoteDocker = envType === 'docker'
+  const isCluster = !isLocalhost && !isRemoteDocker
+
+  // Shared: SSE log lines for localhost auto-deploy and cluster bootstrap
   const [lines, setLines] = useState<BootstrapEvent[]>([])
   const [done, setDone] = useState(false)
   const [streaming, setStreaming] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
+  // Cluster only: kubeconfig pre-flight
+  const [kubeconfigText, setKubeconfigText] = useState('')
+  const [savingKubeconfig, setSavingKubeconfig] = useState(false)
+  const [kubeconfigReady, setKubeconfigReady] = useState(!isCluster || hasKubeconfig)
+  const [kubeconfigError, setKubeconfigError] = useState<string | null>(null)
+
+  // Remote docker only: copy-paste command
+  const [dockerCmd, setDockerCmd] = useState<string | null>(null)
+  const [dockerLoading, setDockerLoading] = useState(false)
+  const [dockerError, setDockerError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  // Scroll to bottom as lines arrive
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [lines])
 
+  // Remote docker: generate the copy-paste command on mount
   useEffect(() => {
+    if (!isRemoteDocker) return
+    setDockerLoading(true)
+    fetch(`/api/environments/${envId}/generate-join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gatewayType: 'docker' }),
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d.error) throw new Error(d.error)
+        setDockerCmd(d.dockerCmd)
+      })
+      .catch(err => setDockerError(err.message))
+      .finally(() => setDockerLoading(false))
+  }, [envId, isRemoteDocker])
+
+  const copyDockerCmd = () => {
+    if (!dockerCmd) return
+    navigator.clipboard.writeText(dockerCmd).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  // Cluster: save kubeconfig then start bootstrap
+  const saveKubeconfigAndStart = async () => {
+    const trimmed = kubeconfigText.trim()
+    if (!trimmed) { setKubeconfigError('Paste a kubeconfig to continue.'); return }
+    setSavingKubeconfig(true)
+    setKubeconfigError(null)
+    try {
+      const b64 = btoa(unescape(encodeURIComponent(trimmed)))
+      const res = await fetch(`/api/environments/${envId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kubeconfig: b64 }),
+      })
+      if (!res.ok) throw new Error(`Failed to save kubeconfig: ${res.status}`)
+      setKubeconfigReady(true)
+    } catch (err) {
+      setKubeconfigError(err instanceof Error ? err.message : 'Failed to save kubeconfig')
+    } finally {
+      setSavingKubeconfig(false)
+    }
+  }
+
+  // SSE stream helper — shared by localhost deploy and cluster bootstrap
+  const streamEndpoint = (url: string) => {
     let cancelled = false
     setStreaming(true)
+    setLines([])
 
-    fetch(`/api/environments/${envId}/bootstrap`, { method: 'POST' })
+    fetch(url, { method: 'POST' })
       .then(async (res) => {
         if (!res.body) throw new Error('No response body')
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ''
-
         while (true) {
           const { value, done: readerDone } = await reader.read()
           if (readerDone || cancelled) break
-
           buffer += decoder.decode(value, { stream: true })
           const parts = buffer.split('\n\n')
           buffer = parts.pop() ?? ''
-
           for (const part of parts) {
             const line = part.trim()
             if (!line.startsWith('data:')) continue
@@ -137,9 +208,7 @@ function BootstrapModal({
                 setDone(true)
                 setStreaming(false)
               }
-            } catch {
-              // ignore parse errors
-            }
+            } catch { /* ignore */ }
           }
         }
       })
@@ -152,63 +221,202 @@ function BootstrapModal({
       })
 
     return () => { cancelled = true }
-  }, [envId])
+  }
+
+  // Localhost: auto-deploy on mount
+  useEffect(() => {
+    if (!isLocalhost) return
+    return streamEndpoint(`/api/environments/${envId}/deploy-gateway`)
+  }, [envId, isLocalhost])
+
+  // Cluster: start bootstrap once kubeconfig is ready
+  useEffect(() => {
+    if (!isCluster || !kubeconfigReady) return
+    return streamEndpoint(`/api/environments/${envId}/bootstrap`)
+  }, [envId, isCluster, kubeconfigReady])
+
+  const router = useRouter()
+  const [creatingTask, setCreatingTask] = useState(false)
+
+  const askAgentToDeploy = async () => {
+    setCreatingTask(true)
+    try {
+      // Create a task for tracking
+      const taskTitle = isCluster
+        ? `Bootstrap ${envName}: deploy ArgoCD + ORION gateway`
+        : `Deploy ORION gateway to ${envName}`
+      await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: taskTitle,
+          description: `Deploy the ORION gateway to the ${envName} environment (type: ${envType}, ID: ${envId}).`,
+          priority: 'high',
+        }),
+      })
+
+      if (isLocalhost) {
+        // Localhost: the deployment is fully automated via the Docker socket.
+        // Just run it directly — no kubectl, no AI needed.
+        setCreatingTask(false)
+        return streamEndpoint(`/api/environments/${envId}/deploy-gateway`)
+      }
+
+      // Remote docker / cluster: fetch the editable prompt from DB, then open chat
+      const promptKey = isRemoteDocker ? 'bootstrap.docker' : 'bootstrap.cluster'
+      const templateRes = await fetch(`/api/admin/prompts/${encodeURIComponent(promptKey)}`)
+      let context: string
+      if (templateRes.ok) {
+        const { content } = await templateRes.json() as { content: string }
+        context = content
+          .replace(/\{\{envId\}\}/g, envId)
+          .replace(/\{\{envName\}\}/g, envName)
+      } else {
+        context = `Deploy the ORION gateway to **${envName}** (type: \`${envType}\`, ID: \`${envId}\`).`
+      }
+
+      const convoRes = await fetch('/api/chat/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initialContext: context }),
+      })
+      const convo = await convoRes.json()
+      onClose()
+      router.push(`/chat?conversationId=${convo.id}`)
+    } catch {
+      setCreatingTask(false)
+    }
+  }
+
+  // Shared log panel — inset from modal walls with visible padding
+  const LogPanel = () => (
+    <div className="flex-1 overflow-y-auto px-4 py-3">
+      <div className="bg-black rounded-lg border border-border-subtle p-4 space-y-1 font-mono text-xs min-h-[180px]">
+        {lines.length === 0 && <p className="text-text-muted">Starting…</p>}
+        {lines.map((evt, i) => (
+          <div
+            key={i}
+            className={
+              evt.type === 'step'  ? 'text-text-primary font-bold' :
+              evt.type === 'error' ? 'text-status-error' :
+              evt.type === 'done'  ? 'text-status-healthy font-semibold' :
+              'text-text-muted'
+            }
+          >
+            {evt.type === 'step' && '› '}
+            {evt.type === 'error' && '✗ '}
+            {evt.type === 'done'  && '✓ '}
+            {evt.message}
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+    </div>
+  )
+
+  const headerTitle =
+    isLocalhost    ? `Deploying Gateway — ${envName}` :
+    isRemoteDocker ? `Deploy Gateway — ${envName}` :
+                     `Bootstrapping — ${envName}`
+
+  const canClose = isRemoteDocker || done || !kubeconfigReady
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-2xl bg-bg-surface border border-border-subtle rounded-xl shadow-2xl flex flex-col max-h-[80vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-black/70 via-black/50 to-bg-sidebar/60 backdrop-blur-sm p-4">
+      <div className="w-full max-w-2xl bg-bg-card border border-border-subtle rounded-xl shadow-2xl flex flex-col max-h-[80vh]">
+
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
           <div className="flex items-center gap-2">
             <Rocket size={16} className="text-accent" />
-            <span className="text-sm font-semibold text-text-primary">
-              Bootstrapping {envName}
-            </span>
-            {streaming && (
-              <RefreshCw size={13} className="animate-spin text-text-muted ml-1" />
+            <span className="text-sm font-semibold text-text-primary">{headerTitle}</span>
+            {streaming && <RefreshCw size={13} className="animate-spin text-text-muted ml-1" />}
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Ask Agent button — always available */}
+            {!streaming && (
+              <button
+                onClick={askAgentToDeploy}
+                disabled={creatingTask}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-border-subtle bg-bg-raised text-text-secondary hover:text-accent hover:border-accent/40 transition-colors disabled:opacity-40"
+                title="Ask an AI agent to handle this"
+              >
+                <Bot size={13} />
+                {creatingTask ? 'Opening…' : 'Ask Agent'}
+              </button>
+            )}
+            {canClose && (
+              <button onClick={onClose} className="p-1.5 rounded hover:bg-bg-raised text-text-muted hover:text-text-primary transition-colors">
+                <X size={16} />
+              </button>
             )}
           </div>
-          {done && (
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded hover:bg-bg-raised text-text-muted hover:text-text-primary transition-colors"
-            >
-              <X size={16} />
-            </button>
-          )}
         </div>
 
-        {/* Log output */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-1 font-mono text-xs bg-bg-card rounded-b-xl">
-          {lines.length === 0 && (
-            <p className="text-text-muted">Starting bootstrap…</p>
-          )}
-          {lines.map((evt, i) => (
-            <div
-              key={i}
-              className={
-                evt.type === 'step'  ? 'text-text-primary font-bold' :
-                evt.type === 'error' ? 'text-status-error' :
-                evt.type === 'done'  ? 'text-status-healthy font-semibold' :
-                'text-text-muted'
-              }
-            >
-              {evt.type === 'step' && '› '}
-              {evt.type === 'error' && '✗ '}
-              {evt.type === 'done' && '✓ '}
-              {evt.message}
+        {/* ── Remote Docker: copy-paste command ── */}
+        {isRemoteDocker && (
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+            <p className="text-sm text-text-secondary">
+              Run this on <span className="text-text-primary font-medium">{envName}</span>. The gateway will connect back to ORION automatically.
+            </p>
+            {dockerLoading && (
+              <div className="flex items-center gap-2 text-text-muted text-sm">
+                <RefreshCw size={13} className="animate-spin" /> Generating command…
+              </div>
+            )}
+            {dockerError && <p className="text-sm text-status-error">{dockerError}</p>}
+            {dockerCmd && (
+              <>
+                <div className="relative">
+                  <pre className="text-xs font-mono bg-black border border-border-subtle text-green-400 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap break-all">{dockerCmd}</pre>
+                  <button
+                    onClick={copyDockerCmd}
+                    className="absolute top-2 right-2 p-1.5 rounded bg-bg-raised border border-border-subtle text-text-muted hover:text-text-primary transition-colors"
+                    title="Copy"
+                  >
+                    {copied ? <Check size={13} className="text-status-healthy" /> : <Copy size={13} />}
+                  </button>
+                </div>
+                <p className="text-xs text-text-muted">Gateway appears connected in ORION within ~30 seconds.</p>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── Localhost: auto-deploy log ── */}
+        {isLocalhost && <LogPanel />}
+
+        {/* ── Cluster: kubeconfig pre-flight then bootstrap log ── */}
+        {isCluster && !kubeconfigReady && (
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+            <p className="text-sm text-text-secondary">
+              Paste the kubeconfig for <span className="text-text-primary font-medium">{envName}</span> to allow ORION to deploy ArgoCD and the gateway.
+            </p>
+            <textarea
+              value={kubeconfigText}
+              onChange={e => { setKubeconfigText(e.target.value); setKubeconfigError(null) }}
+              placeholder="Paste kubeconfig YAML here…"
+              rows={12}
+              className="w-full px-3 py-2 text-xs font-mono bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent resize-none"
+            />
+            {kubeconfigError && <p className="text-xs text-status-error">{kubeconfigError}</p>}
+            <div className="flex justify-end">
+              <button
+                onClick={saveKubeconfigAndStart}
+                disabled={savingKubeconfig || !kubeconfigText.trim()}
+                className="px-4 py-2 text-sm rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {savingKubeconfig ? 'Saving…' : 'Save & Bootstrap'}
+              </button>
             </div>
-          ))}
-          <div ref={bottomRef} />
-        </div>
+          </div>
+        )}
+        {isCluster && kubeconfigReady && <LogPanel />}
 
-        {/* Footer */}
-        {done && (
+        {/* Footer — cluster bootstrap done */}
+        {isCluster && done && (
           <div className="px-5 py-3 border-t border-border-subtle flex justify-end">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm rounded bg-accent text-white hover:bg-accent/80 transition-colors"
-            >
+            <button onClick={onClose} className="px-4 py-2 text-sm rounded bg-accent text-white hover:bg-accent/80 transition-colors">
               Close
             </button>
           </div>
@@ -355,7 +563,7 @@ function EnvironmentCard({
 }: {
   env: Environment
   openPrCount: number
-  onBootstrap: (id: string, name: string) => void
+  onBootstrap: (id: string, name: string, envType: string, hasKubeconfig: boolean) => void
 }) {
   const hasRepo = !!(env.gitOwner && env.gitRepo)
 
@@ -428,7 +636,7 @@ function EnvironmentCard({
         {/* Bootstrap button */}
         {!hasRepo && (
           <button
-            onClick={() => onBootstrap(env.id, env.name)}
+            onClick={() => onBootstrap(env.id, env.name, env.type, !!env.kubeconfig)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-accent/10 text-accent border border-accent/30 hover:bg-accent/20 transition-colors font-medium"
           >
             <Rocket size={12} />
@@ -447,7 +655,7 @@ export function GitOpsPage() {
   const [environments, setEnvironments] = useState<Environment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [bootstrapTarget, setBootstrapTarget] = useState<{ id: string; name: string } | null>(null)
+  const [bootstrapTarget, setBootstrapTarget] = useState<{ id: string; name: string; envType: string; hasKubeconfig: boolean } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -550,7 +758,7 @@ export function GitOpsPage() {
                 key={env.id}
                 env={env}
                 openPrCount={openByEnv[env.id] ?? 0}
-                onBootstrap={(id, name) => setBootstrapTarget({ id, name })}
+                onBootstrap={(id, name, envType, hasKubeconfig) => setBootstrapTarget({ id, name, envType, hasKubeconfig })}
               />
             ))}
           </div>
@@ -562,6 +770,8 @@ export function GitOpsPage() {
         <BootstrapModal
           envId={bootstrapTarget.id}
           envName={bootstrapTarget.name}
+          envType={bootstrapTarget.envType}
+          hasKubeconfig={bootstrapTarget.hasKubeconfig}
           onClose={() => { setBootstrapTarget(null); load() }}
         />
       )}

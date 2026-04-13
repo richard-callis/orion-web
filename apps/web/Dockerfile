@@ -5,13 +5,15 @@ ARG TARGETARCH
 
 FROM node:20-alpine AS deps
 WORKDIR /app
+# Build tools needed for node-pty native compilation
+RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
 FROM node:20-alpine AS builder
 WORKDIR /app
-# Install OpenSSL so Prisma detects linux-musl-openssl-3.0.x and generates the correct binary
-RUN apk add --no-cache openssl
+# Install OpenSSL (Prisma) + native build tools for node-pty
+RUN apk add --no-cache openssl python3 make g++
 COPY --from=deps /app/node_modules ./node_modules
 # Install devDependencies (esbuild, tsx, typescript) for the build step
 COPY package.json package-lock.json* ./
@@ -27,8 +29,13 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Install OpenSSL (Prisma), bash (Claude Code SDK requires it), curl, git
-RUN apk add --no-cache openssl libc6-compat bash curl git
+# Install OpenSSL (Prisma), bash, curl, git, openssh-client, python3 (node-pty runtime)
+RUN apk add --no-cache openssl libc6-compat bash curl git openssh-client python3
+
+# SSH config: auto-accept new host keys for homelab use
+RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh \
+ && printf 'Host *\n  StrictHostKeyChecking accept-new\n  UserKnownHostsFile /root/.ssh/known_hosts\n' > /root/.ssh/config \
+ && chmod 600 /root/.ssh/config
 
 # Install kubectl — architecture-aware, fetch stable version dynamically
 RUN ARCH=${TARGETARCH:-amd64} \
@@ -43,9 +50,6 @@ RUN curl -fsSL "https://raw.githubusercontent.com/helm/helm/main/scripts/get-hel
 
 ENV SHELL=/bin/bash
 
-# Non-root user
-RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
-
 # Standalone output
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
@@ -56,15 +60,12 @@ COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 # Claude Code SDK (dynamic import — not picked up by standalone bundler)
 COPY --from=builder /app/node_modules/@anthropic-ai ./node_modules/@anthropic-ai
+# node-pty native addon (not picked up by standalone bundler)
+COPY --from=builder /app/node_modules/node-pty ./node_modules/node-pty
 
 COPY --from=builder /app/worker.js ./worker.js
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x entrypoint.sh
-
-# Fix ownership so non-root user can write to prisma engine cache
-RUN chown -R nextjs:nodejs /app/node_modules/@prisma /app/node_modules/.prisma /app/prisma
-
-USER nextjs
 EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"

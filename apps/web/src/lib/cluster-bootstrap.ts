@@ -332,8 +332,8 @@ export async function bootstrapCluster(
     await prisma.environment.update({
       where: { id: environmentId },
       data: {
-        gitOwner,
-        gitRepo,
+        gitOwner: gitOwner,
+        gitRepo:  gitRepo,
         argoCdUrl,
         status: 'connected',
       },

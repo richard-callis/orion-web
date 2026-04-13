@@ -1,0 +1,19 @@
+; khalis.corp zone file — managed by ORION, do not edit manually
+$ORIGIN khalis.corp.
+$TTL 60
+
+@   IN  SOA  ns1.khalis.corp. admin.khalis.corp. (
+        2026041201  ; serial
+        3600        ; refresh
+        900         ; retry
+        604800      ; expire
+        60          ; minimum TTL
+    )
+
+    IN  NS   ns1.khalis.corp.
+
+; Management node
+ns1   IN  A  10.2.2.9
+orion IN  A  10.2.2.9
+gitea IN  A  10.2.2.9
+vault IN  A  10.2.2.9
