@@ -7,7 +7,18 @@ import { getToken } from 'next-auth/jwt'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const { prompt, ollamaModel: explicitOllamaModel } = await req.json()
+  const { prompt: rawPrompt, ollamaModel: explicitOllamaModel, targetEnvironmentId } = await req.json()
+
+  // Rewrite @mentions so the LLM sees the real environment ID, not just the name.
+  // e.g. "@localhost" → "@localhost (environment_id: cmnv32drm0000libvj5vwm5pw)"
+  let prompt: string = rawPrompt
+  if (rawPrompt && rawPrompt.includes('@')) {
+    const allEnvs = await prisma.environment.findMany({ select: { id: true, name: true } })
+    prompt = rawPrompt.replace(/@([\w-]+)/g, (_match: string, name: string) => {
+      const env = allEnvs.find((e: { id: string; name: string }) => e.name.toLowerCase() === name.toLowerCase())
+      return env ? `@${env.name} (environment_id: ${env.id})` : `@${name}`
+    })
+  }
   const { id: conversationId } = params
 
   // Get the current user from session (used for permission checks in tool loop)
@@ -103,11 +114,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   return createSSEStream((send, close) => {
     ;(async () => {
       const generator = agentSystemPrompt
-        ? streamAgentChat(prompt, conversationId, agentSystemPrompt, history, agentContextConfig, agentChat?.id, userId)
+        ? streamAgentChat(prompt, conversationId, agentSystemPrompt, history, agentContextConfig, agentChat?.id, userId, targetEnvironmentId)
         : openaiModel && openaiBaseUrl
-        ? streamOpenAIChat(prompt, conversationId, history, openaiModel, openaiBaseUrl, openaiApiKey, abortCtrl.signal, userId)
+        ? streamOpenAIChat(prompt, conversationId, history, openaiModel, openaiBaseUrl, openaiApiKey, abortCtrl.signal, userId, targetEnvironmentId)
         : ollamaModel
-        ? streamOllamaChat(prompt, conversationId, history, ollamaModel, ollamaBaseUrl, abortCtrl.signal, userId)
+        ? streamOllamaChat(prompt, conversationId, history, ollamaModel, ollamaBaseUrl, abortCtrl.signal, userId, targetEnvironmentId)
         : geminiModel
         ? streamGeminiChat(prompt, conversationId, history, geminiModel, abortCtrl.signal)
         : streamClaudeResponse(prompt, conversationId, history, planTarget, undefined, undefined, abortCtrl.signal)

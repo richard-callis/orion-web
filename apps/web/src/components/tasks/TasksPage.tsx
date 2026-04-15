@@ -331,12 +331,22 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
       target.type === 'feature' ? '▸ FEAT · ' :
                                   '● TASK · '
 
-    const initialContext =
-      target.type === 'epic'
+    const promptKey = target.type === 'epic' ? 'context.epic-plan'
+      : target.type === 'feature' ? 'context.feature-plan' : 'context.task-plan'
+    const tmplRes = await fetch(`/api/admin/prompts/${encodeURIComponent(promptKey)}`)
+    let initialContext = ''
+    if (tmplRes.ok) {
+      const { content } = await tmplRes.json() as { content: string }
+      initialContext = content
+        .replace(/\{\{title\}\}/g, target.title)
+        .replace(/\{\{description\}\}/g, target.description ?? 'No description yet.')
+    } else {
+      initialContext = target.type === 'epic'
         ? `I want to design a high-level plan for this epic:\n\n**${target.title}**\n\n${target.description ?? 'No description yet.'}\n\nHelp me break this down into features and an implementation strategy.`
         : target.type === 'feature'
         ? `I want to plan this feature:\n\n**${target.title}**\n\n${target.description ?? 'No description yet.'}\n\nHelp me break it down into specific tasks and implementation details.`
         : `I want to plan this task:\n\n**${target.title}**\n\n${target.description ?? 'No description yet.'}\n\nHelp me break this down into a clear implementation plan.`
+    }
 
     const r = await fetch('/api/chat/conversations', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
       gitRepo:      body.gitRepo      ?? null,
       policyConfig: body.policyConfig ?? undefined,
       kubeconfig:   body.kubeconfig   ?? null,
+      metadata:     body.metadata     ?? undefined,
     },
     include: { tools: true, agents: { include: { agent: true } } },
   })

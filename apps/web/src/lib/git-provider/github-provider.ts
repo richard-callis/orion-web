@@ -178,6 +178,11 @@ export class GitHubGitProvider implements GitProvider {
     return toGitPR(pr)
   }
 
+  async getPR(owner: string, repo: string, prNumber: number): Promise<import('./index').GitPR> {
+    const pr = await this.fetch<GHPR>(`/repos/${owner}/${repo}/pulls/${prNumber}`)
+    return toGitPR(pr)
+  }
+
   async mergePR(owner: string, repo: string, prNumber: number, message?: string): Promise<void> {
     await this.fetch(`/repos/${owner}/${repo}/pulls/${prNumber}/merge`, {
       method: 'PUT',

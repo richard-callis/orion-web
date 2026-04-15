@@ -7,6 +7,7 @@ import {
   Terminal, Copy, CheckCheck, Rocket, Clock, CheckCircle, XCircle,
   Sparkles, ToggleLeft, ToggleRight, Layers, Shield, Users,
 } from 'lucide-react'
+import { ClusterPreflightFlow } from './ClusterPreflightFlow'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -75,8 +76,8 @@ const DEFAULT_INPUT_SCHEMA = `{
 
 // ─── Environment form ──────────────────────────────────────────────────────────
 
-interface EnvForm { name: string; type: string; description: string; gatewayUrl: string; gatewayToken: string }
-const EMPTY_ENV: EnvForm = { name: '', type: 'cluster', description: '', gatewayUrl: '', gatewayToken: '' }
+interface EnvForm { name: string; type: string; description: string; gatewayUrl: string; gatewayToken: string; kubeconfig: string; nodeIp: string }
+const EMPTY_ENV: EnvForm = { name: '', type: 'cluster', description: '', gatewayUrl: '', gatewayToken: '', kubeconfig: '', nodeIp: '' }
 
 // ─── Tool form ────────────────────────────────────────────────────────────────
 
@@ -145,6 +146,14 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   interface BootstrapLog { type: 'step' | 'log' | 'error' | 'done'; message: string }
   const [bootstrapLogs, setBootstrapLogs] = useState<BootstrapLog[]>([])
   const [bootstrapDone, setBootstrapDone] = useState(false)
+
+  // Cluster bootstrap state
+  const [bootstrapModal, setBootstrapModal]             = useState(false)
+  const [clusterBootstrapLogs, setClusterBootstrapLogs] = useState<BootstrapLog[]>([])
+  const [clusterBootstrapDone, setClusterBootstrapDone] = useState(false)
+  const [clusterBootstrapping, setClusterBootstrapping] = useState(false)
+  const [preflightPassed, setPreflightPassed]           = useState(false)
+  const [kubeconfigSaving, setKubeconfigSaving]         = useState(false)
 
   // Pending tool approval state
   const [approvingTool, setApprovingTool] = useState<string | null>(null)
@@ -242,6 +251,55 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
     finally { setDeploying(false) }
   }
 
+  // ── Cluster bootstrap ─────────────────────────────────────────────────────────
+
+  const openBootstrap = (env: Environment) => {
+    void env
+    setClusterBootstrapLogs([])
+    setClusterBootstrapDone(false)
+    setClusterBootstrapping(false)
+    setPreflightPassed(false)
+    setBootstrapModal(true)
+  }
+
+  const runClusterBootstrap = async () => {
+    if (!selected) return
+    setClusterBootstrapping(true)
+    setClusterBootstrapLogs([])
+    setClusterBootstrapDone(false)
+    try {
+      const res = await fetch(`/api/environments/${selected.id}/bootstrap`, { method: 'POST' })
+      if (!res.ok || !res.body) throw new Error(`Bootstrap failed: ${res.status}`)
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n\n')
+        buf = lines.pop() ?? ''
+        for (const chunk of lines) {
+          const dataLine = chunk.split('\n').find(l => l.startsWith('data: '))
+          if (!dataLine) continue
+          try {
+            const evt = JSON.parse(dataLine.slice(6)) as BootstrapLog
+            setClusterBootstrapLogs(prev => [...prev, evt])
+            if (evt.type === 'done' || evt.type === 'error') {
+              setClusterBootstrapDone(true)
+              if (evt.type === 'done') reload()
+            }
+          } catch { /* ignore malformed */ }
+        }
+      }
+    } catch (e) {
+      setClusterBootstrapLogs(prev => [...prev, { type: 'error', message: e instanceof Error ? e.message : String(e) }])
+      setClusterBootstrapDone(true)
+    } finally {
+      setClusterBootstrapping(false)
+    }
+  }
+
   const copyToClipboard = async (text: string, key: string) => {
     await navigator.clipboard.writeText(text)
     setCopied(key)
@@ -252,7 +310,8 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
   const openCreateEnv = () => { setEnvForm(EMPTY_ENV); setEnvError(null); setEnvModal('create') }
   const openEditEnv = (env: Environment) => {
-    setEnvForm({ name: env.name, type: env.type, description: env.description ?? '', gatewayUrl: env.gatewayUrl ?? '', gatewayToken: '' })
+    const meta = (env as unknown as { metadata?: Record<string, unknown> }).metadata ?? {}
+    setEnvForm({ name: env.name, type: env.type, description: env.description ?? '', gatewayUrl: env.gatewayUrl ?? '', gatewayToken: '', kubeconfig: '', nodeIp: (meta.nodeIp as string) ?? '' })
     setEnvError(null)
     setEnvModal('edit')
   }
@@ -261,7 +320,14 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
     if (!envForm.name.trim()) { setEnvError('Name is required'); return }
     setEnvSaving(true); setEnvError(null)
     try {
-      const payload = { name: envForm.name.trim(), type: envForm.type, description: envForm.description || null, gatewayUrl: envForm.gatewayUrl || null, gatewayToken: envForm.gatewayToken || undefined }
+      const kubeconfigB64 = envForm.kubeconfig.trim()
+        ? btoa(unescape(encodeURIComponent(envForm.kubeconfig.trim())))
+        : undefined
+      const currentMeta = (selected as unknown as { metadata?: Record<string, unknown> })?.metadata ?? {}
+      const metaUpdate = envForm.type === 'cluster' && envForm.nodeIp.trim()
+        ? { ...currentMeta, nodeIp: envForm.nodeIp.trim() }
+        : currentMeta
+      const payload = { name: envForm.name.trim(), type: envForm.type, description: envForm.description || null, gatewayUrl: envForm.gatewayUrl || null, gatewayToken: envForm.gatewayToken || undefined, kubeconfig: kubeconfigB64, metadata: metaUpdate }
       const res = envModal === 'create'
         ? await fetch('/api/environments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         : await fetch(`/api/environments/${selected!.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -595,10 +661,17 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
               <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[selected.status] ?? 'bg-text-muted'}`} />
               {selected.status}
             </span>
-            <button onClick={() => openDeploy(selected)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-xs font-medium hover:bg-accent/80 transition-colors" title="Deploy gateway">
-              <Rocket size={12} /> Deploy Gateway
-            </button>
+            {selected.type === 'cluster' ? (
+              <button onClick={() => openBootstrap(selected)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-xs font-medium hover:bg-accent/80 transition-colors" title="Bootstrap GitOps environment">
+                <Rocket size={12} /> Bootstrap
+              </button>
+            ) : (
+              <button onClick={() => openDeploy(selected)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-xs font-medium hover:bg-accent/80 transition-colors" title="Deploy gateway">
+                <Rocket size={12} /> Deploy Gateway
+              </button>
+            )}
             <button onClick={() => openEditEnv(selected)}
               className="p-1.5 rounded text-text-muted hover:text-accent hover:bg-bg-raised transition-colors" title="Edit environment">
               <Pencil size={14} />
@@ -1063,6 +1136,38 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                 <input type="password" value={envForm.gatewayToken} onChange={e => setEnvForm(f => ({ ...f, gatewayToken: e.target.value }))}
                   placeholder="••••••••" className={inputCls} autoComplete="off" />
               </div>
+              {envForm.type === 'cluster' && (
+                <>
+                  <div>
+                    <label className={labelCls}>
+                      <Server size={10} className="inline mr-1" />
+                      Control plane node IP
+                      <span className="text-text-muted ml-1">(used to auto-fetch kubeconfig)</span>
+                    </label>
+                    <input
+                      value={envForm.nodeIp}
+                      onChange={e => setEnvForm(f => ({ ...f, nodeIp: e.target.value }))}
+                      placeholder="10.2.2.100"
+                      className={inputCls}
+                    />
+                    <p className="text-[10px] text-text-muted mt-1">
+                      ORION probes this IP to detect Talos (port 50000) or K3s (port 6443) and fetches credentials automatically.
+                    </p>
+                  </div>
+                  <div>
+                    <label className={labelCls}>
+                      Kubeconfig <span className="text-text-muted">(optional override — leave blank to auto-fetch)</span>
+                    </label>
+                    <textarea
+                      value={envForm.kubeconfig}
+                      onChange={e => setEnvForm(f => ({ ...f, kubeconfig: e.target.value }))}
+                      placeholder="apiVersion: v1&#10;kind: Config&#10;clusters:&#10;  ..."
+                      rows={4}
+                      className={`${inputCls} font-mono text-[11px] resize-y`}
+                    />
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="flex items-center gap-2 px-5 py-4 border-t border-border-subtle">
@@ -1227,6 +1332,73 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                     </div>
                   </>
                 )
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── Cluster Bootstrap modal ── */}
+      {bootstrapModal && selected && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => { if (!clusterBootstrapping) setBootstrapModal(false) }}>
+          <div className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+              <div className="flex items-center gap-2">
+                <Rocket size={14} className="text-accent" />
+                <h2 className="text-sm font-semibold text-text-primary">Bootstrap · {selected.name}</h2>
+              </div>
+              {!clusterBootstrapping && (
+                <button onClick={() => setBootstrapModal(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
+              )}
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Preflight — shared component handles detection, credential input, re-check */}
+              {!preflightPassed && !clusterBootstrapLogs.length && (
+                <ClusterPreflightFlow
+                  envId={selected.id}
+                  onReady={() => {
+                    setPreflightPassed(true)
+                    runClusterBootstrap()
+                  }}
+                />
+              )}
+
+              {/* Live bootstrap log stream */}
+              {clusterBootstrapLogs.length > 0 && (
+                <>
+                  <div className="rounded-lg border border-border-subtle bg-bg-card overflow-hidden">
+                    <div className="max-h-80 overflow-y-auto p-3 space-y-1 font-mono text-[11px]" id="bootstrap-log-scroll">
+                      {clusterBootstrapLogs.map((log, i) => (
+                        <div key={i} className={
+                          log.type === 'step'  ? 'text-accent font-semibold' :
+                          log.type === 'error' ? 'text-status-error' :
+                          log.type === 'done'  ? 'text-status-healthy font-semibold' :
+                          'text-text-muted'
+                        }>
+                          {log.type === 'step'  ? `▶ ${log.message}` :
+                           log.type === 'done'  ? `✓ ${log.message}` :
+                           log.type === 'error' ? `✗ ${log.message}` :
+                           `  ${log.message}`}
+                        </div>
+                      ))}
+                      {clusterBootstrapping && !clusterBootstrapDone && (
+                        <div className="flex items-center gap-1.5 text-text-muted">
+                          <RefreshCw size={10} className="animate-spin" /> Running…
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {clusterBootstrapDone && (
+                    <div className="flex justify-end pt-1">
+                      <button onClick={() => setBootstrapModal(false)}
+                        className="px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 transition-colors">
+                        Done
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

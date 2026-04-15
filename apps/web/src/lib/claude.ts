@@ -703,8 +703,8 @@ async function handleProposeTool(argsRaw: string, environmentId: string | undefi
     }
     if (!environmentId) return 'Error: no environment context — cannot propose a tool'
 
-    const existing = await prisma.mcpTool.findUnique({
-      where: { environmentId_name: { environmentId, name: args.name } },
+    const existing = await prisma.mcpTool.findFirst({
+      where: { environmentId, name: args.name },
     })
     if (existing) {
       return `Tool "${args.name}" already exists (status: ${existing.status}).`
@@ -736,7 +736,9 @@ async function handleOrionGetEnvironment(argsRaw: string): Promise<string> {
   try {
     const { environment_id } = JSON.parse(argsRaw || '{}') as { environment_id?: string }
     if (!environment_id) return 'Error: environment_id is required'
-    const env = await prisma.environment.findUnique({ where: { id: environment_id } })
+    const env = await prisma.environment.findFirst({
+      where: { OR: [{ id: environment_id }, { name: { equals: environment_id, mode: 'insensitive' } }] },
+    })
     if (!env) return `Error: environment "${environment_id}" not found`
     return JSON.stringify({
       id:          env.id,
@@ -767,8 +769,12 @@ async function handleOrionPatchEnvironment(argsRaw: string): Promise<string> {
     }
     if (!Object.keys(update).length) return 'Error: no patchable fields provided'
 
-    await prisma.environment.update({ where: { id: environment_id }, data: update })
-    return `Environment "${environment_id}" updated: ${Object.keys(update).join(', ')}`
+    const target = await prisma.environment.findFirst({
+      where: { OR: [{ id: environment_id }, { name: { equals: environment_id, mode: 'insensitive' } }] },
+    })
+    if (!target) return `Error: environment "${environment_id}" not found`
+    await prisma.environment.update({ where: { id: target.id }, data: update })
+    return `Environment "${target.name}" updated: ${Object.keys(update).join(', ')}`
   } catch (e) {
     return `Error: ${e instanceof Error ? e.message : String(e)}`
   }
@@ -779,7 +785,9 @@ async function handleOrionBootstrapEnvironment(argsRaw: string): Promise<string>
     const { environment_id } = JSON.parse(argsRaw || '{}') as { environment_id?: string }
     if (!environment_id) return 'Error: environment_id is required'
 
-    const env = await prisma.environment.findUnique({ where: { id: environment_id } })
+    const env = await prisma.environment.findFirst({
+      where: { OR: [{ id: environment_id }, { name: { equals: environment_id, mode: 'insensitive' } }] },
+    })
     if (!env) return `Error: environment "${environment_id}" not found`
     if (!env.kubeconfig) return 'Error: no kubeconfig stored for this environment. Patch it first using orion_patch_environment.'
 
@@ -814,6 +822,63 @@ async function handleOrionBootstrapEnvironment(argsRaw: string): Promise<string>
     return lines.length ? lines.join('\n') : 'Bootstrap completed (no output captured)'
   } catch (e) {
     return `Error: ${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+async function handleGitopsPropose(argsRaw: string, conversationId: string): Promise<string> {
+  try {
+    const args = JSON.parse(argsRaw || '{}') as {
+      environment_id?: string
+      title?: string
+      reasoning?: string
+      operation_description?: string
+      changes?: Array<{ path: string; content: string }>
+    }
+
+    if (!args.environment_id || !args.title || !args.reasoning || !args.operation_description || !args.changes?.length) {
+      return 'Error: environment_id, title, reasoning, operation_description, and changes are all required'
+    }
+
+    const { proposeChange } = await import('./gitops')
+    // Accept either the CUID or the environment name
+    const env = await prisma.environment.findFirst({
+      where: { OR: [{ id: args.environment_id }, { name: { equals: args.environment_id, mode: 'insensitive' } }] },
+    })
+    if (!env) return `Error: environment "${args.environment_id}" not found`
+    if (!env.gitOwner || !env.gitRepo) return 'Error: environment has no git repo — run bootstrap first'
+
+    const policy = (env.policyConfig ?? {}) as import('./gitops-policy').PolicyConfig
+    const result = await proposeChange({
+      owner: env.gitOwner,
+      repo:  env.gitRepo,
+      title: args.title,
+      reasoning: args.reasoning,
+      operationDescription: args.operation_description,
+      changes: args.changes,
+      policy,
+    })
+
+    await prisma.gitOpsPR.create({
+      data: {
+        environmentId: args.environment_id,
+        prNumber:  result.prNumber,
+        title:     args.title,
+        operation: result.classification.operation,
+        decision:  result.classification.decision,
+        status:    result.merged ? 'merged' : 'open',
+        prUrl:     result.prUrl,
+        reasoning: args.reasoning,
+        branch:    result.branch,
+        mergedAt:  result.merged ? new Date() : null,
+      },
+    })
+
+    const action = result.merged
+      ? `auto-merged (${result.classification.reason})`
+      : `opened for review — ${result.classification.reason}`
+    return `PR #${result.prNumber} ${action}. URL: ${result.prUrl}`
+  } catch (e) {
+    return `Error proposing GitOps change: ${e instanceof Error ? e.message : String(e)}`
   }
 }
 
@@ -898,6 +963,43 @@ async function* streamOpenAIChatCore(
             environment_id: { type: 'string', description: 'Environment ID' },
           },
           required: ['environment_id'],
+        },
+      },
+    },
+    {
+      type: 'function' as const,
+      function: {
+        name: 'gitops_propose',
+        description: `Propose a GitOps change for a localhost/docker environment. Creates a branch, commits the files, opens a PR, and auto-merges if policy allows.
+
+RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failures):
+1. SELF-CONTAINED ONLY. Do NOT use bind mounts for config files (volumes: ./nginx.conf:/etc/nginx/nginx.conf). The CI runner checks out the repo into a volume, not a normal filesystem path — bind mounts to host files fail with "not a directory".
+2. Use environment variables, command args, or inline config via 'command:' instead of mounted config files.
+3. If config is needed, write it via 'entrypoint' with a shell heredoc, or use a pre-configured image.
+4. Named volumes (no host path) are fine: volumes: [data:/data]
+5. Always use a pinned image tag (e.g. nginx:1.27.1) not 'latest' unless explicitly requested.
+6. Services path: services/<service-name>/docker-compose.yml`,
+        parameters: {
+          type: 'object',
+          properties: {
+            environment_id:       { type: 'string', description: 'Environment ID or name to deploy to (e.g. "localhost", "production")' },
+            title:                { type: 'string', description: 'Short PR title, e.g. "feat: add nginx reverse proxy"' },
+            reasoning:            { type: 'string', description: 'Why this change is needed' },
+            operation_description:{ type: 'string', description: 'Plain-language summary for policy classification: e.g. "add new service", "update image tag to patch version", "scale replicas", "remove service"' },
+            changes: {
+              type: 'array',
+              description: 'Files to create or update. Each docker-compose.yml must be fully self-contained with no host bind mounts.',
+              items: {
+                type: 'object',
+                properties: {
+                  path:    { type: 'string', description: 'Repo-relative file path, e.g. services/nginx/docker-compose.yml' },
+                  content: { type: 'string', description: 'Full file content' },
+                },
+                required: ['path', 'content'],
+              },
+            },
+          },
+          required: ['environment_id', 'title', 'reasoning', 'operation_description', 'changes'],
         },
       },
     },
@@ -1019,6 +1121,8 @@ async function* streamOpenAIChatCore(
           result = await handleOrionPatchEnvironment(tc.argsRaw)
         } else if (tc.name === 'orion_bootstrap_environment') {
           result = await handleOrionBootstrapEnvironment(tc.argsRaw)
+        } else if (tc.name === 'gitops_propose') {
+          result = await handleGitopsPropose(tc.argsRaw, conversationId)
         } else if (gateway && environmentId) {
           // ── Gateway tools ─────────────────────────────────────────────────
           try {

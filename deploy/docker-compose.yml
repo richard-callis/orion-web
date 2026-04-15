@@ -34,6 +34,8 @@ services:
       - orion-claude-creds:/claude-creds
       - ./coredns:/etc/coredns-managed
       - /root/.ssh:/root/.ssh:ro
+      - /root/.kube:/root/.kube:ro
+      - /root/.talos:/root/.talos:ro
     ports:
       - "3000:3000"
     healthcheck:
@@ -76,22 +78,23 @@ services:
       USER_UID: 1000
       USER_GID: 1000
       GITEA__database__DB_TYPE: sqlite3
-      GITEA__server__DOMAIN: ${GITEA_DOMAIN:-gitea.internal}
-      GITEA__server__ROOT_URL: https://${GITEA_DOMAIN:-gitea.internal}
-      GITEA__server__SSH_DOMAIN: ${GITEA_DOMAIN:-gitea.internal}
+      GITEA__server__DOMAIN: ${GITEA_DOMAIN:-gitea.khalisio.com}
+      GITEA__server__ROOT_URL: https://${GITEA_DOMAIN:-gitea.khalisio.com}
+      GITEA__server__LOCAL_ROOT_URL: http://gitea:3000
+      GITEA__server__SSH_DOMAIN: ${GITEA_DOMAIN:-gitea.khalisio.com}
       GITEA__server__SSH_PORT: 2222
-      GITEA__webhook__ALLOWED_HOST_LIST: orion
+      GITEA__webhook__ALLOWED_HOST_LIST: orion,10.2.2.0/24,127.0.0.1,localhost
       GITEA__security__INSTALL_LOCK: "true"
       GITEA__admin__DISABLE_REGULAR_ORG_CREATION: "false"
+      GITEA__actions__ENABLED: "true"
+      GITEA__service__REQUIRE_SIGNIN_VIEW: "false"
     volumes:
       - gitea-data:/data
     ports:
       - "2222:22"
+      - "3002:3000"
     labels:
-      traefik.enable: "true"
-      traefik.http.routers.gitea.rule: "Host(`${GITEA_DOMAIN:-gitea.internal}`)"
-      traefik.http.routers.gitea.entrypoints: "websecure"
-      traefik.http.services.gitea.loadbalancer.server.port: "3000"
+      traefik.enable: "false"
 
   # ── PostgreSQL ─────────────────────────────────────────────────────────────
   postgres:
@@ -157,26 +160,6 @@ services:
       traefik.http.routers.vault.entrypoints: "websecure"
       traefik.http.services.vault.loadbalancer.server.port: "8200"
 
-  # ── Traefik ────────────────────────────────────────────────────────────────
-  traefik:
-    image: traefik:latest
-    restart: unless-stopped
-    command:
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
-      - "--providers.file.directory=/traefik/dynamic"
-      - "--providers.file.watch=true"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - traefik-certs:/traefik/certs
-      - ./traefik/dynamic:/traefik/dynamic:ro
-    ports:
-      - "80:80"
-      - "443:443"
 
   # ── Claude Creds Refresh ───────────────────────────────────────────────────
   claude-refresh:
@@ -204,6 +187,5 @@ volumes:
   gitea-data:
   postgres-data:
   vault-data:
-  traefik-certs:
   orion-claude-creds:
   gateway-creds:

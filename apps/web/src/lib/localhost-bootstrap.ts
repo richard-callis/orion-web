@@ -117,7 +117,7 @@ async function getRunnerRegistrationToken(provider: GiteaGitProvider): Promise<s
   const giteaUrl = (process.env.GITEA_URL ?? 'http://gitea:3000').replace(/\/$/, '')
   const token    = process.env.GITEA_ADMIN_TOKEN ?? ''
   const res = await fetch(`${giteaUrl}/api/v1/admin/runners/registration-token`, {
-    method: 'POST',
+    method: 'GET',
     headers: {
       Authorization: `token ${token}`,
       'Content-Type': 'application/json',
@@ -162,11 +162,23 @@ jobs:
   deploy:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - name: Setup
+        run: |
+          which git || (apt-get update -qq && apt-get install -y -qq git curl)
+
+      - name: Checkout
+        run: |
+          if [ -d ".git" ]; then
+            git fetch origin main
+            git reset --hard origin/main
+          else
+            GITEA_HOST=$(echo "$\{{ gitea.server_url }}" | sed 's|https://||;s|http://||')
+            git clone http://x-gitea-token:$\{{ gitea.token }}@\${GITEA_HOST}/$\{{ gitea.repository }} .
+          fi
 
       - name: Deploy changed services
         run: |
-          CHANGED=$(git diff --name-only HEAD~1 HEAD | grep '^services/' | cut -d/ -f1-2 | sort -u)
+          CHANGED=$(git diff --name-only HEAD~1 HEAD | grep '^services/' | cut -d/ -f1-2 | sort -u || true)
           for SERVICE_DIR in $CHANGED; do
             if [ -f "$SERVICE_DIR/docker-compose.yml" ]; then
               echo "Deploying $SERVICE_DIR..."
@@ -180,9 +192,9 @@ jobs:
       - name: Report status to ORION
         if: always()
         run: |
-          curl -s -X POST "${orionUrl}/api/webhooks/gitea" \\
+          curl -sf -X POST "${orionUrl}/api/webhooks/gitea" \\
             -H "Content-Type: application/json" \\
-            -d '{"action":"deploy_complete","status":"$\{{ job.status }}"}'
+            -d '{"action":"deploy_complete","status":"$\{{ job.status }}"}' || true
 `
 
   return [
@@ -262,12 +274,15 @@ export async function bootstrapLocalEnvironment(
       }
     }
 
-    const webhookSecret = randomBytes(32).toString('hex')
+    // Use the webhook secret from git provider config so ORION can verify signatures
+const gitProviderSetting = await prisma.systemSetting.findUnique({ where: { key: 'git.provider.config' } })
+    const webhookSecret = (gitProviderSetting?.value as Record<string, string> | null)?.webhookSecret
+      ?? randomBytes(32).toString('hex')
     const repo = await provider.ensureRepo({
       owner: gitOwner,
       name: gitRepo,
       description: `ORION-managed Docker environment: ${env.name}`,
-      private: true,
+      private: false,
       isOrg: true,
     })
     emit({ type: 'log', message: `Repo ready: ${repo.htmlUrl}` })
@@ -300,27 +315,72 @@ export async function bootstrapLocalEnvironment(
     emit({ type: 'step', message: 'Registering Gitea Actions runner…' })
     try {
       const regToken = await getRunnerRegistrationToken(provider as GiteaGitProvider)
-      const giteaInternalUrl = process.env.GITEA_URL ?? 'http://gitea:3000'
+      // Use host network so the runner (and sibling Docker executor containers)
+      // can reach Gitea on localhost:3002 and ORION on localhost:3000.
+      const giteaHostUrl = `http://localhost:${process.env.GITEA_PORT ?? '3002'}`
 
       emit({ type: 'log', message: `Pulling runner image…` })
       await dockerPull(RUNNER_IMAGE, msg => emit({ type: 'log', message: msg }))
+
+      // Write act_runner config.yaml into the data volume via a one-shot Alpine container.
+      // Sets Docker executor with host network + docker tooling mounts.
+      const runnerConfig = [
+        'log:',
+        '  level: info',
+        'runner:',
+        `  file: /data/.runner`,
+        '  capacity: 1',
+        'cache:',
+        '  enabled: false',
+        'container:',
+        '  network: host',
+        '  options: -v /usr/bin/docker:/usr/bin/docker -v /usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins',
+        '  valid_volumes:',
+        '    - /var/run/docker.sock',
+        '    - /usr/bin/docker',
+        '    - /usr/libexec/docker/cli-plugins',
+      ].join('\n')
+
+      const configWriteRes = await dockerRequest({
+        method: 'POST',
+        path: `/containers/create?name=orion-runner-config-init`,
+        body: {
+          Image: 'alpine',
+          Cmd: ['sh', '-c', `printf '%s' "${runnerConfig.replace(/'/g, "'\\''")}" > /data/config.yaml && echo done`],
+          HostConfig: {
+            Binds: [`orion-runner-${slug}:/data`],
+            AutoRemove: true,
+          },
+        },
+      })
+      if (configWriteRes.status === 201) {
+        const { Id: cfgId } = JSON.parse(configWriteRes.body) as { Id: string }
+        await dockerRequest({ method: 'POST', path: `/containers/${cfgId}/start` })
+        // Wait briefly for the one-shot container to finish
+        await new Promise(r => setTimeout(r, 2000))
+      }
 
       await removeContainer(runnerName)
       await createAndStartContainer(runnerName, {
         Image: RUNNER_IMAGE,
         Env: [
-          `GITEA_INSTANCE_URL=${giteaInternalUrl}`,
+          `GITEA_INSTANCE_URL=${giteaHostUrl}`,
           `GITEA_RUNNER_REGISTRATION_TOKEN=${regToken}`,
           `GITEA_RUNNER_NAME=${runnerName}`,
-          `GITEA_RUNNER_LABELS=self-hosted,docker,${slug}`,
+          // Label format: label:executor:image — Docker executor with ubuntu:latest
+          `GITEA_RUNNER_LABELS=self-hosted:docker:ubuntu:latest,docker:docker:ubuntu:latest,${slug}:docker:ubuntu:latest`,
+          // Tell act_runner to use host network for spawned containers and mount docker tooling
+          `GITEA_RUNNER_CONFIG=/data/config.yaml`,
         ],
         HostConfig: {
           Binds: [
             '/var/run/docker.sock:/var/run/docker.sock',
+            '/usr/bin/docker:/usr/bin/docker:ro',
+            '/usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins:ro',
             `orion-runner-${slug}:/data`,
           ],
           RestartPolicy: { Name: 'unless-stopped' },
-          NetworkMode: composeNet,
+          NetworkMode: 'host',
         },
       })
       emit({ type: 'log', message: `Runner "${runnerName}" started — registering with Gitea…` })

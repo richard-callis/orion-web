@@ -404,6 +404,57 @@ async function runWatchers() {
   }
 }
 
+// ── GitOps PR sync ─────────────────────────────────────────────────────────────
+
+/**
+ * Poll Gitea for the current state of any open GitOpsPRs and update the DB.
+ * This is a fallback for when webhooks don't fire (e.g. Gitea delivery queue issues).
+ * Runs every 60s — cheap since it only queries PRs that are still marked 'open'.
+ */
+async function syncGitOpsPRs() {
+  const openPRs = await prisma.gitOpsPR.findMany({
+    where: { status: 'open' },
+    include: { environment: { select: { gitOwner: true, gitRepo: true } } },
+  })
+
+  if (openPRs.length === 0) return
+
+  const { getGitProvider } = await import('./lib/git-provider')
+  let provider: Awaited<ReturnType<typeof getGitProvider>>
+  try {
+    provider = await getGitProvider()
+    if (!(await provider.isHealthy())) return
+  } catch {
+    return
+  }
+
+  for (const pr of openPRs) {
+    const { gitOwner, gitRepo } = pr.environment
+    if (!gitOwner || !gitRepo) continue
+
+    try {
+      // Fetch current PR state from git provider
+      const remotePR = await provider.getPR(gitOwner, gitRepo, pr.prNumber)
+
+      const merged = remotePR.merged
+      const closed = remotePR.state === 'closed' || remotePR.state === 'merged'
+
+      if (merged || closed) {
+        await prisma.gitOpsPR.update({
+          where: { id: pr.id },
+          data: {
+            status:   merged ? 'merged' : 'closed',
+            mergedAt: merged ? new Date() : undefined,
+          },
+        })
+        log(`GitOps sync: PR#${pr.prNumber} in ${gitOwner}/${gitRepo} → ${merged ? 'merged' : 'closed'}`)
+      }
+    } catch {
+      // Non-fatal — individual PR fetch failures are skipped
+    }
+  }
+}
+
 // ── Poll loop ──────────────────────────────────────────────────────────────────
 
 async function pollOnce() {
@@ -448,6 +499,11 @@ async function main() {
   // Watcher poll — check every minute whether any watcher is due
   setInterval(() => {
     runWatchers().catch(e => err(`Watcher poll failed: ${e}`))
+  }, 60_000)
+
+  // GitOps PR sync — poll Gitea every 60s to catch merges missed by webhooks
+  setInterval(() => {
+    syncGitOpsPRs().catch(e => err(`GitOps PR sync failed: ${e}`))
   }, 60_000)
 }
 

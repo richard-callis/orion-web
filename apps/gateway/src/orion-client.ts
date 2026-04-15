@@ -84,6 +84,21 @@ export class OrionClient {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
   }
 
+  /** Report K8s Ingress rules to ORION for display in the Ingress management page */
+  async reportIngresses(ingresses: import('./ingress-watcher.js').K8sIngressRule[]): Promise<void> {
+    const res = await fetch(
+      `${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}/ingress/sync`,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ ingresses }),
+      },
+    )
+    if (!res.ok) {
+      console.error(`[gateway] reportIngresses failed: ${res.status} ${await res.text()}`)
+    }
+  }
+
   /** Report ArgoCD Application sync/health state to ORION */
   async reportSyncStatus(apps: import('./argocd-watcher.js').ArgoCDApp[]): Promise<void> {
     const res = await fetch(

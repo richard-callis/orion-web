@@ -33,6 +33,7 @@ import { kubernetesTools } from './builtin-tools/kubernetes.js'
 import { dockerTools } from './builtin-tools/docker.js'
 import { localhostTools } from './builtin-tools/localhost.js'
 import { ArgoCDWatcher } from './argocd-watcher.js'
+import { IngressWatcher } from './ingress-watcher.js'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -152,8 +153,9 @@ if (GATEWAY_TYPE === 'cluster' && process.env.ENABLE_DOCKER === 'true') register
 
 // ── ORION client (constructed after join so credentials are resolved) ───────────
 
-let orion: OrionClient           // initialised in start()
-let argoCdWatcher: ArgoCDWatcher | undefined
+let orion: OrionClient              // initialised in start()
+let argoCdWatcher:  ArgoCDWatcher  | undefined
+let ingressWatcher: IngressWatcher | undefined
 
 // Tools currently active (refreshed from ORION on heartbeat)
 let activeTools: McpToolConfig[] = []
@@ -284,12 +286,17 @@ async function start() {
     console.log(`[gateway] Tool config refreshed: ${tools.length} tools`)
   })
 
-  // Start ArgoCD watcher for K8s clusters
+  // Start ArgoCD + Ingress watchers for K8s clusters
   if (GATEWAY_TYPE === 'cluster') {
     argoCdWatcher = new ArgoCDWatcher(
       async (apps) => { await orion.reportSyncStatus(apps) },
     )
     argoCdWatcher.start()
+
+    ingressWatcher = new IngressWatcher(
+      async (ingresses) => { await orion.reportIngresses(ingresses) },
+    )
+    ingressWatcher.start()
   }
 
   app.listen(PORT, () => {
@@ -305,6 +312,7 @@ async function start() {
 process.on('SIGTERM', () => {
   console.log('[gateway] Shutting down…')
   argoCdWatcher?.stop()
+  ingressWatcher?.stop()
   orion.stopHeartbeat()
   process.exit(0)
 })

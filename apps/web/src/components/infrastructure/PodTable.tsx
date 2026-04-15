@@ -49,7 +49,18 @@ function DebugButton({ pod, models }: { pod: CachedPod; models: AppModel[] }) {
   const startDebug = async (modelId?: string) => {
     setLoading(true)
     setOpen(false)
-    const initialContext = `Debug pod \`${pod.name}\` in namespace \`${pod.namespace}\` on node \`${pod.node}\`.\n\nStatus: **${pod.status}**, Restarts: **${pod.restarts}**\n\nPlease check the logs and recent events to identify the issue.`
+    const tmplRes = await fetch('/api/admin/prompts/context.pod-debug')
+    const defaultCtx = `Debug pod \`${pod.name}\` in namespace \`${pod.namespace}\` on node \`${pod.node}\`.\n\nStatus: **${pod.status}**, Restarts: **${pod.restarts}**\n\nPlease check the logs and recent events to identify the issue.`
+    let initialContext = defaultCtx
+    if (tmplRes.ok) {
+      const { content } = await tmplRes.json() as { content: string }
+      initialContext = content
+        .replace(/\{\{podName\}\}/g, pod.name)
+        .replace(/\{\{namespace\}\}/g, pod.namespace)
+        .replace(/\{\{node\}\}/g, pod.node)
+        .replace(/\{\{status\}\}/g, pod.status)
+        .replace(/\{\{restarts\}\}/g, String(pod.restarts))
+    }
     const r = await fetch('/api/chat/conversations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -174,11 +174,15 @@ export async function bootstrapEnvironmentRepoWithProvider(
     private: true,
   })
 
+  // Use the actual owner returned by the provider (may differ from opts.owner
+  // when the provider resolves the authenticated user's login)
+  const actualOwner = repo.fullName.split('/')[0]
+
   const files = buildScaffoldFiles(opts)
 
   try {
     await provider.commitFiles({
-      owner: opts.owner,
+      owner: actualOwner,
       repo: opts.repoName,
       branch: 'main',
       files,
@@ -189,7 +193,7 @@ export async function bootstrapEnvironmentRepoWithProvider(
   }
 
   if (opts.webhookUrl && opts.webhookSecret) {
-    await provider.ensureWebhook(opts.owner, opts.repoName, opts.webhookUrl, opts.webhookSecret)
+    await provider.ensureWebhook(actualOwner, opts.repoName, opts.webhookUrl, opts.webhookSecret)
   }
 
   return repo

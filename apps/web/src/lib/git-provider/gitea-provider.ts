@@ -57,9 +57,16 @@ export class GiteaGitProvider implements GitProvider {
   // ── Repos ──────────────────────────────────────────────────────────────────
 
   async ensureRepo(opts: EnsureRepoOptions): Promise<GitRepo> {
+    // Determine actual owner: for user repos, use the authenticated user's login
+    let resolvedOwner = opts.owner
+    if (!opts.isOrg) {
+      const authedUser = await this.fetch<{ login: string }>('/user')
+      resolvedOwner = authedUser.login
+    }
+
     // Check if it exists
     try {
-      const existing = await this.fetch<GiteaRepo>(`/repos/${opts.owner}/${opts.name}`)
+      const existing = await this.fetch<GiteaRepo>(`/repos/${resolvedOwner}/${opts.name}`)
       return toGitRepo(existing)
     } catch (err: unknown) {
       if (!isNotFound(err)) throw err
@@ -73,11 +80,23 @@ export class GiteaGitProvider implements GitProvider {
       default_branch: opts.defaultBranch ?? 'main',
     }
     const path = opts.isOrg ? `/orgs/${opts.owner}/repos` : `/user/repos`
-    const created = await this.fetch<GiteaRepo>(path, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    })
-    return toGitRepo(created)
+    try {
+      const created = await this.fetch<GiteaRepo>(path, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+      return toGitRepo(created)
+    } catch (err: unknown) {
+      // 409 = repo already exists under the authenticated user — fetch and return it
+      if (err instanceof Error && err.message.includes('409')) {
+        // Determine the actual owner: org repos use opts.owner, user repos use the authed user
+        const authedUser = await this.fetch<{ login: string }>('/user')
+        const actualOwner = opts.isOrg ? opts.owner : authedUser.login
+        const existing = await this.fetch<GiteaRepo>(`/repos/${actualOwner}/${opts.name}`)
+        return toGitRepo(existing)
+      }
+      throw err
+    }
   }
 
   // ── Branches ───────────────────────────────────────────────────────────────
@@ -96,56 +115,36 @@ export class GiteaGitProvider implements GitProvider {
   // ── Files ──────────────────────────────────────────────────────────────────
 
   async commitFiles(opts: CommitFilesOptions): Promise<void> {
-    // Use Git Trees API for atomic multi-file commit
-    const branch = await this.fetch<{ commit: { id: string } }>(
-      `/repos/${opts.owner}/${opts.repo}/branches/${opts.branch}`,
-    )
-    const headSha = branch.commit.id
+    // Use Contents API (PUT/POST per file) — supported by all Gitea versions.
+    // Files are committed sequentially on the target branch.
+    for (const f of opts.files) {
+      const encodedPath = f.path.split('/').map(encodeURIComponent).join('/')
+      const contentB64 = Buffer.from(f.content, 'utf8').toString('base64')
 
-    const commit = await this.fetch<{ tree: { sha: string } }>(
-      `/repos/${opts.owner}/${opts.repo}/git/commits/${headSha}`,
-    )
-
-    const treeItems = await Promise.all(
-      opts.files.map(async (f) => {
-        const blob = await this.fetch<{ sha: string }>(
-          `/repos/${opts.owner}/${opts.repo}/git/blobs`,
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              content: Buffer.from(f.content, 'utf8').toString('base64'),
-              encoding: 'base64',
-            }),
-          },
+      // Check if the file already exists so we can supply its SHA for updates
+      let existingSha: string | undefined
+      try {
+        const existing = await this.fetch<{ sha: string }>(
+          `/repos/${opts.owner}/${opts.repo}/contents/${encodedPath}?ref=${encodeURIComponent(opts.branch)}`,
         )
-        return { path: f.path, mode: '100644', type: 'blob', sha: blob.sha }
-      }),
-    )
+        existingSha = existing.sha
+      } catch (err: unknown) {
+        if (!isNotFound(err)) throw err
+        // File does not exist yet — will be created
+      }
 
-    const tree = await this.fetch<{ sha: string }>(
-      `/repos/${opts.owner}/${opts.repo}/git/trees`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ base_tree: commit.tree.sha, tree: treeItems }),
-      },
-    )
+      const body: Record<string, unknown> = {
+        message: opts.message,
+        content: contentB64,
+        branch: opts.branch,
+      }
+      if (existingSha) body.sha = existingSha
 
-    const newCommit = await this.fetch<{ sha: string }>(
-      `/repos/${opts.owner}/${opts.repo}/git/commits`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          message: opts.message,
-          tree: tree.sha,
-          parents: [headSha],
-        }),
-      },
-    )
-
-    await this.fetch(`/repos/${opts.owner}/${opts.repo}/git/refs/heads/${opts.branch}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ sha: newCommit.sha, force: false }),
-    })
+      await this.fetch(`/repos/${opts.owner}/${opts.repo}/contents/${encodedPath}`, {
+        method: existingSha ? 'PUT' : 'POST',
+        body: JSON.stringify(body),
+      })
+    }
   }
 
   // ── PRs ────────────────────────────────────────────────────────────────────
@@ -157,12 +156,17 @@ export class GiteaGitProvider implements GitProvider {
       head: opts.head,
       base: opts.base,
     }
-    if (opts.labels?.length) body.labels = opts.labels
+    // Gitea labels API expects integer IDs, not strings — skip to avoid 422
 
     const pr = await this.fetch<GiteaPR>(`/repos/${opts.owner}/${opts.repo}/pulls`, {
       method: 'POST',
       body: JSON.stringify(body),
     })
+    return toGitPR(pr)
+  }
+
+  async getPR(owner: string, repo: string, prNumber: number): Promise<GitPR> {
+    const pr = await this.fetch<GiteaPR>(`/repos/${owner}/${repo}/pulls/${prNumber}`)
     return toGitPR(pr)
   }
 

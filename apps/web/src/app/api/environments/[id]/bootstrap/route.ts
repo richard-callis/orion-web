@@ -23,7 +23,9 @@ export async function POST(
       try {
         await bootstrapCluster(params.id, send)
       } catch (err) {
-        send({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error(`[bootstrap] ${params.id} failed:`, err)
+        send({ type: 'error', message: msg })
       } finally {
         controller.close()
       }

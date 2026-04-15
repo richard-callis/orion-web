@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { KpiCard } from '@/components/dashboard/KpiCard'
+import { ClusterPreflightFlow } from '@/components/environments/ClusterPreflightFlow'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -115,11 +116,7 @@ function BootstrapModal({
   const [streaming, setStreaming] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  // Cluster only: kubeconfig pre-flight
-  const [kubeconfigText, setKubeconfigText] = useState('')
-  const [savingKubeconfig, setSavingKubeconfig] = useState(false)
   const [kubeconfigReady, setKubeconfigReady] = useState(!isCluster || hasKubeconfig)
-  const [kubeconfigError, setKubeconfigError] = useState<string | null>(null)
 
   // Remote docker only: copy-paste command
   const [dockerCmd, setDockerCmd] = useState<string | null>(null)
@@ -158,27 +155,6 @@ function BootstrapModal({
     })
   }
 
-  // Cluster: save kubeconfig then start bootstrap
-  const saveKubeconfigAndStart = async () => {
-    const trimmed = kubeconfigText.trim()
-    if (!trimmed) { setKubeconfigError('Paste a kubeconfig to continue.'); return }
-    setSavingKubeconfig(true)
-    setKubeconfigError(null)
-    try {
-      const b64 = btoa(unescape(encodeURIComponent(trimmed)))
-      const res = await fetch(`/api/environments/${envId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kubeconfig: b64 }),
-      })
-      if (!res.ok) throw new Error(`Failed to save kubeconfig: ${res.status}`)
-      setKubeconfigReady(true)
-    } catch (err) {
-      setKubeconfigError(err instanceof Error ? err.message : 'Failed to save kubeconfig')
-    } finally {
-      setSavingKubeconfig(false)
-    }
-  }
 
   // SSE stream helper — shared by localhost deploy and cluster bootstrap
   const streamEndpoint = (url: string) => {
@@ -386,29 +362,13 @@ function BootstrapModal({
         {/* ── Localhost: auto-deploy log ── */}
         {isLocalhost && <LogPanel />}
 
-        {/* ── Cluster: kubeconfig pre-flight then bootstrap log ── */}
+        {/* ── Cluster: preflight → auto-detect credentials → bootstrap log ── */}
         {isCluster && !kubeconfigReady && (
-          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-            <p className="text-sm text-text-secondary">
-              Paste the kubeconfig for <span className="text-text-primary font-medium">{envName}</span> to allow ORION to deploy ArgoCD and the gateway.
-            </p>
-            <textarea
-              value={kubeconfigText}
-              onChange={e => { setKubeconfigText(e.target.value); setKubeconfigError(null) }}
-              placeholder="Paste kubeconfig YAML here…"
-              rows={12}
-              className="w-full px-3 py-2 text-xs font-mono bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent resize-none"
+          <div className="flex-1 overflow-y-auto px-4 py-3">
+            <ClusterPreflightFlow
+              envId={envId}
+              onReady={() => setKubeconfigReady(true)}
             />
-            {kubeconfigError && <p className="text-xs text-status-error">{kubeconfigError}</p>}
-            <div className="flex justify-end">
-              <button
-                onClick={saveKubeconfigAndStart}
-                disabled={savingKubeconfig || !kubeconfigText.trim()}
-                className="px-4 py-2 text-sm rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                {savingKubeconfig ? 'Saving…' : 'Save & Bootstrap'}
-              </button>
-            </div>
           </div>
         )}
         {isCluster && kubeconfigReady && <LogPanel />}
@@ -426,24 +386,30 @@ function BootstrapModal({
   )
 }
 
-// ─── Open PRs Table ───────────────────────────────────────────────────────────
+// ─── PR Table (shared by open + closed tabs) ──────────────────────────────────
 
-function OpenPRsTable({ prs }: { prs: GitOpsPR[] }) {
+function PRTable({ prs, showStatus }: { prs: GitOpsPR[]; showStatus?: boolean }) {
   if (prs.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-14 gap-3 text-text-muted">
         <CheckCircle size={32} className="text-status-healthy opacity-60" />
-        <p className="text-sm font-medium text-text-secondary">No open PRs — the cluster is in sync</p>
+        <p className="text-sm font-medium text-text-secondary">
+          {showStatus ? 'No closed PRs yet' : 'No open PRs — the cluster is in sync'}
+        </p>
       </div>
     )
   }
+
+  const cols = showStatus
+    ? ['Environment', 'Operation', 'Title', 'Status', 'Merged', 'Actions']
+    : ['Environment', 'Operation', 'Title', 'Decision', 'Opened', 'Actions']
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-bg-raised border-b border-border-subtle">
           <tr>
-            {['Environment', 'Operation', 'Title', 'Decision', 'Opened', 'Actions'].map(h => (
+            {cols.map(h => (
               <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-text-muted">{h}</th>
             ))}
           </tr>
@@ -453,9 +419,7 @@ function OpenPRsTable({ prs }: { prs: GitOpsPR[] }) {
             <tr
               key={pr.id}
               className={`hover:bg-bg-raised transition-colors ${
-                pr.decision === 'review'
-                  ? 'border-l-2 border-l-status-warning'
-                  : ''
+                !showStatus && pr.decision === 'review' ? 'border-l-2 border-l-status-warning' : ''
               }`}
             >
               <td className="px-4 py-3 text-text-secondary text-xs font-medium whitespace-nowrap">
@@ -478,7 +442,17 @@ function OpenPRsTable({ prs }: { prs: GitOpsPR[] }) {
                 </a>
               </td>
               <td className="px-4 py-3 whitespace-nowrap">
-                {pr.decision === 'auto' ? (
+                {showStatus ? (
+                  pr.status === 'merged' ? (
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-status-healthy/10 text-status-healthy">
+                      merged
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-text-muted/10 text-text-muted">
+                      closed
+                    </span>
+                  )
+                ) : pr.decision === 'auto' ? (
                   <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-status-healthy/10 text-status-healthy">
                     auto-merge
                   </span>
@@ -489,7 +463,10 @@ function OpenPRsTable({ prs }: { prs: GitOpsPR[] }) {
                 )}
               </td>
               <td className="px-4 py-3 text-xs text-text-muted whitespace-nowrap">
-                {relativeTime(pr.createdAt)}
+                {showStatus
+                  ? (pr.mergedAt ? relativeTime(pr.mergedAt) : relativeTime(pr.createdAt))
+                  : relativeTime(pr.createdAt)
+                }
               </td>
               <td className="px-4 py-3">
                 <a
@@ -559,10 +536,14 @@ function ArgoCDSyncPanel({ argocd }: { argocd: ArgoCDState }) {
 function EnvironmentCard({
   env,
   openPrCount,
+  selected,
+  onSelect,
   onBootstrap,
 }: {
   env: Environment
   openPrCount: number
+  selected: boolean
+  onSelect: (id: string) => void
   onBootstrap: (id: string, name: string, envType: string, hasKubeconfig: boolean) => void
 }) {
   const hasRepo = !!(env.gitOwner && env.gitRepo)
@@ -573,7 +554,14 @@ function EnvironmentCard({
     'bg-text-muted'
 
   return (
-    <div className="bg-bg-surface border border-border-subtle rounded-xl p-4 flex flex-col gap-3">
+    <div
+      onClick={() => onSelect(env.id)}
+      className={`bg-bg-surface border rounded-xl p-4 flex flex-col gap-3 cursor-pointer transition-colors ${
+        selected
+          ? 'border-accent ring-1 ring-accent/30'
+          : 'border-border-subtle hover:border-accent/40'
+      }`}
+    >
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
@@ -656,6 +644,8 @@ export function GitOpsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [bootstrapTarget, setBootstrapTarget] = useState<{ id: string; name: string; envType: string; hasKubeconfig: boolean } | null>(null)
+  const [prTab, setPrTab] = useState<'open' | 'closed'>('open')
+  const [selectedEnvId, setSelectedEnvId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -679,13 +669,15 @@ export function GitOpsPage() {
   useEffect(() => { load() }, [load])
 
   // Derived counts
-  const openPRs = prs.filter(p => p.status === 'open')
-  const awaitingReview = openPRs.filter(p => p.decision === 'review').length
+  const filteredPRs = selectedEnvId ? prs.filter(p => p.environmentId === selectedEnvId) : prs
+  const openPRs = filteredPRs.filter(p => p.status === 'open')
+  const closedPRs = filteredPRs.filter(p => p.status === 'merged' || p.status === 'closed')
+  const awaitingReview = prs.filter(p => p.status === 'open' && p.decision === 'review').length
   const autoMergedToday = prs.filter(p => p.status === 'merged' && isToday(p.mergedAt)).length
 
-  // Per-environment open PR counts
+  // Per-environment open PR counts (always unfiltered for badges)
   const openByEnv: Record<string, number> = {}
-  for (const pr of openPRs) {
+  for (const pr of prs.filter(p => p.status === 'open')) {
     openByEnv[pr.environmentId] = (openByEnv[pr.environmentId] ?? 0) + 1
   }
 
@@ -723,27 +715,75 @@ export function GitOpsPage() {
         <KpiCard label="Open PRs"           value={openPRs.length}       color="info"    />
       </div>
 
-      {/* Open PRs table */}
+      {/* PR tabs */}
       <div className="bg-bg-surface border border-border-subtle rounded-xl overflow-hidden">
-        <div className="px-5 py-3 border-b border-border-subtle flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-text-primary">Open Pull Requests</h2>
-          {openPRs.length > 0 && (
-            <span className="text-xs text-text-muted">{openPRs.length} open</span>
+        {/* Tab bar */}
+        <div className="flex items-center justify-between border-b border-border-subtle px-2 pt-1">
+        <div className="flex items-center">
+          <button
+            onClick={() => setPrTab('open')}
+            className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
+              prTab === 'open'
+                ? 'border-accent text-text-primary'
+                : 'border-transparent text-text-muted hover:text-text-secondary'
+            }`}
+          >
+            Open
+            {openPRs.length > 0 && (
+              <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] bg-status-warning/20 text-status-warning">
+                {openPRs.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setPrTab('closed')}
+            className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
+              prTab === 'closed'
+                ? 'border-accent text-text-primary'
+                : 'border-transparent text-text-muted hover:text-text-secondary'
+            }`}
+          >
+            Closed
+            {closedPRs.length > 0 && (
+              <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] bg-bg-raised text-text-muted border border-border-subtle">
+                {closedPRs.length}
+              </span>
+            )}
+          </button>
+        </div>
+          {selectedEnvId && (
+            <span className="text-xs text-text-muted pr-2 pb-1">
+              {environments.find(e => e.id === selectedEnvId)?.name}
+            </span>
           )}
         </div>
+
         {loading ? (
           <div className="flex items-center justify-center py-12 gap-2 text-text-muted text-sm">
             <RefreshCw size={14} className="animate-spin" />
             Loading…
           </div>
+        ) : prTab === 'open' ? (
+          <PRTable prs={openPRs} />
         ) : (
-          <OpenPRsTable prs={openPRs} />
+          <PRTable prs={closedPRs} showStatus />
         )}
       </div>
 
       {/* Environments grid */}
       <div>
-        <h2 className="text-sm font-semibold text-text-primary mb-3">Environments</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-text-primary">Environments</h2>
+          {selectedEnvId && (
+            <button
+              onClick={() => setSelectedEnvId(null)}
+              className="inline-flex items-center gap-1 text-xs text-accent hover:text-text-primary transition-colors"
+            >
+              <X size={12} />
+              Clear filter
+            </button>
+          )}
+        </div>
         {loading ? (
           <div className="flex items-center gap-2 text-text-muted text-sm">
             <RefreshCw size={14} className="animate-spin" />
@@ -758,6 +798,8 @@ export function GitOpsPage() {
                 key={env.id}
                 env={env}
                 openPrCount={openByEnv[env.id] ?? 0}
+                selected={selectedEnvId === env.id}
+                onSelect={id => setSelectedEnvId(prev => prev === id ? null : id)}
                 onBootstrap={(id, name, envType, hasKubeconfig) => setBootstrapTarget({ id, name, envType, hasKubeconfig })}
               />
             ))}

@@ -46,7 +46,8 @@ interface CreateBugForm {
 
 export function BugManager({ initialBugs, users }: Props) {
   const [bugs, setBugs]         = useState<Bug[]>(initialBugs)
-  const [selected, setSelected] = useState<Bug | null>(null)
+  const [selectedBug, setSelectedBug] = useState<Bug | null>(null)
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const [modal, setModal]       = useState(false)
   const [saving, setSaving]     = useState(false)
   const [form, setForm]         = useState<CreateBugForm>({ title: '', description: '', severity: 'medium', area: '' })
@@ -61,21 +62,28 @@ export function BugManager({ initialBugs, users }: Props) {
   const titleRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (selected) {
-      setEditTitle(selected.title)
-      setEditDesc(selected.description ?? '')
-      setEditArea(selected.area ?? '')
-      setEditSev(selected.severity)
-      setEditStatus(selected.status as BugStatus)
-      setEditAssignee(selected.assignedUserId ?? '')
+    if (selectedBug) {
+      setEditTitle(selectedBug.title)
+      setEditDesc(selectedBug.description ?? '')
+      setEditArea(selectedBug.area ?? '')
+      setEditSev(selectedBug.severity)
+      setEditStatus(selectedBug.status as BugStatus)
+      setEditAssignee(selectedBug.assignedUserId ?? '')
+    } else {
+      setEditTitle('')
+      setEditDesc('')
+      setEditArea('')
+      setEditSev('medium')
+      setEditStatus('open')
+      setEditAssignee('')
     }
-  }, [selected?.id])
+  }, [selectedBug?.id])
 
   const byStatus = (s: BugStatus) => bugs.filter(b => b.status === s)
 
   const updateBug = async (id: string, patch: Partial<Bug>) => {
     setBugs(prev => prev.map(b => b.id === id ? { ...b, ...patch } : b))
-    if (selected?.id === id) setSelected(s => s ? { ...s, ...patch } : s)
+    if (selectedBug?.id === id) setSelectedBug(s => s ? { ...s, ...patch } : s)
     await fetch(`/api/bugs/${id}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
     }).catch(() => {})
@@ -83,7 +91,10 @@ export function BugManager({ initialBugs, users }: Props) {
 
   const deleteBug = async (id: string) => {
     setBugs(prev => prev.filter(b => b.id !== id))
-    if (selected?.id === id) setSelected(null)
+    if (selectedBug?.id === id) {
+      setSelectedBug(null)
+      setIsDetailModalOpen(false)
+    }
     await fetch(`/api/bugs/${id}`, { method: 'DELETE' }).catch(() => {})
   }
 
@@ -105,11 +116,12 @@ export function BugManager({ initialBugs, users }: Props) {
     setForm({ title: '', description: '', severity: 'medium', area: '' })
     setModal(false)
     setSaving(false)
-    setSelected(bug)
+    setSelectedBug(bug)
+    setIsDetailModalOpen(true)
   }
 
   const saveDetail = async () => {
-    if (!selected) return
+    if (!selectedBug) return
     const assignedUser = users.find(u => u.id === editAssignee) ?? null
     const patch: Partial<Bug> = {
       title:          editTitle,
@@ -122,7 +134,7 @@ export function BugManager({ initialBugs, users }: Props) {
         id: assignedUser.id, name: assignedUser.name, username: assignedUser.username, email: '', role: '',
       } as TaskUser : null,
     }
-    await updateBug(selected.id, patch)
+    await updateBug(selectedBug.id, patch)
   }
 
   const openCount = bugs.filter(b => b.status !== 'closed' && b.status !== 'resolved').length
@@ -164,11 +176,19 @@ export function BugManager({ initialBugs, users }: Props) {
                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
                   {colBugs.map(bug => {
                     const sev = severityConfig[bug.severity] ?? severityConfig.medium
-                    const isSelected = selected?.id === bug.id
+                    const isSelected = selectedBug?.id === bug.id
                     return (
                       <div
                         key={bug.id}
-                        onClick={() => setSelected(isSelected ? null : bug)}
+                        onClick={() => {
+                          if (isSelected) {
+                            setSelectedBug(null)
+                            setIsDetailModalOpen(false)
+                          } else {
+                            setSelectedBug(bug)
+                            setIsDetailModalOpen(true)
+                          }
+                        }}
                         className={`p-2.5 rounded-lg border cursor-pointer transition-colors ${
                           isSelected
                             ? 'border-accent bg-accent/10'
@@ -202,12 +222,12 @@ export function BugManager({ initialBugs, users }: Props) {
       </div>
 
       {/* ── Detail panel ────────────────────────────────────────────────────── */}
-      {selected && (
+      {selectedBug && (
         <aside className="w-80 flex-shrink-0 border-l border-border-subtle bg-bg-sidebar flex flex-col overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
             <span className="text-xs font-medium text-text-secondary">Bug Details</span>
-            <button onClick={() => setSelected(null)} className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors">
+            <button onClick={() => setSelectedBug(null)} className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors">
               <X size={14} />
             </button>
           </div>
@@ -233,7 +253,7 @@ export function BugManager({ initialBugs, users }: Props) {
                 <label className="text-[10px] uppercase tracking-wide text-text-muted">Severity</label>
                 <select
                   value={editSev}
-                  onChange={e => { setEditSev(e.target.value); updateBug(selected.id, { severity: e.target.value }) }}
+                  onChange={e => { setEditSev(e.target.value); updateBug(selectedBug.id, { severity: e.target.value }) }}
                   className="w-full text-xs bg-bg-raised border border-border-visible rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
                 >
                   <option value="critical">Critical</option>
@@ -246,7 +266,7 @@ export function BugManager({ initialBugs, users }: Props) {
                 <label className="text-[10px] uppercase tracking-wide text-text-muted">Status</label>
                 <select
                   value={editStatus}
-                  onChange={e => { setEditStatus(e.target.value as BugStatus); updateBug(selected.id, { status: e.target.value }) }}
+                  onChange={e => { setEditStatus(e.target.value as BugStatus); updateBug(selectedBug.id, { status: e.target.value }) }}
                   className="w-full text-xs bg-bg-raised border border-border-visible rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
                 >
                   {STATUS_COLUMNS.map(s => <option key={s} value={s}>{statusLabel[s]}</option>)}
@@ -272,7 +292,7 @@ export function BugManager({ initialBugs, users }: Props) {
                 <label className="text-[10px] uppercase tracking-wide text-text-muted">Assigned To</label>
                 <select
                   value={editAssignee}
-                  onChange={e => { setEditAssignee(e.target.value); updateBug(selected.id, { assignedUserId: e.target.value || null }) }}
+                  onChange={e => { setEditAssignee(e.target.value); updateBug(selectedBug.id, { assignedUserId: e.target.value || null }) }}
                   className="w-full text-xs bg-bg-raised border border-border-visible rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
                 >
                   <option value="">Unassigned</option>
@@ -298,10 +318,10 @@ export function BugManager({ initialBugs, users }: Props) {
 
             {/* Meta */}
             <div className="text-[10px] text-text-muted space-y-0.5">
-              <p>Reported by <span className="text-text-secondary">{selected.reportedBy}</span></p>
-              <p>Created {new Date(selected.createdAt).toLocaleDateString()}</p>
-              {selected.updatedAt !== selected.createdAt && (
-                <p>Updated {new Date(selected.updatedAt).toLocaleDateString()}</p>
+              <p>Reported by <span className="text-text-secondary">{selectedBug.reportedBy}</span></p>
+              <p>Created {new Date(selectedBug.createdAt).toLocaleDateString()}</p>
+              {selectedBug.updatedAt !== selectedBug.createdAt && (
+                <p>Updated {new Date(selectedBug.updatedAt).toLocaleDateString()}</p>
               )}
             </div>
           </div>
@@ -309,7 +329,7 @@ export function BugManager({ initialBugs, users }: Props) {
           {/* Footer */}
           <div className="p-3 border-t border-border-subtle">
             <button
-              onClick={() => deleteBug(selected.id)}
+              onClick={() => deleteBug(selectedBug.id)}
               className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-border-subtle text-text-muted text-xs hover:border-status-error hover:text-status-error transition-colors"
             >
               <Trash2 size={13} /> Delete Bug

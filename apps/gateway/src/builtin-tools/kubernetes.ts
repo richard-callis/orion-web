@@ -1,10 +1,16 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { writeFileSync, unlinkSync } from 'fs'
 
 const exec = promisify(execFile)
 
 async function kubectl(args: string[]): Promise<string> {
   const { stdout, stderr } = await exec('kubectl', args, { timeout: 30_000 })
+  return stdout || stderr
+}
+
+async function helm(args: string[]): Promise<string> {
+  const { stdout, stderr } = await exec('helm', args, { timeout: 300_000 })
   return stdout || stderr
 }
 
@@ -131,6 +137,101 @@ export const kubernetesTools = [
       if (args.namespace) cmdArgs.push('-n', String(args.namespace))
       else cmdArgs.push('-A')
       return kubectl(cmdArgs)
+    },
+  },
+  {
+    name: 'kubectl_apply_url',
+    description: 'Apply a Kubernetes manifest from a URL (kubectl apply -f <url>)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url:       { type: 'string', description: 'URL of the manifest to apply' },
+        namespace: { type: 'string', description: 'Namespace (optional)' },
+      },
+      required: ['url'],
+    },
+    async execute(args: Record<string, unknown>) {
+      const cmdArgs = ['apply', '-f', String(args.url)]
+      if (args.namespace) cmdArgs.push('-n', String(args.namespace))
+      return kubectl(cmdArgs)
+    },
+  },
+  {
+    name: 'kubectl_apply_manifest',
+    description: 'Apply a Kubernetes manifest from a YAML string (kubectl apply -f -)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        manifest: { type: 'string', description: 'YAML manifest content to apply' },
+      },
+      required: ['manifest'],
+    },
+    async execute(args: Record<string, unknown>) {
+      const manifest = String(args.manifest)
+      const tmpFile = `/tmp/orion-manifest-${Date.now()}.yaml`
+      writeFileSync(tmpFile, manifest, 'utf8')
+      try {
+        const { stdout, stderr } = await exec('kubectl', ['apply', '-f', tmpFile], { timeout: 30_000 })
+        return stdout || stderr
+      } finally {
+        try { unlinkSync(tmpFile) } catch { /* ignore */ }
+      }
+    },
+  },
+  {
+    name: 'kubectl_rollout_status',
+    description: 'Wait for a rollout to complete',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind:      { type: 'string', description: 'Resource kind (deployment, statefulset, daemonset)' },
+        name:      { type: 'string', description: 'Resource name' },
+        namespace: { type: 'string', description: 'Namespace' },
+        timeout:   { type: 'string', description: 'Timeout (default 120s)' },
+      },
+      required: ['kind', 'name', 'namespace'],
+    },
+    async execute(args: Record<string, unknown>) {
+      return kubectl([
+        'rollout', 'status', `${args.kind}/${args.name}`,
+        '-n', String(args.namespace),
+        `--timeout=${args.timeout ?? '120s'}`,
+      ])
+    },
+  },
+  {
+    name: 'helm_upgrade_install',
+    description: 'Install or upgrade a Helm chart (helm upgrade --install)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        release:          { type: 'string', description: 'Release name' },
+        chart:            { type: 'string', description: 'Chart name or path' },
+        repo:             { type: 'string', description: 'Helm repo URL (optional)' },
+        namespace:        { type: 'string', description: 'Namespace to install into' },
+        createNamespace:  { type: 'boolean', description: 'Create namespace if it does not exist' },
+        values:           { type: 'object', description: 'Values to set (key: value pairs)' },
+        wait:             { type: 'boolean', description: 'Wait for release to be ready (default true)' },
+        timeout:          { type: 'string', description: 'Timeout (default 120s)' },
+      },
+      required: ['release', 'chart', 'namespace'],
+    },
+    async execute(args: Record<string, unknown>) {
+      const cmdArgs = [
+        'upgrade', '--install', String(args.release), String(args.chart),
+        '--namespace', String(args.namespace),
+        '--timeout', String(args.timeout ?? '120s'),
+      ]
+      if (args.repo)            cmdArgs.push('--repo', String(args.repo))
+      if (args.createNamespace) cmdArgs.push('--create-namespace')
+      if (args.wait !== false)  cmdArgs.push('--wait')
+      const values = args.values as Record<string, unknown> | undefined
+      if (values) {
+        for (const [k, v] of Object.entries(values)) {
+          cmdArgs.push('--set', `${k}=${v}`)
+        }
+      }
+      return helm(cmdArgs)
     },
   },
 ]

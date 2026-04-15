@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Send, Loader2, ClipboardCheck, Check, ChevronLeft, Bot, Square } from 'lucide-react'
+import { Send, Loader2, ClipboardCheck, Check, ChevronLeft, Bot, Square, Server } from 'lucide-react'
 
 const PROVIDER_CONFIG: Record<string, { label: string; activeClass: string; modelClass: string }> = {
   anthropic: { label: 'Claude',  activeClass: 'bg-blue-500/20 text-blue-400 border-blue-500/40',     modelClass: 'bg-blue-500/10 text-blue-300 border-blue-500/30' },
@@ -34,6 +34,7 @@ interface PlanTarget { type: 'task' | 'feature' | 'epic'; id: string }
 interface AgentTarget { id: string; name: string }
 interface AgentChat   { id: string; name: string }
 interface AgentDraftForm { name: string; role: string; type: string }
+interface Environment { id: string; name: string; type: string; status: string }
 
 interface Props {
   conversationId: string | null
@@ -84,6 +85,24 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
   const selectedModelId = currentProvider === 'anthropic'
     ? 'claude'
     : (availableModels.find(m => m.id === ollamaModel)?.id ?? currentProviderModels[0]?.id ?? '')
+  // @mention environment picker state
+  const [environments, setEnvironments] = useState<Environment[]>([])
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null) // null = picker hidden
+  const [mentionStart, setMentionStart] = useState(0) // index of '@' in input
+  const [mentionEnv, setMentionEnv] = useState<Environment | null>(null) // confirmed target environment
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    fetch('/api/environments')
+      .then(r => r.json())
+      .then((envs: Environment[]) => setEnvironments(envs.filter((e: Environment) => e.status === 'connected')))
+      .catch(() => {})
+  }, [])
+
+  const mentionMatches = mentionQuery !== null
+    ? environments.filter(e => e.name.toLowerCase().includes(mentionQuery.toLowerCase()))
+    : []
+
   const [streaming, setStreaming] = useState(false)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -194,9 +213,22 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
 
     if (!promptOverride) setInput('')
     setStreaming(true)
+    setMentionQuery(null)
 
     const abort = new AbortController()
     abortRef.current = abort
+
+    // Parse @mentions from the prompt — last one wins as target environment
+    const mentionRegex = /@([\w-]+)/g
+    let match: RegExpExecArray | null
+    let targetEnvironmentId: string | undefined
+    while ((match = mentionRegex.exec(prompt)) !== null) {
+      const envName = match[1]
+      const found = environments.find(e => e.name.toLowerCase() === envName.toLowerCase())
+      if (found) targetEnvironmentId = found.id
+    }
+    // Also use the confirmed mentionEnv if set (even if text was edited away)
+    if (!targetEnvironmentId && mentionEnv) targetEnvironmentId = mentionEnv.id
 
     const userMsg: Message = { role: 'user', content: prompt }
     const assistantMsg: Message = { role: 'assistant', content: '', toolCalls: [], streaming: true }
@@ -208,7 +240,11 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
       const resp = await fetch(`/api/chat/conversations/${convId}/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, ...(ollamaModelRef.current && !agentChat ? { ollamaModel: ollamaModelRef.current } : {}) }),
+        body: JSON.stringify({
+          prompt,
+          ...(ollamaModelRef.current && !agentChat ? { ollamaModel: ollamaModelRef.current } : {}),
+          ...(targetEnvironmentId ? { targetEnvironmentId } : {}),
+        }),
         signal: abort.signal,
       })
 
@@ -364,9 +400,46 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
     }
   }
 
+  const onInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value
+    setInput(val)
+    const cursor = e.target.selectionStart ?? val.length
+    // Detect if cursor is inside an @mention sequence
+    const textBefore = val.slice(0, cursor)
+    const atMatch = textBefore.match(/@([\w-]*)$/)
+    if (atMatch) {
+      setMentionQuery(atMatch[1])
+      setMentionStart(cursor - atMatch[0].length)
+    } else {
+      setMentionQuery(null)
+    }
+  }
+
+  const selectMention = (env: Environment) => {
+    // Replace the @<partial> with @EnvName
+    const before = input.slice(0, mentionStart)
+    const after = input.slice(mentionStart + 1 + (mentionQuery?.length ?? 0))
+    const newInput = `${before}@${env.name}${after.startsWith(' ') ? '' : ' '}${after}`
+    setInput(newInput)
+    setMentionEnv(env)
+    setMentionQuery(null)
+    setTimeout(() => textareaRef.current?.focus(), 0)
+  }
+
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (mentionQuery !== null && mentionMatches.length > 0) {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setMentionQuery(null)
+        return
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
+      if (mentionQuery !== null && mentionMatches.length === 1) {
+        selectMention(mentionMatches[0])
+        return
+      }
       send()
     }
   }
@@ -573,12 +646,32 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
 
       {/* Input */}
       <div className="border-t border-border-subtle p-4">
-        <div className="flex gap-2 items-end">
+        <div className="relative flex gap-2 items-end">
+          {/* @mention environment picker popup */}
+          {mentionQuery !== null && mentionMatches.length > 0 && (
+            <div className="absolute bottom-full left-0 mb-2 bg-bg-overlay border border-border-visible rounded-lg shadow-lg z-50 min-w-48 max-w-72 overflow-hidden">
+              <div className="px-2 py-1.5 border-b border-border-subtle">
+                <span className="text-xs text-text-muted">Target environment</span>
+              </div>
+              {mentionMatches.map(env => (
+                <button
+                  key={env.id}
+                  onMouseDown={e => { e.preventDefault(); selectMention(env) }}
+                  className="w-full flex items-center gap-2 px-3 py-2 hover:bg-bg-raised text-left transition-colors"
+                >
+                  <Server size={13} className="text-text-muted flex-shrink-0" />
+                  <span className="text-sm text-text-primary truncate">{env.name}</span>
+                  <span className="ml-auto text-xs text-text-muted flex-shrink-0">{env.type}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <textarea
+            ref={textareaRef}
             value={input}
-            onChange={e => setInput(e.target.value)}
+            onChange={onInputChange}
             onKeyDown={onKeyDown}
-            placeholder={agentChat ? `Message ${agentChat.name}...` : agentTarget ? `Describe what ${agentTarget.name} should do...` : currentProvider !== 'anthropic' ? `Ask ${PROVIDER_CONFIG[currentProvider]?.label ?? currentProvider}... (Enter to send)` : 'Ask Claude about your cluster... (Enter to send, Shift+Enter for newline)'}
+            placeholder={agentChat ? `Message ${agentChat.name}...` : agentTarget ? `Describe what ${agentTarget.name} should do...` : currentProvider !== 'anthropic' ? `Ask ${PROVIDER_CONFIG[currentProvider]?.label ?? currentProvider}... (Enter to send)` : 'Ask Claude about your cluster... Type @ to target an environment'}
             rows={2}
             className="flex-1 resize-none rounded-lg border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted text-sm px-3 py-2 focus:outline-none focus:border-accent"
           />

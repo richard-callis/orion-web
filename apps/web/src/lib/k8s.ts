@@ -5,10 +5,13 @@ import fs from 'fs'
 // ── Singleton K8s client ──────────────────────────────────────────────────────
 
 const kc = new k8s.KubeConfig()
-if (process.env.KUBECONFIG) {
-  kc.loadFromFile(process.env.KUBECONFIG)
-} else {
-  kc.loadFromCluster()
+// loadFromDefault tries in order: KUBECONFIG env → ~/.kube/config → in-cluster service account
+// This works for both Docker (kubeconfig mounted at /root/.kube) and in-cluster deployments
+try {
+  kc.loadFromDefault()
+} catch {
+  // No kubeconfig available — k8s features will be unavailable
+  console.warn('[k8s] No kubeconfig found — Kubernetes features disabled')
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -184,14 +187,15 @@ export async function startWatchers() {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function watchResource(watch: k8s.Watch, path: string, handler: (type: string, obj: any) => void) {
+  let failCount = 0
   const start = () => {
     watch.watch(path, { allowWatchBookmarks: true }, handler, (err) => {
-      if (err) console.error(`Watch error ${path}:`, err)
-      // Reconnect after 5s
-      setTimeout(start, 5000)
+      if (err && failCount === 0) console.warn(`[k8s] Watch ended ${path}: ${(err as Error).message ?? err}`)
+      setTimeout(start, 30_000)
     }).catch((err) => {
-      console.error(`Watch start error ${path}:`, err)
-      setTimeout(start, 5000)
+      if (failCount === 0) console.warn(`[k8s] Watch unavailable ${path}: ${(err as Error).message ?? err}`)
+      failCount++
+      setTimeout(start, 30_000)
     })
   }
   start()

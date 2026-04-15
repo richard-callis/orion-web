@@ -32,6 +32,25 @@ export type BootstrapEvent =
 
 // ── Shell helpers ─────────────────────────────────────────────────────────────
 
+/** Run a command and capture stdout+stderr without streaming to the caller. */
+function runQuiet(
+  cmd: string,
+  args: string[],
+  env: Record<string, string>,
+): Promise<{ ok: boolean; out: string }> {
+  return new Promise((resolve) => {
+    const proc = spawn(cmd, args, {
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let out = ''
+    proc.stdout.on('data', (d: Buffer) => { out += d.toString() })
+    proc.stderr.on('data', (d: Buffer) => { out += d.toString() })
+    proc.on('close', (code) => resolve({ ok: code === 0, out: out.trim() }))
+    proc.on('error', (err) => resolve({ ok: false, out: err.message }))
+  })
+}
+
 function runCommand(
   cmd: string,
   args: string[],
@@ -228,6 +247,7 @@ export async function bootstrapCluster(
   await mkdir(tmpDir, { recursive: true })
   const kubeconfigPath = join(tmpDir, 'kubeconfig')
 
+  console.log(`[bootstrap] Starting for environment ${environmentId} (${env.name})`)
   try {
     // 1. Write kubeconfig
     emit({ type: 'step', message: 'Writing kubeconfig...' })
@@ -247,17 +267,21 @@ export async function bootstrapCluster(
 
     const provider = await getGitProvider()
     const providerHealthy = await provider.isHealthy()
+    console.log(`[bootstrap] Git provider healthy: ${providerHealthy}`)
+    let resolvedGitOwner = gitOwner
     if (!providerHealthy) {
       emit({ type: 'log', message: 'Git provider not reachable — skipping repo creation (will retry on next bootstrap)' })
     } else {
-      await bootstrapEnvironmentRepo({
+      const createdRepo = await bootstrapEnvironmentRepo({
         owner: gitOwner,
         repoName: gitRepo,
         description: `ORION-managed K8s cluster: ${env.name}`,
         webhookUrl: `${orionUrl}/api/webhooks/gitea`,
         webhookSecret: randomBytes(32).toString('hex'),
       })
-      emit({ type: 'log', message: `Git repo created: ${provider.getPRUrl(gitOwner, gitRepo, 0).replace(/\/pull\/0$/, '')}` })
+      // Use the owner the provider resolved (authenticated user, not the default 'orion')
+      resolvedGitOwner = createdRepo.fullName.split('/')[0]
+      emit({ type: 'log', message: `Git repo ready: ${createdRepo.htmlUrl}` })
     }
 
     // 4. Add Argo Helm repo
@@ -280,7 +304,7 @@ export async function bootstrapCluster(
         '--create-namespace',
         '--wait',
         '--timeout', '5m',
-        '--set', 'server.service.type=ClusterIP',
+        '--set', 'server.service.type=NodePort',
       ],
       kenv,
       msg => emit({ type: 'log', message: msg }),
@@ -310,29 +334,56 @@ export async function bootstrapCluster(
       emit({ type: 'log', message: `ArgoCD watching: ${gitRepoCloneUrl}` })
     }
 
-    // 7. Deploy Gateway
+    // 7. Deploy Gateway (skip if already running — re-applying would rotate the token)
     emit({ type: 'step', message: 'Deploying ORION Gateway...' })
-
-    // Generate a join token for this environment
-    const token = `orion_${randomBytes(24).toString('hex')}`
-    const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) // 1 year
-    await prisma.environmentJoinToken.create({
-      data: { token, environmentId, expiresAt },
-    })
-
-    const gatewayYaml = join(tmpDir, 'gateway.yaml')
-    await writeFile(gatewayYaml, gatewayManifest(env.name, token))
-    await runCommand(
-      'kubectl', ['apply', '-f', gatewayYaml],
-      kenv, msg => emit({ type: 'log', message: msg }),
+    const gwCheck = await runQuiet(
+      'kubectl', ['get', 'deployment', 'orion-gateway', '-n', 'orion-management', '--ignore-not-found'],
+      kenv,
     )
+    if (gwCheck.out.includes('orion-gateway')) {
+      emit({ type: 'log', message: 'Gateway already deployed — skipping (use re-bootstrap to force update)' })
+    } else {
+      const token = `orion_${randomBytes(24).toString('hex')}`
+      const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) // 1 year
+      await prisma.environmentJoinToken.create({
+        data: { token, environmentId, expiresAt },
+      })
+      const gatewayYaml = join(tmpDir, 'gateway.yaml')
+      await writeFile(gatewayYaml, gatewayManifest(env.name, token))
+      await runCommand(
+        'kubectl', ['apply', '-f', gatewayYaml],
+        kenv, msg => emit({ type: 'log', message: msg }),
+      )
+    }
 
-    // 8. Update environment record with git repo info + ArgoCD URL
-    const argoCdUrl = `https://argocd.${env.name}.internal` // placeholder; real URL depends on ingress
+    // 8. Resolve ArgoCD NodePort + node IP → accessible URL
+    emit({ type: 'step', message: 'Resolving ArgoCD URL...' })
+    let argoCdUrl: string | null = null
+    const portResult = await runQuiet(
+      'kubectl',
+      ['get', 'svc', 'argocd-server', '-n', 'argocd',
+       '-o', 'jsonpath={.spec.ports[?(@.name=="https")].nodePort}'],
+      kenv,
+    )
+    const nodePort = portResult.out.trim()
+    const nodeIpResult = await runQuiet(
+      'kubectl',
+      ['get', 'nodes', '-o', 'jsonpath={.items[0].status.addresses[?(@.type=="InternalIP")].address}'],
+      kenv,
+    )
+    const nodeIp = nodeIpResult.out.trim()
+    if (nodePort && nodeIp) {
+      argoCdUrl = `https://${nodeIp}:${nodePort}`
+      emit({ type: 'log', message: `ArgoCD available at ${argoCdUrl}` })
+    } else {
+      emit({ type: 'log', message: 'Could not determine ArgoCD URL — set it manually in environment settings' })
+    }
+
+    // 9. Update environment record with git repo info + ArgoCD URL
     await prisma.environment.update({
       where: { id: environmentId },
       data: {
-        gitOwner: gitOwner,
+        gitOwner: resolvedGitOwner,
         gitRepo:  gitRepo,
         argoCdUrl,
         status: 'connected',

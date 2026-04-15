@@ -81,12 +81,14 @@ model Environment {
   policyConfig Json?              // PolicyConfig: { reviewAll?, overrides? }
   kubeconfig   String?            @db.Text // base64 kubeconfig (K8s clusters only)
 
-  tools      McpTool[]
-  agents     AgentEnvironment[]
-  joinTokens EnvironmentJoinToken[]
-  gitOpsPRs  GitOpsPR[]
-  toolGroups ToolGroup[]
-  userTiers  EnvironmentUserTier[]
+  tools         McpTool[]
+  agents        AgentEnvironment[]
+  joinTokens    EnvironmentJoinToken[]
+  gitOpsPRs     GitOpsPR[]
+  toolGroups    ToolGroup[]
+  userTiers     EnvironmentUserTier[]
+  ingressPoints IngressPoint[]
+  coreDnsDomains Domain[]              @relation("DomainCoreDns")
 }
 
 /// Tracks every PR opened by the GitOps loop — open, auto-merged, or awaiting review.
@@ -449,4 +451,83 @@ model ToolExecutionGrant {
   expiresAt      DateTime
   usedAt         DateTime?
   createdAt      DateTime @default(now())
+}
+
+// ─── Ingress Management ───────────────────────────────────────────────────────
+
+model Domain {
+  id                   String         @id @default(cuid())
+  name                 String         @unique  // e.g. "khalisio.com"
+  type                 String         @default("public")  // "public" | "internal"
+  notes                String?        @db.Text
+  coreDnsEnvironmentId String?
+  coreDnsIp            String?
+  coreDnsStatus        String         @default("none")  // "none" | "bootstrapped" | "error"
+  coreDnsEnvironment   Environment?   @relation("DomainCoreDns", fields: [coreDnsEnvironmentId], references: [id], onDelete: SetNull)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  ingressPoints        IngressPoint[]
+  dnsRecords           DnsRecord[]
+}
+
+model DnsRecord {
+  id        String   @id @default(cuid())
+  domainId  String
+  ip        String
+  hostnames String[]
+  enabled   Boolean  @default(true)
+  comment   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  domain    Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+}
+
+model IngressPoint {
+  id            String              @id @default(cuid())
+  domainId      String
+  environmentId String?
+  name          String
+  type          String              @default("traefik")  // "traefik" | "nginx" | "cilium" | "haproxy" | "cloudflare-tunnel" | "other"
+  ip            String?
+  port          Int                 @default(443)
+  certManager   Boolean             @default(true)
+  clusterIssuer String?
+  status        String              @default("pending")  // "pending" | "bootstrapped" | "error"
+  comment       String?             @db.Text
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  domain        Domain              @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  environment   Environment?        @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  routes        IngressRoute[]
+  middlewares   IngressMiddleware[]
+}
+
+model IngressRoute {
+  id             String       @id @default(cuid())
+  ingressPointId String
+  host           String
+  paths          Json         @default("[]")  // [{path: "/", service: "svc-name", port: 80, namespace: "apps"}]
+  tls            Boolean      @default(true)
+  middlewares    String[]     @default([])    // names of IngressMiddleware to apply
+  comment        String?      @db.Text
+  enabled        Boolean      @default(true)
+  disabledAt     DateTime?
+  disabledBy     String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  ingressPoint   IngressPoint @relation(fields: [ingressPointId], references: [id], onDelete: Cascade)
+}
+
+model IngressMiddleware {
+  id             String       @id @default(cuid())
+  ingressPointId String
+  name           String       // e.g. "crowdsec-bouncer", "authentik-forward-auth"
+  type           String       // "crowdsec" | "forward-auth" | "rate-limit" | "basic-auth" | "headers" | "custom"
+  config         Json         @default("{}")  // provider URL, secret ref, namespace, etc.
+  enabled        Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  ingressPoint   IngressPoint @relation(fields: [ingressPointId], references: [id], onDelete: Cascade)
+
+  @@unique([ingressPointId, name])
 }

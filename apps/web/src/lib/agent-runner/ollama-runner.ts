@@ -1,5 +1,6 @@
 import type { AgentRunner, AgentEvent, TaskRunContext, GatewayTool } from './types'
 import { GatewayClient } from './gateway-client'
+import { getPrompt, interpolate } from '@/lib/system-prompts'
 
 interface OllamaMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
@@ -43,15 +44,12 @@ export const ollamaRunner: AgentRunner = {
       },
     }))
 
-    const taskPrompt = [
-      `You are executing a task. Work through it step by step using available tools.`,
-      ``,
-      `Task: ${ctx.taskTitle}`,
-      ctx.taskDescription ? `Description: ${ctx.taskDescription}` : null,
-      ctx.taskPlan ? `\nImplementation plan:\n${ctx.taskPlan}` : null,
-      ``,
-      `When you are done, clearly state what was accomplished.`,
-    ].filter(Boolean).join('\n')
+    const taskTemplate = await getPrompt('system.task-execution')
+    const taskPrompt = interpolate(taskTemplate, {
+      taskTitle:       ctx.taskTitle,
+      taskDescription: ctx.taskDescription ? `Description: ${ctx.taskDescription}` : '',
+      taskPlan:        ctx.taskPlan ? `\nImplementation plan:\n${ctx.taskPlan}` : '',
+    })
 
     const messages: OllamaMessage[] = [
       { role: 'system', content: ctx.systemPrompt },

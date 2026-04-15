@@ -79,6 +79,7 @@ export interface GitProvider {
   // PRs
   createPR(opts: CreatePROptions): Promise<GitPR>
   mergePR(owner: string, repo: string, prNumber: number, message?: string): Promise<void>
+  getPR(owner: string, repo: string, prNumber: number): Promise<GitPR>
 
   // Webhooks
   ensureWebhook(owner: string, repo: string, callbackUrl: string, secret: string): Promise<void>
