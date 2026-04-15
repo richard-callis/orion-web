@@ -6,6 +6,21 @@ ORION is a self-hosted management platform that lives *outside* the infrastructu
 
 ---
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Login](docs/screenshots/login.png) | ![Dashboard](docs/screenshots/dashboard.png) |
+| **Login** | **Dashboard** |
+| ![Infrastructure](docs/screenshots/infrastructure.png) | ![GitOps](docs/screenshots/gitops.png) |
+| **Infrastructure — nodes & pods** | **GitOps — PR tracking & environments** |
+| ![Ingress](docs/screenshots/ingress.png) | ![Chat](docs/screenshots/chat.png) |
+| **Ingress Manager** | **Claude Chat** |
+| ![Tasks](docs/screenshots/tasks.png) | ![Environments](docs/screenshots/environments.png) |
+| **Tasks — kanban board** | **Admin — environment tools** |
+
+---
+
 ## How It Works
 
 ORION runs on a dedicated management node (a Raspberry Pi 4 8GB works great). On first boot it spins up its own dependencies, then you register environments through the UI. From that point on, every infrastructure change flows through Git.
