@@ -142,11 +142,25 @@ async function autoFetchTalosConfig(
   return null
 }
 
+async function waitForGateway(gatewayUrl: string, log: JobLogger, timeoutMs = 5 * 60_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 10_000))
+    try {
+      const res = await fetch(`${gatewayUrl}/health`, { signal: AbortSignal.timeout(5000) })
+      if (res.ok) { await log('  Gateway back online ✓'); return }
+    } catch { /* still down */ }
+    await log('  Gateway still offline — waiting...')
+  }
+  throw new Error('Timed out waiting for gateway to come back online after node reboot')
+}
+
 async function checkAndFixIscsi(
   log: JobLogger,
   exec: (tool: string, args: Record<string, unknown>) => Promise<string>,
   nodeIps: string[],
   talosConfig: string | null,
+  gatewayUrl: string,
 ): Promise<void> {
   if (!talosConfig) {
     await log('  ⚠ No talosConfig available — cannot check/install iscsi-tools.')
@@ -226,8 +240,22 @@ async function checkAndFixIscsi(
     const installerImage = `factory.talos.dev/installer/${schematicId}:v${talosVersion}`
     await log(`  Upgrading to factory image (node will reboot, ~3-5 min)...`)
     await log(`  Image: ${installerImage}`)
-    await exec('talos_upgrade', { nodeIp, talosConfig, installerImage, preserve: true })
-    await log(`  Node ${nodeIp} rebooted with iscsi-tools ✓`)
+    try {
+      await exec('talos_upgrade', { nodeIp, talosConfig, installerImage, preserve: true })
+      await log(`  Node ${nodeIp} upgraded with iscsi-tools ✓`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      // Gateway connection drops when the node it runs on reboots — this is expected.
+      // The upgrade command was delivered before the connection was lost.
+      if (msg.includes('fetch failed') || msg.includes('ECONNRESET') || msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT')) {
+        await log(`  Gateway connection lost (expected — node is rebooting)`)
+        await log(`  Waiting for gateway to come back online...`)
+        await waitForGateway(gatewayUrl, log)
+        await log(`  Node ${nodeIp} upgraded with iscsi-tools ✓`)
+      } else {
+        throw err
+      }
+    }
   }
 
   // Wait for all nodes to be Ready in Kubernetes after reboots
@@ -272,7 +300,7 @@ async function bootstrapLonghorn(
       }
     }
 
-    await checkAndFixIscsi(log, exec, nodeIps, effectiveTalosConfig)
+    await checkAndFixIscsi(log, exec, nodeIps, effectiveTalosConfig, gatewayUrl)
   } else {
     await log('  Standard Kubernetes cluster ✓')
   }
