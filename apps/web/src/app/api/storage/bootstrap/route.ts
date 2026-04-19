@@ -203,6 +203,24 @@ async function checkAndFixIscsi(
   for (const nodeIp of nodesNeedingFix) {
     await log(`\n  ── Node ${nodeIp} ──`)
 
+    // Skip nodes that are NotReady — they may be unreachable or have hardware issues
+    try {
+      const nodesJson = await exec('kubectl_get', { resource: 'nodes', output: 'json' })
+      const nodeList = JSON.parse(nodesJson) as { items?: { status?: { conditions?: { type: string; status: string }[] }; metadata?: { labels?: Record<string, string> } }[] }
+      const matchingNode = (nodeList.items ?? []).find(n => {
+        const addrs = (n as { status?: { addresses?: { type: string; address: string }[] } }).status?.addresses ?? []
+        return addrs.some((a: { type: string; address: string }) => a.address === nodeIp)
+      })
+      if (matchingNode) {
+        const conditions = matchingNode.status?.conditions ?? []
+        const ready = conditions.find((c: { type: string; status: string }) => c.type === 'Ready')
+        if (ready?.status !== 'True') {
+          await log(`  ⚠ Node is NotReady — skipping (fix hardware issues first)`)
+          continue
+        }
+      }
+    } catch { /* if we can't check, proceed anyway */ }
+
     // Get current Talos version
     await log(`  Getting Talos version on ${nodeIp}...`)
     const versionOut = await exec('talos_get_version', { nodeIp, talosConfig })
