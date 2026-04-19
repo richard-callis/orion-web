@@ -269,14 +269,17 @@ app.get('/tools', requireAuth, (_req, res) => {
 app.post('/tools/execute', requireAuth, async (req, res) => {
   const { name, arguments: args = {} } = req.body as { name: string; arguments?: Record<string, unknown> }
   const tool = activeTools.find(t => t.name === name)
-  if (!tool) { res.status(404).json({ error: `Unknown tool: ${name}` }); return }
+  const builtin = BUILTIN_REGISTRY[name]
+
+  // Built-in tools are always executable regardless of ORION tool config
+  if (!tool && !builtin) { res.status(404).json({ error: `Unknown tool: ${name}` }); return }
 
   try {
     let result: string
-    if (tool.builtIn && BUILTIN_REGISTRY[name]) {
-      result = await BUILTIN_REGISTRY[name].execute(args)
+    if (builtin && (!tool || tool.builtIn)) {
+      result = await builtin.execute(args)
     } else {
-      result = await runTool(tool, args)
+      result = await runTool(tool!, args)
     }
     res.json({ result })
   } catch (e) {
