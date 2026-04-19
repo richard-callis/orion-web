@@ -215,7 +215,7 @@ async function checkAndFixIscsi(
         const conditions = matchingNode.status?.conditions ?? []
         const ready = conditions.find((c: { type: string; status: string }) => c.type === 'Ready')
         if (ready?.status !== 'True') {
-          await log(`  ⚠ Node is NotReady — skipping (fix hardware issues first)`)
+          await log(`  ⚠ Node is NotReady — skipping (investigate why node is not ready before retrying)`)
           continue
         }
       }
