@@ -207,11 +207,20 @@ async function checkAndFixIscsi(
     // Patch machine config to add extension (strategic merge — works with multi-document configs)
     await log(`  Patching machine config on ${nodeIp}...`)
     const extensionEntry = { image: 'ghcr.io/siderolabs/iscsi-tools:v0.1.6' }
-    await exec('talos_patch_machineconfig', {
-      nodeIp, talosConfig,
-      patch: JSON.stringify({ machine: { install: { extensions: [extensionEntry] } } }),
-    })
-    await log(`  Machine config patched ✓`)
+    try {
+      await exec('talos_patch_machineconfig', {
+        nodeIp, talosConfig,
+        patch: JSON.stringify({ machine: { install: { extensions: [extensionEntry] } } }),
+      })
+      await log(`  Machine config patched ✓`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.includes('duplicate system extension')) {
+        await log(`  Machine config already has iscsi-tools — skipping patch ✓`)
+      } else {
+        throw err
+      }
+    }
 
     // Upgrade to factory image with extension baked in (triggers reboot)
     const installerImage = `factory.talos.dev/installer/${schematicId}:v${talosVersion}`
