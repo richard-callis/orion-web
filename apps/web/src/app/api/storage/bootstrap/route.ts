@@ -377,8 +377,14 @@ async function bootstrapLonghorn(
   }
 
   // ── Step 3: Default StorageClass ───────────────────────────────────────────
+  // StorageClass parameters are immutable — patch only the default annotation
   await log('Step 3/3: Setting Longhorn as default StorageClass...')
-  await exec('kubectl_apply_manifest', { manifest: longhornStorageClass() })
+  await exec('kubectl_patch', {
+    resource: 'storageclass',
+    name: 'longhorn',
+    patch: JSON.stringify({ metadata: { annotations: { 'storageclass.kubernetes.io/is-default-class': 'true' } } }),
+    patchType: 'merge',
+  })
   await log('  Default StorageClass set ✓')
 
   await log('Longhorn bootstrap complete!')

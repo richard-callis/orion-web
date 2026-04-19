@@ -179,6 +179,29 @@ export const kubernetesTools = [
     },
   },
   {
+    name: 'kubectl_patch',
+    description: 'Patch a Kubernetes resource (kubectl patch)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        resource:  { type: 'string', description: 'Resource type, e.g. storageclass, deployment' },
+        name:      { type: 'string', description: 'Resource name' },
+        namespace: { type: 'string', description: 'Namespace (omit for cluster-scoped resources)' },
+        patch:     { type: 'string', description: 'JSON patch string' },
+        patchType: { type: 'string', description: 'Patch type: merge, json, or strategic (default: merge)' },
+      },
+      required: ['resource', 'name', 'patch'],
+    },
+    async execute(args: Record<string, unknown>) {
+      const patchType = String(args.patchType ?? 'merge')
+      const typeFlag = patchType === 'json' ? 'json' : patchType === 'strategic' ? 'strategic' : 'merge'
+      const cmd = ['patch', String(args.resource), String(args.name), `--type=${typeFlag}`, '-p', String(args.patch)]
+      if (args.namespace) cmd.push('-n', String(args.namespace))
+      const { stdout, stderr } = await exec('kubectl', cmd, { timeout: 30_000 })
+      return stdout || stderr
+    },
+  },
+  {
     name: 'kubectl_rollout_status',
     description: 'Wait for a rollout to complete',
     inputSchema: {
