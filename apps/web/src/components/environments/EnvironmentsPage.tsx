@@ -5,7 +5,7 @@ import {
   Plus, Trash2, Pencil, X, RefreshCw, Check,
   Server, Container, Globe, Zap, ZapOff, Bot, Code2, Link2,
   Terminal, Copy, CheckCheck, Rocket, Clock, CheckCircle, XCircle,
-  Sparkles, ToggleLeft, ToggleRight, Layers, Shield, Users,
+  Sparkles, ToggleLeft, ToggleRight, Layers, Shield, Users, ArrowUpCircle,
 } from 'lucide-react'
 import { ClusterPreflightFlow } from './ClusterPreflightFlow'
 
@@ -39,6 +39,7 @@ interface Environment {
   description: string | null
   gatewayUrl: string | null
   gatewayToken: string | null
+  gatewayVersion: string | null
   status: string
   lastSeen: string | null
   tools: McpTool[]
@@ -76,8 +77,8 @@ const DEFAULT_INPUT_SCHEMA = `{
 
 // ─── Environment form ──────────────────────────────────────────────────────────
 
-interface EnvForm { name: string; type: string; description: string; gatewayUrl: string; gatewayToken: string; kubeconfig: string; nodeIp: string }
-const EMPTY_ENV: EnvForm = { name: '', type: 'cluster', description: '', gatewayUrl: '', gatewayToken: '', kubeconfig: '', nodeIp: '' }
+interface EnvForm { name: string; type: string; description: string; gatewayUrl: string; gatewayToken: string; kubeconfig: string; nodeIp: string; talosConfig: string }
+const EMPTY_ENV: EnvForm = { name: '', type: 'cluster', description: '', gatewayUrl: '', gatewayToken: '', kubeconfig: '', nodeIp: '', talosConfig: '' }
 
 // ─── Tool form ────────────────────────────────────────────────────────────────
 
@@ -155,6 +156,10 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   const [preflightPassed, setPreflightPassed]           = useState(false)
   const [kubeconfigSaving, setKubeconfigSaving]         = useState(false)
 
+  // Gateway update state
+  const [gatewayUpdating, setGatewayUpdating] = useState(false)
+  const [gatewayUpdateMsg, setGatewayUpdateMsg] = useState<string | null>(null)
+
   // Pending tool approval state
   const [approvingTool, setApprovingTool] = useState<string | null>(null)
 
@@ -185,6 +190,23 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   const syncSelected = (updated: Environment) => {
     setEnvironments(prev => prev.map(e => e.id === updated.id ? updated : e))
     setSelected(updated)
+  }
+
+  // ── Gateway update ────────────────────────────────────────────────────────────
+
+  const triggerGatewayUpdate = async (env: Environment) => {
+    setGatewayUpdating(true)
+    setGatewayUpdateMsg(null)
+    try {
+      const res = await fetch(`/api/environments/${env.id}/gateway`, { method: 'POST' })
+      const data = await res.json() as { ok?: boolean; message?: string; error?: string }
+      setGatewayUpdateMsg(data.message ?? data.error ?? 'Done')
+      setTimeout(() => setGatewayUpdateMsg(null), 5000)
+    } catch (e) {
+      setGatewayUpdateMsg(e instanceof Error ? e.message : 'Update failed')
+    } finally {
+      setGatewayUpdating(false)
+    }
   }
 
   // ── Deploy gateway ────────────────────────────────────────────────────────────
@@ -311,7 +333,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   const openCreateEnv = () => { setEnvForm(EMPTY_ENV); setEnvError(null); setEnvModal('create') }
   const openEditEnv = (env: Environment) => {
     const meta = (env as unknown as { metadata?: Record<string, unknown> }).metadata ?? {}
-    setEnvForm({ name: env.name, type: env.type, description: env.description ?? '', gatewayUrl: env.gatewayUrl ?? '', gatewayToken: '', kubeconfig: '', nodeIp: (meta.nodeIp as string) ?? '' })
+    setEnvForm({ name: env.name, type: env.type, description: env.description ?? '', gatewayUrl: env.gatewayUrl ?? '', gatewayToken: '', kubeconfig: '', nodeIp: (meta.nodeIp as string) ?? '', talosConfig: '' })
     setEnvError(null)
     setEnvModal('edit')
   }
@@ -324,9 +346,14 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
         ? btoa(unescape(encodeURIComponent(envForm.kubeconfig.trim())))
         : undefined
       const currentMeta = (selected as unknown as { metadata?: Record<string, unknown> })?.metadata ?? {}
-      const metaUpdate = envForm.type === 'cluster' && envForm.nodeIp.trim()
-        ? { ...currentMeta, nodeIp: envForm.nodeIp.trim() }
-        : currentMeta
+      let metaUpdate: Record<string, unknown> = { ...currentMeta }
+      if (envForm.type === 'cluster') {
+        if (envForm.nodeIp.trim()) metaUpdate.nodeIp = envForm.nodeIp.trim()
+        if (envForm.talosConfig.trim()) {
+          // Store as base64 so we can pass it directly to gateway tools
+          metaUpdate.talosConfig = btoa(unescape(encodeURIComponent(envForm.talosConfig.trim())))
+        }
+      }
       const payload = { name: envForm.name.trim(), type: envForm.type, description: envForm.description || null, gatewayUrl: envForm.gatewayUrl || null, gatewayToken: envForm.gatewayToken || undefined, kubeconfig: kubeconfigB64, metadata: metaUpdate }
       const res = envModal === 'create'
         ? await fetch('/api/environments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -661,6 +688,19 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
               <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[selected.status] ?? 'bg-text-muted'}`} />
               {selected.status}
             </span>
+            {selected.gatewayVersion && (
+              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-mono bg-bg-raised text-text-muted border border-border-subtle" title="Gateway version">
+                v{selected.gatewayVersion}
+              </span>
+            )}
+            {selected.status === 'connected' && (
+              <button onClick={() => triggerGatewayUpdate(selected)} disabled={gatewayUpdating}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium text-text-muted border border-border-subtle hover:text-accent hover:border-accent/50 transition-colors disabled:opacity-50"
+                title={gatewayUpdateMsg ?? 'Update gateway to latest image'}>
+                <ArrowUpCircle size={12} className={gatewayUpdating ? 'animate-spin' : ''} />
+                {gatewayUpdating ? 'Updating…' : gatewayUpdateMsg ?? 'Update'}
+              </button>
+            )}
             {selected.type === 'cluster' ? (
               <button onClick={() => openBootstrap(selected)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-xs font-medium hover:bg-accent/80 transition-colors" title="Bootstrap GitOps environment">
@@ -1165,6 +1205,23 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                       rows={4}
                       className={`${inputCls} font-mono text-[11px] resize-y`}
                     />
+                  </div>
+                  <div>
+                    <label className={labelCls}>
+                      Talos Config{' '}
+                      <span className="text-text-muted">(optional — enables auto-remediation of Talos prerequisites)</span>
+                    </label>
+                    <textarea
+                      value={envForm.talosConfig}
+                      onChange={e => setEnvForm(f => ({ ...f, talosConfig: e.target.value }))}
+                      placeholder="context: <cluster-name>&#10;contexts:&#10;  <cluster-name>:&#10;    endpoints: [...]&#10;    ca: ...&#10;    crt: ...&#10;    key: ..."
+                      rows={4}
+                      className={`${inputCls} font-mono text-[11px] resize-y`}
+                    />
+                    <p className="text-[10px] text-text-muted mt-1">
+                      Paste your <code className="font-mono">talosconfig</code> content here. Used by storage bootstrap to auto-install
+                      extensions (e.g. iscsi-tools) and reboot nodes. Leave blank to skip auto-remediation.
+                    </p>
                   </div>
                 </>
               )}

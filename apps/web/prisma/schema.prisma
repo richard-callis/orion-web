@@ -17,6 +17,7 @@ model Conversation {
   metadata    Json?
   messages    Message[]
   invocations ClaudeInvocation[]
+  memories    Memory[]           // Persistent key-value facts for this conversation
 }
 
 model Message {
@@ -44,6 +45,23 @@ model ClaudeInvocation {
   createdAt      DateTime     @default(now())
 }
 
+// ── Conversation Memory ──────────────────────────────────────────────────────
+// Persistent key-value facts attached to conversations. Allows the agent to
+// "remember" important details beyond the sliding message history window.
+
+model Memory {
+  id             String   @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  key            String   // e.g., "user_preference_editor", "project_main_language"
+  value          String   @db.Text
+  context        String?  @db.Text  // When/why this was stored (optional)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([conversationId, key])
+}
+
 model Agent {
   id           String             @id @default(cuid())
   name         String             @unique
@@ -65,10 +83,11 @@ model Environment {
   name         String             @unique
   type         String             @default("cluster") // "cluster" | "docker"
   description  String?            @db.Text
-  gatewayUrl   String?
-  gatewayToken String?            // hashed token for gateway auth
-  status       String             @default("disconnected") // "connected" | "disconnected" | "error"
-  lastSeen     DateTime?
+  gatewayUrl     String?
+  gatewayToken   String?            // hashed token for gateway auth
+  gatewayVersion String?            // version reported by the gateway on heartbeat
+  status         String             @default("disconnected") // "connected" | "disconnected" | "error"
+  lastSeen       DateTime?
   metadata     Json?
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
@@ -153,6 +172,7 @@ model EnvironmentJoinToken {
   usedAt        DateTime?
   expiresAt     DateTime
   createdAt     DateTime     @default(now())
+  fingerprint   String?      // SHA-256 of the machineId presented at first join — verified on re-join
 }
 
 model AgentMessage {
@@ -516,6 +536,24 @@ model IngressRoute {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   ingressPoint   IngressPoint @relation(fields: [ingressPointId], references: [id], onDelete: Cascade)
+}
+
+// ─── Background Jobs ──────────────────────────────────────────────────────────
+// Tracks long-running operations (storage bootstrap, ingress bootstrap, etc.)
+// that previously streamed SSE inline. Jobs run async; UI polls for status.
+
+model BackgroundJob {
+  id            String    @id
+  type          String    // 'storage-bootstrap' | 'ingress-bootstrap'
+  title         String
+  status        String    @default("queued")   // queued | running | completed | failed
+  logs          String[]  @default([])
+  environmentId String?
+  metadata      Json?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  completedAt   DateTime?
+  archivedAt    DateTime?
 }
 
 model IngressMiddleware {

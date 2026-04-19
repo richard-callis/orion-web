@@ -36,11 +36,11 @@ export class OrionClient {
     }
   }
 
-  async register(): Promise<void> {
+  async register(version?: string): Promise<void> {
     const res = await fetch(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}`, {
       method: 'PUT',
       headers: this.headers(),
-      body: JSON.stringify({ status: 'connected', gatewayUrl: this.cfg.gatewayUrl, lastSeen: new Date().toISOString() }),
+      body: JSON.stringify({ status: 'connected', gatewayUrl: this.cfg.gatewayUrl, lastSeen: new Date().toISOString(), gatewayVersion: version }),
     })
     if (!res.ok) throw new Error(`Failed to register with ORION: ${res.status} ${await res.text()}`)
     console.log(`[gateway] Registered with ORION as environment ${this.cfg.environmentId}`)
@@ -63,13 +63,13 @@ export class OrionClient {
   }
 
   /** Start sending heartbeats every 30s so ORION knows we're alive */
-  startHeartbeat(onToolsChanged: (tools: McpToolConfig[]) => void, intervalMs = 30_000) {
+  startHeartbeat(onToolsChanged: (tools: McpToolConfig[]) => void, intervalMs = 30_000, version?: string) {
     this.heartbeatTimer = setInterval(async () => {
       try {
         await fetch(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}`, {
           method: 'PUT',
           headers: this.headers(),
-          body: JSON.stringify({ status: 'connected', lastSeen: new Date().toISOString() }),
+          body: JSON.stringify({ status: 'connected', lastSeen: new Date().toISOString(), gatewayVersion: version }),
         })
         // Refresh tool config on every heartbeat so changes take effect within one interval
         const tools = await this.fetchTools()

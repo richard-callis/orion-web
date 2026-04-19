@@ -17,8 +17,21 @@
 
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { readFileSync, writeFileSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { randomUUID } from 'crypto'
+import { createRequire } from 'module'
 import express, { type Request, type Response, type NextFunction } from 'express'
+
+const _require = createRequire(import.meta.url)
+const GATEWAY_VERSION: string = (() => {
+  try {
+    const pkgPaths = ['/app/package.json', new URL('../package.json', import.meta.url).pathname]
+    for (const p of pkgPaths) {
+      if (existsSync(p)) return (_require(p) as { version: string }).version
+    }
+  } catch { /* ignore */ }
+  return 'unknown'
+})()
 
 const execFileAsync = promisify(execFile)
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -32,6 +45,7 @@ import { runTool } from './tool-runner.js'
 import { kubernetesTools } from './builtin-tools/kubernetes.js'
 import { dockerTools } from './builtin-tools/docker.js'
 import { localhostTools } from './builtin-tools/localhost.js'
+import { talosTools } from './builtin-tools/talos.js'
 import { ArgoCDWatcher } from './argocd-watcher.js'
 import { IngressWatcher } from './ingress-watcher.js'
 
@@ -49,18 +63,36 @@ const GATEWAY_CREDS_FILE  = process.env.GATEWAY_CREDS_FILE   ?? ''
 let ENVIRONMENT_ID = process.env.ENVIRONMENT_ID ?? ''
 let GATEWAY_TOKEN  = process.env.GATEWAY_TOKEN  ?? ''
 
+// Stable machine identity — generated once on first boot, persisted in the creds file
+// (localhost mode) or K8s Secret (cluster mode). Sent with every join request so ORION
+// can verify the fingerprint on re-join and reject stolen tokens.
+let MACHINE_ID = process.env.MACHINE_ID ?? ''
+
+interface CredsFile {
+  environmentId?: string
+  gatewayToken?:  string
+  machineId?:     string
+}
+
 /** Load persisted credentials from a file (used in localhost mode for restart resilience) */
 function loadPersistedCredentials(): void {
   if (!GATEWAY_CREDS_FILE) return
   try {
-    const data = JSON.parse(readFileSync(GATEWAY_CREDS_FILE, 'utf8')) as { environmentId?: string; gatewayToken?: string }
+    const data = JSON.parse(readFileSync(GATEWAY_CREDS_FILE, 'utf8')) as CredsFile
     if (data.environmentId && data.gatewayToken) {
       ENVIRONMENT_ID = data.environmentId
       GATEWAY_TOKEN  = data.gatewayToken
       console.log(`[gateway] Loaded persisted credentials from ${GATEWAY_CREDS_FILE}`)
     }
+    if (data.machineId) {
+      MACHINE_ID = data.machineId
+    }
   } catch {
     // File doesn't exist yet — first boot
+  }
+  // Generate a new machineId if not loaded from file
+  if (!MACHINE_ID) {
+    MACHINE_ID = randomUUID()
   }
 }
 
@@ -68,7 +100,8 @@ function loadPersistedCredentials(): void {
 function saveCredentialsToFile(): void {
   if (!GATEWAY_CREDS_FILE) return
   try {
-    writeFileSync(GATEWAY_CREDS_FILE, JSON.stringify({ environmentId: ENVIRONMENT_ID, gatewayToken: GATEWAY_TOKEN }), 'utf8')
+    const creds: CredsFile = { environmentId: ENVIRONMENT_ID, gatewayToken: GATEWAY_TOKEN, machineId: MACHINE_ID }
+    writeFileSync(GATEWAY_CREDS_FILE, JSON.stringify(creds), 'utf8')
     console.log(`[gateway] Credentials saved to ${GATEWAY_CREDS_FILE}`)
   } catch (err) {
     console.warn('[gateway] Could not save credentials to file:', err instanceof Error ? err.message : String(err))
@@ -98,7 +131,7 @@ async function joinWithToken(joinToken: string): Promise<void> {
   const res = await fetch(`${ORION_URL}/api/environments/join`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ joinToken, gatewayUrl: GATEWAY_URL, gatewayType: GATEWAY_TYPE }),
+    body: JSON.stringify({ joinToken, gatewayUrl: GATEWAY_URL, gatewayType: GATEWAY_TYPE, machineId: MACHINE_ID }),
   })
   if (!res.ok) {
     const err = await res.text()
@@ -115,7 +148,7 @@ async function joinWithToken(joinToken: string): Promise<void> {
 /** Persist permanent credentials into the K8s Secret so restarts skip re-join */
 async function persistCredentials(): Promise<void> {
   if (!GATEWAY_SECRET_NAME || !ENVIRONMENT_ID || !GATEWAY_TOKEN) return
-  const patch = JSON.stringify({ stringData: { 'environment-id': ENVIRONMENT_ID, 'gateway-token': GATEWAY_TOKEN } })
+  const patch = JSON.stringify({ stringData: { 'environment-id': ENVIRONMENT_ID, 'gateway-token': GATEWAY_TOKEN, 'machine-id': MACHINE_ID } })
   try {
     await execFileAsync('kubectl', [
       'patch', 'secret', GATEWAY_SECRET_NAME,
@@ -145,9 +178,17 @@ function registerBuiltins(tools: BuiltinTool[]) {
   for (const t of tools) BUILTIN_REGISTRY[t.name] = t
 }
 
-if (GATEWAY_TYPE === 'cluster')   registerBuiltins(kubernetesTools)
+if (GATEWAY_TYPE === 'cluster')   { registerBuiltins(kubernetesTools); registerBuiltins(talosTools) }
 if (GATEWAY_TYPE === 'docker')    registerBuiltins(dockerTools)
-if (GATEWAY_TYPE === 'localhost') { registerBuiltins(dockerTools); registerBuiltins(localhostTools) }
+// localhost = the gateway co-located with ORION on the management host.
+// It can talk to the local cluster directly, so it gets the full cluster + talos toolset
+// plus docker/localhost tools for managing the host itself.
+if (GATEWAY_TYPE === 'localhost') {
+  registerBuiltins(kubernetesTools)
+  registerBuiltins(talosTools)
+  registerBuiltins(dockerTools)
+  registerBuiltins(localhostTools)
+}
 // Cluster gateways also expose docker if desired
 if (GATEWAY_TYPE === 'cluster' && process.env.ENABLE_DOCKER === 'true') registerBuiltins(dockerTools)
 
@@ -244,6 +285,29 @@ app.post('/tools/execute', requireAuth, async (req, res) => {
   }
 })
 
+// Self-update endpoint — triggers a rolling restart so the pod is replaced with the latest image
+app.post('/update', requireAuth, async (_req, res) => {
+  res.json({ ok: true, message: 'Update triggered — gateway will restart shortly' })
+  // Defer the restart so the HTTP response is sent first
+  setTimeout(async () => {
+    try {
+      if (GATEWAY_TYPE === 'cluster') {
+        // Rolling restart: Kubernetes pulls the latest image and replaces the pod
+        await execFileAsync('kubectl', [
+          'rollout', 'restart', 'deployment/orion-gateway', '-n', 'orion-management',
+        ])
+        console.log('[gateway] Rolling restart triggered via kubectl')
+      } else {
+        // localhost/docker: signal the process to restart (Docker will restart the container)
+        console.log('[gateway] Exiting for Docker restart (update requested)')
+        process.exit(0)
+      }
+    } catch (err) {
+      console.error('[gateway] Self-update failed:', err instanceof Error ? err.message : String(err))
+    }
+  }, 500)
+})
+
 // MCP SSE endpoint — AI agents connect here
 const transports: Map<string, SSEServerTransport> = new Map()
 
@@ -276,7 +340,8 @@ async function start() {
   orion = new OrionClient({ mccUrl: ORION_URL, environmentId: ENVIRONMENT_ID, gatewayToken: GATEWAY_TOKEN, gatewayUrl: GATEWAY_URL })
 
   // Register with ORION and fetch initial tool config
-  await orion.register()
+  console.log(`[gateway] Version: ${GATEWAY_VERSION}`)
+  await orion.register(GATEWAY_VERSION)
   activeTools = await orion.fetchTools()
   console.log(`[gateway] Loaded ${activeTools.length} tools from ORION`)
 
@@ -284,7 +349,7 @@ async function start() {
   orion.startHeartbeat((tools) => {
     activeTools = tools
     console.log(`[gateway] Tool config refreshed: ${tools.length} tools`)
-  })
+  }, 30_000, GATEWAY_VERSION)
 
   // Start ArgoCD + Ingress watchers for K8s clusters
   if (GATEWAY_TYPE === 'cluster') {

@@ -30,8 +30,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (body.gatewayToken !== undefined && body.gatewayToken !== '••••') {
     data.gatewayToken = body.gatewayToken || null
   }
-  if (body.status       !== undefined) data.status       = body.status
-  if (body.lastSeen     !== undefined) data.lastSeen     = body.lastSeen ? new Date(body.lastSeen) : null
+  if (body.status         !== undefined) data.status         = body.status
+  if (body.lastSeen       !== undefined) data.lastSeen       = body.lastSeen ? new Date(body.lastSeen) : null
+  if (body.gatewayVersion !== undefined) data.gatewayVersion = body.gatewayVersion || null
   if (body.metadata     !== undefined) data.metadata     = body.metadata
   if (body.gitOwner     !== undefined) data.gitOwner     = body.gitOwner     || null
   if (body.gitRepo      !== undefined) data.gitRepo      = body.gitRepo      || null
