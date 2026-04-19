@@ -174,14 +174,9 @@ async function checkAndFixIscsi(
   for (const nodeIp of nodeIps) {
     try {
       const raw = await exec('talos_get_extensions', { nodeIp, talosConfig })
-      // talosctl get extensions returns NDJSON
-      const lines = raw.trim().split('\n').filter(Boolean)
-      const hasIscsi = lines.some(line => {
-        try {
-          const obj = JSON.parse(line) as { spec?: { metadata?: { name?: string } } }
-          return obj.spec?.metadata?.name === 'iscsi-tools'
-        } catch { return false }
-      })
+      // talosctl get extensions -o json returns pretty-printed multi-line JSON objects
+      // (not NDJSON), so we match the name field directly via regex
+      const hasIscsi = /"name"\s*:\s*"iscsi-tools"/.test(raw)
       if (hasIscsi) {
         await log(`  iscsi-tools present on ${nodeIp} ✓`)
       } else {
