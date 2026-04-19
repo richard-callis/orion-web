@@ -4,8 +4,8 @@ import { writeFileSync, unlinkSync } from 'fs'
 
 const exec = promisify(execFile)
 
-async function kubectl(args: string[]): Promise<string> {
-  const { stdout, stderr } = await exec('kubectl', args, { timeout: 30_000 })
+async function kubectl(args: string[], timeoutMs = 30_000): Promise<string> {
+  const { stdout, stderr } = await exec('kubectl', args, { timeout: timeoutMs })
   return stdout || stderr
 }
 
@@ -153,7 +153,7 @@ export const kubernetesTools = [
     async execute(args: Record<string, unknown>) {
       const cmdArgs = ['apply', '-f', String(args.url)]
       if (args.namespace) cmdArgs.push('-n', String(args.namespace))
-      return kubectl(cmdArgs)
+      return kubectl(cmdArgs, 120_000) // 2 min — large manifests take time to download + apply
     },
   },
   {
@@ -171,7 +171,7 @@ export const kubernetesTools = [
       const tmpFile = `/tmp/orion-manifest-${Date.now()}.yaml`
       writeFileSync(tmpFile, manifest, 'utf8')
       try {
-        const { stdout, stderr } = await exec('kubectl', ['apply', '-f', tmpFile], { timeout: 30_000 })
+        const { stdout, stderr } = await exec('kubectl', ['apply', '-f', tmpFile], { timeout: 60_000 })
         return stdout || stderr
       } finally {
         try { unlinkSync(tmpFile) } catch { /* ignore */ }
@@ -192,13 +192,52 @@ export const kubernetesTools = [
       required: ['kind', 'name', 'namespace'],
     },
     async execute(args: Record<string, unknown>) {
+      // Parse the kubectl --timeout value and add 5s buffer for the Node exec timeout
+      const ktimeout = String(args.timeout ?? '120s')
+      const seconds  = ktimeout.endsWith('s') ? parseInt(ktimeout) : parseInt(ktimeout) * 60
+      const execMs   = (seconds + 5) * 1_000
       return kubectl([
         'rollout', 'status', `${args.kind}/${args.name}`,
         '-n', String(args.namespace),
-        `--timeout=${args.timeout ?? '120s'}`,
-      ])
+        `--timeout=${ktimeout}`,
+      ], execMs)
     },
   },
+  {
+    name: 'kubectl_wait_nodes_ready',
+    description: 'Wait for cluster nodes to be in Ready condition',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        timeout:   { type: 'string', description: 'Timeout (default 300s)' },
+        nodeNames: { type: 'array', items: { type: 'string' }, description: 'Specific node IPs to wait for (looks up node names). If omitted, waits for all nodes.' },
+      },
+    },
+    async execute(args: Record<string, unknown>) {
+      const ktimeout = String(args.timeout ?? '300s')
+      const seconds  = ktimeout.endsWith('s') ? parseInt(ktimeout) : parseInt(ktimeout) * 60
+      const execMs   = (seconds + 10) * 1_000
+      const nodeIps  = Array.isArray(args.nodeNames) ? (args.nodeNames as string[]) : []
+
+      if (nodeIps.length === 0) {
+        return kubectl(['wait', '--for=condition=Ready', 'nodes', '--all', `--timeout=${ktimeout}`], execMs)
+      }
+
+      // Resolve IPs to node names via kubectl get nodes
+      const nodesJson = await kubectl(['get', 'nodes', '-o', 'json'], 10_000)
+      const list = JSON.parse(nodesJson) as { items?: { metadata?: { name?: string }; status?: { addresses?: { type: string; address: string }[] } }[] }
+      const nodeNames: string[] = []
+      for (const ip of nodeIps) {
+        const node = (list.items ?? []).find(n =>
+          (n.status?.addresses ?? []).some(a => a.address === ip),
+        )
+        if (node?.metadata?.name) nodeNames.push(node.metadata.name)
+      }
+      if (nodeNames.length === 0) return 'No matching nodes found'
+      return kubectl(['wait', '--for=condition=Ready', ...nodeNames.map(n => `node/${n}`), `--timeout=${ktimeout}`], execMs)
+    },
+  },
+
   {
     name: 'helm_upgrade_install',
     description: 'Install or upgrade a Helm chart (helm upgrade --install)',

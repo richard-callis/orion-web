@@ -200,6 +200,8 @@ async function checkAndFixIscsi(
     throw new Error(`Could not get Talos factory schematic: ${err instanceof Error ? err.message : String(err)}`)
   }
 
+  const upgradedNodes: string[] = []
+
   for (const nodeIp of nodesNeedingFix) {
     await log(`\n  ── Node ${nodeIp} ──`)
 
@@ -256,6 +258,7 @@ async function checkAndFixIscsi(
     try {
       await exec('talos_upgrade', { nodeIp, talosConfig, installerImage, preserve: true })
       await log(`  Node ${nodeIp} upgraded with iscsi-tools ✓`)
+      upgradedNodes.push(nodeIp)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       // Gateway connection drops when the node it runs on reboots — this is expected.
@@ -265,16 +268,19 @@ async function checkAndFixIscsi(
         await log(`  Waiting for gateway to come back online...`)
         await waitForGateway(gatewayUrl, log)
         await log(`  Node ${nodeIp} upgraded with iscsi-tools ✓`)
+        upgradedNodes.push(nodeIp)
       } else {
         throw err
       }
     }
   }
 
-  // Wait for all nodes to be Ready in Kubernetes after reboots
-  await log('\n  Waiting for all nodes to report Ready...')
-  await exec('kubectl_wait_nodes_ready', { timeout: '300s' })
-  await log('  All nodes Ready ✓')
+  // Wait only for nodes that were actually upgraded (skipped/NotReady nodes excluded)
+  if (upgradedNodes.length > 0) {
+    await log('\n  Waiting for upgraded nodes to report Ready...')
+    await exec('kubectl_wait_nodes_ready', { timeout: '300s', nodeNames: upgradedNodes })
+    await log('  Upgraded nodes Ready ✓')
+  }
 }
 
 // ── Longhorn ──────────────────────────────────────────────────────────────────
