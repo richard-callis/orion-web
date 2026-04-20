@@ -121,6 +121,186 @@ export const KUBERNETES_DEFAULT_TOOLS: DefaultTool[] = [
     execConfig: { fn: 'kubectl_rollout_restart' },
     builtIn: true,
   },
+  {
+    name: 'kubectl_rollout_status',
+    description: 'Wait for a rollout to complete',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind:      { type: 'string', description: 'Resource kind (deployment, statefulset, daemonset)' },
+        name:      { type: 'string', description: 'Resource name' },
+        namespace: { type: 'string', description: 'Namespace' },
+        timeout:   { type: 'string', description: 'Timeout (default 120s)' },
+      },
+      required: ['kind', 'name', 'namespace'],
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'kubectl_rollout_status' },
+    builtIn: true,
+  },
+  {
+    name: 'kubectl_apply_url',
+    description: 'Apply a Kubernetes manifest from a URL (kubectl apply -f <url>)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url:       { type: 'string', description: 'URL of the manifest to apply' },
+        namespace: { type: 'string', description: 'Namespace (optional)' },
+      },
+      required: ['url'],
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'kubectl_apply_url' },
+    builtIn: true,
+  },
+  {
+    name: 'kubectl_apply_manifest',
+    description: 'Apply a Kubernetes manifest from a YAML string (kubectl apply -f -)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        manifest: { type: 'string', description: 'YAML manifest content to apply' },
+      },
+      required: ['manifest'],
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'kubectl_apply_manifest' },
+    builtIn: true,
+  },
+  {
+    name: 'kubectl_wait_nodes_ready',
+    description: 'Wait for all cluster nodes to be in Ready condition',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        timeout:   { type: 'string', description: 'Timeout (default 300s)' },
+        nodeNames: { type: 'array', items: { type: 'string' }, description: 'Specific node IPs to wait for. If omitted, waits for all nodes.' },
+      },
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'kubectl_wait_nodes_ready' },
+    builtIn: true,
+  },
+  {
+    name: 'kubectl_patch',
+    description: 'Patch a Kubernetes resource (kubectl patch)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        resource:  { type: 'string', description: 'Resource type, e.g. storageclass, deployment' },
+        name:      { type: 'string', description: 'Resource name' },
+        namespace: { type: 'string', description: 'Namespace (omit for cluster-scoped resources)' },
+        patch:     { type: 'string', description: 'JSON patch string' },
+        patchType: { type: 'string', description: 'Patch type: merge, json, or strategic (default: merge)' },
+      },
+      required: ['resource', 'name', 'patch'],
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'kubectl_patch' },
+    builtIn: true,
+  },
+  {
+    name: 'helm_upgrade_install',
+    description: 'Install or upgrade a Helm chart (helm upgrade --install)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        release:         { type: 'string', description: 'Release name' },
+        chart:           { type: 'string', description: 'Chart name or path' },
+        repo:            { type: 'string', description: 'Helm repo URL (optional)' },
+        namespace:       { type: 'string', description: 'Namespace to install into' },
+        createNamespace: { type: 'boolean', description: 'Create namespace if it does not exist' },
+        values:          { type: 'object', description: 'Values to set (key: value pairs)' },
+        wait:            { type: 'boolean', description: 'Wait for release to be ready (default true)' },
+        timeout:         { type: 'string', description: 'Timeout (default 120s)' },
+      },
+      required: ['release', 'chart', 'namespace'],
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'helm_upgrade_install' },
+    builtIn: true,
+  },
+]
+
+export const TALOS_DEFAULT_TOOLS: DefaultTool[] = [
+  {
+    name: 'talos_get_version',
+    description: 'Get Talos version info for a node',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeIp:      { type: 'string', description: 'Node IP address' },
+        talosConfig: { type: 'string', description: 'Base64-encoded talosconfig content' },
+      },
+      required: ['nodeIp', 'talosConfig'],
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'talos_get_version' },
+    builtIn: true,
+  },
+  {
+    name: 'talos_get_extensions',
+    description: 'List installed Talos system extensions on a node',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeIp:      { type: 'string', description: 'Node IP address' },
+        talosConfig: { type: 'string', description: 'Base64-encoded talosconfig content' },
+      },
+      required: ['nodeIp', 'talosConfig'],
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'talos_get_extensions' },
+    builtIn: true,
+  },
+  {
+    name: 'talos_patch_machineconfig',
+    description: 'Apply a JSON patch to the Talos machine config on a node',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeIp:      { type: 'string', description: 'Node IP address' },
+        talosConfig: { type: 'string', description: 'Base64-encoded talosconfig content' },
+        patch:       { type: 'string', description: 'JSON patch array (RFC 6902)' },
+      },
+      required: ['nodeIp', 'talosConfig', 'patch'],
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'talos_patch_machineconfig' },
+    builtIn: true,
+  },
+  {
+    name: 'talos_upgrade',
+    description: 'Upgrade a Talos node to a new installer image (applies pending config changes, reboots)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeIp:         { type: 'string', description: 'Node IP address' },
+        talosConfig:    { type: 'string', description: 'Base64-encoded talosconfig content' },
+        installerImage: { type: 'string', description: 'Talos installer image, e.g. factory.talos.dev/installer/<id>:v1.9.5' },
+        preserve:       { type: 'boolean', description: 'Preserve data across upgrade (default true)' },
+      },
+      required: ['nodeIp', 'talosConfig', 'installerImage'],
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'talos_upgrade' },
+    builtIn: true,
+  },
+  {
+    name: 'talos_reboot',
+    description: 'Reboot a Talos node (applies pending config changes)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeIp:      { type: 'string', description: 'Node IP address' },
+        talosConfig: { type: 'string', description: 'Base64-encoded talosconfig content' },
+      },
+      required: ['nodeIp', 'talosConfig'],
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'talos_reboot' },
+    builtIn: true,
+  },
 ]
 
 export const DOCKER_DEFAULT_TOOLS: DefaultTool[] = [
@@ -180,6 +360,27 @@ export const DOCKER_DEFAULT_TOOLS: DefaultTool[] = [
     execConfig: { fn: 'docker_inspect' },
     builtIn: true,
   },
+  {
+    name: 'docker_run',
+    description: 'Run a Docker container (idempotent — removes existing container with same name first)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        image:   { type: 'string', description: 'Docker image to run' },
+        name:    { type: 'string', description: 'Container name' },
+        restart: { type: 'string', description: 'Restart policy (e.g. unless-stopped, always, no)' },
+        ports:   { type: 'array', items: { type: 'string' }, description: 'Port mappings e.g. ["80:80", "443:443"]' },
+        volumes: { type: 'array', items: { type: 'string' }, description: 'Volume mounts e.g. ["/data:/data"]' },
+        env:     { type: 'object', description: 'Environment variables as key/value pairs' },
+        args:    { type: 'array', items: { type: 'string' }, description: 'Extra arguments passed to the container (CMD)' },
+        detach:  { type: 'boolean', description: 'Run in background (default true)' },
+      },
+      required: ['image'],
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'docker_run' },
+    builtIn: true,
+  },
 ]
 
 export const LOCALHOST_DEFAULT_TOOLS: DefaultTool[] = [
@@ -235,8 +436,10 @@ export const LOCALHOST_DEFAULT_TOOLS: DefaultTool[] = [
 ]
 
 export function getDefaultTools(type: string): DefaultTool[] {
-  if (type === 'cluster')   return KUBERNETES_DEFAULT_TOOLS
+  if (type === 'cluster')   return [...KUBERNETES_DEFAULT_TOOLS, ...TALOS_DEFAULT_TOOLS]
   if (type === 'docker')    return DOCKER_DEFAULT_TOOLS
-  if (type === 'localhost') return LOCALHOST_DEFAULT_TOOLS
+  // localhost gateway co-exists with ORION on the management host — it can reach the
+  // local cluster directly, so seed kubernetes + talos tools alongside host tools.
+  if (type === 'localhost') return [...LOCALHOST_DEFAULT_TOOLS, ...KUBERNETES_DEFAULT_TOOLS, ...TALOS_DEFAULT_TOOLS]
   return []
 }

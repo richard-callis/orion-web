@@ -4,38 +4,12 @@
  * Bootstraps an IngressPoint by deploying Traefik + cert-manager into the
  * associated environment via the Gateway.
  *
- * Streams SSE progress events:
- *   { type: 'log',  message: string }
- *   { type: 'done', success: boolean, error?: string }
+ * Returns { jobId } immediately — progress tracked via /api/jobs/[id].
  */
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-
-function sse(controller: ReadableStreamDefaultController, event: object) {
-  controller.enqueue(`data: ${JSON.stringify(event)}\n\n`)
-}
-
-function log(ctrl: ReadableStreamDefaultController, msg: string) {
-  console.log('[ingress-bootstrap]', msg)
-  sse(ctrl, { type: 'log', message: msg })
-}
-
-async function gatewayExec(
-  gatewayUrl: string,
-  gatewayToken: string,
-  toolName: string,
-  args: Record<string, unknown>,
-): Promise<string> {
-  const res = await fetch(`${gatewayUrl}/tools/execute`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${gatewayToken}` },
-    body: JSON.stringify({ name: toolName, arguments: args }),
-  })
-  if (!res.ok) throw new Error(`Gateway tool ${toolName} failed: ${res.status} ${await res.text()}`)
-  const data = await res.json() as { result?: string; error?: string }
-  if (data.error) throw new Error(data.error)
-  return data.result ?? ''
-}
+import { startJob, type JobLogger } from '@/lib/job-runner'
+import { GatewayClient } from '@/lib/agent-runner/gateway-client'
 
 export async function POST(
   _req: NextRequest,
@@ -50,178 +24,238 @@ export async function POST(
     },
   })
   if (!point) {
-    return new Response(JSON.stringify({ error: 'IngressPoint not found' }), { status: 404 })
+    return NextResponse.json({ error: 'IngressPoint not found' }, { status: 404 })
   }
   if (!point.environment) {
-    return new Response(JSON.stringify({ error: 'IngressPoint has no associated environment' }), { status: 422 })
+    return NextResponse.json({ error: 'IngressPoint has no associated environment' }, { status: 422 })
   }
 
   const env = point.environment
   if (!env.gatewayUrl || !env.gatewayToken) {
-    return new Response(JSON.stringify({ error: 'Environment gateway not connected' }), { status: 422 })
+    return NextResponse.json({ error: 'Environment gateway not connected' }, { status: 422 })
   }
 
   const isDocker = env.type === 'docker'
 
-  const stream = new ReadableStream({
-    async start(ctrl) {
-      try {
-        log(ctrl, `Bootstrapping IngressPoint "${point.name}" in environment "${env.name}" (${isDocker ? 'Docker' : 'Kubernetes'})`)
+  const jobId = await startJob(
+    'ingress-bootstrap',
+    `Ingress bootstrap — ${point.name} (${env.name})`,
+    { environmentId: env.id, metadata: { pointId: point.id, pointName: point.name } },
+    async (log) => {
+      await bootstrapIngressPoint(log, point, env, isDocker, params.id)
+    },
+  )
 
-        let assignedIp = point.ip
+  return NextResponse.json({ jobId })
+}
 
-        if (isDocker) {
-          // ── Docker: deploy Traefik as a container ─────────────────────────
-          log(ctrl, 'Step 1/1: Deploying Traefik container...')
+async function bootstrapIngressPoint(
+  log: JobLogger,
+  point: {
+    id: string
+    name: string
+    ip: string | null
+    port: number
+    certManager: boolean
+    clusterIssuer: string | null
+    domain: { name: string }
+    environment?: { id: string; name: string; type: string; gatewayUrl: string | null; gatewayToken: string | null } | null
+  },
+  env: { id: string; name: string; type: string; gatewayUrl: string | null; gatewayToken: string | null },
+  isDocker: boolean,
+  pointId: string,
+): Promise<void> {
+  const gc = new GatewayClient(env.gatewayUrl!, env.gatewayToken!)
+  const gatewayExec = (toolName: string, args: Record<string, unknown>) => gc.executeTool(toolName, args)
 
-          const httpPort  = 80
-          const httpsPort = point.port
-          const traefikArgs = [
-            '--api.dashboard=true',
-            '--providers.docker=true',
-            '--providers.docker.exposedByDefault=false',
-            `--entryPoints.web.address=:${httpPort}`,
-            `--entryPoints.websecure.address=:${httpsPort}`,
-          ]
-          if (point.certManager) {
-            traefikArgs.push(
-              '--certificatesResolvers.letsencrypt.acme.tlsChallenge=true',
-              `--certificatesResolvers.letsencrypt.acme.email=admin@${point.domain.name}`,
-              '--certificatesResolvers.letsencrypt.acme.storage=/letsencrypt/acme.json',
-            )
-          }
+  await log(`Bootstrapping IngressPoint "${point.name}" in environment "${env.name}" (${isDocker ? 'Docker' : 'Kubernetes'})`)
 
-          await gatewayExec(env.gatewayUrl!, env.gatewayToken!, 'docker_run', {
-            image:   'traefik:v3',
-            name:    'traefik',
-            restart: 'unless-stopped',
-            ports:   [`${httpPort}:${httpPort}`, `${httpsPort}:${httpsPort}`, '8080:8080'],
-            volumes: ['/var/run/docker.sock:/var/run/docker.sock:ro', 'traefik-letsencrypt:/letsencrypt'],
-            args:    traefikArgs,
-            detach:  true,
-          })
-          log(ctrl, '  Traefik container started ✓')
+  let assignedIp = point.ip
 
-          if (point.ip) {
-            assignedIp = point.ip
-          }
-        } else {
-          // ── Kubernetes: cert-manager → ClusterIssuer → Traefik Helm ───────
+  if (isDocker) {
+    // ── Docker: deploy Traefik as a container ─────────────────────────
+    await log('Step 1/1: Deploying Traefik container...')
 
-          // Step 1: cert-manager
-          log(ctrl, 'Step 1/3: Installing cert-manager...')
-          let certManagerExists = false
-          try {
-            await gatewayExec(env.gatewayUrl!, env.gatewayToken!, 'kubectl_get', {
-              resource: 'namespace', name: 'cert-manager',
-            })
-            certManagerExists = true
-            log(ctrl, '  cert-manager already installed ✓')
-          } catch {
-            certManagerExists = false
-          }
+    const httpPort  = 80
+    const httpsPort = point.port
+    const traefikArgs = [
+      '--api.dashboard=true',
+      '--providers.docker=true',
+      '--providers.docker.exposedByDefault=false',
+      `--entryPoints.web.address=:${httpPort}`,
+      `--entryPoints.websecure.address=:${httpsPort}`,
+    ]
+    if (point.certManager) {
+      traefikArgs.push(
+        '--certificatesResolvers.letsencrypt.acme.tlsChallenge=true',
+        `--certificatesResolvers.letsencrypt.acme.email=admin@${point.domain.name}`,
+        '--certificatesResolvers.letsencrypt.acme.storage=/letsencrypt/acme.json',
+      )
+    }
 
-          if (!certManagerExists) {
-            log(ctrl, '  Applying cert-manager manifests...')
-            await gatewayExec(env.gatewayUrl!, env.gatewayToken!, 'kubectl_apply_url', {
-              url: 'https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml',
-            })
-            log(ctrl, '  Waiting for cert-manager webhook to be ready...')
-            await gatewayExec(env.gatewayUrl!, env.gatewayToken!, 'kubectl_rollout_status', {
-              kind: 'deployment', name: 'cert-manager-webhook', namespace: 'cert-manager', timeout: '120s',
-            })
-            log(ctrl, '  cert-manager ready ✓')
-          }
+    await gatewayExec('docker_run', {
+      image:   'traefik:v3',
+      name:    'traefik',
+      restart: 'unless-stopped',
+      ports:   [`${httpPort}:${httpPort}`, `${httpsPort}:${httpsPort}`, '8080:8080'],
+      volumes: ['/var/run/docker.sock:/var/run/docker.sock:ro', 'traefik-letsencrypt:/letsencrypt'],
+      args:    traefikArgs,
+      detach:  true,
+    })
+    await log('  Traefik container started ✓')
 
-          // Step 2: ClusterIssuer
-          if (point.certManager && point.clusterIssuer) {
-            log(ctrl, `Step 2/3: Configuring ClusterIssuer "${point.clusterIssuer}"...`)
-            const issuerYaml = buildClusterIssuer(point.clusterIssuer, point.domain.name)
-            await gatewayExec(env.gatewayUrl!, env.gatewayToken!, 'kubectl_apply_manifest', {
-              manifest: issuerYaml,
-            })
-            log(ctrl, `  ClusterIssuer "${point.clusterIssuer}" applied ✓`)
-          } else {
-            log(ctrl, 'Step 2/3: Skipping ClusterIssuer (cert-manager disabled or no issuer configured)')
-          }
+    if (point.ip) {
+      assignedIp = point.ip
+    }
+  } else {
+    // ── Kubernetes: MetalLB → cert-manager → ClusterIssuer → Traefik Helm ───────
 
-          // Step 3: Traefik via Helm
-          log(ctrl, 'Step 3/3: Installing Traefik via Helm...')
-          const helmValues: Record<string, string> = {
-            'ports.websecure.port': String(point.port),
-            'ports.web.port':       '80',
-          }
-          if (point.ip) {
-            helmValues['service.loadBalancerIP'] = point.ip
-          }
-          if (point.certManager) {
-            helmValues['ingressClass.enabled']        = 'true'
-            helmValues['ingressClass.isDefaultClass'] = 'true'
-          }
+    if (!point.ip) {
+      throw new Error('An IP address is required for Kubernetes ingress bootstrap. Set a LoadBalancer IP on this IngressPoint before bootstrapping.')
+    }
 
-          await gatewayExec(env.gatewayUrl!, env.gatewayToken!, 'helm_upgrade_install', {
-            release:         'traefik',
-            chart:           'traefik',
-            repo:            'https://helm.traefik.io/traefik',
-            namespace:       'kube-system',
-            createNamespace: false,
-            values:          helmValues,
-            wait:            true,
-            timeout:         '180s',
-          })
-          log(ctrl, '  Traefik installed ✓')
+    // Step 1: MetalLB
+    await log('Step 1/4: Installing MetalLB...')
+    let metallbExists = false
+    try {
+      await gatewayExec('kubectl_get', {
+        resource: 'namespace', name: 'metallb-system',
+      })
+      metallbExists = true
+      await log('  MetalLB already installed ✓')
+    } catch {
+      metallbExists = false
+    }
 
-          // Discover the assigned LoadBalancer IP
-          try {
-            const svcJson = await gatewayExec(env.gatewayUrl!, env.gatewayToken!, 'kubectl_get', {
-              resource: 'service', name: 'traefik', namespace: 'kube-system', output: 'json',
-            })
-            const svc = JSON.parse(svcJson)
-            const ingresses = svc?.status?.loadBalancer?.ingress ?? []
-            const discovered = ingresses[0]?.ip ?? ingresses[0]?.hostname ?? null
-            if (discovered && discovered !== assignedIp) {
-              assignedIp = discovered
-              log(ctrl, `  Discovered LoadBalancer IP: ${assignedIp}`)
-            }
-          } catch { /* non-fatal */ }
-        }
+    if (!metallbExists) {
+      await log('  Applying MetalLB manifests...')
+      await gatewayExec('kubectl_apply_url', {
+        url: 'https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-native.yaml',
+      })
+      await log('  Waiting for MetalLB controller to be ready...')
+      await gatewayExec('kubectl_rollout_status', {
+        kind: 'deployment', name: 'controller', namespace: 'metallb-system', timeout: '120s',
+      })
+      await log('  MetalLB ready ✓')
+    }
 
-        // ── Mark bootstrapped ───────────────────────────────────────────────
-        await prisma.ingressPoint.update({
-          where: { id: params.id },
-          data:  { status: 'bootstrapped', ...(assignedIp ? { ip: assignedIp } : {}) },
-        })
+    await log(`  Configuring IPAddressPool for ${point.ip}...`)
+    await gatewayExec('kubectl_apply_manifest', {
+      manifest: buildMetalLBConfig(point.ip),
+    })
+    await log('  MetalLB IP pool configured ✓')
 
-        const addr = assignedIp ? `${assignedIp}:${point.port}` : `port ${point.port} (no external IP yet)`
-        log(ctrl, `Bootstrap complete! Traefik is serving at ${addr}`)
-        sse(ctrl, { type: 'done', success: true })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        log(ctrl, `Bootstrap failed: ${msg}`)
-        sse(ctrl, { type: 'done', success: false, error: msg })
-        await prisma.ingressPoint.update({
-          where: { id: params.id },
-          data:  { status: 'error' },
-        })
-      } finally {
-        ctrl.close()
+    // Step 2: cert-manager
+    await log('Step 2/4: Installing cert-manager...')
+    let certManagerExists = false
+    try {
+      await gatewayExec('kubectl_get', {
+        resource: 'namespace', name: 'cert-manager',
+      })
+      certManagerExists = true
+      await log('  cert-manager already installed ✓')
+    } catch {
+      certManagerExists = false
+    }
+
+    if (!certManagerExists) {
+      await log('  Applying cert-manager manifests...')
+      await gatewayExec('kubectl_apply_url', {
+        url: 'https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml',
+      })
+      await log('  Waiting for cert-manager webhook to be ready...')
+      await gatewayExec('kubectl_rollout_status', {
+        kind: 'deployment', name: 'cert-manager-webhook', namespace: 'cert-manager', timeout: '120s',
+      })
+      await log('  cert-manager ready ✓')
+    }
+
+    // Step 3: ClusterIssuer
+    if (point.certManager && point.clusterIssuer) {
+      await log(`Step 3/4: Configuring ClusterIssuer "${point.clusterIssuer}"...`)
+      const issuerYaml = buildClusterIssuer(point.clusterIssuer, point.domain.name)
+      await gatewayExec('kubectl_apply_manifest', {
+        manifest: issuerYaml,
+      })
+      await log(`  ClusterIssuer "${point.clusterIssuer}" applied ✓`)
+    } else {
+      await log('Step 3/4: Skipping ClusterIssuer (cert-manager disabled or no issuer configured)')
+    }
+
+    // Step 4: Traefik via Helm
+    await log('Step 4/4: Installing Traefik via Helm...')
+    const helmValues: Record<string, string> = {
+      'ports.websecure.port': String(point.port),
+      'ports.web.port':       '80',
+    }
+    if (point.ip) {
+      helmValues['service.loadBalancerIP'] = point.ip
+    }
+    if (point.certManager) {
+      helmValues['ingressClass.enabled']        = 'true'
+      helmValues['ingressClass.isDefaultClass'] = 'true'
+    }
+
+    await gatewayExec('helm_upgrade_install', {
+      release:         'traefik',
+      chart:           'traefik',
+      repo:            'https://helm.traefik.io/traefik',
+      namespace:       'kube-system',
+      createNamespace: false,
+      values:          helmValues,
+      wait:            true,
+      timeout:         '180s',
+    })
+    await log('  Traefik installed ✓')
+
+    // Discover the assigned LoadBalancer IP
+    try {
+      const svcJson = await gatewayExec('kubectl_get', {
+        resource: 'service', name: 'traefik', namespace: 'kube-system', output: 'json',
+      })
+      const svc = JSON.parse(svcJson)
+      const ingresses = svc?.status?.loadBalancer?.ingress ?? []
+      const discovered = ingresses[0]?.ip ?? ingresses[0]?.hostname ?? null
+      if (discovered && discovered !== assignedIp) {
+        assignedIp = discovered
+        await log(`  Discovered LoadBalancer IP: ${assignedIp}`)
       }
-    },
+    } catch { /* non-fatal */ }
+  }
+
+  // ── Mark bootstrapped ───────────────────────────────────────────────
+  await prisma.ingressPoint.update({
+    where: { id: pointId },
+    data:  { status: 'bootstrapped', ...(assignedIp ? { ip: assignedIp } : {}) },
   })
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type':  'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection:      'keep-alive',
-    },
-  })
+  const addr = assignedIp ? `${assignedIp}:${point.port}` : `port ${point.port} (no external IP yet)`
+  await log(`Bootstrap complete! Traefik is serving at ${addr}`)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function buildClusterIssuer(name: string, _domain: string): string {
-  // Generic ACME staging/prod issuer — user configures DNS credentials separately
+function buildMetalLBConfig(ip: string): string {
+  return `apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: orion-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - ${ip}/32
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: orion-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - orion-pool`
+}
+
+function buildClusterIssuer(name: string, domain: string): string {
   const server = name.includes('staging')
     ? 'https://acme-staging-v02.api.letsencrypt.org/directory'
     : 'https://acme-v02.api.letsencrypt.org/directory'
@@ -233,7 +267,7 @@ metadata:
 spec:
   acme:
     server: ${server}
-    email: admin@local
+    email: admin@${domain}
     privateKeySecretRef:
       name: ${name}-key
     solvers:
@@ -242,8 +276,4 @@ spec:
           apiTokenSecretRef:
             name: cloudflare-api-token
             key: api-token`
-}
-
-function buildTraefikValues(ip: string | null, port: number, _clusterIssuer: string | null): string {
-  return JSON.stringify({ loadBalancerIP: ip, port })
 }

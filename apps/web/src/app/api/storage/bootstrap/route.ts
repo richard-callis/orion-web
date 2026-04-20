@@ -9,25 +9,9 @@ import * as fs from 'fs'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { startJob, type JobLogger } from '@/lib/job-runner'
+import { GatewayClient } from '@/lib/agent-runner/gateway-client'
 
 type StorageType = 'longhorn' | 'ceph'
-
-async function gatewayExec(
-  gatewayUrl: string,
-  gatewayToken: string,
-  toolName: string,
-  args: Record<string, unknown>,
-): Promise<string> {
-  const res = await fetch(`${gatewayUrl}/tools/execute`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${gatewayToken}` },
-    body: JSON.stringify({ name: toolName, arguments: args }),
-  })
-  if (!res.ok) throw new Error(`Gateway tool ${toolName} failed: ${res.status} ${await res.text()}`)
-  const data = await res.json() as { result?: string; error?: string }
-  if (data.error) throw new Error(data.error)
-  return data.result ?? ''
-}
 
 export async function POST(req: NextRequest) {
   const body = await req.json() as { environmentId?: string; storageType?: StorageType }
@@ -293,8 +277,8 @@ async function bootstrapLonghorn(
   envId: string,
   talosConfig: string | null,
 ): Promise<void> {
-  const exec = (tool: string, args: Record<string, unknown>) =>
-    gatewayExec(gatewayUrl, gatewayToken, tool, args)
+  const gc = new GatewayClient(gatewayUrl, gatewayToken)
+  const exec = (tool: string, args: Record<string, unknown>) => gc.executeTool(tool, args)
 
   await log(`Bootstrapping Longhorn in environment "${envName}"...`)
 
@@ -398,8 +382,8 @@ async function bootstrapCeph(
   gatewayToken: string,
   envName: string,
 ): Promise<void> {
-  const exec = (tool: string, args: Record<string, unknown>) =>
-    gatewayExec(gatewayUrl, gatewayToken, tool, args)
+  const gc = new GatewayClient(gatewayUrl, gatewayToken)
+  const exec = (tool: string, args: Record<string, unknown>) => gc.executeTool(tool, args)
 
   await log(`Bootstrapping Rook-Ceph in environment "${envName}"...`)
 
@@ -460,24 +444,6 @@ metadata:
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/audit: privileged
     pod-security.kubernetes.io/warn: privileged`
-}
-
-function longhornStorageClass(): string {
-  return `apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: longhorn
-  annotations:
-    storageclass.kubernetes.io/is-default-class: "true"
-provisioner: driver.longhorn.io
-allowVolumeExpansion: true
-reclaimPolicy: Delete
-volumeBindingMode: Immediate
-parameters:
-  numberOfReplicas: "2"
-  staleReplicaTimeout: "2880"
-  fromBackup: ""
-  fsType: ext4`
 }
 
 function cephClusterManifest(): string {
@@ -555,8 +521,6 @@ parameters:
   imageFeatures: layering
   csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
   csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
-  csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner
-  csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
   csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner
   csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
   csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node
