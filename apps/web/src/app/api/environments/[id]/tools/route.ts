@@ -2,6 +2,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const auth = req.headers.get('authorization')
+  if (auth?.startsWith('Bearer ')) {
+    // Called by the gateway — validate the token
+    const env = await prisma.environment.findUnique({
+      where: { id: params.id },
+      select: { gatewayToken: true },
+    })
+    if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (!env.gatewayToken || auth !== `Bearer ${env.gatewayToken}`) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+  }
+
   const { searchParams } = new URL(req.url)
   const enabledOnly = searchParams.get('enabled') === 'true'
 

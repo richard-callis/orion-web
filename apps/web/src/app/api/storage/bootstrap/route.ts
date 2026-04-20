@@ -10,10 +10,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { startJob, type JobLogger } from '@/lib/job-runner'
 import { GatewayClient } from '@/lib/agent-runner/gateway-client'
+import { requireAdmin } from '@/lib/auth'
 
 type StorageType = 'longhorn' | 'ceph'
 
 export async function POST(req: NextRequest) {
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   const body = await req.json() as { environmentId?: string; storageType?: StorageType }
   if (!body.environmentId) {
     return NextResponse.json({ error: 'environmentId is required' }, { status: 400 })

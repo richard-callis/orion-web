@@ -13,6 +13,9 @@ const PUBLIC_PATHS = [
   '/favicon.ico',
 ]
 
+// API routes that may use x-api-key header — pass through, route handles auth
+const API_KEY_PATHS = ['/api/api-keys']
+
 // API routes that gateways call with Bearer tokens — middleware passes through,
 // route handlers validate the token themselves
 const BEARER_PATHS = [
@@ -26,11 +29,18 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
-  // Gateway calls use Bearer token auth — let them through, routes handle validation
+  // Gateway calls use Bearer token auth — let them through, routes handle validation.
+  // DELETE is never a gateway operation and must always require a session.
   if (
+    req.method !== 'DELETE' &&
     BEARER_PATHS.some(p => pathname.startsWith(p)) &&
     req.headers.get('authorization')?.startsWith('Bearer ')
   ) {
+    return NextResponse.next()
+  }
+
+  // API key routes — pass through, route handler handles all auth
+  if (API_KEY_PATHS.some(p => pathname.startsWith(p))) {
     return NextResponse.next()
   }
 
@@ -47,4 +57,5 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  runtime: 'nodejs',
 }
