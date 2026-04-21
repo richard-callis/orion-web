@@ -11,10 +11,10 @@ import { prisma } from '@/lib/db'
 
 async function getRoomMembership(roomId: string, userId: string | undefined) {
   const member = await prisma.chatRoomMember.findFirst({
-    where: { room_id: roomId, user_id: userId },
-    select: { user_id: true, agent_id: true },
+    where: { roomId, userId },
+    select: { userId: true, agentId: true },
   })
-  return { userId: member?.user_id ?? userId, agentId: member?.agent_id ?? null }
+  return { userId: member?.userId ?? userId, agentId: member?.agentId ?? null }
 }
 
 // GET /api/chatrooms/[id]/messages
@@ -27,11 +27,11 @@ export async function GET(
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '50') || 50, 200)
   const before = searchParams.get('before')
 
-  const where: Record<string, string> = { room_id: id }
+  const where: Record<string, string> = { roomId: id }
 
   const messages = await prisma.chatMessage.findMany({
     where,
-    orderBy: { created_at: 'desc' },
+    orderBy: { createdAt: 'desc' },
     take: limit,
     include: {
       agent: { select: { id: true, name: true, type: true } },
@@ -41,13 +41,13 @@ export async function GET(
 
   const formatted = messages.reverse().map(msg => ({
     id: msg.id,
-    sender_type: msg.sender_type,
+    senderType: msg.senderType,
     content: msg.content,
     attachments: msg.attachments,
     sender: msg.agent ? { type: 'agent', id: msg.agent.id, name: msg.agent.name }
             : msg.user ? { type: 'user', id: msg.user.id, name: msg.user.name || msg.user.username }
             : { type: 'unknown', id: null, name: 'unknown' },
-    created_at: msg.created_at.toISOString(),
+    createdAt: msg.createdAt.toISOString(),
   }))
 
   return NextResponse.json({ messages: formatted })
@@ -73,12 +73,12 @@ export async function POST(
 
   const msg = await prisma.chatMessage.create({
     data: {
-      room_id: id,
-      user_id: memberUserId ?? userId,
-      agent_id: agentId,
-      sender_type: body.senderType ?? (agentId ? 'agent' : 'human'),
+      roomId: id,
+      userId: memberUserId ?? userId,
+      agentId,
+      senderType: body.senderType ? String(body.senderType) : (agentId ? 'agent' : 'human'),
       content: content.trim(),
-      attachments: body.attachments ?? [],
+      attachments: (body.attachments as any) ?? undefined,
     },
     include: {
       agent: { select: { id: true, name: true } },
@@ -88,15 +88,15 @@ export async function POST(
 
   await prisma.chatRoom.update({
     where: { id },
-    data: { updated_at: new Date() },
+    data: { updatedAt: new Date() },
   })
 
   return NextResponse.json({
-    id: msg.id, sender_type: msg.sender_type, content: msg.content,
+    id: msg.id, senderType: msg.senderType, content: msg.content,
     attachments: msg.attachments,
     sender: msg.agent ? { type: 'agent', id: msg.agent.id, name: msg.agent.name }
             : msg.user ? { type: 'user', id: msg.user.id, name: msg.user.name || msg.user.username }
             : { type: 'unknown', id: null, name: 'system' },
-    created_at: msg.created_at.toISOString(),
+    createdAt: msg.createdAt.toISOString(),
   }, { status: 201 })
 }

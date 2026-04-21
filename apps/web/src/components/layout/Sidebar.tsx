@@ -14,7 +14,7 @@ const nav = [
   { href: '/infrastructure', icon: Server,           label: 'Infrastructure' },
   { href: '/gitops',         icon: GitBranch,        label: 'GitOps' },
   { href: '/storage',        icon: Database,         label: 'Storage' },
-  { href: '/chat',           icon: MessageSquare,    label: 'Claude Chat' },
+  { href: '/messages',        icon: MessageSquare,   label: 'Messages' },
   { href: '/tasks',          icon: ClipboardList,    label: 'Tasks' },
   { href: '/agents',         icon: Bot,              label: 'Agents' },
   { href: '/ingress',        icon: Network,          label: 'Ingress' },
@@ -24,7 +24,6 @@ const nav = [
   { href: '/logs',           icon: FileText,         label: 'Logs' },
   { href: '/notes',          icon: BookOpen,         label: 'Wiki' },
   { href: '/nova',            icon: Sparkles,        label: 'Nova' },
-  { href: '/chatrooms',       icon: MessageSquare,   label: 'Chat Rooms' },
 ]
 
 export function Sidebar() {

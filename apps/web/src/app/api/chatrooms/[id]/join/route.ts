@@ -25,13 +25,14 @@ export async function POST(
   const room = await prisma.chatRoom.findUnique({ where: { id } })
   if (!room) return NextResponse.json({ error: 'Chat room not found' }, { status: 404 })
 
+  const role = body.role ? String(body.role) : 'member'
   await prisma.chatRoomMember.create({
-    data: { room_id: id, user_id: userId, agent_id: agentId, role: body.role ?? 'member' },
+    data: { roomId: id, userId, agentId, role },
   })
 
   const name = agentId ? `Agent ${agentId}` : session?.user?.username ?? userId
   await prisma.chatMessage.create({
-    data: { room_id: id, sender_type: 'system', content: `${name} joined the room` },
+    data: { roomId: id, senderType: 'system', content: `${name} joined the room` },
   })
 
   return NextResponse.json({ joined: true })
@@ -52,16 +53,14 @@ export async function DELETE(
   if (!room) return NextResponse.json({ error: 'Chat room not found' }, { status: 404 })
 
   const member = await prisma.chatRoomMember.findFirst({
-    where: { room_id: id, user_id: userId },
+    where: { roomId: id, userId },
   })
   if (!member) return NextResponse.json({ error: 'Not a member' }, { status: 404 })
 
-  await prisma.chatRoomMember.delete({
-    where: { room_id_agent_id_user_id: { room_id: id, user_id: userId } },
-  })
+  await prisma.chatRoomMember.delete({ where: { id: member.id } })
 
   await prisma.chatMessage.create({
-    data: { room_id: id, sender_type: 'system', content: `${session.user.username} left the room` },
+    data: { roomId: id, senderType: 'system', content: `${session.user.username} left the room` },
   })
 
   return NextResponse.json({ left: true })
