@@ -81,12 +81,16 @@ export function makeLocalGx(kubeconfig: string) {
     }
 
     if (name === 'kubectl_delete') {
-      const cmdArgs = ['delete', args.resource as string]
+      const resource = (args.resource as string).toLowerCase()
+      const cmdArgs = ['delete', resource]
       if (args.name) cmdArgs.push(args.name as string)
       if (args.namespace) cmdArgs.push('-n', args.namespace as string)
       if (args.selector) {
         cmdArgs.push('-l', String(args.selector))
-        if (!args.name) cmdArgs.push('--all')
+        // --all only works for workload resources, not for pods or services
+        if (!args.name && ['deployment', 'statefulset', 'daemonset', 'replicaset', 'job', 'replicationcontroller'].includes(resource)) {
+          cmdArgs.push('--all')
+        }
       }
       cmdArgs.push('--ignore-not-found=true', '--kubeconfig', kc)
       return (await execFileAsync('kubectl', cmdArgs, { timeout: 30_000 })).stdout
