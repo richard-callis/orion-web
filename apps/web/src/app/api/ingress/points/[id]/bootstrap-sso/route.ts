@@ -14,7 +14,7 @@ import { startJob, type JobLogger } from '@/lib/job-runner'
 import { GatewayClient } from '@/lib/agent-runner/gateway-client'
 import { requireAdmin } from '@/lib/auth'
 import { makeLocalGx } from '@/lib/local-exec'
-import { getProvider, type ProviderConfig, type RenderContext } from '@/lib/provider-engine'
+import { getProvider, renderProviderConfig, type ProviderConfig } from '@/lib/provider-engine'
 
 export async function POST(
   _req: NextRequest,
@@ -118,35 +118,6 @@ function gwExecFn(gc: GatewayClient) {
   return (tool: string, args: Record<string, unknown>) => gc.executeTool(tool, args)
 }
 
-// Check for and remove stale Helm releases from previous failed deployments
-async function cleanupStaleHelmRelease(
-  gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
-  log: JobLogger,
-  cfg: { provider: string; hostname: string; namespace: string },
-): Promise<void> {
-  const releaseNames: Record<string, string> = {
-    authentik: 'authentik',
-    authelia: 'authelia',
-    oauth2_proxy: 'oauth2-proxy',
-    keycloak: 'keycloak',
-    custom_oidc: 'oauth2-proxy',
-  }
-  const releaseName = releaseNames[cfg.provider]
-  if (!releaseName) return
-
-  // Check if the release exists
-  try {
-    const result = await gx('helm_list', { namespace: cfg.namespace, filter: releaseName })
-    if (result.includes(releaseName)) {
-      await log(`  Found stale release '${releaseName}', cleaning up...`)
-      await gx('helm_uninstall', { release: releaseName, namespace: cfg.namespace })
-      await log('  Stale release removed ✓')
-    }
-  } catch {
-    // No existing release — nothing to clean up
-  }
-}
-
 async function bootstrapProvider(
   gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
   log: JobLogger,
@@ -156,44 +127,55 @@ async function bootstrapProvider(
     customIssuerCaSecret: string; databaseType: string; redisHost: string; isDocker: boolean
   },
 ): Promise<void> {
-  // Full namespace cleanup for Authentik — Helm uninstall alone leaves behind
-  // manually-patched deployments, services, PVCs, and secrets that conflict
-  // with the new Helm-managed resources.
-  if (cfg.provider === 'authentik') {
-    await log('Cleaning all stale Authentik resources...')
-    // Helm uninstall — removes Helm-managed resources (deployment, statefulset, services, secrets, etc.)
-    await gx('helm_uninstall', { release: 'authentik', namespace: cfg.namespace, timeout: '120s' }).catch(() => {})
-    // Delete remaining workloads (bootstrap-created ones that Helm doesn't manage)
-    await gx('kubectl_delete', { resource: 'statefulset', name: 'authentik-redis', namespace: cfg.namespace }).catch(() => {})
-    await gx('kubectl_delete', { resource: 'deployment', name: 'authentik-redis', namespace: cfg.namespace }).catch(() => {})
-    await gx('kubectl_delete', { resource: 'statefulset', name: 'authentik-postgresql', namespace: cfg.namespace }).catch(() => {})
-    // Delete PVCs (Helm uninstall may not always succeed in deleting PVCs)
-    await gx('kubectl_delete', { resource: 'pvc', name: 'postgres-data-authentik-postgresql-0', namespace: cfg.namespace }).catch(() => {})
-    await gx('kubectl_delete', { resource: 'pvc', name: 'data-authentik-postgresql-0', namespace: cfg.namespace }).catch(() => {})
-    await gx('kubectl_delete', { resource: 'pvc', name: 'redis-data-authentik-redis-0', namespace: cfg.namespace }).catch(() => {})
-    // Delete secrets that could conflict with new deployment
-    const SECRET_NAMES = ['authentik', 'authentik-secrets', 'authentik-secret-key', 'authentik-root-password', 'authentik-secret-fix', 'authentik-postgresql']
-    for (const sn of SECRET_NAMES) {
-      await gx('kubectl_delete', { resource: 'secret', name: sn, namespace: cfg.namespace }).catch(() => {})
+  // Load and render provider config (resolves from remote if not bundled)
+  const pcRaw = await getProvider(cfg.provider)
+  if (!pcRaw) {
+    throw new Error(`Unknown SSO provider: ${cfg.provider}`)
+  }
+  const pc = renderProviderConfig(pcRaw, {
+    hostname: cfg.hostname,
+    namespace: cfg.namespace,
+    clusterIssuer: cfg.clusterIssuer,
+    adminPassword: cfg.adminPassword,
+    provider: cfg.provider,
+    genSecrets: {},
+  })
+
+  // Cleanup via provider config
+  if (pc.cleanup) {
+    await log(`Cleaning ${pc.name} resources...`)
+    if (pc.cleanup.helmRelease) {
+      await gx('helm_uninstall', { release: pc.cleanup.helmRelease, namespace: cfg.namespace, timeout: pc.cleanup.helmReleaseTimeout ?? '120s' }).catch(() => {})
     }
-    // Delete bootstrap-created services that Helm may have missed
-    const SVC_NAMES = ['authentik-server', 'authentik-postgresql', 'authentik-redis', 'authentik-worker', 'authentik-goauthentikio']
-    for (const sv of SVC_NAMES) {
-      await gx('kubectl_delete', { resource: 'service', name: sv, namespace: cfg.namespace }).catch(() => {})
+    for (const ss of (pc.cleanup.statefulsets ?? [])) {
+      await gx('kubectl_delete', { resource: 'statefulset', name: ss, namespace: cfg.namespace }).catch(() => {})
     }
-    // Delete ingress routes
-    await gx('kubectl_delete', { resource: 'ingress', name: 'authentik', namespace: cfg.namespace }).catch(() => {})
-    // Delete cert-manager resources that can block SSL renewal
-    await gx('kubectl_delete', { resource: 'certificate', name: 'authentik-tls', namespace: cfg.namespace }).catch(() => {})
-    await gx('kubectl_delete', { resource: 'order', name: 'authentik-tls', namespace: cfg.namespace }).catch(() => {})
-    await gx('kubectl_delete', { resource: 'challenge', name: 'authentik-tls', namespace: cfg.namespace }).catch(() => {})
-    await log('  Stale resources cleaned ✓')
-  } else {
-    // Non-Authentik: basic cleanup
-    await cleanupStaleHelmRelease(gx, log, cfg)
+    for (const d of (pc.cleanup.deployments ?? [])) {
+      await gx('kubectl_delete', { resource: 'deployment', name: d, namespace: cfg.namespace }).catch(() => {})
+    }
+    for (const prefix of (pc.cleanup.pvcPrefixes ?? [])) {
+      await gx('kubectl_delete', { resource: 'pvc', name: `${prefix}*`, namespace: cfg.namespace }).catch(() => {})
+    }
+    for (const s of (pc.cleanup.secrets ?? [])) {
+      await gx('kubectl_delete', { resource: 'secret', name: s, namespace: cfg.namespace }).catch(() => {})
+    }
+    for (const s of (pc.cleanup.services ?? [])) {
+      await gx('kubectl_delete', { resource: 'service', name: s, namespace: cfg.namespace }).catch(() => {})
+    }
+    await gx('kubectl_delete', { resource: 'ingress', name: pc.name, namespace: cfg.namespace }).catch(() => {})
+    for (const cert of (pc.cleanup.certificates ?? [])) {
+      await gx('kubectl_delete', { resource: 'certificate', name: cert, namespace: cfg.namespace }).catch(() => {})
+    }
+    for (const ch of (pc.cleanup.challenges ?? [])) {
+      await gx('kubectl_delete', { resource: 'challenge', name: ch, namespace: cfg.namespace }).catch(() => {})
+    }
+    for (const o of (pc.cleanup.orders ?? [])) {
+      await gx('kubectl_delete', { resource: 'order', name: o, namespace: cfg.namespace }).catch(() => {})
+    }
+    await log(`  ${pc.name} cleanup done ✓`)
   }
 
-  await log(`Deploying ${cfg.provider} identity provider to namespace "${cfg.namespace}"`)
+  await log(`Deploying ${pc.name} identity provider to namespace "${cfg.namespace}"`)
 
   // Ensure namespace exists with PodSecurity bypass (Talos defaults to restricted policy)
   // Always apply — namespace manifests with annotations can be reapplied to add/update annotations
@@ -208,13 +190,8 @@ metadata:
     pod-security.kubernetes.io/warn: "privileged"`,
   })
 
-  // Load provider config (falls back to built-in configs)
-  const providerConfig = getProvider(cfg.provider)
-  if (!providerConfig) {
-    throw new Error(`Unknown SSO provider: ${cfg.provider}`)
-  }
-
-  await runProviderDeploy(gx, log, providerConfig, {
+  // Run deploy (cleanup already done above)
+  await runProviderDeploy(gx, log, pc, {
     hostname: cfg.hostname,
     namespace: cfg.namespace,
     clusterIssuer: cfg.clusterIssuer,
@@ -231,48 +208,14 @@ async function runProviderDeploy(
   pc: ProviderConfig,
   ctx: { hostname: string; namespace: string; clusterIssuer: string; adminPassword: string; provider: string },
 ): Promise<void> {
-  // Step 1: Cleanup
-  if (pc.cleanup) {
-    await log(`Cleaning ${pc.name} resources...`)
-    if (pc.cleanup.helmRelease) {
-      await gx('helm_uninstall', { release: pc.cleanup.helmRelease, namespace: ctx.namespace, timeout: pc.cleanup.helmReleaseTimeout ?? '120s' }).catch(() => {})
-    }
-    for (const ss of (pc.cleanup.statefulsets ?? [])) {
-      await gx('kubectl_delete', { resource: 'statefulset', name: ss, namespace: ctx.namespace }).catch(() => {})
-    }
-    for (const d of (pc.cleanup.deployments ?? [])) {
-      await gx('kubectl_delete', { resource: 'deployment', name: d, namespace: ctx.namespace }).catch(() => {})
-    }
-    for (const prefix of (pc.cleanup.pvcPrefixes ?? [])) {
-      await gx('kubectl_delete', { resource: 'pvc', name: `${prefix}*`, namespace: ctx.namespace }).catch(() => {})
-    }
-    for (const s of (pc.cleanup.secrets ?? [])) {
-      await gx('kubectl_delete', { resource: 'secret', name: s, namespace: ctx.namespace }).catch(() => {})
-    }
-    for (const s of (pc.cleanup.services ?? [])) {
-      await gx('kubectl_delete', { resource: 'service', name: s, namespace: ctx.namespace }).catch(() => {})
-    }
-    await gx('kubectl_delete', { resource: 'ingress', name: pc.name, namespace: ctx.namespace }).catch(() => {})
-    for (const cert of (pc.cleanup.certificates ?? [])) {
-      await gx('kubectl_delete', { resource: 'certificate', name: cert, namespace: ctx.namespace }).catch(() => {})
-    }
-    for (const ch of (pc.cleanup.challenges ?? [])) {
-      await gx('kubectl_delete', { resource: 'challenge', name: ch, namespace: ctx.namespace }).catch(() => {})
-    }
-    for (const o of (pc.cleanup.orders ?? [])) {
-      await gx('kubectl_delete', { resource: 'order', name: o, namespace: ctx.namespace }).catch(() => {})
-    }
-    await log(`  ${pc.name} cleanup done ✓`)
-  }
-
-  // Step 2: Apply provider-specific manifests
+  // Step 1: Apply provider-specific manifests
   if (pc.manifests) {
     for (const manifest of pc.manifests) {
       await gx('kubectl_apply_manifest', { manifest })
     }
   }
 
-  // Step 3: Helm install/upgrade
+  // Step 2: Helm install/upgrade
   if (pc.helm) {
     await log(`Installing ${pc.name} via Helm...`)
     await gx('helm_upgrade_install', {
@@ -322,10 +265,19 @@ async function runProviderDeploy(
       }
     }
 
-    // Step 7: Delete old pods to pick up envFrom
-    for (const dep of pc.deployments) {
-      const label = dep.name === pc.overlaySecret?.name ? dep.name : `app.kubernetes.io/component=${dep.name.replace(pc.name + '-', '')}`
-      await gx('kubectl_delete', { resource: 'pods', namespace: ctx.namespace, selector: label }).catch(() => {})
+    // Step 7: Delete pods to pick up envFrom changes
+    // Helm charts use varying label conventions — safest to delete all workload pods
+    for (const res of ['deployment', 'statefulset'] as const) {
+      const list = await gx('kubectl_get', { resource: res, namespace: ctx.namespace, output: 'json' })
+      try {
+        const items = JSON.parse(list).items || []
+        for (const item of items) {
+          const podName = item.metadata.name
+          await gx('kubectl_delete', { resource: 'pod', name: podName, namespace: ctx.namespace }).catch(() => {})
+        }
+      } catch {
+        // Parse error — skip
+      }
     }
 
     // Step 8: Wait for server readiness
@@ -348,12 +300,15 @@ async function runProviderDeploy(
 async function syncOverlaySecret(
   gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
   log: JobLogger,
-  overlay: ProviderConfig['overlaySecret'],
+  overlay: NonNullable<ProviderConfig['overlaySecret']>,
   pc: ProviderConfig,
   ctx: { hostname: string; namespace: string; clusterIssuer: string; adminPassword: string; provider: string },
 ): Promise<void> {
-  // Collect all secret values
+  const placeholderRe = /\{\{\s*resolveSecret\s+(\S+)\s+(\S+)\s*\}\}/g
+
+  // Step 1: Collect regular entries (with placeholders) and resolve targets
   const stringData: Record<string, string> = {}
+  const resolveTargets: Array<{ placeholder: string; secretName: string; secretKey: string }> = []
 
   for (const entry of overlay.entries) {
     let value = entry.value
@@ -365,32 +320,32 @@ async function syncOverlaySecret(
     value = value.replace(/\{\{\s*provider\s*\}\}/g, ctx.provider)
     value = value.replace(/\{\{\s*namespace\s*\}\}/g, ctx.namespace)
 
-    // Resolve {{ resolveSecret <name> <key> }} — extract from cluster
-    value = value.replace(/\{\{\s*resolveSecret\s+(\S+)\s+(\S+)\s*\}\}/g, async (_match, secretName, secretKey) => {
-      // This is called synchronously — we need a sync resolution
-      // The actual resolution happens in the loop below
-      return `__PLACEHOLDER_${secretName}_${secretKey}__`
+    // Replace resolveSecret with unique placeholders, collecting targets
+    value = value.replace(placeholderRe, (_: string, secretName: string, secretKey: string) => {
+      const ph = `__RS_${secretName}_${secretKey}__`
+      resolveTargets.push({ placeholder: ph, secretName, secretKey })
+      return ph
     })
 
     stringData[entry.key] = value
   }
 
-  // Now resolve all the placeholders by reading from the cluster
-  for (const [key, value] of Object.entries(stringData)) {
-    const match = value.match(/^__PLACEHOLDER_(.+)_([a-zA-Z_]+)__$/)
-    if (match) {
-      const [_, secretName, secretKey] = match
-      try {
-        const result = await gx('kubectl_get', {
-          resource: 'secret', name: secretName, namespace: ctx.namespace, output: 'json',
-        })
-        const data = JSON.parse(result).data?.[secretKey]
-        if (data) {
-          stringData[key] = Buffer.from(data, 'base64').toString('utf8')
+  // Step 2: Resolve all placeholders from cluster
+  for (const target of resolveTargets) {
+    try {
+      const result = await gx('kubectl_get', {
+        resource: 'secret', name: target.secretName, namespace: ctx.namespace, output: 'json',
+      })
+      const data = JSON.parse(result).data?.[target.secretKey]
+      if (data) {
+        const resolvedValue = Buffer.from(data, 'base64').toString('utf8')
+        // Replace placeholder in all stringData values
+        for (const [key, val] of Object.entries(stringData)) {
+          stringData[key] = val.replace(new RegExp(`\\{\\{\\s*${target.placeholder}\\s*\\}\\}`, 'g'), resolvedValue)
         }
-      } catch {
-        log(`  WARNING: Could not resolve secret ${secretName}.${secretKey} for key ${key}`)
       }
+    } catch {
+      log(`  WARNING: Could not resolve secret ${target.secretName}.${target.secretKey}`)
     }
   }
 
