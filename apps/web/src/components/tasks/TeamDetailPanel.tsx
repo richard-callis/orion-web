@@ -141,27 +141,37 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
   const create = async () => {
     if (!form.name.trim()) return
     setSaving(true)
-    const isHuman = form.modelId === 'human'
-    const r = await fetch('/api/agents', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: form.name,
-        type: modelIdToType(form.modelId),
-        role: form.role || null,
-        description: form.description || null,
-        metadata: !isHuman ? {
-          systemPrompt: form.systemPrompt || undefined,
-          contextConfig: { llm: form.modelId },
-        } : undefined,
-      }),
-    })
-    const agent: Agent = await r.json()
-    if (onCreate) onCreate(agent)
-    else setLocalAgents(prev => [...prev, agent])
-    setCreateModal(false)
-    setForm(emptyForm)
-    setSaving(false)
+    try {
+      const isHuman = form.modelId === 'human'
+      const r = await fetch('/api/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: form.name,
+          type: modelIdToType(form.modelId),
+          role: form.role || null,
+          description: form.description || null,
+          metadata: !isHuman ? {
+            systemPrompt: form.systemPrompt || undefined,
+            contextConfig: { llm: form.modelId },
+          } : undefined,
+        }),
+      })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        throw new Error(err.error ?? 'Failed to create agent')
+      }
+      const agent: Agent = await r.json()
+      if (onCreate) onCreate(agent)
+      else setLocalAgents(prev => [...prev, agent])
+      setCreateModal(false)
+      setForm(emptyForm)
+    } catch (err) {
+      console.error('Failed to create agent:', err)
+      alert(`Failed to create agent: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const saveEdit = async () => {
