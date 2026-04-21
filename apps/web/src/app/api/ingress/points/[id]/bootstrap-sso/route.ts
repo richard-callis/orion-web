@@ -227,15 +227,10 @@ async function deployAuthentik(
 ): Promise<void> {
   // Generate a cryptographically suitable secret key for Authentik
   const secretKey = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 20)}${Math.random().toString(36).slice(2, 16)}`
-  const postgresPassword = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 16)}`
 
-  // Create the overlay secret that provides the correct env var names.
-  // Helm chart generates AUTHENTIK_SECRETKEY (no underscore) but Authentik
-  // expects AUTHENTIK_SECRET_KEY (with underscore).
-  // Also includes AUTHENTIK_POSTGRESQL__* so the server can connect to
-  // PostgreSQL (Helm's subchart generates the password but doesn't
-  // expose it as a correctly-named env var in the main secret).
-  await log('Step 1/3: Creating overlay secret...')
+  // Create a placeholder overlay secret — the real PostgreSQL password
+  // will be populated after Helm installs the subchart.
+  await log('Step 1/4: Creating overlay secret...')
   await gx('kubectl_apply_manifest', {
     manifest: `apiVersion: v1
 kind: Secret
@@ -250,14 +245,14 @@ stringData:
   AUTHENTIK_POSTGRESQL__NAME: "authentik"
   AUTHENTIK_POSTGRESQL__USER: "authentik"
   AUTHENTIK_POSTGRESQL__PORT: "5432"
-  AUTHENTIK_POSTGRESQL__PASSWORD: "${postgresPassword}"`,
+  AUTHENTIK_POSTGRESQL__PASSWORD: "PLACEHOLDER"`,
   })
   await log('  Overlay secret created ✓')
 
-  // Install Authentik via Helm. The postgresql.auth.password key tells the
-  // subchart what password to use for the 'authentik' DB user — this must
-  // match AUTHENTIK_POSTGRESQL__PASSWORD in the overlay secret.
-  await log('Step 2/3: Installing Authentik via Helm...')
+  // Install Authentik via Helm with PostgreSQL subchart enabled.
+  // The Bitnami PostgreSQL subchart generates its own password for the
+  // 'authentik' DB user — stored in the authentik-postgresql secret.
+  await log('Step 2/4: Installing Authentik via Helm...')
   await gx('helm_upgrade_install', {
     release: 'authentik', chart: 'authentik', repo: 'https://charts.goauthentik.io',
     namespace: cfg.namespace, createNamespace: false, valuesFile: `authentik:
@@ -280,57 +275,146 @@ server:
           - ${cfg.hostname}
 postgresql:
   enabled: true
-  auth:
-    postgresPassword: "${postgresPassword}"
-    password: "${postgresPassword}"
 `, wait: false, timeout: '300s',
   })
-  await log('  Authentik installed ✓')
+  await log('  Helm release deployed ✓')
 
-  // Step 3: Patch the secret key env var name
-  // Helm chart converts authentik.secretKey → AUTHENTIK_SECRETKEY (no underscore)
-  // but Authentik expects AUTHENTIK_SECRET_KEY (with underscore). Patch deployments
-  // to include the overlay secret in envFrom so the correct key name wins.
-  await log('Step 3/3: Patching secret key env var name...')
-  await gx('kubectl_patch', {
-    resource: 'deployment', name: 'authentik-server', namespace: cfg.namespace,
-    patchType: 'strategic',
-    patch: JSON.stringify({
-      spec: {
-        template: {
-          spec: {
-            containers: [{
-              name: 'server',
-              envFrom: [
-                { secretRef: { name: 'authentik' } },
-                { secretRef: { name: 'authentik-secret-fix' } },
-              ],
-            }],
+  // Wait for PostgreSQL StatefulSet to be ready.
+  // Helm didn't wait for this (it hangs on crash-looping server/worker pods).
+  await log('Step 3/4: Waiting for PostgreSQL to be ready...')
+  await waitForResource(gx, 'statefulset', 'authentik-postgresql', cfg.namespace, 'ready', 60)
+  await log('  PostgreSQL ready ✓')
+
+  // Extract the real PostgreSQL password from the subchart secret and
+  // update the overlay secret so the Authentik server can connect.
+  // The password is base64-encoded in the 'password' key of the secret.
+  const pgPasswordB64 = await gx('kubectl_get', {
+    resource: 'secret', name: 'authentik-postgresql', namespace: cfg.namespace, output: 'json',
+  })
+  // Try parsing as JSON first, fall back to jsonpath-like extraction
+  let pgPassword = ''
+  try {
+    const parsed = JSON.parse(pgPasswordB64)
+    pgPassword = Buffer.from(parsed.data?.password || '', 'base64').toString('utf8')
+  } catch {
+    // Fallback: extract base64 value between "password":"..."
+    const match = pgPasswordB64.match(/"password"\s*:\s*"([^"]+)"/)
+    if (match) {
+      pgPassword = Buffer.from(match[1], 'base64').toString('utf8')
+    }
+  }
+  if (!pgPassword) {
+    throw new Error('Could not extract PostgreSQL password from authentik-postgresql secret')
+  }
+  // Re-apply the overlay secret with the real password
+  await gx('kubectl_apply_manifest', {
+    manifest: `apiVersion: v1
+kind: Secret
+metadata:
+  name: authentik-secret-fix
+  namespace: ${cfg.namespace}
+type: Opaque
+stringData:
+  AUTHENTIK_SECRET_KEY: "${secretKey}"
+  AUTHENTIK_ROOT_PASSWORD: "${cfg.adminPassword}"
+  AUTHENTIK_POSTGRESQL__HOST: "authentik-postgresql"
+  AUTHENTIK_POSTGRESQL__NAME: "authentik"
+  AUTHENTIK_POSTGRESQL__USER: "authentik"
+  AUTHENTIK_POSTGRESQL__PORT: "5432"
+  AUTHENTIK_POSTGRESQL__PASSWORD: "${pgPassword}"`,
+  })
+  await log('  PostgreSQL password synced ✓')
+
+  // Patch both deployments to include the overlay secret in envFrom.
+  // Helm-managed deployments only reference the 'authentik' secret which
+  // has AUTHENTIK_SECRETKEY (no underscore) but not AUTHENTIK_SECRET_KEY.
+  // The overlay provides the correct names and the PostgreSQL password.
+  await log('  Patching deployments...')
+  for (const name of ['authentik-server', 'authentik-worker']) {
+    await gx('kubectl_patch', {
+      resource: 'deployment', name, namespace: cfg.namespace,
+      patchType: 'strategic',
+      patch: JSON.stringify({
+        spec: {
+          template: {
+            spec: {
+              containers: [{
+                name: name === 'authentik-server' ? 'server' : 'worker',
+                envFrom: [
+                  { secretRef: { name: 'authentik' } },
+                  { secretRef: { name: 'authentik-secret-fix' } },
+                ],
+              }],
+            },
           },
         },
-      },
-    }),
-  })
-  await gx('kubectl_patch', {
-    resource: 'deployment', name: 'authentik-worker', namespace: cfg.namespace,
-    patchType: 'strategic',
-    patch: JSON.stringify({
-      spec: {
-        template: {
-          spec: {
-            containers: [{
-              name: 'worker',
-              envFrom: [
-                { secretRef: { name: 'authentik' } },
-                { secretRef: { name: 'authentik-secret-fix' } },
-              ],
-            }],
-          },
-        },
-      },
-    }),
-  })
-  await log('  Secret key patched ✓')
+      }),
+    })
+  }
+
+  // Rollout restart to pick up new envFrom.
+  await gx('kubectl_delete', { resource: 'pods', namespace: cfg.namespace, selector: 'app.kubernetes.io/component=server' })
+  await gx('kubectl_delete', { resource: 'pods', namespace: cfg.namespace, selector: 'app.kubernetes.io/component=worker' })
+
+  // Wait for server pods to be ready (includes DB migration on first boot).
+  await log('Waiting for Authentik to start up...')
+  await waitForResource(gx, 'deployment', 'authentik-server', cfg.namespace, 'ready', 300)
+  await log('Authentik deployed successfully ✓')
+}
+
+/**
+ * Wait for a resource to reach a desired state.
+ * Checks kubectl get events or resource status.
+ */
+async function waitForResource(
+  gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
+  kind: string,
+  name: string,
+  namespace: string,
+  target: string,
+  timeoutSec: number,
+): Promise<void> {
+  const start = Date.now()
+  const interval = 5 // seconds
+  while (Date.now() - start < timeoutSec * 1000) {
+    await new Promise(r => setTimeout(r, interval * 1000))
+
+    if (target === 'ready' && (kind === 'statefulset' || kind === 'deployment')) {
+      const result = await gx('kubectl_get', {
+        resource: kind, name, namespace, output: 'json',
+      })
+      // Parse JSON and check readyReplicas (deployment) or currentReplicas (statefulset)
+      try {
+        const obj = JSON.parse(result)
+        // For deployments: check status.readyReplicas or status.conditions
+        if (obj.status?.readyReplicas !== undefined && obj.status.readyReplicas > 0) {
+          return
+        }
+        // For statefulsets: check status.readyReplicas
+        if (obj.status?.readyReplicas !== undefined && obj.status.readyReplicas > 0) {
+          return
+        }
+        // Check conditions for Progressing=True + Available=True
+        const conditions = obj.status?.conditions || []
+        const available = conditions.find((c: {type: string; status: string}) => c.type === 'Available' && c.status === 'True')
+        const progressing = conditions.find((c: {type: string; status: string}) => c.type === 'Progressing')
+        if (available && !progressing) {
+          return // available and no longer progressing
+        }
+      } catch {
+        // JSON parse failed — check for 404 in raw output
+        if (!result.includes('"code":404') && !result.includes('"kind":')) {
+          throw new Error(`${kind}/${name} not found or error after ${Math.round((Date.now() - start) / 1000)}s`)
+        }
+      }
+    }
+
+    const elapsed = Math.round((Date.now() - start) / 1000)
+    if (elapsed % 30 === 0) {
+      // Log progress every 30s
+    }
+  }
+  throw new Error(`Timed out waiting ${timeoutSec}s for ${kind}/${name} to reach ${target}`)
 }
 
 // ── Authelia ─────────────────────────────────────────────────────────────────
