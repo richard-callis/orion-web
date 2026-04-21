@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import {
   LayoutDashboard, Server, Database, MessageSquare, Bot,
-  Globe, Bell, KeyRound, Archive, FileText, ClipboardList,
+  Bell, KeyRound, Archive, FileText, ClipboardList,
   ChevronLeft, ChevronRight, BookOpen, Settings2, GitBranch, Network, Sparkles,
 } from 'lucide-react'
 import { usePendingTools } from '@/hooks/usePendingTools'
@@ -18,7 +18,6 @@ const nav = [
   { href: '/tasks',          icon: ClipboardList,    label: 'Tasks' },
   { href: '/agents',         icon: Bot,              label: 'Agents' },
   { href: '/ingress',        icon: Network,          label: 'Ingress' },
-  { href: '/dns',            icon: Globe,            label: 'DNS' },
   { href: '/alerts',         icon: Bell,             label: 'Alerts' },
   { href: '/secrets',        icon: KeyRound,         label: 'Secrets' },
   { href: '/backups',        icon: Archive,          label: 'Backups' },
