@@ -50,14 +50,11 @@ jobs:
     needs: build
     runs-on: [self-hosted, linux, x64]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Deploy ORION
         env:
           COMPOSE_PROFILES: gitea
         run: |
-          cd deploy
+          cd /opt/orion/deploy
           docker compose pull --quiet
           docker compose up -d --remove-orphans
           echo "Waiting for ORION health check..."

@@ -50,9 +50,6 @@ jobs:
     needs: build
     runs-on: [self-hosted, linux, x64]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Deploy Gateway
         run: |
           cd /opt/orion/deploy
