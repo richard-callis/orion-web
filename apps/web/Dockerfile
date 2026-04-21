@@ -6,14 +6,14 @@ ARG TARGETARCH
 FROM node:20-alpine AS deps
 WORKDIR /app
 # Build tools needed for node-pty native compilation
-RUN apk add --no-cache python3 make g++
+RUN apk add --no-cache make g++
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
 FROM node:20-alpine AS builder
 WORKDIR /app
 # Install OpenSSL (Prisma) + native build tools for node-pty
-RUN apk add --no-cache openssl python3 make g++
+RUN apk add --no-cache openssl make g++
 COPY --from=deps /app/node_modules ./node_modules
 # Install devDependencies (esbuild, tsx, typescript) for the build step
 COPY package.json package-lock.json* ./
@@ -30,7 +30,7 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Install OpenSSL (Prisma), bash, curl, git, openssh-client, python3 (node-pty runtime)
-RUN apk add --no-cache openssl libc6-compat bash curl git openssh-client python3
+RUN apk add --no-cache openssl libc6-compat bash curl git openssh-client
 
 # SSH config: auto-accept new host keys for homelab use
 RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh \
@@ -67,8 +67,6 @@ COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 # Claude Code SDK (dynamic import — not picked up by standalone bundler)
 COPY --from=builder /app/node_modules/@anthropic-ai ./node_modules/@anthropic-ai
-# node-pty native addon (not picked up by standalone bundler)
-COPY --from=builder /app/node_modules/node-pty ./node_modules/node-pty
 
 COPY --from=builder /app/worker.js ./worker.js
 COPY entrypoint.sh ./entrypoint.sh

@@ -6,7 +6,7 @@ import { LayoutDashboard, Server, MessageSquare, ClipboardList, Bot, NotebookPen
 const tabs = [
   { href: '/', icon: LayoutDashboard, label: 'Home' },
   { href: '/infrastructure', icon: Server, label: 'Infra' },
-  { href: '/chat', icon: MessageSquare, label: 'Chat' },
+  { href: '/messages', icon: MessageSquare, label: 'Chat' },
   { href: '/tasks', icon: ClipboardList, label: 'Tasks' },
   { href: '/agents', icon: Bot, label: 'Agents' },
   { href: '/notes', icon: NotebookPen, label: 'Notes' },
