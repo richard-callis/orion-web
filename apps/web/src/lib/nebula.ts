@@ -171,7 +171,8 @@ export async function loadRemoteNovae(): Promise<Map<string, Nova>> {
 /** Reload all remote Nova definitions from the manifest (e.g. after cache invalidation). */
 export async function reloadRemoteNovae(): Promise<string[]> {
   _remoteNovae.clear()
-  return (await loadRemoteNovae()).keys()
+  const m = await loadRemoteNovae()
+  return Array.from(m.keys())
 }
 
 // ── Nova registry (merged from all sources) ─────────────────────────────────────
