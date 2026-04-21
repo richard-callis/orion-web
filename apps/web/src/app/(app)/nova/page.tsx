@@ -65,6 +65,8 @@ export default function NovaPage() {
       const res = await fetch(`/api/novas/${nova.id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error(await res.text())
       setNovae(prev => prev.filter(n => n.id !== nova.id))
+      setShowForm(false)
+      setEditing(null)
     } catch (err) {
       console.error('Failed to delete Nova:', err)
     } finally {
@@ -76,6 +78,9 @@ export default function NovaPage() {
     setEditing(nova)
     setShowForm(true)
   }
+
+  // Check if a Nova is editable (user-created only)
+  const canEdit = (nova: Nova) => nova.source === 'user-created'
 
   return (
     <div className="space-y-4 p-4 lg:p-6">
@@ -165,12 +170,20 @@ export default function NovaPage() {
                 <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Category</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Source</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Tags</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-text-muted w-[100px]">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border-subtle">
               {filtered.map(nova => (
-                <tr key={nova.id} className="hover:bg-bg-raised group">
+                <tr
+                  key={nova.id}
+                  className={`cursor-pointer transition-colors ${
+                    nova.source === 'user-created'
+                      ? 'hover:bg-bg-raised'
+                      : 'hover:bg-bg-raised opacity-70'
+                  }`}
+                  onClick={() => handleEdit(nova)}
+                  title={nova.source === 'user-created' ? 'Click to edit' : 'View only (bundled/remote)'}
+                >
                   <td className="px-3 py-3">
                     {nova.config?.type === 'agent' ? (
                       <Bot size={16} className="text-accent" />
@@ -203,33 +216,6 @@ export default function NovaPage() {
                       ))}
                     </div>
                   </td>
-                  <td className="px-3 py-3">
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {nova.source === 'user-created' && (
-                        <>
-                          <button
-                            onClick={() => handleEdit(nova)}
-                            className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors"
-                            title="Edit"
-                          >
-                            <Edit2 size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(nova)}
-                            disabled={deleting === nova.id}
-                            className="p-1 rounded text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
-                            title="Delete"
-                          >
-                            {deleting === nova.id ? (
-                              <RefreshCw size={14} className="animate-spin" />
-                            ) : (
-                              <Trash2 size={14} />
-                            )}
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -243,6 +229,7 @@ export default function NovaPage() {
           initial={editing}
           onClose={() => { setShowForm(false); setEditing(null) }}
           onSave={() => { setShowForm(false); setEditing(null); load() }}
+          onDelete={editing ? () => handleDelete(editing) : undefined}
         />
       )}
     </div>
@@ -251,10 +238,11 @@ export default function NovaPage() {
 
 // ── Nova Form Modal ─────────────────────────────────────────────────────────────
 
-function NovaFormModal({ initial, onClose, onSave }: {
+function NovaFormModal({ initial, onClose, onSave, onDelete }: {
   initial: Nova | null
   onClose: () => void
   onSave: () => void
+  onDelete?: () => void
 }) {
   const [name, setName] = useState(initial?.name || '')
   const [displayName, setDisplayName] = useState(initial?.displayName || '')
@@ -431,23 +419,42 @@ function NovaFormModal({ initial, onClose, onSave }: {
               {error}
             </div>
           )}
+
+          {/* Delete (edit mode only) */}
+          {initial && onDelete && initial.source === 'user-created' && (
+            <div className="border-t border-border-subtle pt-4">
+              <button
+                onClick={onDelete}
+                disabled={saving}
+                className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 px-3 py-2 rounded transition-colors disabled:opacity-50"
+              >
+                <Trash2 size={14} />
+                Delete Nova
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border-subtle flex-shrink-0">
-          <button
-            onClick={onClose}
-            className="px-3 py-1.5 text-xs rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={saving}
-            className="px-3 py-1.5 text-xs rounded bg-accent/15 text-accent hover:bg-accent/25 transition-colors disabled:opacity-50"
-          >
-            {saving ? 'Saving...' : initial ? 'Update' : 'Create'}
-          </button>
+        <div className="flex items-center justify-between px-4 py-3 border-t border-border-subtle flex-shrink-0">
+          {initial ? (
+            <span className="text-[10px] text-text-muted">{initial.name} · {initial.source}</span>
+          ) : <span />}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onClose}
+              className="px-3 py-1.5 text-xs rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={saving}
+              className="px-3 py-1.5 text-xs rounded bg-accent/15 text-accent hover:bg-accent/25 transition-colors disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : initial ? 'Update' : 'Create'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
