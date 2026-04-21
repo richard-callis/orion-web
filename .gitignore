@@ -10,3 +10,5 @@ worker.js
 .env.test
 package-lock.json
 .worktrees/
+# Self-hosted GitHub Actions Runner (local only)
+runners/
