@@ -5,7 +5,7 @@ import { useState } from 'react'
 import {
   LayoutDashboard, Server, Database, MessageSquare, Bot,
   Bell, KeyRound, Archive, FileText, ClipboardList,
-  ChevronLeft, ChevronRight, BookOpen, Settings2, GitBranch, Network, Sparkles,
+  ChevronLeft, ChevronRight, BookOpen, Settings2, GitBranch, Network, Sparkles, MessageCircle,
 } from 'lucide-react'
 import { usePendingTools } from '@/hooks/usePendingTools'
 
@@ -23,7 +23,8 @@ const nav = [
   { href: '/backups',        icon: Archive,          label: 'Backups' },
   { href: '/logs',           icon: FileText,         label: 'Logs' },
   { href: '/notes',          icon: BookOpen,         label: 'Wiki' },
-  { href: '/nova',           icon: Sparkles,         label: 'Nova' },
+  { href: '/nova',            icon: Sparkles,        label: 'Nova' },
+  { href: '/chatrooms',       icon: MessageCircle,   label: 'Chat Rooms' },
 ]
 
 export function Sidebar() {
