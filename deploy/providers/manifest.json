@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "description": "ORION provider deployment configs — JSON-driven identity provider bootstrapping",
+  "description": "ORION deployment novas — JSON-driven identity provider configs",
   "providers": [
     {
       "name": "authentik",

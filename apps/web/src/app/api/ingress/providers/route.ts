@@ -1,7 +1,7 @@
 /**
  * GET /api/ingress/providers
  *
- * Returns all available SSO provider configs — bundled + remote (orion-flux).
+ * Returns all available SSO provider nova configs — bundled + remote (orion-nub).
  * Used by the SSO bootstrap modal to dynamically populate the provider selector.
  */
 import { NextResponse } from 'next/server'

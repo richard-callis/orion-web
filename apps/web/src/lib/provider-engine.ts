@@ -1,11 +1,8 @@
 /**
  * Dynamic provider deployment engine.
  *
- * Loads provider configs from JSON files and executes deployments
- * without hardcoded per-provider logic.
- *
- * Config location: deploy/providers/<provider>.json (mounted as static asset)
- * Fallback: bundled configs embedded in this module.
+ * Each nova (provider config) is loaded from bundled configs or the orion-nub repo.
+ * Falls back to bundled if the remote repo is unavailable.
  */
 
 export interface ProviderConfig {
@@ -179,12 +176,12 @@ declare const process: { env: Record<string, string | undefined> }
 
 const REMOTE_MANIFEST_URL =
   typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_PROVIDER_MANIFEST_URL
-    || 'https://raw.githubusercontent.com/richard-callis/orion-flux/refs/heads/main/manifest.json'
+    || 'https://raw.githubusercontent.com/richard-callis/orion-nub/refs/heads/main/manifest.json'
 
 let _remoteManifest: RemoteManifest | null = null
 let _remoteConfigs: Map<string, ProviderConfig> = new Map()
 
-async function loadRemoteManifest(): Promise<RemoteManifest | null> {
+export async function loadRemoteManifest(): Promise<RemoteManifest | null> {
   if (_remoteManifest) return _remoteManifest
   try {
     const res = await fetch(REMOTE_MANIFEST_URL)
@@ -196,11 +193,11 @@ async function loadRemoteManifest(): Promise<RemoteManifest | null> {
   }
 }
 
-async function loadRemoteConfig(name: string): Promise<ProviderConfig | null> {
+export async function loadRemoteConfig(name: string): Promise<ProviderConfig | null> {
   if (_remoteConfigs.has(name)) return _remoteConfigs.get(name)!
   try {
     const res = await fetch(
-      `https://raw.githubusercontent.com/richard-callis/orion-flux/refs/heads/main/providers/${name}.json`
+      `https://raw.githubusercontent.com/richard-callis/orion-nub/refs/heads/main/providers/${name}.json`
     )
     if (!res.ok) return null
     const config = await res.json()

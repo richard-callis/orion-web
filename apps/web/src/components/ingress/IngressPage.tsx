@@ -453,7 +453,7 @@ function SSOBootstrapModal({
               }
             </select>
             {resolved.description && <p className="text-[10px] text-text-muted mt-1">{resolved.description}</p>}
-            {remoteProvider?.source === 'remote' && <span className="text-[9px] text-text-muted opacity-50">Loaded from orion-flux</span>}
+            {remoteProvider?.source === 'remote' && <span className="text-[9px] text-text-muted opacity-50">Loaded from orion-nub</span>}
           </div>
 
           {/* Hostname */}
