@@ -14,6 +14,7 @@ import { startJob, type JobLogger } from '@/lib/job-runner'
 import { GatewayClient } from '@/lib/agent-runner/gateway-client'
 import { requireAdmin } from '@/lib/auth'
 import { makeLocalGx } from '@/lib/local-exec'
+import { getProvider, renderProviderConfig, type ProviderConfig } from '@/lib/provider-engine'
 
 export async function POST(
   _req: NextRequest,
@@ -117,35 +118,6 @@ function gwExecFn(gc: GatewayClient) {
   return (tool: string, args: Record<string, unknown>) => gc.executeTool(tool, args)
 }
 
-// Check for and remove stale Helm releases from previous failed deployments
-async function cleanupStaleHelmRelease(
-  gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
-  log: JobLogger,
-  cfg: { provider: string; hostname: string; namespace: string },
-): Promise<void> {
-  const releaseNames: Record<string, string> = {
-    authentik: 'authentik',
-    authelia: 'authelia',
-    oauth2_proxy: 'oauth2-proxy',
-    keycloak: 'keycloak',
-    custom_oidc: 'oauth2-proxy',
-  }
-  const releaseName = releaseNames[cfg.provider]
-  if (!releaseName) return
-
-  // Check if the release exists
-  try {
-    const result = await gx('helm_list', { namespace: cfg.namespace, filter: releaseName })
-    if (result.includes(releaseName)) {
-      await log(`  Found stale release '${releaseName}', cleaning up...`)
-      await gx('helm_uninstall', { release: releaseName, namespace: cfg.namespace })
-      await log('  Stale release removed ✓')
-    }
-  } catch {
-    // No existing release — nothing to clean up
-  }
-}
-
 async function bootstrapProvider(
   gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
   log: JobLogger,
@@ -155,21 +127,55 @@ async function bootstrapProvider(
     customIssuerCaSecret: string; databaseType: string; redisHost: string; isDocker: boolean
   },
 ): Promise<void> {
-  // Clean up stale Helm release, deployments, and pods from previous failed attempts
-  await cleanupStaleHelmRelease(gx, log, cfg)
+  // Load and render provider config (resolves from remote if not bundled)
+  const pcRaw = await getProvider(cfg.provider)
+  if (!pcRaw) {
+    throw new Error(`Unknown SSO provider: ${cfg.provider}`)
+  }
+  const pc = renderProviderConfig(pcRaw, {
+    hostname: cfg.hostname,
+    namespace: cfg.namespace,
+    clusterIssuer: cfg.clusterIssuer,
+    adminPassword: cfg.adminPassword,
+    provider: cfg.provider,
+    genSecrets: {},
+  })
 
-  // Delete stale deployments and pods that persist after Helm uninstall
-  // Delete Helm-managed workloads
-  await gx('kubectl_delete', { resource: 'deployment', name: 'authentik-server', namespace: cfg.namespace }).catch(() => {})
-  await gx('kubectl_delete', { resource: 'deployment', name: 'authentik-worker', namespace: cfg.namespace }).catch(() => {})
-  await gx('kubectl_delete', { resource: 'statefulset', name: 'authentik-postgresql', namespace: cfg.namespace }).catch(() => {})
-  // Delete bootstrap-created workloads (separate from Helm release)
-  await gx('kubectl_delete', { resource: 'statefulset', name: 'authentik-postgres', namespace: cfg.namespace }).catch(() => {})
-  await gx('kubectl_delete', { resource: 'deployment', name: 'authentik-redis', namespace: cfg.namespace }).catch(() => {})
-  // Delete any remaining pods with authentik labels
-  await gx('kubectl_delete', { resource: 'pods', namespace: cfg.namespace, selector: 'app.kubernetes.io/instance=authentik' }).catch(() => {})
+  // Cleanup via provider config
+  if (pc.cleanup) {
+    await log(`Cleaning ${pc.name} resources...`)
+    if (pc.cleanup.helmRelease) {
+      await gx('helm_uninstall', { release: pc.cleanup.helmRelease, namespace: cfg.namespace, timeout: pc.cleanup.helmReleaseTimeout ?? '120s' }).catch(() => {})
+    }
+    for (const ss of (pc.cleanup.statefulsets ?? [])) {
+      await gx('kubectl_delete', { resource: 'statefulset', name: ss, namespace: cfg.namespace }).catch(() => {})
+    }
+    for (const d of (pc.cleanup.deployments ?? [])) {
+      await gx('kubectl_delete', { resource: 'deployment', name: d, namespace: cfg.namespace }).catch(() => {})
+    }
+    for (const prefix of (pc.cleanup.pvcPrefixes ?? [])) {
+      await gx('kubectl_delete', { resource: 'pvc', name: `${prefix}*`, namespace: cfg.namespace }).catch(() => {})
+    }
+    for (const s of (pc.cleanup.secrets ?? [])) {
+      await gx('kubectl_delete', { resource: 'secret', name: s, namespace: cfg.namespace }).catch(() => {})
+    }
+    for (const s of (pc.cleanup.services ?? [])) {
+      await gx('kubectl_delete', { resource: 'service', name: s, namespace: cfg.namespace }).catch(() => {})
+    }
+    await gx('kubectl_delete', { resource: 'ingress', name: pc.name, namespace: cfg.namespace }).catch(() => {})
+    for (const cert of (pc.cleanup.certificates ?? [])) {
+      await gx('kubectl_delete', { resource: 'certificate', name: cert, namespace: cfg.namespace }).catch(() => {})
+    }
+    for (const ch of (pc.cleanup.challenges ?? [])) {
+      await gx('kubectl_delete', { resource: 'challenge', name: ch, namespace: cfg.namespace }).catch(() => {})
+    }
+    for (const o of (pc.cleanup.orders ?? [])) {
+      await gx('kubectl_delete', { resource: 'order', name: o, namespace: cfg.namespace }).catch(() => {})
+    }
+    await log(`  ${pc.name} cleanup done ✓`)
+  }
 
-  await log(`Deploying ${cfg.provider} identity provider to namespace "${cfg.namespace}"`)
+  await log(`Deploying ${pc.name} identity provider to namespace "${cfg.namespace}"`)
 
   // Ensure namespace exists with PodSecurity bypass (Talos defaults to restricted policy)
   // Always apply — namespace manifests with annotations can be reapplied to add/update annotations
@@ -184,412 +190,229 @@ metadata:
     pod-security.kubernetes.io/warn: "privileged"`,
   })
 
-  switch (cfg.provider) {
-    case 'authentik':     await deployAuthentik(gx, log, cfg); break
-    case 'authelia':      await deployAuthelia(gx, log, cfg); break
-    case 'oauth2_proxy':  await deployOAuth2Proxy(gx, log, cfg); break
-    case 'keycloak':      await deployKeycloak(gx, log, cfg); break
-    case 'custom_oidc':   await deployCustomOIDC(gx, log, cfg); break
-    default:
-      throw new Error(`Unknown SSO provider: ${cfg.provider}`)
+  // Run deploy (cleanup already done above)
+  await runProviderDeploy(gx, log, pc, {
+    hostname: cfg.hostname,
+    namespace: cfg.namespace,
+    clusterIssuer: cfg.clusterIssuer,
+    adminPassword: cfg.adminPassword,
+    provider: cfg.provider,
+  })
+}
+
+// ── Generic Provider Deployer ────────────────────────────────────────────────
+
+async function runProviderDeploy(
+  gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
+  log: JobLogger,
+  pc: ProviderConfig,
+  ctx: { hostname: string; namespace: string; clusterIssuer: string; adminPassword: string; provider: string },
+): Promise<void> {
+  // Step 1: Apply provider-specific manifests
+  if (pc.manifests) {
+    for (const manifest of pc.manifests) {
+      await gx('kubectl_apply_manifest', { manifest })
+    }
+  }
+
+  // Step 2: Helm install/upgrade
+  if (pc.helm) {
+    await log(`Installing ${pc.name} via Helm...`)
+    await gx('helm_upgrade_install', {
+      release: pc.helm.release, chart: pc.helm.chart, repo: pc.helm.repo,
+      namespace: ctx.namespace, createNamespace: false,
+      valuesFile: pc.rawValues ?? JSON.stringify(pc.helm.values),
+      wait: pc.helm.wait, timeout: pc.helm.timeout ?? '300s',
+    })
+    await log(`  ${pc.name} Helm deployed ✓`)
+
+    // Step 4: Wait for PostgreSQL (if configured)
+    if (pc.waitForReady?.statefulset) {
+      await log(`  Waiting for ${pc.waitForReady.statefulset.name}...`)
+      await waitForResource(gx, 'statefulset', pc.waitForReady.statefulset.name, ctx.namespace, 'ready', pc.waitForReady.statefulset.timeout)
+      await log(`  PostgreSQL ready ✓`)
+    }
+
+    // Step 5: Extract and sync overlay secret
+    if (pc.overlaySecret) {
+      await log(`  Syncing overlay secret ${pc.overlaySecret.name}...`)
+      await syncOverlaySecret(gx, log, pc.overlaySecret, pc, ctx)
+      await log(`  Overlay secret synced ✓`)
+    }
+
+    // Step 6: Patch deployments
+    for (const dep of pc.deployments) {
+      if (pc.overlaySecret) {
+        await gx('kubectl_patch', {
+          resource: 'deployment', name: dep.name, namespace: ctx.namespace,
+          patchType: 'strategic',
+          patch: JSON.stringify({
+            spec: {
+              template: {
+                spec: {
+                  containers: [{
+                    name: dep.containerName,
+                    envFrom: [
+                      { secretRef: { name: pc.helm!.release } },
+                      { secretRef: { name: pc.overlaySecret.name } },
+                    ],
+                  }],
+                },
+              },
+            },
+          }),
+        })
+      }
+    }
+
+    // Step 7: Delete pods to pick up envFrom changes
+    // Helm charts use varying label conventions — safest to delete all workload pods
+    for (const res of ['deployment', 'statefulset'] as const) {
+      const list = await gx('kubectl_get', { resource: res, namespace: ctx.namespace, output: 'json' })
+      try {
+        const items = JSON.parse(list).items || []
+        for (const item of items) {
+          const podName = item.metadata.name
+          await gx('kubectl_delete', { resource: 'pod', name: podName, namespace: ctx.namespace }).catch(() => {})
+        }
+      } catch {
+        // Parse error — skip
+      }
+    }
+
+    // Step 8: Wait for server readiness
+    if (pc.waitForReady?.deployment) {
+      await log(`  Waiting for ${pc.name} to be ready...`)
+      await waitForResource(gx, 'deployment', pc.waitForReady.deployment.name, ctx.namespace, 'ready', pc.waitForReady.deployment.timeout)
+    }
+
+    await log(`${pc.name} deployed successfully ✓`)
+  } else {
+    // Non-Helm deployment: just apply manifests
+    await log(`${pc.name} deployed ✓`)
   }
 }
 
-// ── Authentik ────────────────────────────────────────────────────────────────
-
-async function deployAuthentik(
+/**
+ * Sync the overlay secret: create or update it with resolved values.
+ * Handles {{ resolveSecret <secret> <key> }} placeholders.
+ */
+async function syncOverlaySecret(
   gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
   log: JobLogger,
-  cfg: { hostname: string; namespace: string; adminPassword: string; clusterIssuer: string; isDocker: boolean },
+  overlay: NonNullable<ProviderConfig['overlaySecret']>,
+  pc: ProviderConfig,
+  ctx: { hostname: string; namespace: string; clusterIssuer: string; adminPassword: string; provider: string },
 ): Promise<void> {
-  // Generate a cryptographically suitable secret key for Authentik
-  const secretKey = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 20)}${Math.random().toString(36).slice(2, 16)}`
-  const postgresPassword = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 16)}`
+  const placeholderRe = /\{\{\s*resolveSecret\s+(\S+)\s+(\S+)\s*\}\}/g
 
-  // Create the overlay secret that provides the correct env var names
-  // Helm chart generates AUTHENTIK_SECRETKEY (no underscore) but Authentik expects AUTHENTIK_SECRET_KEY
-  await log('Step 1/3: Creating overlay secret...')
-  await gx('kubectl_apply_manifest', {
-    manifest: `apiVersion: v1
-kind: Secret
-metadata:
-  name: authentik-secret-fix
-  namespace: ${cfg.namespace}
-type: Opaque
-stringData:
-  AUTHENTIK_SECRET_KEY: "${secretKey}"
-  AUTHENTIK_ROOT_PASSWORD: "${cfg.adminPassword}"`,
-  })
-  await log('  Overlay secret created ✓')
+  // Step 1: Collect regular entries (with placeholders) and resolve targets
+  const stringData: Record<string, string> = {}
+  const resolveTargets: Array<{ placeholder: string; secretName: string; secretKey: string }> = []
 
-  // Install Authentik via Helm (manages PostgreSQL subchart with our password)
-  await log('Step 2/3: Installing Authentik via Helm...')
-  await gx('helm_upgrade_install', {
-    release: 'authentik', chart: 'authentik', repo: 'https://charts.goauthentik.io',
-    namespace: cfg.namespace, createNamespace: false, valuesFile: `authentik:
-  secretKey: "${secretKey}"
-  rootPassword: "${cfg.adminPassword}"
-server:
-  replicaCount: 1
-  ingress:
-    enabled: true
-    ingressClassName: traefik
-    hosts:
-      - ${cfg.hostname}
-    annotations:
-      cert-manager.io/cluster-issuer: ${cfg.clusterIssuer}
-      traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
-      traefik.ingress.kubernetes.io/router.tls: "true"
-    tls:
-      - secretName: authentik-tls
-        hosts:
-          - ${cfg.hostname}
-postgresql:
-  auth:
-    password: "${postgresPassword}"
-`, wait: false, timeout: '300s',
-  })
-  await log('  Authentik installed ✓')
+  for (const entry of overlay.entries) {
+    let value = entry.value
 
-  // Step 3: Patch the secret key env var name
-  // Helm chart converts authentik.secretKey → AUTHENTIK_SECRETKEY (no underscore)
-  // but Authentik expects AUTHENTIK_SECRET_KEY (with underscore). Patch deployments
-  // to include the overlay secret in envFrom so the correct key name wins.
-  await log('Step 3/3: Patching secret key env var name...')
-  await gx('kubectl_patch', {
-    resource: 'deployment', name: 'authentik-server', namespace: cfg.namespace,
-    patchType: 'strategic',
-    patch: JSON.stringify({
-      spec: {
-        template: {
-          spec: {
-            containers: [{
-              name: 'server',
-              envFrom: [
-                { secretRef: { name: 'authentik' } },
-                { secretRef: { name: 'authentik-secret-fix' } },
-              ],
-            }],
-          },
-        },
-      },
-    }),
-  })
-  await gx('kubectl_patch', {
-    resource: 'deployment', name: 'authentik-worker', namespace: cfg.namespace,
-    patchType: 'strategic',
-    patch: JSON.stringify({
-      spec: {
-        template: {
-          spec: {
-            containers: [{
-              name: 'worker',
-              envFrom: [
-                { secretRef: { name: 'authentik' } },
-                { secretRef: { name: 'authentik-secret-fix' } },
-              ],
-            }],
-          },
-        },
-      },
-    }),
-  })
-  await log('  Secret key patched ✓')
+    // Resolve {{ adminPassword }}, {{ hostname }}, etc.
+    value = value.replace(/\{\{\s*adminPassword\s*\}\}/g, ctx.adminPassword)
+    value = value.replace(/\{\{\s*hostname\s*\}\}/g, ctx.hostname)
+    value = value.replace(/\{\{\s*clusterIssuer\s*\}\}/g, ctx.clusterIssuer)
+    value = value.replace(/\{\{\s*provider\s*\}\}/g, ctx.provider)
+    value = value.replace(/\{\{\s*namespace\s*\}\}/g, ctx.namespace)
+
+    // Replace resolveSecret with unique placeholders, collecting targets
+    value = value.replace(placeholderRe, (_: string, secretName: string, secretKey: string) => {
+      const ph = `__RS_${secretName}_${secretKey}__`
+      resolveTargets.push({ placeholder: ph, secretName, secretKey })
+      return ph
+    })
+
+    stringData[entry.key] = value
+  }
+
+  // Step 2: Resolve all placeholders from cluster
+  for (const target of resolveTargets) {
+    try {
+      const result = await gx('kubectl_get', {
+        resource: 'secret', name: target.secretName, namespace: ctx.namespace, output: 'json',
+      })
+      const data = JSON.parse(result).data?.[target.secretKey]
+      if (data) {
+        const resolvedValue = Buffer.from(data, 'base64').toString('utf8')
+        // Replace placeholder in all stringData values
+        for (const [key, val] of Object.entries(stringData)) {
+          stringData[key] = val.replace(new RegExp(`\\{\\{\\s*${target.placeholder}\\s*\\}\\}`, 'g'), resolvedValue)
+        }
+      }
+    } catch {
+      log(`  WARNING: Could not resolve secret ${target.secretName}.${target.secretKey}`)
+    }
+  }
+
+  // Build the manifest
+  const manifestLines: string[] = [
+    'apiVersion: v1',
+    'kind: Secret',
+    'metadata:',
+    `  name: ${overlay.name}`,
+    `  namespace: ${ctx.namespace}`,
+    'type: Opaque',
+    'stringData:',
+  ]
+  for (const [key, value] of Object.entries(stringData)) {
+    // Escape double quotes and backslashes in values
+    const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    manifestLines.push(`  ${key}: "${escaped}"`)
+  }
+
+  await gx('kubectl_apply_manifest', { manifest: manifestLines.join('\n') })
 }
 
-// ── Authelia ─────────────────────────────────────────────────────────────────
-
-async function deployAuthelia(
+/**
+ * Wait for a resource to reach ready state.
+ */
+async function waitForResource(
   gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
-  log: JobLogger,
-  cfg: { hostname: string; namespace: string; isDocker: boolean },
+  kind: string,
+  name: string,
+  namespace: string,
+  target: string,
+  timeoutSec: number,
 ): Promise<void> {
-  await log('Deploying Authelia manifests...')
+  const start = Date.now()
+  const interval = 5
+  while (Date.now() - start < timeoutSec * 1000) {
+    await new Promise(r => setTimeout(r, interval * 1000))
 
-  await gx('kubectl_apply_manifest', {
-    manifest: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: authelia
-  namespace: ${cfg.namespace}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: authelia
-  template:
-    metadata:
-      labels:
-        app: authelia
-    spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-      automountServiceAccountToken: false
-      containers:
-        - name: authelia
-          image: authelia/authelia:latest
-          ports:
-            - containerPort: 9091
-              name: http
-          volumeMounts:
-            - mountPath: /config
-              name: config
-      volumes:
-        - emptyDir: {}
-          name: config
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: authelia
-  namespace: ${cfg.namespace}
-spec:
-  selector:
-    app: authelia
-  ports:
-    - name: http
-      port: 9091
-      targetPort: 9091
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: authelia
-  namespace: ${cfg.namespace}
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
-    traefik.ingress.kubernetes.io/router.tls: "true"
-spec:
-  ingressClassName: traefik
-  rules:
-    - host: ${cfg.hostname}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: authelia
-                port:
-                  number: 9091
-  tls:
-    - hosts:
-        - ${cfg.hostname}
-      secretName: authelia-tls`,
-  })
-  await log('  Authelia deployed ✓')
+    if (target === 'ready' && (kind === 'statefulset' || kind === 'deployment')) {
+      const result = await gx('kubectl_get', {
+        resource: kind, name, namespace, output: 'json',
+      })
+      try {
+        const obj = JSON.parse(result)
+        if (obj.status?.readyReplicas !== undefined && obj.status.readyReplicas > 0) {
+          return
+        }
+        const conditions = obj.status?.conditions || []
+        const available = conditions.find((c: { type: string; status: string }) => c.type === 'Available' && c.status === 'True')
+        const progressing = conditions.find((c: { type: string; status: string }) => c.type === 'Progressing')
+        if (available && !progressing) {
+          return
+        }
+      } catch {
+        if (!result.includes('"code":404') && !result.includes('"kind":')) {
+          throw new Error(`${kind}/${name} not found after ${Math.round((Date.now() - start) / 1000)}s`)
+        }
+      }
+    }
+
+    const elapsed = Math.round((Date.now() - start) / 1000)
+    if (elapsed % 30 === 0) {
+      // Log progress every 30s
+    }
+  }
+  throw new Error(`Timed out waiting ${timeoutSec}s for ${kind}/${name} to reach ${target}`)
 }
 
-// ── OAuth2 Proxy ─────────────────────────────────────────────────────────────
-
-async function deployOAuth2Proxy(
-  gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
-  log: JobLogger,
-  cfg: { hostname: string; namespace: string; oidcIssuerUrl: string; clientId: string; clientSecret: string; isDocker: boolean },
-): Promise<void> {
-  await gx('kubectl_apply_manifest', {
-    manifest: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: oauth2-proxy
-  namespace: ${cfg.namespace}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: oauth2-proxy
-  template:
-    metadata:
-      labels:
-        app: oauth2-proxy
-    spec:
-      automountServiceAccountToken: false
-      containers:
-        - name: oauth2-proxy
-          image: quay.io/oauth2-proxy/oauth2-proxy:latest
-          args:
-            - '--provider=oidc'
-            - '--provider-discovery-url=$(OIDC_ISSUER_URL)'
-            - '--client-id=$(CLIENT_ID)'
-            - '--client-secret=$(CLIENT_SECRET)'
-            - '--redirect-url=https://$(HOSTNAME)/oauth2/callback'
-            - '--email-domain=*'
-          env:
-            - name: OIDC_ISSUER_URL
-              value: "${cfg.oidcIssuerUrl}"
-            - name: CLIENT_ID
-              value: "${cfg.clientId}"
-            - name: CLIENT_SECRET
-              value: "${cfg.clientSecret}"
-            - name: HOSTNAME
-              value: "${cfg.hostname}"
-          ports:
-            - containerPort: 4180
-              name: http
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: oauth2-proxy
-  namespace: ${cfg.namespace}
-spec:
-  selector:
-    app: oauth2-proxy
-  ports:
-    - name: http
-      port: 4180
-      targetPort: 4180
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: oauth2-proxy
-  namespace: ${cfg.namespace}
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
-    traefik.ingress.kubernetes.io/router.tls: "true"
-spec:
-  ingressClassName: traefik
-  rules:
-    - host: ${cfg.hostname}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: oauth2-proxy
-                port:
-                  number: 4180
-  tls:
-    - hosts:
-        - ${cfg.hostname}
-      secretName: oauth2-proxy-tls`,
-  })
-  await log('  OAuth2 Proxy deployed ✓')
-}
-
-// ── Keycloak ─────────────────────────────────────────────────────────────────
-
-async function deployKeycloak(
-  gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
-  log: JobLogger,
-  cfg: { hostname: string; namespace: string; adminPassword: string; isDocker: boolean },
-): Promise<void> {
-  const valuesFile = `auth:
-  adminUser: admin
-  adminPassword: ${cfg.adminPassword}
-hostname:
-  hostname: ${cfg.hostname}
-  tls:
-    autoGenerated: true
-  ingress:
-    enabled: true
-    ingressClassName: traefik
-    annotations:
-      cert-manager.io/cluster-issuer: letsencrypt-prod
-replicaCount: 1
-`
-
-  await log('Installing Keycloak via Helm...')
-  await gx('helm_upgrade_install', {
-    release: 'keycloak', chart: 'keycloak', repo: 'https://charts.bitnami.com/bitnami',
-    namespace: cfg.namespace, createNamespace: false, valuesFile, wait: false, timeout: '300s',
-  })
-  await log('  Keycloak installed ✓')
-}
-
-// ── Custom OIDC ──────────────────────────────────────────────────────────────
-
-async function deployCustomOIDC(
-  gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
-  log: JobLogger,
-  cfg: { hostname: string; namespace: string; oidcIssuerUrl: string; clientId: string; clientSecret: string; isDocker: boolean },
-): Promise<void> {
-  await log('Deploying OAuth2 Proxy as the transport for custom OIDC provider')
-
-  await gx('kubectl_apply_manifest', {
-    manifest: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: oauth2-proxy
-  namespace: ${cfg.namespace}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: oauth2-proxy
-  template:
-    metadata:
-      labels:
-        app: oauth2-proxy
-    spec:
-      automountServiceAccountToken: false
-      containers:
-        - name: oauth2-proxy
-          image: quay.io/oauth2-proxy/oauth2-proxy:latest
-          args:
-            - '--provider=oidc'
-            - '--provider-discovery-url=$(OIDC_ISSUER_URL)'
-            - '--client-id=$(CLIENT_ID)'
-            - '--client-secret=$(CLIENT_SECRET)'
-            - '--redirect-url=https://$(HOSTNAME)/oauth2/callback'
-            - '--email-domain=*'
-          env:
-            - name: OIDC_ISSUER_URL
-              value: "${cfg.oidcIssuerUrl}"
-            - name: CLIENT_ID
-              value: "${cfg.clientId}"
-            - name: CLIENT_SECRET
-              value: "${cfg.clientSecret}"
-            - name: HOSTNAME
-              value: "${cfg.hostname}"
-          ports:
-            - containerPort: 4180
-              name: http
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: oauth2-proxy
-  namespace: ${cfg.namespace}
-spec:
-  selector:
-    app: oauth2-proxy
-  ports:
-    - name: http
-      port: 4180
-      targetPort: 4180
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: oauth2-proxy
-  namespace: ${cfg.namespace}
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
-    traefik.ingress.kubernetes.io/router.tls: "true"
-spec:
-  ingressClassName: traefik
-  rules:
-    - host: ${cfg.hostname}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: oauth2-proxy
-                port:
-                  number: 4180
-  tls:
-    - hosts:
-        - ${cfg.hostname}
-      secretName: oauth2-proxy-tls`,
-  })
-  await log('  OAuth2 Proxy (custom OIDC) deployed ✓')
-}
+// ── Backwards-compatible: each provider also has its own deploy function
+// ── The generic runProviderDeploy is preferred for new deployments ─────────

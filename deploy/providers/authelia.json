@@ -1,0 +1,47 @@
+{
+  "name": "authelia",
+  "displayName": "Authelia",
+  "description": "Open-source authentication and authorization web application",
+  "helm": {
+    "release": "authelia",
+    "chart": "bitnami/authelia",
+    "repo": "https://charts.bitnami.com/bitnami",
+    "values": {
+      "ingress": {
+        "enabled": true,
+        "className": "traefik",
+        "hosts": ["{{ hostname }}"],
+        "annotations": {
+          "cert-manager.io/cluster-issuer": "{{ clusterIssuer }}"
+        },
+        "tls": [
+          {
+            "secretName": "authelia-tls",
+            "hosts": ["{{ hostname }}"]
+          }
+        ]
+      }
+    },
+    "wait": false,
+    "timeout": "300s"
+  },
+  "deployments": [
+    {
+      "name": "authelia",
+      "containerName": "authelia"
+    }
+  ],
+  "waitForReady": {
+    "deployment": {
+      "name": "authelia",
+      "timeout": 300
+    }
+  },
+  "cleanup": {
+    "helmRelease": "authelia",
+    "deployments": ["authelia"],
+    "secrets": ["authelia"],
+    "services": ["authelia"],
+    "ingresses": ["authelia"]
+  }
+}

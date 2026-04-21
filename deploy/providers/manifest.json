@@ -1,0 +1,18 @@
+{
+  "version": "1",
+  "description": "ORION deployment novas — JSON-driven identity provider configs",
+  "providers": [
+    {
+      "name": "authentik",
+      "displayName": "Authentik",
+      "description": "Open-source identity provider with SSO, MFA, and passwordless auth",
+      "url": "providers/authentik.json"
+    },
+    {
+      "name": "authelia",
+      "displayName": "Authelia",
+      "description": "Open-source authentication and authorization web application",
+      "url": "providers/authelia.json"
+    }
+  ]
+}

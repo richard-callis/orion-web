@@ -17,13 +17,31 @@ function readClusterContext(): string {
   try { return fs.readFileSync(claudeMdPath, 'utf8') } catch { return '# Homelab cluster — no context file mounted' }
 }
 
-async function getSystemPrompt(toolNames: string[] = [], basePrompt?: string): Promise<string> {
+async function getSystemPrompt(
+  toolNames: string[] = [],
+  basePrompt?: string,
+  conversationId?: string,  // Optional: inject conversation memories
+): Promise<string> {
   const clusterContext = readClusterContext()
   const persona = basePrompt ?? 'You are ORION, an AI assistant for homelab infrastructure management.'
 
+  // Fetch conversation memories if conversationId provided
+  let memorySection = ''
+  if (conversationId) {
+    const memories = await prisma.memory.findMany({
+      where: { conversationId },
+      orderBy: { createdAt: 'asc' },
+    })
+    if (memories.length > 0) {
+      memorySection = '\n\n### CONVERSATION MEMORY (Persistent Facts)\n' +
+        memories.map(m => `- ${m.key}: ${m.value}${m.context ? ` (${m.context})` : ''}`).join('\n') +
+        '\n\nThese facts were established earlier in this conversation. Reference them when relevant.'
+    }
+  }
+
   if (toolNames.length === 0) {
     const template = await getPrompt('system.main.no-gateway')
-    return interpolate(template, { persona })
+    return interpolate(template, { persona }) + memorySection
   }
 
   const template = await getPrompt('system.main')
@@ -31,7 +49,7 @@ async function getSystemPrompt(toolNames: string[] = [], basePrompt?: string): P
     toolCount:      String(toolNames.length),
     toolList:       toolNames.join(', '),
     clusterContext,
-  })
+  }) + memorySection
 }
 
 async function getPlanningSystemPrompt(targetType: string): Promise<string> {
@@ -100,9 +118,9 @@ function getOAuthToken(): string | null {
 
 export interface AgentContextConfig {
   maxTurns?: number        // default 6 for agent chats
-  historyMessages?: number // default 6 for agent chats
+  historyMessages?: number // default 12 for agent chats (was 6)
   allowedTools?: string[]  // default [] (no tools) for agent chats
-  summarizeAfter?: number  // summarize conversation after this many messages (default 20)
+  summarizeAfter?: number  // summarize conversation after this many messages (default 15, was 20)
   llm?: string             // "claude:<model-id>" | "ollama:<model-id>" | "gemini:<model-id>" | "ext:<cuid>" — defaults to Claude Sonnet
 }
 
@@ -511,7 +529,7 @@ export async function* streamAgentChat(
 
     if (provider === 'ollama') {
       if (gw) {
-        const systemPrompt = await getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt)
+        const systemPrompt = await getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt, conversationId)
         yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, trimmedHistory, model, baseUrl, gw.tools, gw.gc, gw.environmentId, undefined, userId)
       } else {
         yield* streamOllamaAgentChat(prompt, conversationId, agentSystemPrompt + noGwSuffix, trimmedHistory, model, baseUrl, timeoutSecs)
@@ -520,7 +538,7 @@ export async function* streamAgentChat(
       // OpenAI-compatible endpoint (custom / openai / llama.cpp / etc.)
       if (!baseUrl) { yield { type: 'error', error: `No baseUrl configured for model ${model}` }; return }
       const systemPrompt = gw
-        ? await getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt)
+        ? await getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt, conversationId)
         : agentSystemPrompt + noGwSuffix
       yield* streamOpenAIChatCore(
         prompt, conversationId, systemPrompt, trimmedHistory,
@@ -679,7 +697,7 @@ export async function* streamOpenAIChat(
     try { gatewayTools = await gatewayClient.listTools() } catch { /* proceed without tools */ }
   }
 
-  const systemPrompt = await getSystemPrompt(gatewayTools.map(t => t.name))
+  const systemPrompt = await getSystemPrompt(gatewayTools.map(t => t.name), undefined, conversationId)
   yield* streamOpenAIChatCore(
     prompt, conversationId, systemPrompt, history,
     model, baseUrl, apiKey,
@@ -1336,8 +1354,9 @@ async function maybeGetSummarizedHistory(
 
 async function generateSummary(messages: Array<{ role: string; content: string }>): Promise<string | null> {
   if (messages.length === 0) return null
+  // Increased from 500 to 1000 chars to capture more context in the summary
   const transcript = messages
-    .map(m => `${m.role.toUpperCase()}: ${m.content.slice(0, 500)}`)
+    .map(m => `${m.role.toUpperCase()}: ${m.content.slice(0, 1000)}`)
     .join('\n\n')
 
   const ollamaExt = await prisma.externalModel.findFirst({
@@ -1351,10 +1370,18 @@ async function generateSummary(messages: Array<{ role: string; content: string }
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: ollamaExt.modelId,
-        prompt: `Summarize this conversation in 3-5 sentences, capturing key decisions, context, and outcomes:\n\n${transcript}`,
+        prompt: `Create a detailed conversation summary that captures:
+- Key facts discovered or established (names, values, configurations)
+- Decisions made and the reasoning behind them
+- Important context about systems, services, or state
+- Any pending items or unresolved questions
+
+Be specific with details. Use 5-8 sentences if needed for completeness:
+
+${transcript}`,
         stream: false,
-        system: 'You are a conversation summarizer. Produce a concise factual summary. Be brief.',
-        options: { temperature: 0.1, num_predict: 300 },
+        system: 'You are a conversation summarizer. Produce a detailed factual summary that preserves important context and facts.',
+        options: { temperature: 0.1, num_predict: 500 },
       }),
       signal: AbortSignal.timeout(30000),
     })
@@ -1374,8 +1401,16 @@ async function generateSummary(messages: Array<{ role: string; content: string }
     }
     const { query } = await import('@anthropic-ai/claude-code')
     const response = query({
-      prompt: `Summarize this conversation concisely in 3-5 sentences, capturing key decisions, context, and outcomes:\n\n${transcript}`,
-      options: { allowedTools: [], maxTurns: 1, customSystemPrompt: 'You are a conversation summarizer. Produce a concise factual summary.' },
+      prompt: `Create a detailed conversation summary that captures:
+- Key facts discovered or established (names, values, configurations)
+- Decisions made and the reasoning behind them
+- Important context about systems, services, or state
+- Any pending items or unresolved questions
+
+Be specific with details. Use 5-8 sentences if needed for completeness:
+
+${transcript}`,
+      options: { allowedTools: [], maxTurns: 1, customSystemPrompt: 'You are a conversation summarizer. Produce a detailed factual summary that preserves important context and facts.' },
     })
     const summary = await collectQueryText(response as AsyncIterable<unknown>)
     return summary || null
@@ -1412,7 +1447,9 @@ export async function* streamClaudeResponse(
       process.env.HOME = claudeHome
     }
 
-    const systemPrompt = agentSystemPrompt ?? (planTarget ? await getPlanningSystemPrompt(planTarget.type) : await getSystemPrompt())
+    const systemPrompt = agentSystemPrompt ?? (planTarget
+      ? await getPlanningSystemPrompt(planTarget.type)
+      : await getSystemPrompt([], undefined, conversationId))
 
     const fullPrompt = previousMessages.length > 0
       ? previousMessages.map(m => `${m.role}: ${m.content}`).join('\n\n') + `\n\nuser: ${prompt}`

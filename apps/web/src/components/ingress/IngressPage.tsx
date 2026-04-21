@@ -5,7 +5,7 @@ import {
   Globe, Plus, ChevronRight, ChevronDown, Server, Wifi, WifiOff,
   Pencil, Trash2, Check, X, RefreshCw, ExternalLink, Lock,
   AlertCircle, Shield, Zap, ShieldCheck, Settings2, Play, Terminal,
-  DatabaseZap,
+  DatabaseZap, KeyRound, Bot, UserCog,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -145,39 +145,23 @@ function InlineEdit({
 // ── Bootstrap panel ───────────────────────────────────────────────────────────
 
 function BootstrapPanel({ pointId, onDone }: { pointId: string; onDone: (status: string) => void }) {
-  const [running, setRunning] = useState(false)
-  const [logs, setLogs]       = useState<string[]>([])
-  const [done, setDone]       = useState<{ success: boolean; error?: string } | null>(null)
-  const logRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
-  }, [logs])
+  const [running, setRunning]   = useState(false)
+  const [notice, setNotice]     = useState<{ text: string; ok: boolean } | null>(null)
 
   const run = async () => {
-    setRunning(true); setLogs([]); setDone(null)
+    setRunning(true); setNotice(null)
     try {
       const res = await fetch(`/api/ingress/points/${pointId}/bootstrap`, { method: 'POST' })
-      if (!res.ok || !res.body) { throw new Error(`HTTP ${res.status}`) }
-      const reader  = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buf = ''
-      while (true) {
-        const { done: streamDone, value } = await reader.read()
-        if (streamDone) break
-        buf += decoder.decode(value, { stream: true })
-        const lines = buf.split('\n'); buf = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.startsWith('data:')) continue
-          const evt = JSON.parse(line.slice(5).trim())
-          if (evt.type === 'log')  setLogs(prev => [...prev, evt.message])
-          if (evt.type === 'done') { setDone(evt); onDone(evt.success ? 'bootstrapped' : 'error') }
-        }
+      const data = await res.json() as { jobId?: string; error?: string }
+      if (!res.ok || !data.jobId) {
+        throw new Error(data.error ?? `HTTP ${res.status}`)
       }
+      setNotice({ text: 'Bootstrap started — check the Jobs panel for live progress.', ok: true })
+      // Optimistically mark as bootstrapped so the UI reflects the attempt
+      onDone('bootstrapped')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      setLogs(prev => [...prev, `Error: ${msg}`])
-      setDone({ success: false, error: msg })
+      setNotice({ text: msg, ok: false })
     } finally {
       setRunning(false)
     }
@@ -188,24 +172,16 @@ function BootstrapPanel({ pointId, onDone }: { pointId: string; onDone: (status:
       <div className="flex items-center gap-2">
         <button onClick={run} disabled={running} className={btnPrimary}>
           {running
-            ? <><RefreshCw size={11} className="animate-spin" /> Bootstrapping…</>
+            ? <><RefreshCw size={11} className="animate-spin" /> Starting…</>
             : <><Play size={11} /> Bootstrap</>
           }
         </button>
-        {done && (
-          <span className={`text-xs ${done.success ? 'text-status-healthy' : 'text-status-error'}`}>
-            {done.success ? '✓ Done' : `✗ ${done.error}`}
+        {notice && (
+          <span className={`text-xs ${notice.ok ? 'text-status-healthy' : 'text-status-error'}`}>
+            {notice.text}
           </span>
         )}
       </div>
-      {logs.length > 0 && (
-        <div
-          ref={logRef}
-          className="rounded-lg border border-border-subtle bg-bg-canvas p-3 max-h-48 overflow-y-auto font-mono text-[11px] text-text-secondary space-y-0.5"
-        >
-          {logs.map((l, i) => <div key={i}>{l}</div>)}
-        </div>
-      )}
     </div>
   )
 }
@@ -328,6 +304,416 @@ function NewMiddlewareForm({ pointId, onCreated }: { pointId: string; onCreated:
         <button onClick={() => setOpen(false)} className={btnGhost}>Cancel</button>
       </div>
     </div>
+  )
+}
+
+// ── SSO Provider bootstrap ───────────────────────────────────────────────────
+
+interface SSOProviderInfo {
+  name: string
+  displayName: string
+  description: string
+  source?: 'bundled' | 'remote' | 'local'
+  hasHelm?: boolean
+  hasOverlaySecret?: boolean
+  hasCleanup?: boolean
+}
+
+const SSO_PROVIDER_TYPES: Record<string, {
+  label: string
+  icon: typeof KeyRound
+  description: string
+  fields: string[]
+}> = {
+  authentik:    { label: 'Authentik',     icon: KeyRound, description: 'Open-source identity provider with SSO, MFA & SCIM', fields: ['hostname','adminPassword','namespace','clusterIssuer'] },
+  authelia:     { label: 'Authelia',      icon: Shield,   description: 'Authorization server for multi-factor access control', fields: ['hostname','adminPassword','namespace','databaseType','redisHost'] },
+  oauth2_proxy: { label: 'OAuth2 Proxy',  icon: Lock,     description: 'Lightweight OIDC proxy (requires external provider)', fields: ['hostname','oidcIssuerUrl','clientId','clientSecret','namespace'] },
+  keycloak:     { label: 'Keycloak',      icon: UserCog,  description: 'Enterprise identity & access management (RH SSO)', fields: ['hostname','adminPassword','namespace','clusterIssuer'] },
+  custom_oidc:  { label: 'Custom OIDC',   icon: Settings2, description: 'Generic OpenID Connect provider (any compliant server)', fields: ['hostname','oidcIssuerUrl','clientId','clientSecret','customIssuerCaSecret','namespace'] },
+}
+
+function SSOBootstrapModal({
+  pointId, domainName, onDone, onClose,
+}: {
+  pointId: string; domainName: string; onDone: () => void; onClose: () => void
+}) {
+  const [providers, setProviders] = useState<SSOProviderInfo[]>([])
+  const [provider, setProvider] = useState('authentik')
+  const [hostname, setHostname] = useState('')
+  const [adminPassword, setAdminPassword] = useState('')
+  const [namespace, setNamespace] = useState('security')
+  const [clusterIssuer, setClusterIssuer] = useState('letsencrypt-prod')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  // Provider-specific fields
+  const [oidcIssuerUrl, setOidcIssuerUrl] = useState('')
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
+  const [databaseType, setDatabaseType] = useState('sqlite')
+  const [redisHost, setRedisHost] = useState('')
+  const [customIssuerCaSecret, setCustomIssuerCaSecret] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/ingress/providers')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!cancelled) {
+          setProviders(data?.providers ?? [])
+          setLoading(false)
+        }
+      })
+      .catch(() => { setLoading(false) })
+    return () => { cancelled = true }
+  }, [])
+
+  const providerInfo = SSO_PROVIDER_TYPES[provider]
+  const remoteProvider = providers.find(p => p.name === provider)
+  const resolved = {
+    label: remoteProvider?.displayName ?? providerInfo?.label ?? provider,
+    description: remoteProvider?.description ?? providerInfo?.description ?? '',
+    fields: providerInfo?.fields ?? (remoteProvider?.hasHelm ? ['hostname','namespace','clusterIssuer'] : ['hostname','namespace']),
+    hasHelm: remoteProvider?.hasHelm,
+  }
+  const Icon = providerInfo?.icon ?? (remoteProvider?.hasHelm ? KeyRound : Zap)
+
+  const submit = async () => {
+    setError('')
+    if (!hostname.trim()) { setError('Hostname is required.'); return }
+
+    const config: Record<string, unknown> = {
+      provider,
+      hostname: hostname.trim(),
+      namespace: namespace || 'security',
+    }
+    if (adminPassword) config.adminPassword = adminPassword
+    if (clusterIssuer) config.clusterIssuer = clusterIssuer
+    if (oidcIssuerUrl) config.oidcIssuerUrl = oidcIssuerUrl
+    if (clientId) config.clientId = clientId
+    if (clientSecret) config.clientSecret = clientSecret
+    if (databaseType) config.databaseType = databaseType
+    if (redisHost) config.redisHost = redisHost
+    if (customIssuerCaSecret) config.customIssuerCaSecret = customIssuerCaSecret
+
+    setSaving(true)
+    try {
+      const res = await fetch(`/api/ingress/points/${pointId}/bootstrap-sso`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.jobId) {
+        throw new Error(data.error ?? `HTTP ${res.status}`)
+      }
+      onDone()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="w-full max-w-lg max-h-[90vh] overflow-auto bg-[#1e1e2e] border border-border-subtle rounded-xl shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+          <div className="flex items-center gap-3">
+            <Icon size={18} className="text-accent" />
+            <div>
+              <h2 className="text-sm font-semibold text-text-primary">Bootstrap Identity Provider</h2>
+              <p className="text-[11px] text-text-muted">Deploy and configure an SSO provider for your services</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-text-muted hover:text-text-primary">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-5 py-4 space-y-3">
+          {/* Provider selection */}
+          <div>
+            <label className="text-[11px] font-medium text-text-muted mb-1 block">Provider Type</label>
+            <select value={provider} onChange={e => setProvider(e.target.value)} className={inputCls}>
+              {loading && providers.length === 0
+                ? <option value={provider}>Loading…</option>
+                : (
+                    Object.entries(SSO_PROVIDER_TYPES)
+                      .filter(([key]) => !providers.some(p => p.name === key)) // show bundled ones not yet in remote
+                      .map(([key, t]) => <option key={key} value={key}>{t.label}</option>)
+                  )
+                  .concat(providers.map(p => <option key={p.name} value={p.name}>{p.displayName}</option>))
+              }
+            </select>
+            {resolved.description && <p className="text-[10px] text-text-muted mt-1">{resolved.description}</p>}
+            {remoteProvider?.source === 'remote' && <span className="text-[9px] text-text-muted opacity-50">Loaded from orion-nub</span>}
+          </div>
+
+          {/* Hostname */}
+          <div>
+            <label className="text-[11px] font-medium text-text-muted mb-1 block">Hostname</label>
+            <input
+              autoFocus
+              value={hostname}
+              onChange={e => setHostname(e.target.value)}
+              placeholder={`e.g. auth.${domainName}`}
+              className={inputCls}
+            />
+          </div>
+
+          {/* Namespace */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[11px] font-medium text-text-muted mb-1 block">Namespace</label>
+              <input
+                value={namespace}
+                onChange={e => setNamespace(e.target.value)}
+                placeholder="security"
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-medium text-text-muted mb-1 block">ClusterIssuer</label>
+              <input
+                value={clusterIssuer}
+                onChange={e => setClusterIssuer(e.target.value)}
+                placeholder="letsencrypt-prod"
+                className={inputCls}
+              />
+            </div>
+          </div>
+
+          {/* Provider-specific: admin password */}
+          {resolved.fields.includes('adminPassword') && (
+            <div>
+              <label className="text-[11px] font-medium text-text-muted mb-1 block">Admin Password</label>
+              <input
+                type="password"
+                value={adminPassword}
+                onChange={e => setAdminPassword(e.target.value)}
+                placeholder="Set initial admin password"
+                className={inputCls}
+              />
+            </div>
+          )}
+
+          {/* Provider-specific: OIDC fields */}
+          {(provider === 'oauth2_proxy' || provider === 'custom_oidc') && (
+            <>
+              <div>
+                <label className="text-[11px] font-medium text-text-muted mb-1 block">OIDC Issuer URL</label>
+                <input
+                  value={oidcIssuerUrl}
+                  onChange={e => setOidcIssuerUrl(e.target.value)}
+                  placeholder="https://auth.example.com/oauth2/token"
+                  className={inputCls}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] font-medium text-text-muted mb-1 block">Client ID</label>
+                  <input
+                    value={clientId}
+                    onChange={e => setClientId(e.target.value)}
+                    placeholder="oauth2-proxy-client"
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-medium text-text-muted mb-1 block">Client Secret</label>
+                  <input
+                    type="password"
+                    value={clientSecret}
+                    onChange={e => setClientSecret(e.target.value)}
+                    placeholder="client-secret-from-provider"
+                    className={inputCls}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Provider-specific: Keycloak/Custom CA */}
+          {provider === 'custom_oidc' && (
+            <div>
+              <label className="text-[11px] font-medium text-text-muted mb-1 block">Issuer CA Secret</label>
+              <input
+                value={customIssuerCaSecret}
+                onChange={e => setCustomIssuerCaSecret(e.target.value)}
+                placeholder="namespace/secret-name"
+                className={inputCls}
+              />
+            </div>
+          )}
+
+          {/* Provider-specific: Authelia database */}
+          {provider === 'authelia' && (
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[11px] font-medium text-text-muted mb-1 block">Database</label>
+                <select value={databaseType} onChange={e => setDatabaseType(e.target.value)} className={inputCls}>
+                  <option value="sqlite">SQLite</option>
+                  <option value="postgresql">PostgreSQL</option>
+                </select>
+              </div>
+              {databaseType === 'postgresql' && (
+                <div>
+                  <label className="text-[11px] font-medium text-text-muted mb-1 block">Redis Host</label>
+                  <input
+                    value={redisHost}
+                    onChange={e => setRedisHost(e.target.value)}
+                    placeholder="redis://redis:6379"
+                    className={inputCls}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {error && (
+            <p className="text-xs text-status-error flex items-center gap-1">
+              <AlertCircle size={12} /> {error}
+            </p>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-border-subtle bg-bg-raised">
+          <button onClick={onClose} className={btnGhost}>Cancel</button>
+          <button onClick={submit} disabled={saving || !hostname.trim()} className={btnPrimary}>
+            {saving
+              ? <><RefreshCw size={11} className="animate-spin" /> Deploying…</>
+              : <><Play size={11} /> Deploy Provider</>
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Middleware bootstrap (CrowdSec, Fail2Ban) ────────────────────────────────
+
+const MIDDLEWARE_BOOTSTRAP_TYPES = [
+  {
+    value: 'crowdsec',  label: 'CrowdSec',        icon: Shield, description: 'Behavioral IPS with Traefik bouncer for automated IP banning',
+    fields: ['namespace','clusterIssuer'],
+  },
+  {
+    value: 'fail2ban',  label: 'Fail2Ban',        icon: Bot, description: 'Intrusion prevention via log monitoring (deployed as DaemonSet)',
+    fields: ['namespace'],
+  },
+]
+
+function MiddlewareBootstrapPanel({ pointId }: { pointId: string }) {
+  const [modal, setModal] = useState<string | null>(null)
+  const [running, setRunning] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{ text: string; ok: boolean } | null>(null)
+
+  // Auto-close the modal after a successful single-step bootstrap
+  useEffect(() => {
+    if (notice?.ok && !running) {
+      const timer = setTimeout(() => setModal(null), 1500)
+      return () => clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notice])
+
+  const runBootstrap = async (type: string) => {
+    setRunning(type); setNotice(null)
+    try {
+      const res = await fetch(`/api/ingress/points/${pointId}/bootstrap-middleware`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ middlewareType: type }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.jobId) throw new Error(data.error ?? `HTTP ${res.status}`)
+      setNotice({ text: `${type.charAt(0).toUpperCase() + type.slice(1)} bootstrap started — check the Jobs panel for progress.`, ok: true })
+    } catch (e) {
+      setNotice({ text: e instanceof Error ? e.message : String(e), ok: false })
+    } finally {
+      setRunning(null)
+    }
+  }
+
+  return (
+    <>
+      <div className="mt-3 pt-3 border-t border-border-subtle">
+        <p className="text-[11px] font-medium text-text-muted mb-2">Deploy Infrastructure Middleware</p>
+        <div className="grid grid-cols-2 gap-2">
+          {MIDDLEWARE_BOOTSTRAP_TYPES.map(t => {
+            const Icon = t.icon
+            const isRunning = running === t.value
+            return (
+              <button
+                key={t.value}
+                onClick={() => setModal(t.value)}
+                disabled={isRunning}
+                className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border border-border-subtle text-center transition-colors hover:bg-bg-raised hover:border-accent/40 ${isRunning ? 'opacity-50 cursor-wait' : ''}`}
+              >
+                <Icon size={18} className="text-accent" />
+                <span className="text-[11px] font-medium text-text-primary">{t.label}</span>
+              </button>
+            )
+          })}
+        </div>
+        {notice && (
+          <p className={`text-xs mt-2 flex items-center gap-1 ${notice.ok ? 'text-status-healthy' : 'text-status-error'}`}>
+            {notice.ok ? <Check size={12} /> : <AlertCircle size={12} />} {notice.text}
+          </p>
+        )}
+      </div>
+
+      {/* Inline middleware bootstrap modal */}
+      {modal && (() => {
+        const t = MIDDLEWARE_BOOTSTRAP_TYPES.find(x => x.value === modal)
+        if (!t) return null
+        const Icon = t.icon
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setModal(null)}>
+            <div className="w-full max-w-md bg-[#1e1e2e] border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+                <div className="flex items-center gap-3">
+                  <Icon size={18} className="text-accent" />
+                  <div>
+                    <h2 className="text-sm font-semibold text-text-primary">Deploy {t.label}</h2>
+                    <p className="text-[11px] text-text-muted">{t.description}</p>
+                  </div>
+                </div>
+                <button onClick={() => setModal(null)} className="text-text-muted hover:text-text-primary"><X size={16} /></button>
+              </div>
+              <div className="px-5 py-4">
+                <p className="text-xs text-text-muted">
+                  This will deploy <strong>{t.label}</strong> into your cluster via the associated environment.
+                  All config is managed through ORION playbooks.
+                </p>
+                <div className="flex gap-2 mt-4">
+                  <button onClick={() => setModal(null)} className={btnGhost}>Cancel</button>
+                  <button
+                    onClick={() => { runBootstrap(modal) }}
+                    disabled={running !== null}
+                    className={btnPrimary}
+                  >
+                    {running === modal
+                      ? <><RefreshCw size={11} className="animate-spin" /> Deploying…</>
+                      : <><Play size={11} /> Deploy</>
+                    }
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+    </>
   )
 }
 
@@ -722,6 +1108,7 @@ function PointPanel({ point, domain, environments, onChange }: {
   const [tab, setTab]             = useState<PointTab>('routes')
   const [routes, setRoutes]       = useState(point.routes)
   const [middlewares, setMws]     = useState(point.middlewares ?? [])
+  const [showSSOModal, setShowSSO] = useState(false)
 
   const patchPoint = async (data: Record<string, unknown>) => {
     const res = await fetch(`/api/ingress/points/${point.id}`, {
@@ -898,7 +1285,7 @@ function PointPanel({ point, domain, environments, onChange }: {
 
             {/* Middlewares tab */}
             {tab === 'middlewares' && (
-              <>
+              <div className="space-y-1.5">
                 {middlewares.length === 0 && (
                   <p className="text-xs text-text-muted italic py-1">No middlewares defined. Add one to apply to routes.</p>
                 )}
@@ -916,7 +1303,36 @@ function PointPanel({ point, domain, environments, onChange }: {
                   pointId={point.id}
                   onCreated={m => setMws(prev => [...prev, m])}
                 />
-              </>
+
+                {/* SSO Provider bootstrap */}
+                <div className="mt-3 pt-3 border-t border-border-subtle">
+                  <p className="text-[11px] font-medium text-text-muted mb-2">Deploy Identity Provider (SSO)</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={() => setShowSSO(true)}
+                      className={`${btnPrimary} text-[11px]`}
+                    >
+                      <KeyRound size={11} /> Bootstrap SSO Provider
+                    </button>
+                    <span className="text-[10px] text-text-muted">
+                      Authentik · Authelia · OAuth2 Proxy · Keycloak · Custom OIDC
+                    </span>
+                  </div>
+                </div>
+
+                {/* Infrastructure middleware bootstrap */}
+                <MiddlewareBootstrapPanel pointId={point.id} />
+
+                {/* SSO Bootstrap Modal */}
+                {showSSOModal && (
+                  <SSOBootstrapModal
+                    pointId={point.id}
+                    domainName={domain.name}
+                    onDone={() => { setShowSSO(false) }}
+                    onClose={() => { setShowSSO(false) }}
+                  />
+                )}
+              </div>
             )}
 
             {/* Bootstrap tab */}
@@ -924,7 +1340,19 @@ function PointPanel({ point, domain, environments, onChange }: {
               <div className="space-y-3">
                 <div className="text-xs text-text-muted space-y-1">
                   <p>Bootstrapping will deploy <strong className="text-text-primary">Traefik</strong> and <strong className="text-text-primary">cert-manager</strong> into the associated cluster environment.</p>
-                  {point.ip && <p>Traefik will be assigned LoadBalancer IP: <code className="font-mono text-accent">{point.ip}</code></p>}
+                  <div className="flex items-center gap-2">
+                    <span>LoadBalancer IP (MetalLB):</span>
+                    <InlineEdit
+                      value={point.ip ?? ''}
+                      placeholder="e.g. 10.2.2.200"
+                      onSave={ip => patchPoint({ ip: ip || null })}
+                    />
+                    {!point.ip && (
+                      <span className="text-status-warning flex items-center gap-1">
+                        <AlertCircle size={11} /> Required for Kubernetes bootstrap
+                      </span>
+                    )}
+                  </div>
                   {point.clusterIssuer && <p>ClusterIssuer: <code className="font-mono text-accent">{point.clusterIssuer}</code></p>}
                   {!point.environment && (
                     <p className="text-status-warning flex items-center gap-1">
@@ -985,8 +1413,8 @@ function DnsRecordModal({ domain, initial, suggestedIp, onSave, onClose }: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-md bg-bg-surface border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-md bg-[#1e1e2e] border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
           <h2 className="text-sm font-semibold text-text-primary">{editing ? 'Edit DNS Record' : 'Add DNS Record'}</h2>
           <button onClick={onClose} className="text-text-muted hover:text-text-primary"><X size={15} /></button>
