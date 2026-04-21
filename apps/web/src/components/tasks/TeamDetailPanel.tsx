@@ -2,8 +2,9 @@
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { X, Plus, Trash2, Bot, User, Cpu, MessageSquarePlus, MessageSquare } from 'lucide-react'
+import { X, Plus, Trash2, Bot, User, Cpu, MessageSquarePlus, MessageSquare, Rocket } from 'lucide-react'
 import type { Agent } from '@/types/tasks'
+import { NovaBrowser } from '@/components/nova/NovaBrowser'
 
 const ROLE_COLORS = [
   'bg-blue-500', 'bg-purple-500', 'bg-emerald-500', 'bg-orange-500',
@@ -73,6 +74,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
   const [modalAgent, setModalAgent]     = useState<Agent | null>(null)
   const [editForm, setEditForm]         = useState<AgentForm>(emptyForm)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [showNovaBrowser, setShowNovaBrowser] = useState(false)
   const [saving, setSaving]             = useState(false)
   const [availableModels, setAvailableModels] = useState<Array<{id: string; name: string; provider: string; builtIn: boolean}>>([])
   const router = useRouter()
@@ -133,6 +135,12 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
     })
     const convo = await r.json()
     router.push(`/chat?conversation=${convo.id}`)
+  }
+
+  const handleNovaImport = (novaName: string) => {
+    setShowNovaBrowser(false)
+    // Refresh the agents list after import
+    fetch('/api/agents').then(r => r.json()).then(setLocalAgents).catch(() => {})
   }
 
   const openCreate = () => { setForm(emptyForm); setCreateModal(true) }
@@ -275,6 +283,11 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
             className="flex items-center gap-2 px-4 py-2.5 text-xs text-text-muted hover:text-accent hover:bg-bg-raised transition-colors border-l border-border-subtle"
             title="Start a conversation to plan the agent with Claude">
             <MessageSquarePlus size={13} /> Create with Claude
+          </button>
+          <button onClick={() => setShowNovaBrowser(true)}
+            className="flex items-center gap-2 px-4 py-2.5 text-xs text-text-muted hover:text-accent hover:bg-bg-raised transition-colors border-l border-border-subtle"
+            title="Browse Nebula service catalog to import agents">
+            <Rocket size={13} /> Nebula
           </button>
         </div>
       </aside>
@@ -450,6 +463,22 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
                 {saving ? 'Saving…' : 'Save'}
               </button>
             </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Nebula browser panel — slides in from the right */}
+      {showNovaBrowser && createPortal(
+        <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setShowNovaBrowser(false)}>
+          <div className="w-80 h-full bg-bg-sidebar border-l border-border-subtle shadow-xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+              <span className="text-xs font-semibold text-text-primary">Nebula Catalog</span>
+              <button onClick={() => setShowNovaBrowser(false)} className="text-text-muted hover:text-text-primary">
+                <X size={14} />
+              </button>
+            </div>
+            <NovaBrowser onImport={handleNovaImport} />
           </div>
         </div>,
         document.body
