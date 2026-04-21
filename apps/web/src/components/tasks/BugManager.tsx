@@ -341,7 +341,7 @@ export function BugManager({ initialBugs, users }: Props) {
       {/* ── Create modal ─────────────────────────────────────────────────────── */}
       {modal && (
         <>
-          <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setModal(false)} />
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" onClick={() => setModal(false)} />
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl w-full max-w-md">
               <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">

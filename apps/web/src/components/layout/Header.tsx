@@ -3,6 +3,7 @@
 import { useSession, signOut } from 'next-auth/react'
 import { useState, useRef, useEffect } from 'react'
 import { LogOut } from 'lucide-react'
+import { JobsPanel } from '@/components/jobs/JobsPanel'
 
 export function Header() {
   const { data: session } = useSession()
@@ -37,7 +38,9 @@ export function Header() {
       <span className="font-semibold text-text-primary">{appName}</span>
 
       {session && (
-        <div className="ml-auto relative" ref={ref}>
+        <div className="ml-auto flex items-center gap-2">
+        <JobsPanel />
+        <div className="relative" ref={ref}>
           <button
             onClick={() => setOpen(o => !o)}
             className="w-8 h-8 rounded-full bg-accent/20 border border-accent/30 flex items-center justify-center text-xs font-semibold text-accent hover:bg-accent/30 transition-colors"
@@ -65,6 +68,7 @@ export function Header() {
               </button>
             </div>
           )}
+        </div>
         </div>
       )}
     </header>

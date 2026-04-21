@@ -89,10 +89,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
   }
 
-  // History window: respect agent's contextConfig, default 10 for regular chats, 6 for agent chats
+  // History window: respect agent's contextConfig, increased defaults for better context retention
+  // Regular chats: 30 messages (was 10), Agent chats: 12 messages (was 6)
   const historyLimit = agentSystemPrompt
-    ? (agentContextConfig.historyMessages ?? 6)
-    : 10
+    ? (agentContextConfig.historyMessages ?? 12)
+    : 30
   const rawHistory = await prisma.message.findMany({
     where: { conversationId },
     orderBy: { createdAt: 'desc' },  // most recent first
@@ -101,7 +102,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   })
   rawHistory.reverse()  // back to chronological order
   // Cap individual message size to prevent bloated history (tool output, API dumps, etc.)
-  const MAX_MSG_CHARS = 2000
+  // Increased from 2000 to 5000 to preserve more context from tool outputs
+  const MAX_MSG_CHARS = 5000
   const history = rawHistory.map(m => ({
     role: m.role,
     content: m.content.length > MAX_MSG_CHARS
