@@ -6,7 +6,7 @@
  * Only admins can create API keys.
  */
 
-import { randomBytes, createHash } from 'crypto'
+import { randomBytes, pbkdf2Sync, timingSafeEqual, createHash } from 'crypto'
 import { prisma } from './db'
 
 export type ApiKeyRow = {
@@ -59,14 +59,45 @@ const sql = {
  * Generate a new API key.
  * Returns the plaintext key (shown once) and metadata.
  */
+const API_KEY_KDF_ALGO = 'pbkdf2_sha256'
+const API_KEY_KDF_ITERATIONS = 210000
+const API_KEY_KDF_KEYLEN = 32
+const API_KEY_KDF_DIGEST = 'sha256'
+
+function hashPrefixFromStoredHash(storedHash: string): string {
+  return createHash('sha256').update(storedHash).digest('hex').slice(0, 6)
+}
+
+function hashApiKey(rawKey: string): string {
+  const salt = randomBytes(16).toString('hex')
+  const derived = pbkdf2Sync(rawKey, salt, API_KEY_KDF_ITERATIONS, API_KEY_KDF_KEYLEN, API_KEY_KDF_DIGEST).toString('hex')
+  return `${API_KEY_KDF_ALGO}$${API_KEY_KDF_ITERATIONS}$${salt}$${derived}`
+}
+
+function verifyApiKeyHash(rawKey: string, storedHash: string): boolean {
+  const parts = storedHash.split('$')
+  if (parts.length !== 4) return false
+  const [algo, iterStr, salt, expectedHex] = parts
+  if (algo !== API_KEY_KDF_ALGO) return false
+
+  const iterations = Number(iterStr)
+  if (!Number.isInteger(iterations) || iterations <= 0) return false
+
+  const actual = pbkdf2Sync(rawKey, salt, iterations, API_KEY_KDF_KEYLEN, API_KEY_KDF_DIGEST)
+  const expected = Buffer.from(expectedHex, 'hex')
+  if (expected.length !== actual.length) return false
+
+  return timingSafeEqual(actual, expected)
+}
+
 export async function createApiKey(
   userId: string,
   name: string,
   expiresInDays?: number,
 ): Promise<{ key: string; info: ApiKeyInfo }> {
   const raw = `orion_ak_${randomBytes(18).toString('hex')}`
-  const hash = createHash('sha256').update(raw).digest('hex')
-  const prefix = hash.slice(0, 6)
+  const hash = hashApiKey(raw)
+  const prefix = hashPrefixFromStoredHash(hash)
   const expiresAt = expiresInDays ? new Date(Date.now() + expiresInDays * 86400000) : null
 
   await prisma.$executeRawUnsafe(
@@ -94,14 +125,14 @@ export async function verifyApiKey(key: string): Promise<string | null> {
   if (!key.startsWith('orion_ak_')) return null
   if (key.length < 18) return null // minimum length check
 
-  const hash = createHash('sha256').update(key).digest('hex')
-  const prefix = hash.slice(0, 6)
+  const prefix = hashPrefixFromStoredHash(hashApiKey(key))
 
-  const rows = await prisma.$queryRawUnsafe<ApiKeyRow[]>(sql.verifyByHash, prefix, hash)
+  const rows = await prisma.$queryRawUnsafe<ApiKeyRow[]>(sql.verifyByHash, prefix, '')
 
   if (!rows || rows.length === 0) return null
 
-  const r = rows[0]
+  const r = rows.find(row => verifyApiKeyHash(key, row.hash))
+  if (!r) return null
 
   // Check active
   if (!r.active) return null
@@ -110,7 +141,7 @@ export async function verifyApiKey(key: string): Promise<string | null> {
   if (r.expiresAt && new Date(r.expiresAt) < new Date()) return null
 
   // Update lastUsedAt
-  await prisma.$executeRawUnsafe(sql.updateLastUsed(hash))
+  await prisma.$executeRawUnsafe(sql.updateLastUsed(r.hash))
 
   return r.userId
 }
