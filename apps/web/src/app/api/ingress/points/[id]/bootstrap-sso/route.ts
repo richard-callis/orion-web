@@ -155,19 +155,42 @@ async function bootstrapProvider(
     customIssuerCaSecret: string; databaseType: string; redisHost: string; isDocker: boolean
   },
 ): Promise<void> {
-  // Clean up stale Helm release, deployments, and pods from previous failed attempts
-  await cleanupStaleHelmRelease(gx, log, cfg)
-
-  // Delete stale deployments and pods that persist after Helm uninstall
-  // Delete Helm-managed workloads
-  await gx('kubectl_delete', { resource: 'deployment', name: 'authentik-server', namespace: cfg.namespace }).catch(() => {})
-  await gx('kubectl_delete', { resource: 'deployment', name: 'authentik-worker', namespace: cfg.namespace }).catch(() => {})
-  await gx('kubectl_delete', { resource: 'statefulset', name: 'authentik-postgresql', namespace: cfg.namespace }).catch(() => {})
-  // Delete bootstrap-created workloads (separate from Helm release)
-  await gx('kubectl_delete', { resource: 'statefulset', name: 'authentik-postgres', namespace: cfg.namespace }).catch(() => {})
-  await gx('kubectl_delete', { resource: 'deployment', name: 'authentik-redis', namespace: cfg.namespace }).catch(() => {})
-  // Delete any remaining pods with authentik labels
-  await gx('kubectl_delete', { resource: 'pods', namespace: cfg.namespace, selector: 'app.kubernetes.io/instance=authentik' }).catch(() => {})
+  // Full namespace cleanup for Authentik — Helm uninstall alone leaves behind
+  // manually-patched deployments, services, PVCs, and secrets that conflict
+  // with the new Helm-managed resources.
+  if (cfg.provider === 'authentik') {
+    await log('Cleaning all stale Authentik resources...')
+    // Helm uninstall — removes Helm-managed resources (deployment, statefulset, services, secrets, etc.)
+    await gx('helm_uninstall', { release: 'authentik', namespace: cfg.namespace, timeout: '120s' }).catch(() => {})
+    // Delete remaining workloads (bootstrap-created ones that Helm doesn't manage)
+    await gx('kubectl_delete', { resource: 'statefulset', name: 'authentik-redis', namespace: cfg.namespace }).catch(() => {})
+    await gx('kubectl_delete', { resource: 'deployment', name: 'authentik-redis', namespace: cfg.namespace }).catch(() => {})
+    await gx('kubectl_delete', { resource: 'statefulset', name: 'authentik-postgresql', namespace: cfg.namespace }).catch(() => {})
+    // Delete PVCs (Helm uninstall may not always succeed in deleting PVCs)
+    await gx('kubectl_delete', { resource: 'pvc', name: 'postgres-data-authentik-postgresql-0', namespace: cfg.namespace }).catch(() => {})
+    await gx('kubectl_delete', { resource: 'pvc', name: 'data-authentik-postgresql-0', namespace: cfg.namespace }).catch(() => {})
+    await gx('kubectl_delete', { resource: 'pvc', name: 'redis-data-authentik-redis-0', namespace: cfg.namespace }).catch(() => {})
+    // Delete secrets that could conflict with new deployment
+    const SECRET_NAMES = ['authentik', 'authentik-secrets', 'authentik-secret-key', 'authentik-root-password', 'authentik-secret-fix', 'authentik-postgresql']
+    for (const sn of SECRET_NAMES) {
+      await gx('kubectl_delete', { resource: 'secret', name: sn, namespace: cfg.namespace }).catch(() => {})
+    }
+    // Delete bootstrap-created services that Helm may have missed
+    const SVC_NAMES = ['authentik-server', 'authentik-postgresql', 'authentik-redis', 'authentik-worker', 'authentik-goauthentikio']
+    for (const sv of SVC_NAMES) {
+      await gx('kubectl_delete', { resource: 'service', name: sv, namespace: cfg.namespace }).catch(() => {})
+    }
+    // Delete ingress routes
+    await gx('kubectl_delete', { resource: 'ingress', name: 'authentik', namespace: cfg.namespace }).catch(() => {})
+    // Delete cert-manager resources that can block SSL renewal
+    await gx('kubectl_delete', { resource: 'certificate', name: 'authentik-tls', namespace: cfg.namespace }).catch(() => {})
+    await gx('kubectl_delete', { resource: 'order', name: 'authentik-tls', namespace: cfg.namespace }).catch(() => {})
+    await gx('kubectl_delete', { resource: 'challenge', name: 'authentik-tls', namespace: cfg.namespace }).catch(() => {})
+    await log('  Stale resources cleaned ✓')
+  } else {
+    // Non-Authentik: basic cleanup
+    await cleanupStaleHelmRelease(gx, log, cfg)
+  }
 
   await log(`Deploying ${cfg.provider} identity provider to namespace "${cfg.namespace}"`)
 
@@ -206,8 +229,12 @@ async function deployAuthentik(
   const secretKey = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 20)}${Math.random().toString(36).slice(2, 16)}`
   const postgresPassword = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 16)}`
 
-  // Create the overlay secret that provides the correct env var names
-  // Helm chart generates AUTHENTIK_SECRETKEY (no underscore) but Authentik expects AUTHENTIK_SECRET_KEY
+  // Create the overlay secret that provides the correct env var names.
+  // Helm chart generates AUTHENTIK_SECRETKEY (no underscore) but Authentik
+  // expects AUTHENTIK_SECRET_KEY (with underscore).
+  // Also includes AUTHENTIK_POSTGRESQL__* so the server can connect to
+  // PostgreSQL (Helm's subchart generates the password but doesn't
+  // expose it as a correctly-named env var in the main secret).
   await log('Step 1/3: Creating overlay secret...')
   await gx('kubectl_apply_manifest', {
     manifest: `apiVersion: v1
@@ -218,11 +245,18 @@ metadata:
 type: Opaque
 stringData:
   AUTHENTIK_SECRET_KEY: "${secretKey}"
-  AUTHENTIK_ROOT_PASSWORD: "${cfg.adminPassword}"`,
+  AUTHENTIK_ROOT_PASSWORD: "${cfg.adminPassword}"
+  AUTHENTIK_POSTGRESQL__HOST: "authentik-postgresql"
+  AUTHENTIK_POSTGRESQL__NAME: "authentik"
+  AUTHENTIK_POSTGRESQL__USER: "authentik"
+  AUTHENTIK_POSTGRESQL__PORT: "5432"
+  AUTHENTIK_POSTGRESQL__PASSWORD: "${postgresPassword}"`,
   })
   await log('  Overlay secret created ✓')
 
-  // Install Authentik via Helm (manages PostgreSQL subchart with our password)
+  // Install Authentik via Helm. The postgresql.auth.password key tells the
+  // subchart what password to use for the 'authentik' DB user — this must
+  // match AUTHENTIK_POSTGRESQL__PASSWORD in the overlay secret.
   await log('Step 2/3: Installing Authentik via Helm...')
   await gx('helm_upgrade_install', {
     release: 'authentik', chart: 'authentik', repo: 'https://charts.goauthentik.io',
@@ -246,6 +280,7 @@ server:
           - ${cfg.hostname}
 postgresql:
   auth:
+    postgresPassword: "${postgresPassword}"
     password: "${postgresPassword}"
 `, wait: false, timeout: '300s',
   })
