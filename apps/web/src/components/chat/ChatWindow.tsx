@@ -355,11 +355,15 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: draftForm.name,
-          type: draftForm.type,
+          type: (draftForm.type === 'custom' ? 'claude' : draftForm.type),
           role: draftForm.role || null,
-          metadata: lastAssistant?.content ? { systemPrompt: lastAssistant.content } : undefined,
+          metadata: lastAssistant?.content?.trim() ? { systemPrompt: lastAssistant.content.trim() } : undefined,
         }),
       })
+      if (!agentRes.ok) {
+        const err = await agentRes.json().catch(() => ({}))
+        throw new Error(err.error ?? 'Failed to create agent')
+      }
       const agent = await agentRes.json()
       // Link this conversation to the new agent
       await fetch(`/api/chat/conversations/${conversationId}`, {
@@ -368,7 +372,9 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
         body: JSON.stringify({ metadata: { agentTarget: { id: agent.id, name: agent.name } } }),
       })
       router.push('/agents')
-    } finally {
+    } catch (err) {
+      console.error('Failed to create agent:', err)
+      alert(`Failed to create agent: ${err instanceof Error ? err.message : 'Unknown error'}`)
       setCreatingAgent(false)
     }
   }
