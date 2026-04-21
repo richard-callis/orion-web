@@ -99,12 +99,16 @@ export const kubernetesTools = [
       required: ['resource'],
     },
     async execute(args: Record<string, unknown>) {
-      const cmdArgs = ['delete', String(args.resource)]
+      const resource = String(args.resource).toLowerCase()
+      const cmdArgs = ['delete', resource]
       if (args.name) cmdArgs.push(String(args.name))
       if (args.namespace) cmdArgs.push('-n', String(args.namespace))
       if (args.selector) {
         cmdArgs.push('-l', String(args.selector))
-        if (!args.name) cmdArgs.push('--all')
+        // --all only works for workload resources, not for pods or services
+        if (!args.name && ['deployment', 'statefulset', 'daemonset', 'replicaset', 'job', 'replicationcontroller'].includes(resource)) {
+          cmdArgs.push('--all')
+        }
       }
       if (args.ignoreNotFound !== false) cmdArgs.push('--ignore-not-found=true')
       return kubectl(cmdArgs)
