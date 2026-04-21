@@ -250,7 +250,6 @@ postgresql:
 `, wait: false, timeout: '300s',
   })
   await log('  Authentik installed ✓')
-  await log('  Authentik installed ✓')
 
   // Step 3: Patch the secret key env var name
   // Helm chart converts authentik.secretKey → AUTHENTIK_SECRETKEY (no underscore)
@@ -268,7 +267,6 @@ postgresql:
               name: 'server',
               envFrom: [
                 { secretRef: { name: 'authentik' } },
-                { secretRef: { name: 'authentik-secrets' } },
                 { secretRef: { name: 'authentik-secret-fix' } },
               ],
             }],
@@ -288,7 +286,6 @@ postgresql:
               name: 'worker',
               envFrom: [
                 { secretRef: { name: 'authentik' } },
-                { secretRef: { name: 'authentik-secrets' } },
                 { secretRef: { name: 'authentik-secret-fix' } },
               ],
             }],
