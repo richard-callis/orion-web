@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 
 const RESERVED_NAMES = ['human', 'user', 'system', 'admin']
-const VALID_TYPES = ['claude', 'ollama', 'human']
+const VALID_TYPES = ['claude', 'ollama', 'human', 'custom']
 
 export async function GET() {
   const agents = await prisma.agent.findMany({ orderBy: { name: 'asc' } })
@@ -21,9 +21,6 @@ export async function POST(req: NextRequest) {
   const type = body.type ?? 'claude'
   if (!VALID_TYPES.includes(type)) {
     return NextResponse.json({ error: `type must be one of: ${VALID_TYPES.join(', ')}` }, { status: 400 })
-  }
-  if (type !== 'human' && !body.metadata?.systemPrompt?.trim()) {
-    return NextResponse.json({ error: 'metadata.systemPrompt is required for claude/ollama agents' }, { status: 400 })
   }
 
   const agent = await prisma.agent.create({
