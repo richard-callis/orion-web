@@ -206,20 +206,11 @@ async function deployAuthentik(
   const secretKey = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 20)}${Math.random().toString(36).slice(2, 16)}`
   const postgresPassword = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 16)}`
 
-  // Step 1: Create secrets
-  await log('Step 1/4: Creating secrets...')
+  // Create the overlay secret that provides the correct env var names
+  // Helm chart generates AUTHENTIK_SECRETKEY (no underscore) but Authentik expects AUTHENTIK_SECRET_KEY
+  await log('Step 1/3: Creating overlay secret...')
   await gx('kubectl_apply_manifest', {
     manifest: `apiVersion: v1
-kind: Secret
-metadata:
-  name: authentik-secrets
-  namespace: ${cfg.namespace}
-type: Opaque
-stringData:
-  POSTGRES_PASSWORD: "${postgresPassword}"
-  AUTHENTIK_SECRET_KEY: "${secretKey}"
----
-apiVersion: v1
 kind: Secret
 metadata:
   name: authentik-secret-fix
@@ -229,125 +220,10 @@ stringData:
   AUTHENTIK_SECRET_KEY: "${secretKey}"
   AUTHENTIK_ROOT_PASSWORD: "${cfg.adminPassword}"`,
   })
-  await log('  Secrets created ✓')
+  await log('  Overlay secret created ✓')
 
-  // Step 2: Create PostgreSQL PVC, StatefulSet, and Service
-  await log('Step 2/4: Deploying PostgreSQL...')
-  await gx('kubectl_apply_manifest', {
-    manifest: `apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: authentik-postgres-data
-  namespace: ${cfg.namespace}
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: longhorn
-  resources:
-    requests:
-      storage: 10Gi
----
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: authentik-postgres
-  namespace: ${cfg.namespace}
-spec:
-  serviceName: authentik-postgres
-  replicas: 1
-  selector:
-    matchLabels:
-      app: authentik-postgres
-  template:
-    metadata:
-      labels:
-        app: authentik-postgres
-    spec:
-      nodeSelector:
-        kubernetes.io/arch: amd64
-      containers:
-        - name: postgres
-          image: postgres:16-alpine
-          env:
-            - name: POSTGRES_DB
-              value: authentik
-            - name: POSTGRES_USER
-              value: authentik
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: authentik-secrets
-                  key: POSTGRES_PASSWORD
-          ports:
-            - containerPort: 5432
-              name: postgres
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/postgresql/data
-              subPath: pgdata
-          resources:
-            requests:
-              memory: "256Mi"
-              cpu: "100m"
-            limits:
-              memory: "512Mi"
-              cpu: "500m"
-      volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: authentik-postgres-data
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: authentik-postgresql
-  namespace: ${cfg.namespace}
-spec:
-  selector:
-    app: authentik-postgres
-  ports:
-    - port: 5432
-      targetPort: 5432`,
-  })
-  // Redis Deployment + Service
-  await gx('kubectl_apply_manifest', {
-    manifest: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: authentik-redis
-  namespace: ${cfg.namespace}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: authentik-redis
-  template:
-    metadata:
-      labels:
-        app: authentik-redis
-    spec:
-      containers:
-        - name: redis
-          image: redis:7-alpine
-          ports:
-            - containerPort: 6379
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: authentik-redis
-  namespace: ${cfg.namespace}
-spec:
-  selector:
-    app: authentik-redis
-  ports:
-    - port: 6379
-      targetPort: 6379`,
-  })
-  await log('  PostgreSQL and Redis deployed ✓')
-
-  // Step 3: Install Authentik via Helm
-  await log('Step 3/4: Installing Authentik via Helm...')
+  // Install Authentik via Helm (manages PostgreSQL subchart with our password)
+  await log('Step 2/3: Installing Authentik via Helm...')
   await gx('helm_upgrade_install', {
     release: 'authentik', chart: 'authentik', repo: 'https://charts.goauthentik.io',
     namespace: cfg.namespace, createNamespace: false, valuesFile: `authentik:
@@ -368,24 +244,33 @@ server:
       - secretName: authentik-tls
         hosts:
           - ${cfg.hostname}
+postgresql:
+  auth:
+    password: "${postgresPassword}"
 `, wait: false, timeout: '300s',
   })
   await log('  Authentik installed ✓')
+  await log('  Authentik installed ✓')
 
-  // Step 4: Patch the secret key env var and envFrom
+  // Step 3: Patch the secret key env var name
   // Helm chart converts authentik.secretKey → AUTHENTIK_SECRETKEY (no underscore)
-  // but Authentik expects AUTHENTIK_SECRET_KEY (with underscore). Create an overlay
-  // secret and patch deployments to include it in envFrom.
-  await log('Step 4/4: Patching secret key env var name...')
+  // but Authentik expects AUTHENTIK_SECRET_KEY (with underscore). Patch deployments
+  // to include the overlay secret in envFrom so the correct key name wins.
+  await log('Step 3/3: Patching secret key env var name...')
   await gx('kubectl_patch', {
     resource: 'deployment', name: 'authentik-server', namespace: cfg.namespace,
+    patchType: 'strategic',
     patch: JSON.stringify({
       spec: {
         template: {
           spec: {
             containers: [{
               name: 'server',
-              envFrom: [{ secretRef: { name: 'authentik' } }, { secretRef: { name: 'authentik-secret-fix' } }],
+              envFrom: [
+                { secretRef: { name: 'authentik' } },
+                { secretRef: { name: 'authentik-secrets' } },
+                { secretRef: { name: 'authentik-secret-fix' } },
+              ],
             }],
           },
         },
@@ -394,13 +279,18 @@ server:
   })
   await gx('kubectl_patch', {
     resource: 'deployment', name: 'authentik-worker', namespace: cfg.namespace,
+    patchType: 'strategic',
     patch: JSON.stringify({
       spec: {
         template: {
           spec: {
             containers: [{
               name: 'worker',
-              envFrom: [{ secretRef: { name: 'authentik' } }, { secretRef: { name: 'authentik-secret-fix' } }],
+              envFrom: [
+                { secretRef: { name: 'authentik' } },
+                { secretRef: { name: 'authentik-secrets' } },
+                { secretRef: { name: 'authentik-secret-fix' } },
+              ],
             }],
           },
         },
