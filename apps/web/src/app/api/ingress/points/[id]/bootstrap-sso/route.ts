@@ -279,6 +279,7 @@ server:
         hosts:
           - ${cfg.hostname}
 postgresql:
+  enabled: true
   auth:
     postgresPassword: "${postgresPassword}"
     password: "${postgresPassword}"
