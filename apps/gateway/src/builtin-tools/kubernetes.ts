@@ -86,6 +86,31 @@ export const kubernetesTools = [
     },
   },
   {
+    name: 'kubectl_delete',
+    description: 'Delete a Kubernetes resource (kubectl delete)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        resource:  { type: 'string', description: 'Resource type, e.g. pod, deployment, service, deploymentconfig' },
+        name:      { type: 'string', description: 'Resource name (omit to delete by selector/file)' },
+        namespace: { type: 'string', description: 'Namespace (for namespaced resources)' },
+        ignoreNotFound: { type: 'boolean', description: 'Ignore if resource not found (default true)' },
+      },
+      required: ['resource'],
+    },
+    async execute(args: Record<string, unknown>) {
+      const cmdArgs = ['delete', String(args.resource)]
+      if (args.name) cmdArgs.push(String(args.name))
+      if (args.namespace) cmdArgs.push('-n', String(args.namespace))
+      if (args.selector) {
+        cmdArgs.push('-l', String(args.selector))
+        if (!args.name) cmdArgs.push('--all')
+      }
+      if (args.ignoreNotFound !== false) cmdArgs.push('--ignore-not-found=true')
+      return kubectl(cmdArgs)
+    },
+  },
+  {
     name: 'kubectl_get',
     description: 'Get any Kubernetes resource in JSON or YAML format',
     inputSchema: {
@@ -262,31 +287,115 @@ export const kubernetesTools = [
   },
 
   {
+    name: 'helm_repo_add',
+    description: 'Add a Helm chart repository (helm repo add)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Repository name' },
+        url:  { type: 'string', description: 'Repository URL' },
+      },
+      required: ['name', 'url'],
+    },
+    async execute(args: Record<string, unknown>) {
+      try {
+        return await helm(['repo', 'add', String(args.name), String(args.url)])
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e)
+        if (msg.includes('already exists')) return `Repository "${args.name}" already exists`
+        throw new Error(`helm repo add failed: ${msg}`)
+      }
+    },
+  },
+
+  {
+    name: 'helm_list',
+    description: 'List Helm releases (helm list)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        namespace: { type: 'string', description: 'Namespace to list releases in' },
+        filter:    { type: 'string', description: 'Optional regex filter on release name' },
+      },
+    },
+    async execute(args: Record<string, unknown>) {
+      const cmdArgs = ['list', '--short']
+      if (args.namespace) cmdArgs.push('-n', String(args.namespace))
+      if (args.filter) cmdArgs.push('--filter', String(args.filter))
+      return await helm(cmdArgs)
+    },
+  },
+
+  {
+    name: 'helm_uninstall',
+    description: 'Uninstall a Helm release (helm uninstall)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        release:     { type: 'string', description: 'Release name' },
+        namespace:   { type: 'string', description: 'Namespace the release is installed in' },
+        timeout:     { type: 'string', description: 'Timeout (default 60s)' },
+      },
+      required: ['release', 'namespace'],
+    },
+    async execute(args: Record<string, unknown>) {
+      return helm([
+        'uninstall', String(args.release),
+        '--namespace', String(args.namespace),
+        '--timeout', String(args.timeout ?? '60s'),
+      ])
+    },
+  },
+
+  {
     name: 'helm_upgrade_install',
     description: 'Install or upgrade a Helm chart (helm upgrade --install)',
     inputSchema: {
       type: 'object',
       properties: {
         release:          { type: 'string', description: 'Release name' },
-        chart:            { type: 'string', description: 'Chart name or path' },
-        repo:             { type: 'string', description: 'Helm repo URL (optional)' },
+        chart:            { type: 'string', description: 'Chart name or path (e.g. "repo/chart" or full URL)' },
+        repo:             { type: 'string', description: 'Helm repo name or URL. If it starts with http, uses --repo mode. Otherwise uses local cache.' },
         namespace:        { type: 'string', description: 'Namespace to install into' },
         createNamespace:  { type: 'boolean', description: 'Create namespace if it does not exist' },
-        values:           { type: 'object', description: 'Values to set (key: value pairs)' },
+        values:           { type: 'object', description: 'Simple values to set (key: value pairs). For complex/nested values use valuesFile.' },
+        valuesFile:       { type: 'string', description: 'Full YAML values file as a string. Used for arrays and nested structures.' },
         wait:             { type: 'boolean', description: 'Wait for release to be ready (default true)' },
         timeout:          { type: 'string', description: 'Timeout (default 120s)' },
       },
       required: ['release', 'chart', 'namespace'],
     },
     async execute(args: Record<string, unknown>) {
-      const cmdArgs = [
-        'upgrade', '--install', String(args.release), String(args.chart),
+      const chart = String(args.chart)
+      const repo = String(args.repo ?? '')
+      const cmdArgs: string[] = [
+        'upgrade', '--install', String(args.release), chart,
+      ]
+      // If repo is a URL, use --repo mode (remote repo without pre-registering)
+      // --repo takes a URL string (not NAME URL pair)
+      if (repo.startsWith('http')) {
+        cmdArgs.push('--repo', repo)
+      }
+      cmdArgs.push(
         '--namespace', String(args.namespace),
         '--timeout', String(args.timeout ?? '120s'),
-      ]
-      if (args.repo)            cmdArgs.push('--repo', String(args.repo))
+      )
       if (args.createNamespace) cmdArgs.push('--create-namespace')
       if (args.wait !== false)  cmdArgs.push('--wait')
+      // Handle valuesFile (YAML string for complex/nested values including arrays)
+      if (args.valuesFile) {
+        const { writeFileSync, unlinkSync } = await import('fs')
+        const valuesFile = String(args.valuesFile)
+        const tmpFile = `/tmp/helm-values-${Date.now()}.yaml`
+        writeFileSync(tmpFile, valuesFile, 'utf8')
+        cmdArgs.push('--values', tmpFile)
+        try {
+          return await helm(cmdArgs)
+        } finally {
+          try { unlinkSync(tmpFile) } catch { /* ignore */ }
+        }
+      }
+      // Simple key-value --set flags
       const values = args.values as Record<string, unknown> | undefined
       if (values) {
         for (const [k, v] of Object.entries(values)) {
