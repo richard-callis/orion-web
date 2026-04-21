@@ -307,6 +307,22 @@ model User {
   assignedBugs  Bug[]     @relation("AssignedBugUser")
   sessions      Session[]
   environmentTiers EnvironmentUserTier[]
+  apiKeys          ApiKey[]
+}
+
+model ApiKey {
+  id         String   @id @default(uuid())
+  userId     String
+  hash       String   @unique
+  hashPrefix String
+  name       String   @default("Default")
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@map("api_keys")
 }
 
 model Session {

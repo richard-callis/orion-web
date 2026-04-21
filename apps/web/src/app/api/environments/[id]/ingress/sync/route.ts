@@ -37,43 +37,44 @@ export async function POST(
     return NextResponse.json({ error: 'ingresses must be an array' }, { status: 400 })
   }
 
-  // Load known domain names from system settings for matching
-  const domainSettings = await prisma.systemSetting.findMany({
-    where: { key: { in: ['domain.internal', 'domain.public'] } },
-  })
-  const knownDomains = domainSettings.map(s => ({
-    name: (s.value as string).toLowerCase(),
-    type: s.key === 'domain.public' ? 'public' : 'internal',
-  }))
+  // Load all known domains for matching
+  const domains = await prisma.domain.findMany({ select: { id: true, name: true, type: true } })
+  const domainByName = new Map(domains.map(d => [d.name.toLowerCase(), d]))
 
-  // Find or create the IngressPoint for this environment (one per environment, type=traefik)
-  let ingressPoint = await prisma.ingressPoint.findFirst({
-    where: { environmentId: params.id, type: 'traefik' },
-  })
+  // Build a lookup: suffix (parent domain) -> domain record
+  // e.g. "khalisio.com" -> domain record, "khalis.corp" -> domain record
+  const parentDomainLookup = new Map<string, { id: string; name: string }>()
+  for (const d of domains) {
+    const name = d.name.toLowerCase()
+    parentDomainLookup.set(name, { id: d.id, name })
+    // Also register each label-level suffix for nested subdomains
+    const parts = name.split('.')
+    for (let i = 1; i < parts.length; i++) {
+      const suffix = parts.slice(i).join('.')
+      parentDomainLookup.set(suffix, { id: d.id, name })
+    }
+  }
 
-  if (!ingressPoint) {
-    // Determine the domain for this environment's ingress point
-    // Default to the first known domain or create one from system settings
-    let domainRecord = await prisma.domain.findFirst({ orderBy: { createdAt: 'asc' } })
-    if (!domainRecord && knownDomains.length > 0) {
-      domainRecord = await prisma.domain.create({
-        data: { name: knownDomains[0].name, type: knownDomains[0].type },
+  // Create or find an ingress point per domain for this environment
+  const ingressPointByDomain = new Map<string, any>()
+  for (const [domainSuffix] of parentDomainLookup) {
+    let ip = await prisma.ingressPoint.findFirst({
+      where: { environmentId: params.id, type: 'traefik', domainId: parentDomainLookup.get(domainSuffix)!.id },
+    })
+    if (!ip) {
+      const d = parentDomainLookup.get(domainSuffix)!
+      ip = await prisma.ingressPoint.create({
+        data: {
+          domainId:      d.id,
+          environmentId: params.id,
+          name:          `${env.name} (${d.name})`,
+          type:          'traefik',
+          certManager:   true,
+          status:        'active',
+        },
       })
     }
-    if (!domainRecord) {
-      return NextResponse.json({ error: 'No domain configured — complete the setup wizard first' }, { status: 422 })
-    }
-
-    ingressPoint = await prisma.ingressPoint.create({
-      data: {
-        domainId:      domainRecord.id,
-        environmentId: params.id,
-        name:          env.name,
-        type:          'traefik',
-        certManager:   true,
-        status:        'active',
-      },
-    })
+    ingressPointByDomain.set(domainSuffix, ip)
   }
 
   let created = 0
@@ -82,6 +83,20 @@ export async function POST(
   for (const rule of ingresses) {
     const host = rule.host.trim().toLowerCase()
     if (!host) continue
+
+    // Match host to a parent domain (e.g. "auth.khalisio.com" -> "khalisio.com")
+    const parts = host.split('.')
+    let matchedDomain: { id: string; name: string } | undefined
+    for (let i = 1; i < parts.length; i++) {
+      const suffix = parts.slice(i).join('.')
+      if (parentDomainLookup.has(suffix)) {
+        matchedDomain = parentDomainLookup.get(suffix)!
+        break
+      }
+    }
+    if (!matchedDomain) continue // no matching domain
+
+    const ingressPoint = ingressPointByDomain.get(matchedDomain.name)!
 
     // Upsert: create only if host doesn't already exist under this ingress point
     const existing = await prisma.ingressRoute.findFirst({

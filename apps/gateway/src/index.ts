@@ -63,6 +63,35 @@ const GATEWAY_CREDS_FILE  = process.env.GATEWAY_CREDS_FILE   ?? ''
 let ENVIRONMENT_ID = process.env.ENVIRONMENT_ID ?? ''
 let GATEWAY_TOKEN  = process.env.GATEWAY_TOKEN  ?? ''
 
+/** Discover the node's own infrastructure IP address to replace placeholder GATEWAY_URLs */
+async function discoverNodeIp(): Promise<string | null> {
+  // Get the pod's node name via kubectl (downward API NODE_NAME may not be set)
+  let nodeName = process.env.NODE_NAME
+  if (!nodeName) {
+    try {
+      const podName = process.env.POD_NAME ?? (await execFileAsync('hostname', [])).stdout.trim()
+      nodeName = (await execFileAsync('kubectl', ['get', 'pod', podName, '-o', 'jsonpath={.spec.nodeName}'])).stdout.trim()
+    } catch { /* can't get node name */ }
+  }
+  if (nodeName) {
+    try {
+      const { stdout } = await execFileAsync('kubectl', ['get', 'node', nodeName, '-o', `jsonpath={.status.addresses[?(@.type=="InternalIP")].address}`])
+      const ip = stdout.trim()
+      if (ip) return ip
+    } catch { /* fall through */ }
+  }
+  // Final fallback: first non-loopback, non-pod-network IPv4
+  const { stdout } = await execFileAsync('hostname', ['-i'])
+  const addrs = stdout.trim().split(/\s+/)
+  for (const a of addrs) {
+    const ip = a.trim()
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(ip) && !ip.startsWith('10.244.')) return ip
+  }
+  return null
+}
+
+let ACTUAL_GATEWAY_URL = GATEWAY_URL
+
 // Stable machine identity — generated once on first boot, persisted in the creds file
 // (localhost mode) or K8s Secret (cluster mode). Sent with every join request so ORION
 // can verify the fingerprint on re-join and reject stolen tokens.
@@ -131,7 +160,7 @@ async function joinWithToken(joinToken: string): Promise<void> {
   const res = await fetch(`${ORION_URL}/api/environments/join`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ joinToken, gatewayUrl: GATEWAY_URL, gatewayType: GATEWAY_TYPE, machineId: MACHINE_ID }),
+    body: JSON.stringify({ joinToken, gatewayUrl: ACTUAL_GATEWAY_URL, gatewayType: GATEWAY_TYPE, machineId: MACHINE_ID }),
   })
   if (!res.ok) {
     const err = await res.text()
@@ -217,8 +246,9 @@ server.setRequestHandler(ListToolsRequestSchema, () => {
   return { tools }
 })
 
-server.setRequestHandler(CallToolRequestSchema, async (req) => {
-  const { name, arguments: args = {} } = req.params
+server.setRequestHandler(CallToolRequestSchema, async (req: unknown) => {
+  const params = (req as { params: { name: string; arguments?: Record<string, unknown> } }).params
+  const { name, arguments: args = {} } = params
   const tool = activeTools.find(t => t.name === name)
   if (!tool) return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true }
 
@@ -253,12 +283,12 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 // Health check (used by ORION, k8s probes — no auth required)
-app.get('/health', (_req, res) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', environmentId: ENVIRONMENT_ID, tools: activeTools.length, type: GATEWAY_TYPE })
 })
 
 // REST tool API — used by Ollama/Gemini agents that can't speak MCP natively
-app.get('/tools', requireAuth, (_req, res) => {
+app.get('/tools', requireAuth, (_req: Request, res: Response) => {
   res.json(activeTools.map(t => ({
     name:        t.name,
     description: t.description,
@@ -266,7 +296,7 @@ app.get('/tools', requireAuth, (_req, res) => {
   })))
 })
 
-app.post('/tools/execute', requireAuth, async (req, res) => {
+app.post('/tools/execute', requireAuth, async (req: Request, res: Response) => {
   const { name, arguments: args = {} } = req.body as { name: string; arguments?: Record<string, unknown> }
   const tool = activeTools.find(t => t.name === name)
   const builtin = BUILTIN_REGISTRY[name]
@@ -289,7 +319,7 @@ app.post('/tools/execute', requireAuth, async (req, res) => {
 })
 
 // Self-update endpoint — triggers a rolling restart so the pod is replaced with the latest image
-app.post('/update', requireAuth, async (_req, res) => {
+app.post('/update', requireAuth, async (_req: Request, res: Response) => {
   res.json({ ok: true, message: 'Update triggered — gateway will restart shortly' })
   // Defer the restart so the HTTP response is sent first
   setTimeout(async () => {
@@ -314,7 +344,7 @@ app.post('/update', requireAuth, async (_req, res) => {
 // MCP SSE endpoint — AI agents connect here
 const transports: Map<string, SSEServerTransport> = new Map()
 
-app.get('/mcp', async (req, res) => {
+app.get('/mcp', async (req: Request, res: Response) => {
   const transport = new SSEServerTransport('/mcp/message', res)
   const sessionId = transport.sessionId
   transports.set(sessionId, transport)
@@ -322,7 +352,7 @@ app.get('/mcp', async (req, res) => {
   await server.connect(transport)
 })
 
-app.post('/mcp/message', async (req, res) => {
+app.post('/mcp/message', async (req: Request, res: Response) => {
   const sessionId = req.query.sessionId as string
   const transport = transports.get(sessionId)
   if (!transport) { res.status(404).json({ error: 'Session not found' }); return }
@@ -332,6 +362,15 @@ app.post('/mcp/message', async (req, res) => {
 // ── Startup ───────────────────────────────────────────────────────────────────
 
 async function start() {
+  // Resolve placeholder GATEWAY_URL (e.g. http://<node-ip>:30001) to NodePort URL
+  // Always use the NodePort pattern so the gateway is reachable from outside the cluster
+  if (GATEWAY_URL.includes('<node-ip>') || GATEWAY_URL.match(/^\d+\.\d+\.\d+\.\d+:\d+$/)) {
+    const nodeIp = await discoverNodeIp()
+    // Use port 30001 (NodePort) so ORION can reach the gateway from outside the cluster
+    ACTUAL_GATEWAY_URL = `http://${nodeIp || '10.2.2.30'}:30001`
+    console.log(`[gateway] Resolved GATEWAY_URL to ${ACTUAL_GATEWAY_URL}`)
+  }
+
   // Use persisted credentials if available, otherwise exchange join token
   if (ENVIRONMENT_ID && GATEWAY_TOKEN) {
     console.log(`[gateway] Using persisted credentials for environment ${ENVIRONMENT_ID}`)
@@ -340,7 +379,7 @@ async function start() {
   }
 
   // Construct ORION client now that credentials are resolved
-  orion = new OrionClient({ mccUrl: ORION_URL, environmentId: ENVIRONMENT_ID, gatewayToken: GATEWAY_TOKEN, gatewayUrl: GATEWAY_URL })
+  orion = new OrionClient({ mccUrl: ORION_URL, environmentId: ENVIRONMENT_ID, gatewayToken: GATEWAY_TOKEN, gatewayUrl: ACTUAL_GATEWAY_URL })
 
   // Register with ORION and fetch initial tool config
   console.log(`[gateway] Version: ${GATEWAY_VERSION}`)

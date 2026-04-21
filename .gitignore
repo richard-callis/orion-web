@@ -9,3 +9,4 @@ dist/
 worker.js
 .env.test
 package-lock.json
+.worktrees/

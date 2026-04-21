@@ -23,6 +23,13 @@ RUN ARCH=${TARGETARCH:-amd64} \
          -o /usr/local/bin/kubectl \
     && chmod +x /usr/local/bin/kubectl
 
+# Install talosctl — architecture-aware
+RUN ARCH=${TARGETARCH:-amd64} \
+    && TALOS_VERSION=$(curl -fsSL https://api.github.com/repos/siderolabs/talos/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": "v\([^"]*\)".*/\1/') \
+    && curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-${ARCH}" \
+         -o /usr/local/bin/talosctl \
+    && chmod +x /usr/local/bin/talosctl
+
 # Install helm — architecture-aware
 RUN ARCH=${TARGETARCH:-amd64} \
     && HELM_VERSION=$(curl -fsSL https://api.github.com/repos/helm/helm/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": "\(.*\)".*/\1/') \

@@ -1,4 +1,6 @@
 import { customApi } from '@/lib/k8s'
+import StorageBootstrapPanel from '@/components/infrastructure/StorageBootstrapPanel'
+import StorageStatsPanel from '@/components/infrastructure/StorageStatsPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,6 +58,12 @@ export default async function StoragePage() {
 
   return (
     <div className="space-y-4 p-4 lg:p-6">
+      {/* Longhorn bootstrap */}
+      <StorageBootstrapPanel />
+
+      {/* Storage capacity stats */}
+      <StorageStatsPanel />
+
       {/* Summary cards */}
       <div className="grid grid-cols-4 gap-4">
         {[

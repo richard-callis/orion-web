@@ -1,0 +1,100 @@
+{
+  "name": "authentik",
+  "displayName": "Authentik",
+  "description": "Open-source identity provider with SSO, MFA, and passwordless auth",
+  "helm": {
+    "release": "authentik",
+    "chart": "goauthentik/authentik",
+    "repo": "https://charts.goauthentik.io",
+    "values": {
+      "authentik": {
+        "secretKey": "{{ genSecret 64 }}"
+      },
+      "server": {
+        "replicaCount": 1,
+        "ingress": {
+          "enabled": true,
+          "ingressClassName": "traefik",
+          "hosts": ["{{ hostname }}"],
+          "annotations": {
+            "cert-manager.io/cluster-issuer": "{{ clusterIssuer }}"
+          },
+          "tls": [
+            {
+              "secretName": "authentik-tls",
+              "hosts": ["{{ hostname }}"]
+            }
+          ]
+        }
+      },
+      "postgresql": {
+        "enabled": true
+      }
+    },
+    "wait": false,
+    "timeout": "300s"
+  },
+  "overlaySecret": {
+    "name": "authentik-secret-fix",
+    "entries": [
+      {
+        "key": "AUTHENTIK_SECRET_KEY",
+        "value": "{{ .helm.values.authentik.secretKey }}"
+      },
+      {
+        "key": "AUTHENTIK_ROOT_PASSWORD",
+        "value": "{{ adminPassword }}"
+      },
+      {
+        "key": "AUTHENTIK_POSTGRESQL__HOST",
+        "value": "{{ .helm.release }}-postgresql"
+      },
+      {
+        "key": "AUTHENTIK_POSTGRESQL__NAME",
+        "value": "authentik"
+      },
+      {
+        "key": "AUTHENTIK_POSTGRESQL__USER",
+        "value": "authentik"
+      },
+      {
+        "key": "AUTHENTIK_POSTGRESQL__PORT",
+        "value": "5432"
+      },
+      {
+        "key": "AUTHENTIK_POSTGRESQL__PASSWORD",
+        "value": "{{ resolveSecret .helm.release-postgresql .data.password }}"
+      }
+    ]
+  },
+  "deployments": [
+    {
+      "name": "authentik-server",
+      "containerName": "server"
+    },
+    {
+      "name": "authentik-worker",
+      "containerName": "worker"
+    }
+  ],
+  "waitForReady": {
+    "statefulset": {
+      "name": "{{ .helm.release }}-postgresql",
+      "timeout": 60
+    },
+    "deployment": {
+      "name": "{{ .helm.release }}-server",
+      "timeout": 600
+    }
+  },
+  "cleanup": {
+    "helmRelease": "authentik",
+    "statefulsets": ["authentik-postgresql", "authentik-redis"],
+    "deployments": ["authentik-redis"],
+    "secrets": ["authentik", "authentik-secrets", "authentik-secret-key", "authentik-root-password", "authentik-postgresql"],
+    "services": ["authentik-server", "authentik-postgresql", "authentik-redis", "authentik-worker", "authentik-goauthentikio"],
+    "ingresses": ["authentik"],
+    "certificates": ["authentik-tls"],
+    "pvcPrefixes": ["data-authentik-postgresql-", "redis-data-authentik-redis-"]
+  }
+}
