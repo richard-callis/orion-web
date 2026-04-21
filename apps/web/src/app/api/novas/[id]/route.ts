@@ -54,7 +54,7 @@ export async function PUT(
   if (body.tags !== undefined) data.tags = body.tags
 
   // Save revision before updating
-  const prevConfig = { ...nova.config }
+  const prevConfig = nova.config ? { ...(nova.config as Record<string, unknown>) } : {}
   const newConfig = data.config || prevConfig
 
   const updatedNova = await prisma.nova.update({
