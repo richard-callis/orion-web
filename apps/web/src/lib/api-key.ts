@@ -55,6 +55,39 @@ const sql = {
     `DELETE FROM api_keys WHERE id = '${keyId.replace(/'/g, "''")}' AND "userId" = '${userId.replace(/'/g, "''")}'`,
 } as const
 
+// PBKDF2-SHA256: 1,000,000 iterations exceeds CodeQL minimum (~600K)
+// and provides ~100ms verification time on modern hardware.
+const API_KEY_KDF_ALGO = 'pbkdf2_sha256'
+const API_KEY_KDF_ITERATIONS = 1000000
+const API_KEY_KDF_KEYLEN = 32
+const API_KEY_KDF_DIGEST = 'sha256'
+
+function hashPrefixFromStoredHash(storedHash: string): string {
+  return createHash('sha256').update(storedHash).digest('hex').slice(0, 6)
+}
+
+function hashApiKey(rawKey: string): string {
+  const salt = randomBytes(16).toString('hex')
+  const derived = pbkdf2Sync(rawKey, salt, API_KEY_KDF_ITERATIONS, API_KEY_KDF_KEYLEN, API_KEY_KDF_DIGEST).toString('hex')
+  return `${API_KEY_KDF_ALGO}$${API_KEY_KDF_ITERATIONS}$${salt}$${derived}`
+}
+
+function verifyApiKeyHash(rawKey: string, storedHash: string): boolean {
+  const parts = storedHash.split('$')
+  if (parts.length !== 4) return false
+  const [algo, iterStr, salt, expectedHex] = parts
+  if (algo !== API_KEY_KDF_ALGO) return false
+
+  const iterations = Number(iterStr)
+  if (!Number.isInteger(iterations) || iterations <= 0) return false
+
+  const actual = pbkdf2Sync(rawKey, salt, iterations, API_KEY_KDF_KEYLEN, API_KEY_KDF_DIGEST)
+  const expected = Buffer.from(expectedHex, 'hex')
+  if (expected.length !== actual.length) return false
+
+  return timingSafeEqual(actual, expected)
+}
+
 /**
  * Generate a new API key.
  * Returns the plaintext key (shown once) and metadata.
