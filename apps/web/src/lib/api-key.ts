@@ -6,7 +6,8 @@
  * Only admins can create API keys.
  */
 
-import { randomBytes, pbkdf2Sync, timingSafeEqual, createHash } from 'crypto'
+import { randomBytes } from 'crypto'
+import { compare, hash } from 'bcryptjs'
 import { prisma } from './db'
 
 export type ApiKeyRow = {
@@ -50,60 +51,32 @@ const sql = {
   findByHash: `SELECT "id", "hashPrefix", name, active, "expiresAt", "lastUsedAt", "createdAt" FROM api_keys WHERE "hashPrefix" = $1 AND hash = $2`,
   listByUser: `SELECT "id", "hashPrefix", name, active, "expiresAt", "lastUsedAt", "createdAt" FROM api_keys WHERE "userId" = $1 ORDER BY "createdAt" DESC`,
   verifyByHash: `SELECT "id", "userId", "expiresAt", "lastUsedAt", active FROM api_keys WHERE "hashPrefix" = $1 AND hash = $2`,
-  updateLastUsed: (hash: string) => `UPDATE api_keys SET "lastUsedAt" = now() WHERE hash = '${hash.replace(/'/g, "''")}'`,
+  updateLastUsed: (h: string) => `UPDATE api_keys SET "lastUsedAt" = now() WHERE hash = '${h.replace(/'/g, "''")}'`,
   deleteByKey: (keyId: string, userId: string) =>
     `DELETE FROM api_keys WHERE id = '${keyId.replace(/'/g, "''")}' AND "userId" = '${userId.replace(/'/g, "''")}'`,
 } as const
 
-// PBKDF2-SHA256: 1,000,000 iterations exceeds CodeQL minimum (~600K)
-// and provides ~100ms verification time on modern hardware.
-const API_KEY_KDF_ALGO = 'pbkdf2_sha256'
-const API_KEY_KDF_ITERATIONS = 1000000
-const API_KEY_KDF_KEYLEN = 32
-const API_KEY_KDF_DIGEST = 'sha256'
-
-function hashPrefixFromStoredHash(storedHash: string): string {
-  return createHash('sha256').update(storedHash).digest('hex').slice(0, 6)
-}
-
-function hashApiKey(rawKey: string): string {
-  const salt = randomBytes(16).toString('hex')
-  const derived = pbkdf2Sync(rawKey, salt, API_KEY_KDF_ITERATIONS, API_KEY_KDF_KEYLEN, API_KEY_KDF_DIGEST).toString('hex')
-  return `${API_KEY_KDF_ALGO}$${API_KEY_KDF_ITERATIONS}$${salt}$${derived}`
-}
-
-function verifyApiKeyHash(rawKey: string, storedHash: string): boolean {
-  const parts = storedHash.split('$')
-  if (parts.length !== 4) return false
-  const [algo, iterStr, salt, expectedHex] = parts
-  if (algo !== API_KEY_KDF_ALGO) return false
-
-  const iterations = Number(iterStr)
-  if (!Number.isInteger(iterations) || iterations <= 0) return false
-
-  const actual = pbkdf2Sync(rawKey, salt, iterations, API_KEY_KDF_KEYLEN, API_KEY_KDF_DIGEST)
-  const expected = Buffer.from(expectedHex, 'hex')
-  if (expected.length !== actual.length) return false
-
-  return timingSafeEqual(actual, expected)
-}
-
+/**
+ * Generate a new API key.
+ * Returns the plaintext key (shown once) and metadata.
+ */
 export async function createApiKey(
   userId: string,
   name: string,
   expiresInDays?: number,
 ): Promise<{ key: string; info: ApiKeyInfo }> {
   const raw = `orion_ak_${randomBytes(18).toString('hex')}`
-  const hash = hashApiKey(raw)
-  const prefix = hashPrefixFromStoredHash(hash)
+  // bcryptjs with cost factor 14 (exceeds CodeQL minimum of cost 12)
+  const hashValue = await hash(raw, 14)
+  const prefix = hashValue.slice(0, 6)
   const expiresAt = expiresInDays ? new Date(Date.now() + expiresInDays * 86400000) : null
 
   await prisma.$executeRawUnsafe(
     `INSERT INTO api_keys ("userId", "hashPrefix", hash, name, "expiresAt") VALUES ($1, $2, $3, $4, $5)`,
-    userId, prefix, hash, name, expiresAt,
+    userId, prefix, hashValue, name, expiresAt,
   )
 
-  const rows = await prisma.$queryRawUnsafe<ApiKeyRow[]>(sql.findByHash, prefix, hash)
+  const rows = await prisma.$queryRawUnsafe<ApiKeyRow[]>(sql.findByHash, prefix, hashValue)
   return { key: raw, info: mapRow(rows[0]) }
 }
 
@@ -123,20 +96,24 @@ export async function verifyApiKey(key: string): Promise<string | null> {
   if (!key.startsWith('orion_ak_')) return null
   if (key.length < 18) return null // minimum length check
 
-  const prefix = hashPrefixFromStoredHash(hashApiKey(key))
+  const hashValue = await hash(key, 14)
+  const prefix = hashValue.slice(0, 6)
 
-  const rows = await prisma.$queryRawUnsafe<ApiKeyRow[]>(sql.verifyByHash, prefix, '')
+  const rows = await prisma.$queryRawUnsafe<ApiKeyRow[]>(sql.verifyByHash, prefix, hashValue)
 
   if (!rows || rows.length === 0) return null
 
-  const r = rows.find(row => verifyApiKeyHash(key, row.hash))
-  if (!r) return null
+  const r = rows[0]
 
   // Check active
   if (!r.active) return null
 
   // Check expiry
   if (r.expiresAt && new Date(r.expiresAt) < new Date()) return null
+
+  // Verify the key matches the stored hash
+  const match = await compare(key, r.hash)
+  if (!match) return null
 
   // Update lastUsedAt
   await prisma.$executeRawUnsafe(sql.updateLastUsed(r.hash))
