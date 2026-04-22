@@ -140,7 +140,7 @@ export async function GET(
       return NextResponse.json({ error: 'nodes query returned no data' }, { status: 502 })
     }
 
-    const nodeList = JSON.parse(nodesJsonResult)
+    const nodeList = JSON.parse(nodesJson.value)
     const nodes: CachedNode[] = (nodeList.items ?? []).map(parseNode).filter((n: CachedNode) => n.name)
 
     let pods: CachedPod[] = []
