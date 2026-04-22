@@ -2,9 +2,13 @@
  * GET /api/notes/graph-data
  *
  * Returns nodes and links for the knowledge graph visualization.
- * Links are derived from [[wikilink]] patterns in note content.
+ * Links include both [[wikilink]] edges and semantic (vector-similarity) edges.
+ *
+ * Query params:
+ *   includeSemantic=true|false — include semantic edges (default: true)
+ *   threshold=0.XX — minimum similarity score for semantic edges (default: 0.5)
  */
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { computeOutgoingEdges } from '@/lib/wiki-links'
 
@@ -17,8 +21,14 @@ interface NoteRow {
   pinned: boolean
 }
 
-export async function GET() {
-  const notes: NoteRow[] = await prisma.note.findMany({
+export const dynamic = 'force-dynamic'
+
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url)
+  const includeSemantic = searchParams.get('includeSemantic') !== 'false'
+  const threshold = parseFloat(searchParams.get('threshold') ?? '0.5') || 0.5
+
+  const notes = await prisma.note.findMany({
     orderBy: { updatedAt: 'desc' },
   })
 
@@ -30,12 +40,32 @@ export async function GET() {
     pinned: n.pinned,
   }))
 
-  const edges = computeOutgoingEdges(
+  // Wikilink edges (existing)
+  const wikilinkEdges = computeOutgoingEdges(
     notes.map(n => ({ id: n.id, title: n.title, content: n.content ?? '' })),
-  )
+  ).map(e => ({
+    source: e.source,
+    target: e.target,
+    type: 'wikilink',
+  }))
 
-  // Transform to react-force-graph-2d format (links)
-  const links = edges.map(e => ({ source: e.source, target: e.target }))
+  // Semantic edges (new)
+  let semanticLinks: Array<{ source: string; target: string; type: 'semantic'; score: number }> = []
+  if (includeSemantic) {
+    const connections = await prisma.semanticConnection.findMany({
+      select: { sourceNoteId: true, targetNoteId: true, score: true },
+      where: { score: { gte: threshold } },
+      orderBy: { score: 'desc' },
+    })
+    semanticLinks = connections.map(c => ({
+      source: c.sourceNoteId,
+      target: c.targetNoteId,
+      type: 'semantic',
+      score: c.score,
+    }))
+  }
 
-  return NextResponse.json({ nodes, links })
+  const links = [...wikilinkEdges, ...semanticLinks]
+
+  return NextResponse.json({ nodes, links, counts: { wikilinks: wikilinkEdges.length, semantic: semanticLinks.length } })
 }
