@@ -3,21 +3,19 @@
  *
  * Regenerate embeddings for all notes and recompute semantic connections.
  * This is a batch operation that may take several minutes for large note sets.
- * Intended for admin use or triggered by the MCP tool knowledge_embed_all.
+ * Triggered by the MCP tool knowledge_embed_all.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { embedAllNotes, computeAllSemanticEdges } from '@/lib/embeddings'
+import { getServerSession } from 'next-auth'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
-  // Only allow admin users (check session)
-  const { default: { getToken } } = await import('next-auth/next/cookies')
-  // Skip auth in dev for now; production should gate this properly
-  // @ts-ignore - next-auth cookies module not typed for this path
-  const token = await getToken({ req, cookieName: 'next-auth.session.token' })
-  if (!token) {
+  // Auth check — session required
+  const session = await getServerSession()
+  if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
