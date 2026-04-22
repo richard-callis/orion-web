@@ -39,8 +39,3 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   await prisma.note.delete({ where: { id: params.id } })
   return new NextResponse(null, { status: 204 })
 }
-
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
-  await prisma.note.delete({ where: { id: params.id } })
-  return new NextResponse(null, { status: 204 })
-}
