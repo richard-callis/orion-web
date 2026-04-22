@@ -1,14 +1,16 @@
 'use client'
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkEmoji from 'remark-emoji'
 import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/atom-one-dark.css'
 import { CodeBlock } from '@/components/notes/CodeBlock'
+import { findBacklinks } from '@/lib/wiki-links'
 import {
   Plus, Search, ChevronRight, ChevronDown, Trash2, FileText,
-  Pin, Pencil, Eye, ArrowLeft,
+  Pin, Pencil, Eye, ArrowLeft, GitGraph,
 } from 'lucide-react'
 
 // Remark plugin: transforms > [!NOTE] / [!WARNING] etc. blockquotes into
@@ -59,6 +61,7 @@ interface Note {
 }
 
 export default function NotesPage() {
+  const router = useRouter()
   const [notes, setNotes] = useState<Note[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [mode, setMode] = useState<'edit' | 'preview'>('edit')
@@ -68,9 +71,19 @@ export default function NotesPage() {
   const [search, setSearch] = useState('')
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
   const [mobileView, setMobileView] = useState<'list' | 'editor'>('list')
+  const [wikilinkTarget, setWikilinkTarget] = useState<string | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const titleInputRef = useRef<HTMLInputElement>(null)
   const isSavingRef = useRef(false)
+
+  // Preprocess: convert [[Title]] and [[Title|Alias]] to markdown links
+  const preprocessContent = useCallback((content: string) => {
+    return content.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (_, title, alias) => {
+      const target = (alias || title).trim()
+      const slug = title.trim().toLowerCase().replace(/\s+/g, '-')
+      return `[${alias || title}](#${slug})`
+    })
+  }, [])
 
   // Fetch notes on mount
   useEffect(() => {
@@ -79,6 +92,16 @@ export default function NotesPage() {
       .then(setNotes)
       .catch(console.error)
   }, [])
+
+  // Handle wikilink clicks
+  useEffect(() => {
+    if (!wikilinkTarget) return
+    const match = notes.find(n => n.title.toLowerCase() === wikilinkTarget.toLowerCase())
+    if (match) {
+      selectNote(match.id)
+    }
+    setWikilinkTarget(null)
+  }, [wikilinkTarget, notes]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedNote = notes.find(n => n.id === selectedId) ?? null
 
@@ -410,6 +433,15 @@ export default function NotesPage() {
               </button>
             </div>
 
+            {/* View Graph */}
+            <button
+              onClick={() => router.push('/notes/graph')}
+              title="View knowledge graph"
+              className="p-1.5 rounded text-text-muted hover:text-accent transition-colors"
+            >
+              <GitGraph size={15} />
+            </button>
+
             {/* Delete */}
             <button
               onClick={() => deleteNote(selectedNote.id)}
@@ -495,9 +527,22 @@ export default function NotesPage() {
                           return <code className="bg-bg-raised font-mono text-sm rounded px-1 py-0.5 text-text-primary">{children}</code>
                         },
                         pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
-                        a: ({ href, children }) => (
-                          <a href={href} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">{children}</a>
-                        ),
+                        a: ({ href, children }) => {
+                          // Handle wikilinks (#[title-slug])
+                          if (href?.startsWith('#')) {
+                            if (!href) return null
+                            const title = decodeURIComponent(href.slice(1)).replace(/-/g, ' ')
+                            return (
+                              <button
+                                onClick={() => setWikilinkTarget(title)}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors font-medium"
+                              >
+                                {children}
+                              </button>
+                            )
+                          }
+                          return <a href={href} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">{children}</a>
+                        },
                         hr: () => <hr className="border-border-subtle my-4" />,
                         strong: ({ children }) => (
                           <strong className="font-semibold text-text-primary">{children}</strong>
@@ -521,8 +566,33 @@ export default function NotesPage() {
                         ),
                       }}
                     >
-                      {localContent}
+                      {preprocessContent(localContent)}
                     </ReactMarkdown>
+
+                    {/* Backlinks */}
+                    {selectedNote && (() => {
+                      const backlinks = findBacklinks(
+                        notes.map(n => ({ id: n.id, title: n.title, content: n.content })),
+                        selectedNote.title,
+                      )
+                      if (backlinks.length === 0) return null
+                      return (
+                        <div className="mt-6 pt-4 border-t border-border-subtle">
+                          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">Backlinks</h3>
+                          <div className="flex flex-wrap gap-1.5">
+                            {backlinks.map(bl => (
+                              <button
+                                key={bl.id}
+                                onClick={() => selectNote(bl.id)}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors"
+                              >
+                                [[{bl.title}]]
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })()}
                   </div>
                 ) : (
                   <p className="text-text-muted text-sm italic">Nothing to preview yet.</p>

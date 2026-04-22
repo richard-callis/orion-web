@@ -1,10 +1,9 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Server, MessageSquare, ClipboardList, Bot, NotebookPen } from 'lucide-react'
+import { Server, MessageSquare, ClipboardList, Bot, NotebookPen } from 'lucide-react'
 
 const tabs = [
-  { href: '/', icon: LayoutDashboard, label: 'Home' },
   { href: '/infrastructure', icon: Server, label: 'Infra' },
   { href: '/messages', icon: MessageSquare, label: 'Chat' },
   { href: '/tasks', icon: ClipboardList, label: 'Tasks' },
