@@ -12,22 +12,17 @@ interface GraphNode {
   pinned: boolean
 }
 
-interface GraphEdge {
+interface GraphLink {
   source: string
   target: string
+  type?: 'wikilink' | 'semantic'
+  score?: number
 }
 
 interface GraphData {
   nodes: GraphNode[]
-  links: GraphEdge[]
-}
-
-// Transform edges→links for react-force-graph-2d
-function toGraphData(notes: GraphNode[], edges: GraphEdge[]): GraphData {
-  return {
-    nodes: notes,
-    links: edges.map(e => ({ source: e.source, target: e.target })),
-  }
+  links: GraphLink[]
+  counts?: { wikilinks: number; semantic: number }
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -37,6 +32,9 @@ const CATEGORY_COLORS: Record<string, string> = {
   note: '#94a3b8',
 }
 
+const SEMANTIC_EDGE_COLOR = '#00A7E1' // accent color
+const WIKILINK_COLOR = '#475569'
+
 export function GraphView() {
   const router = useRouter()
   const [data, setData] = useState<GraphData | null>(null)
@@ -44,7 +42,9 @@ export function GraphView() {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
   const [highlightedNodes, setHighlightedNodes] = useState<Set<string>>(new Set())
-  const [highlightedEdges, setHighlightedEdges] = useState<Set<string>>(new Set())
+  const [highlightedLinks, setHighlightedLinks] = useState<Set<string>>(new Set())
+  const [showSemantic, setShowSemantic] = useState(true)
+  const [showWikilinks, setShowWikilinks] = useState(true)
   const fgRef = useRef<any>(null)
 
   // Fetch graph data on mount
@@ -68,49 +68,57 @@ export function GraphView() {
     )
   }, [data, searchTerm])
 
-  const validNodeIds = useMemo(() => new Set(filteredNodes.map(n => n.id)), [filteredNodes])
+  // Visible links (respects toggles)
+  const visibleLinks = useMemo(() => {
+    if (!data) return []
+    return data.links.filter(l => {
+      if (l.type === 'semantic' && !showSemantic) return false
+      if (l.type === 'wikilink' && !showWikilinks) return false
+      return true
+    })
+  }, [data, showSemantic, showWikilinks])
 
   // Handle node click
   const handleNodeClick = useCallback((node: GraphNode) => {
     setSelectedNode(node)
     setHighlightedNodes(new Set([node.id]))
-    setHighlightedEdges(new Set())
+    setHighlightedLinks(new Set())
 
-    if (data) {
+    if (visibleLinks) {
       const connected = new Set<string>()
-      for (const link of data.links) {
+      for (const link of visibleLinks) {
         if (link.source === node.id || link.target === node.id) {
-          connected.add(`${link.source}->${link.target}`)
+          connected.add(linkKey(link))
         }
       }
-      setHighlightedEdges(connected)
+      setHighlightedLinks(connected)
     }
-  }, [data])
+  }, [visibleLinks])
 
   // Handle node hover
   const handleNodeHover = useCallback((node: GraphNode | null) => {
     if (!node) {
       setHighlightedNodes(new Set())
-      setHighlightedEdges(new Set())
+      setHighlightedLinks(new Set())
       return
     }
 
     const nodes = new Set<string>([node.id])
-    const edges = new Set<string>()
+    const links = new Set<string>()
 
-    if (data) {
-      for (const link of data.links) {
+    if (visibleLinks) {
+      for (const link of visibleLinks) {
         if (link.source === node.id || link.target === node.id) {
           nodes.add(link.source)
           nodes.add(link.target)
-          edges.add(`${link.source}->${link.target}`)
+          links.add(linkKey(link))
         }
       }
     }
 
     setHighlightedNodes(nodes)
-    setHighlightedEdges(edges)
-  }, [data])
+    setHighlightedLinks(links)
+  }, [visibleLinks])
 
   // Zoom to node on click
   useEffect(() => {
@@ -120,28 +128,55 @@ export function GraphView() {
     }
   }, [selectedNode])
 
-  const linkKey = (link: GraphEdge) => `${link.source}->${link.target}`
+  const linkKey = (link: GraphLink) => `${link.source}->${link.target}`
 
   const nodeColor = (node: GraphNode) => {
     if (highlightedNodes.size > 0 && !highlightedNodes.has(node.id)) return '#334155'
     return CATEGORY_COLORS[node.type] || CATEGORY_COLORS.note
   }
 
-  const linkColor = (link: GraphEdge) => {
-    if (highlightedEdges.size > 0 && !highlightedEdges.has(linkKey(link))) return '#1e293b'
-    return '#475569'
+  const linkColor = (link: GraphLink) => {
+    if (highlightedLinks.size > 0 && !highlightedLinks.has(linkKey(link))) return '#1e293b'
+    return link.type === 'semantic' ? SEMANTIC_EDGE_COLOR : WIKILINK_COLOR
   }
 
-  const linkWidth = (link: GraphEdge) => {
-    if (highlightedEdges.size > 0 && !highlightedEdges.has(linkKey(link))) return 0.5
-    return 1.5
+  const linkWidth = (link: GraphLink) => {
+    if (highlightedLinks.size > 0 && !highlightedLinks.has(linkKey(link))) return 0.5
+    return link.type === 'semantic' ? 1.2 : 1.5
   }
 
-  // Compute links from selected node
-  const selectedLinks = useMemo(() => {
-    if (!selectedNode || !data) return []
-    return data.links.filter(l => l.source === selectedNode.id || l.target === selectedNode.id)
-  }, [selectedNode, data])
+  // Build link info (for display)
+  const getLinkInfo = useCallback((link: GraphLink): { label: string; score?: number } | null => {
+    if (link.type === 'semantic') {
+      return { label: 'Semantic match', score: link.score }
+    }
+    return { label: 'Wikilink' }
+  }, [])
+
+  // Connections for selected node (split by type)
+  const { wikilinkConnections, semanticConnections } = useMemo(() => {
+    if (!selectedNode || !data) return { wikilinkConnections: [], semanticConnections: [] }
+    const wikis: GraphLink[] = []
+    const sems: GraphLink[] = []
+    for (const link of data.links) {
+      if ((link.source === selectedNode.id || link.target === selectedNode.id) &&
+          (link.type !== 'semantic' || showSemantic) &&
+          (link.type !== 'wikilink' || showWikilinks)) {
+        if (link.type === 'semantic') sems.push(link)
+        else wikis.push(link)
+      }
+    }
+    return { wikilinkConnections: wikis, semanticConnections: sems }
+  }, [selectedNode, data, showSemantic, showWikilinks])
+
+  const targetNode = useCallback(
+    (link: GraphLink) => {
+      const isOutgoing = link.source === selectedNode?.id
+      const targetId = isOutgoing ? link.target : link.source
+      return data?.nodes.find(n => n.id === targetId)
+    },
+    [selectedNode, data],
+  )
 
   return (
     <div className="absolute inset-0 flex">
@@ -162,11 +197,9 @@ export function GraphView() {
             onNodeHover={handleNodeHover}
             linkColor={linkColor}
             linkWidth={linkWidth}
+            linkDirectionalDashArray={[4, 4]}
             backgroundColor="#0f172a"
             cooldownTicks={100}
-            onEngineStop={() => {
-              // Auto-center after layout settles
-            }}
           />
         )}
 
@@ -191,14 +224,36 @@ export function GraphView() {
           </div>
         </div>
 
-        {/* Legend */}
-        <div className="absolute bottom-3 left-3 flex gap-3 text-xs text-text-muted">
-          {Object.entries(CATEGORY_COLORS).map(([type, color]) => (
-            <div key={type} className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-              <span className="capitalize">{type}</span>
+        {/* Edge type toggles */}
+        <div className="absolute bottom-3 left-3 flex items-center gap-3">
+          {/* Edge type legend */}
+          <div className="flex items-center gap-2 text-xs">
+            <button
+              onClick={() => setShowWikilinks(v => !v)}
+              className={`flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${
+                showWikilinks ? 'text-text-secondary' : 'text-text-muted opacity-40'
+              }`}
+            >
+              <div className={`w-2 h-0.5 rounded`} style={{ backgroundColor: WIKILINK_COLOR }} />
+              <span>Wikilink</span>
+            </button>
+            <button
+              onClick={() => setShowSemantic(v => !v)}
+              className={`flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${
+                showSemantic ? 'text-text-secondary' : 'text-text-muted opacity-40'
+              }`}
+            >
+              <div className="w-2 h-0.5 rounded" style={{ backgroundColor: SEMANTIC_EDGE_COLOR }} />
+              <span>Semantic</span>
+            </button>
+          </div>
+
+          {/* Edge count summary */}
+          {data?.counts && (
+            <div className="text-[10px] text-text-muted">
+              {data.counts.wikilinks} wiki · {data.counts.semantic} semantic
             </div>
-          ))}
+          )}
         </div>
 
         {/* Back button */}
@@ -240,27 +295,52 @@ export function GraphView() {
               </div>
             </div>
 
-            {/* Connections */}
-            {selectedLinks.length > 0 && (
+            {/* Wikilink connections */}
+            {wikilinkConnections.length > 0 && (
               <div>
                 <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-1.5">
-                  Connections ({selectedLinks.length})
+                  Wikilinks ({wikilinkConnections.length})
                 </h4>
                 <div className="space-y-0.5">
-                  {selectedLinks.map(link => {
+                  {wikilinkConnections.map(link => {
+                    const target = targetNode(link)
+                    if (!target) return null
                     const isOutgoing = link.source === selectedNode.id
-                    const targetId = isOutgoing ? link.target : link.source
-                    const targetNode = data?.nodes.find(n => n.id === targetId)
-                    return targetNode ? (
+                    return (
                       <button
-                        key={`${link.source}->${link.target}`}
-                        onClick={() => handleNodeClick(targetNode)}
-                        className="flex items-center gap-1 w-full text-left text-xs text-accent hover:underline py-0.5"
+                        key={linkKey(link)}
+                        onClick={() => handleNodeClick(target)}
+                        className="flex items-center gap-1 w-full text-left text-xs text-text-secondary hover:text-text-primary py-0.5 truncate"
                       >
-                        <span className="text-[10px]">{isOutgoing ? '→' : '←'}</span>
-                        <span className="truncate">{targetNode.title}</span>
+                        <span className="text-[10px] opacity-60">{isOutgoing ? '→' : '←'}</span>
+                        <span className="truncate">{target.title}</span>
                       </button>
-                    ) : null
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Semantic connections */}
+            {semanticConnections.length > 0 && (
+              <div>
+                <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-1.5">
+                  Semantic ({semanticConnections.length})
+                </h4>
+                <div className="space-y-0.5">
+                  {semanticConnections.map(link => {
+                    const target = targetNode(link)
+                    if (!target) return null
+                    return (
+                      <button
+                        key={linkKey(link)}
+                        onClick={() => handleNodeClick(target)}
+                        className="flex items-center gap-1 w-full text-left text-xs text-accent/80 hover:text-accent py-0.5 truncate"
+                      >
+                        <span className="text-[10px] opacity-60">{link.score?.toFixed(2)}</span>
+                        <span className="truncate">{target.title}</span>
+                      </button>
+                    )
                   })}
                 </div>
               </div>

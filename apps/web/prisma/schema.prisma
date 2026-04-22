@@ -295,6 +295,43 @@ model Note {
   tags      Json?    // string[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  embeddings NoteEmbedding[]
+}
+
+// ── Knowledge Graph: Note Embeddings (pgvector) ────────────────────────────────
+// Each note gets a vector embedding of its title + content.
+// Stored as JSON text array for raw-SQL pgvector queries.
+// Uses pgvector's <-> cosine distance for similarity search.
+
+model NoteEmbedding {
+  noteId      String   @id @default(cuid())
+  note        Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  embedding   String   @db.Text  // JSON-encoded vector array: [0.1, -0.3, ...]
+  dimension   Int      // 1536 (OpenAI) or 768 (Ollama nomic)
+  modelRef    String?  // which model generated this embedding (ext:xxx ID)
+  version     Int      @default(1) // bump when re-embedding
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("note_embeddings")
+}
+
+// ── Knowledge Graph: Semantic Connections ──────────────────────────────────────
+// Pre-computed semantic edges for the knowledge graph visualization.
+// Each row is a vector-similarity match between two notes.
+// Threshold (≥0.5) applied in the graph-data API to avoid noise.
+
+model SemanticConnection {
+  sourceNoteId String
+  targetNoteId String
+  score        Float  // cosine similarity, 0.0-1.0
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@id([sourceNoteId, targetNoteId])
+  @@index([score])
+  @@map("semantic_connections")
 }
 
 model User {

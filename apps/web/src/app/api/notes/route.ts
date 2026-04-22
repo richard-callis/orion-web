@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { embedNote } from '@/lib/embeddings'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -23,5 +24,9 @@ export async function POST(req: NextRequest) {
       tags:    body.tags    ?? null,
     },
   })
+
+  // Embed asynchronously — don't block the response
+  embedNote(note).catch(err => console.error('[embed] failed for new note:', err))
+
   return NextResponse.json(note, { status: 201 })
 }
