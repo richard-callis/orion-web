@@ -17,6 +17,9 @@ interface NoteRow {
   pinned: boolean
 }
 
+// Prevent static prerendering — needs database at request time
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   const notes: NoteRow[] = await prisma.note.findMany({
     orderBy: { updatedAt: 'desc' },
