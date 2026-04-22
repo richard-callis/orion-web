@@ -13,7 +13,7 @@ interface Props {
   activeId: string | null
   onMobileBack: () => void
   onConversationCreated: (convo: Conversation) => void
-  view: 'ai' | 'rooms' | 'all'
+  view: 'ai' | 'rooms'
 }
 
 export function ChatContainer({ activeId, onMobileBack, onConversationCreated, view }: Props) {
