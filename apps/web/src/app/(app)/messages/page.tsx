@@ -35,7 +35,7 @@ interface Room {
 }
 
 export default function MessagesPage() {
-  const [view, setView] = useState<'ai' | 'rooms' | 'all'>('all')
+  const [view, setView] = useState<'ai' | 'rooms'>('ai')
   const [activeId, setActiveId] = useState<string | null>(null)
   const [mobileShowList, setMobileShowList] = useState(true)
   const [convos, setConvos] = useState<Conversation[]>([])
@@ -134,10 +134,6 @@ export default function MessagesPage() {
             <span className="text-sm font-semibold text-text-primary">Messages</span>
           </div>
           <div className="flex items-center gap-1">
-            <button
-              onClick={() => setView('all')}
-              className={`px-2 py-0.5 rounded text-[10px] ${view === 'all' ? 'bg-accent/20 text-accent' : 'text-text-muted hover:text-text-primary'}`}
-            >All</button>
             <button
               onClick={() => setView('ai')}
               className={`px-2 py-0.5 rounded text-[10px] ${view === 'ai' ? 'bg-accent/20 text-accent' : 'text-text-muted hover:text-text-primary'}`}
