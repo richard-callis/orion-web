@@ -64,7 +64,7 @@ export default async function DashboardPage() {
             {[
               ['/infrastructure', 'Infrastructure'],
               ['/storage',        'Longhorn Storage'],
-              ['/chat',           'Claude Chat'],
+              ['/messages',        'Messages'],
               ['/dns',            'DNS Manager'],
               ['/alerts',         'Alerts'],
               ['/logs',           'Pod Logs'],

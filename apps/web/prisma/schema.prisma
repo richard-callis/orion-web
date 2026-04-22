@@ -79,6 +79,8 @@ model Agent {
   agentGroups  AgentGroupMember[]
   toolRestrictions ToolAgentRestriction[]
   novaDeployments NovaDeployment[]
+  chatRoomMembers ChatRoomMember[]
+  chatMessages    ChatMessage[]
 }
 
 model Environment {
@@ -235,6 +237,7 @@ model Task {
   updatedAt      DateTime    @updatedAt
   events         TaskEvent[]
   metadata       Json?
+  chatRooms      ChatRoom[]  @relation("ChatRoomTask")
 }
 
 model TaskEvent {
@@ -312,6 +315,8 @@ model User {
   sessions      Session[]
   environmentTiers EnvironmentUserTier[]
   apiKeys          ApiKey[]
+  chatRoomMembers  ChatRoomMember[]
+  chatMessages     ChatMessage[]
 }
 
 model ApiKey {
@@ -659,7 +664,7 @@ model ChatRoom {
   description   String?            @db.Text
   type          String             @default("task")  // "task" | "feature" | "general" | "ops"
   taskId        String?
-  task          Task?              @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  task          Task?              @relation("ChatRoomTask", fields: [taskId], references: [id], onDelete: SetNull)
   createdBy     String
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
@@ -683,7 +688,8 @@ model ChatRoomMember {
   agent         Agent?      @relation(fields: [agentId], references: [id], onDelete: Cascade)
   user          User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@id([roomId, agentId, userId])
+  @@unique([roomId, agentId])
+  @@unique([roomId, userId])
   @@map("chat_room_members")
 }
 

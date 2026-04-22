@@ -30,24 +30,26 @@ export async function GET(req: NextRequest) {
     },
   })
 
-  // Filter to rooms user belongs to
   const session = await getServerSession(authOptions)
   const userId = session?.user?.id
 
   let result = rooms
   if (userId) {
-    result = await Promise.all(rooms.map(async (room) => {
+    const filtered: any[] = []
+    for (const room of rooms) {
       const members = await prisma.chatRoomMember.findMany({
-        where: { room_id: room.id },
-        select: { user_id: true, agent_id: true },
+        where: { roomId: room.id },
+        select: { userId: true, agentId: true },
       })
-      const isMember = members.some(m => m.user_id === userId)
-      return isMember ? {
-        ...room,
-        members: members.map(m => ({ agentId: m.agent_id, userId: m.user_id })),
-      } : null
-    }))
-    result = result.filter(Boolean) as any
+      const isMember = members.some(m => m.userId === userId)
+      if (isMember) {
+        filtered.push({
+          ...room,
+          members: members.map(m => ({ agentId: m.agentId, userId: m.userId })),
+        })
+      }
+    }
+    result = filtered
   }
 
   return NextResponse.json({ rooms: result })
@@ -63,9 +65,9 @@ export async function POST(req: NextRequest) {
     data: {
       name: String(body.name ?? ''),
       description: body.description ? String(body.description) : null,
-      type: body.type ?? 'task',
-      task_id: body.taskId ? String(body.taskId) : null,
-      created_by: String(createdBy),
+      type: body.type ? String(body.type) : 'task',
+      taskId: body.taskId ? String(body.taskId) : null,
+      createdBy: String(createdBy),
     },
     include: {
       _count: { select: { messages: true, members: true } },
@@ -74,21 +76,21 @@ export async function POST(req: NextRequest) {
   })
 
   const userId = session?.user?.id ?? null
-  const agentId = (body.agentId && String(body.agentId)) || null
+  const agentId = (body.agentId && String(body.agentId)) as string | null
 
   await prisma.chatRoomMember.create({
     data: {
-      room_id: room.id,
-      user_id: userId,
-      agent_id: agentId,
+      roomId: room.id,
+      userId,
+      agentId,
       role: 'lead',
     },
   })
 
   await prisma.chatMessage.create({
     data: {
-      room_id: room.id,
-      sender_type: 'system',
+      roomId: room.id,
+      senderType: 'system',
       content: `Room created by ${createdBy}`,
     },
   })
