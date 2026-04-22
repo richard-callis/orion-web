@@ -131,13 +131,12 @@ export async function GET(
     ])
 
     // Nodes always required; pods are best-effort
-    const nodesJsonResult = nodesJson.value
-    if (!nodesJsonResult) {
+    if (nodesJson.status === 'rejected') {
       const reason = nodesJson.reason instanceof Error ? nodesJson.reason.message : String(nodesJson.reason)
       return NextResponse.json({ error: reason }, { status: 502 })
     }
 
-    const nodeList = JSON.parse(nodesJsonResult)
+    const nodeList = JSON.parse(nodesJson.value)
     const nodes: CachedNode[] = (nodeList.items ?? []).map(parseNode).filter((n: CachedNode) => n.name)
 
     let pods: CachedPod[] = []
