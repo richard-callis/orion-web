@@ -3,14 +3,13 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import {
-  LayoutDashboard, Server, Database, MessageSquare, Bot,
+  Server, Database, MessageSquare, Bot,
   Bell, KeyRound, Archive, FileText, ClipboardList,
   ChevronLeft, ChevronRight, BookOpen, Settings2, GitBranch, Network, Sparkles, MessageCircle,
 } from 'lucide-react'
 import { usePendingTools } from '@/hooks/usePendingTools'
 
 const nav = [
-  { href: '/',               icon: LayoutDashboard, label: 'Dashboard' },
   { href: '/infrastructure', icon: Server,           label: 'Infrastructure' },
   { href: '/gitops',         icon: GitBranch,        label: 'GitOps' },
   { href: '/storage',        icon: Database,         label: 'Storage' },
