@@ -48,6 +48,45 @@ function parseNode(node: any): CachedNode {
   }
 }
 
+// Parse text output from `kubectl get pods -o wide`
+function parsePodTable(text: string): CachedPod[] {
+  const lines = text.trim().split('\n')
+  if (lines.length < 2) return []
+
+  // Skip header line, parse each pod row
+  // Format: NAMESPACE   NAME   READY   STATUS   RESTARTS   AGE   IP   NODE   NOMINATED NODE   READINESS GATES
+  const pods: CachedPod[] = []
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(/\s+/)
+    if (cols.length < 7) continue
+
+    const namespace = cols[0]
+    const name = cols[1]
+    const readyMatch = cols[2].match(/(\d+)\/(\d+)/)
+    const ready = readyMatch ? parseInt(readyMatch[1]) === parseInt(readyMatch[2]) : false
+    const phase = cols[3] as CachedPod['phase']
+    const restarts = parseInt(cols[4]) || 0
+    const node = cols[7] || ''
+    const status = (phase === 'Running' && !ready) ? 'NotReady' :
+                   (phase === 'Running') ? 'Running' :
+                   phase
+
+    pods.push({
+      name,
+      namespace,
+      node,
+      status,
+      phase,
+      ready,
+      restarts,
+      age: new Date(), // text output has age string, parse best-effort
+      containers: [],
+      labels: {},
+    })
+  }
+  return pods
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function parsePod(pod: any): CachedPod {
   const cs = pod.status?.containerStatuses ?? []
@@ -83,16 +122,32 @@ export async function GET(
   }
 
   try {
-    const [nodesJson, podsJson] = await Promise.all([
+    // Fetch nodes and pods independently — large clusters may have too many pods
+    // for the gateway's stdout buffer, so a failed pods query should not kill the
+    // entire response.
+    const [nodesJson, podsText] = await Promise.allSettled([
       gatewayExec(env.gatewayUrl, env.gatewayToken, 'kubectl_get', { resource: 'nodes', output: 'json' }),
-      gatewayExec(env.gatewayUrl, env.gatewayToken, 'kubectl_get', { resource: 'pods', output: 'json' }),
+      gatewayExec(env.gatewayUrl, env.gatewayToken, 'kubectl_get_pods', {}),
     ])
 
-    const nodeList = JSON.parse(nodesJson)
-    const podList  = JSON.parse(podsJson)
+    // Nodes always required; pods are best-effort
+    const nodesJsonResult = nodesJson.value
+    if (!nodesJsonResult) {
+      const reason = nodesJson.reason instanceof Error ? nodesJson.reason.message : String(nodesJson.reason)
+      return NextResponse.json({ error: reason }, { status: 502 })
+    }
 
+    const nodeList = JSON.parse(nodesJsonResult)
     const nodes: CachedNode[] = (nodeList.items ?? []).map(parseNode).filter((n: CachedNode) => n.name)
-    const pods:  CachedPod[]  = (podList.items  ?? []).map(parsePod).filter((p: CachedPod)  => p.name)
+
+    let pods: CachedPod[] = []
+    if (podsText.status === 'fulfilled' && podsText.value) {
+      try {
+        pods = parsePodTable(podsText.value)
+      } catch {
+        // Pod parsing failed — return nodes with empty pods
+      }
+    }
 
     return NextResponse.json({ nodes, pods })
   } catch (err) {
