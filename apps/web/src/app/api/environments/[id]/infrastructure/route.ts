@@ -131,10 +131,13 @@ export async function GET(
     ])
 
     // Nodes always required; pods are best-effort
-    const nodesJsonResult = nodesJson.value
-    if (!nodesJsonResult) {
+    if (nodesJson.status === 'rejected') {
       const reason = nodesJson.reason instanceof Error ? nodesJson.reason.message : String(nodesJson.reason)
       return NextResponse.json({ error: reason }, { status: 502 })
+    }
+    const nodesJsonResult = nodesJson.status === 'fulfilled' ? nodesJson.value : null
+    if (!nodesJsonResult) {
+      return NextResponse.json({ error: 'nodes query returned no data' }, { status: 502 })
     }
 
     const nodeList = JSON.parse(nodesJsonResult)
