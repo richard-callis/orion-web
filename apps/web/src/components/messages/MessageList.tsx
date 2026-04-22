@@ -40,7 +40,7 @@ interface Room {
 
 // ── Props ───────────────────────────────────────────────────────
 interface Props {
-  view: 'ai' | 'rooms' | 'all'
+  view: 'ai' | 'rooms'
   onSelect: (id: string) => void
   activeId?: string
   onMobileSelect?: () => void
@@ -400,18 +400,7 @@ export function MessageList({
   return (
     <aside className="w-full md:w-56 lg:w-64 h-full flex-shrink-0 flex flex-col border-r border-border-subtle bg-bg-sidebar overflow-hidden">
       <div className="flex-1 overflow-y-auto">
-        {view === 'all' ? (
-          <>
-            {renderAISections()}
-            {/* Separator */}
-            <div className="mx-3 my-1 border-t border-border-subtle" />
-            {renderRoomSections()}
-          </>
-        ) : view === 'ai' ? (
-          renderAISections()
-        ) : (
-          renderRoomSections()
-        )}
+        {view === 'ai' ? renderAISections() : renderRoomSections()}
       </div>
     </aside>
   )
