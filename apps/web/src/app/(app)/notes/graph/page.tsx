@@ -1,8 +1,8 @@
 import type { ComponentType } from 'react'
-import dynamic from 'next/dynamic'
+import nextDynamic from 'next/dynamic'
 
 // Force-graph-2d (Three.js) is browser-only — disable SSR
-const GraphViewClient = dynamic<{ }>(
+const GraphViewClient = nextDynamic<{ }>(
   async () => {
     const mod = await import('@/components/notes/GraphView')
     return mod.GraphView as ComponentType
@@ -16,6 +16,10 @@ const GraphViewClient = dynamic<{ }>(
     ),
   },
 )
+
+// Force dynamic rendering — prevents Next.js from prerendering
+// which crashes on react-force-graph-2d's window access
+export const dynamic = 'force-dynamic'
 
 export default function GraphPage() {
   return <GraphViewClient />
