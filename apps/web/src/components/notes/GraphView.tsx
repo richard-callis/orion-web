@@ -197,7 +197,6 @@ export function GraphView() {
             onNodeHover={handleNodeHover}
             linkColor={linkColor}
             linkWidth={linkWidth}
-            linkDirectionalDashArray={[4, 4]}
             backgroundColor="#0f172a"
             cooldownTicks={100}
           />
