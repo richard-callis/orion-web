@@ -57,7 +57,7 @@ export const knowledgeGraphTools = [
       required: ['query'],
     },
     async execute(args: Record<string, unknown>) {
-      const limit = Math.min(Math.max(parseInt(args.limit as number ?? '5', 10), 1), 20)
+      const limit = Math.min(Math.max(parseInt(String(args.limit ?? 5), 10), 1), 20)
       const body = {
         query: args.query as string,
         limit,
@@ -198,7 +198,7 @@ export const knowledgeGraphTools = [
       required: [],
     },
     async execute(args: Record<string, unknown>) {
-      const limit = Math.min(Math.max(parseInt(args.limit as number ?? '5', 10), 1), 20)
+      const limit = Math.min(Math.max(parseInt(String(args.limit ?? 5), 10), 1), 20)
 
       // Find the target note
       let noteId: string
