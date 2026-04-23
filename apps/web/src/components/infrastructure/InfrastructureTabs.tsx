@@ -377,7 +377,7 @@ export function InfrastructureTabs() {
     }`
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Toolbar — only show on overview tab */}
       {activeTab === 'overview' && (
         <>
@@ -427,7 +427,7 @@ export function InfrastructureTabs() {
       )}
 
       {/* Tab bar */}
-      <div className="flex gap-1 flex-wrap px-1">
+      <div className="flex gap-1 flex-wrap border-b border-border-subtle pb-2">
         {tabs.map(t => (
           <button key={t.key} className={tabCls(t.key)} onClick={() => { setActiveTab(t.key); setLoading(false); setError(null) }}>
             <t.icon size={11} className="inline mr-1" />
@@ -437,7 +437,7 @@ export function InfrastructureTabs() {
       </div>
 
       {/* Tab content */}
-      <div className="min-h-[400px]">
+      <div className="space-y-6">
         {activeTab === 'overview' && (
           <>
             {nodes.length > 0 && (
