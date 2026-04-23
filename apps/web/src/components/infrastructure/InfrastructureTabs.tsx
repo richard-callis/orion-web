@@ -460,11 +460,7 @@ export function InfrastructureTabs() {
           </>
         )}
 
-        {activeTab === 'ingress' && (
-          <div className="pt-2">
-            <IngressPage />
-          </div>
-        )}
+        {activeTab === 'ingress' && <IngressPage />}
 
         {activeTab === 'storage' && (
           <StorageTab
