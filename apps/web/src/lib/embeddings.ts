@@ -81,6 +81,7 @@ export async function generateEmbedding(text: string): Promise<EmbeddingResult |
   }
 
   // Ollama: supports /api/embed endpoint (nomic-embed-text, bge-m3, etc.)
+  // Returns { embeddings: [vector[]] } — flat vector at index 0
   const res = await fetch(`${provider.baseUrl}/api/embed`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -88,8 +89,10 @@ export async function generateEmbedding(text: string): Promise<EmbeddingResult |
     signal: AbortSignal.timeout(30_000),
   })
   if (!res.ok) return null
-  const data = await res.json() as { embedding: number[] }
-  return { vector: data.embedding, modelRef: provider.modelId }
+  const data = await res.json() as { embedding?: number[]; embeddings?: number[][] }
+  const vector = data.embedding ?? data.embeddings?.[0]
+  if (!vector) return null
+  return { vector, modelRef: provider.modelId }
 }
 
 /**
