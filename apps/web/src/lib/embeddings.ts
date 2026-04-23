@@ -241,7 +241,8 @@ export async function computeSemanticEdges(
   const target = await prisma.noteEmbedding.findUnique({ where: { noteId } })
   if (!target) return
 
-  const vecStr = `[${target.embedding}]`
+  // target.embedding is already stored as a JSON array string like [-0.1, 0.5, ...]
+  const vecStr = target.embedding
 
   const similar = await prisma.$queryRaw<
     Array<{ targetNoteId: string; score: number }>
@@ -292,7 +293,9 @@ export async function computeAllSemanticEdges(topN: number = 5): Promise<{
     try {
       await computeSemanticEdges(emb.noteId, topN)
       computed++
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`computeSemanticEdges(${emb.noteId}) failed: ${msg}`)
       failed++
     }
   }
