@@ -13,9 +13,12 @@ import { getServerSession } from 'next-auth'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
-  // Auth check — session required
+  // Auth check — allow session, OR an embed trigger token set via env
   const session = await getServerSession()
-  if (!session) {
+  const embedToken = process.env.EMBED_TRIGGER_TOKEN
+  const headers = req.headers
+  const hasToken = embedToken && headers.get('x-embed-token') === embedToken
+  if (!session && !hasToken) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
