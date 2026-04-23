@@ -7,7 +7,9 @@ import remarkEmoji from 'remark-emoji'
 import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/atom-one-dark.css'
 import { CodeBlock } from '@/components/notes/CodeBlock'
+import { Tabs } from '@/components/notes/Tabs'
 import { findBacklinks } from '@/lib/wiki-links'
+import { remarkTabs } from '@/lib/tabs-remark'
 import {
   Plus, Search, ChevronRight, ChevronDown, Trash2, FileText,
   Pin, Pencil, Eye, ArrowLeft, GitGraph,
@@ -476,8 +478,9 @@ export default function NotesPage() {
               <div className="h-full overflow-y-auto px-6 py-4">
                 {localContent ? (
                   <div className="max-w-3xl notes-prose">
+                    <Tabs>
                     <ReactMarkdown
-                      remarkPlugins={[remarkGfm, remarkCallouts, [remarkEmoji, { accessible: true }]]}
+                      remarkPlugins={[remarkGfm, remarkTabs, remarkCallouts, [remarkEmoji, { accessible: true }]]}
                       rehypePlugins={[rehypeHighlight]}
                       components={{
                         h1: ({ children }) => (
@@ -593,6 +596,7 @@ export default function NotesPage() {
                         </div>
                       )
                     })()}
+                    </Tabs>
                   </div>
                 ) : (
                   <p className="text-text-muted text-sm italic">Nothing to preview yet.</p>
