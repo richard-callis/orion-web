@@ -3,26 +3,20 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import {
-  Server, Database, MessageSquare, Bot,
-  Bell, KeyRound, Archive, FileText, ClipboardList,
-  ChevronLeft, ChevronRight, BookOpen, Settings2, GitBranch, Network, Sparkles, MessageCircle,
+  Server, MessageSquare, Bot,
+  Bell, ClipboardList,
+  ChevronLeft, ChevronRight, BookOpen, Settings2, Sparkles,
 } from 'lucide-react'
 import { usePendingTools } from '@/hooks/usePendingTools'
 
 const nav = [
-  { href: '/infrastructure', icon: Server,           label: 'Infrastructure' },
-  { href: '/gitops',         icon: GitBranch,        label: 'GitOps' },
-  { href: '/storage',        icon: Database,         label: 'Storage' },
-  { href: '/messages',        icon: MessageSquare,   label: 'Messages' },
-  { href: '/tasks',          icon: ClipboardList,    label: 'Tasks' },
-  { href: '/agents',         icon: Bot,              label: 'Agents' },
-  { href: '/ingress',        icon: Network,          label: 'Ingress' },
-  { href: '/alerts',         icon: Bell,             label: 'Alerts' },
-  { href: '/secrets',        icon: KeyRound,         label: 'Secrets' },
-  { href: '/backups',        icon: Archive,          label: 'Backups' },
-  { href: '/logs',           icon: FileText,         label: 'Logs' },
-  { href: '/notes',          icon: BookOpen,         label: 'Wiki' },
-  { href: '/nova',            icon: Sparkles,        label: 'Nova' },
+  { href: '/infrastructure', icon: Server,  label: 'Infrastructure' },
+  { href: '/messages',       icon: MessageSquare, label: 'Messages' },
+  { href: '/tasks',          icon: ClipboardList, label: 'Tasks' },
+  { href: '/agents',         icon: Bot,    label: 'Agents' },
+  { href: '/alerts',         icon: Bell,   label: 'Alerts' },
+  { href: '/notes',          icon: BookOpen, label: 'Wiki' },
+  { href: '/nova',           icon: Sparkles, label: 'Nova' },
 ]
 
 export function Sidebar() {
