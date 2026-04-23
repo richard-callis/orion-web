@@ -437,7 +437,7 @@ export function InfrastructureTabs() {
       )}
 
       {/* Tab content */}
-      <div className="space-y-5">
+      <div className="p-4 lg:p-6 space-y-5">
         {activeTab === 'overview' && (
           <>
             {nodes.length > 0 && (
