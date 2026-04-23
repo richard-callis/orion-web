@@ -1820,7 +1820,7 @@ export function IngressPage() {
   const disabledRoutes = domains.reduce((s, d) => s + d.ingressPoints.reduce((ss, p) => ss + p.routes.filter(r => !r.enabled).length, 0), 0)
 
   return (
-    <div className="p-4 lg:p-6 space-y-6">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold text-text-primary">Ingress</h1>
