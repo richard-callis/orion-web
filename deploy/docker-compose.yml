@@ -29,6 +29,7 @@ services:
       ORION_CALLBACK_URL: ${ORION_CALLBACK_URL:-http://${MANAGEMENT_IP:-localhost}:3000}
       COREDNS_DIR: /etc/coredns-managed
       LOCALHOST_JOIN_TOKEN: ${LOCALHOST_JOIN_TOKEN}
+      EMBED_TRIGGER_TOKEN: ${EMBED_TRIGGER_TOKEN:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - orion-claude-creds:/claude-creds
@@ -98,7 +99,7 @@ services:
 
   # ── PostgreSQL ─────────────────────────────────────────────────────────────
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_DB: orion

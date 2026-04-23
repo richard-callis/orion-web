@@ -7,6 +7,7 @@ const PUBLIC_PATHS = [
   '/api/setup',
   '/api/auth',
   '/api/health',
+  '/api/notes/embed',       // embed rebuild — bypassed via x-embed-token header
   '/api/environments/join', // gateway registration — no session, token IS the auth
   '/api/webhooks',          // git provider webhooks — HMAC signature is the auth
   '/_next',
