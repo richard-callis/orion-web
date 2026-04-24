@@ -272,6 +272,41 @@ export async function computeSemanticEdges(
   }
 }
 
+// ── RAG Context Retrieval ─────────────────────────────────────────────────────
+
+/**
+ * Retrieve the most semantically relevant notes for a query.
+ * Returns a formatted markdown block ready to append to a system prompt.
+ * Returns empty string silently on any error (no embedding provider, pgvector
+ * not installed, no notes embedded, etc.) so it never blocks an LLM call.
+ */
+export async function retrieveKnowledgeContext(
+  query: string,
+  topK = 3,
+  minScore = 0.4,
+): Promise<string> {
+  try {
+    const result = await generateEmbedding(query.slice(0, 2000))
+    if (!result) return ''
+
+    const hits = await vectorSearch(result.vector, topK)
+    const relevant = hits.filter(h => h.score >= minScore)
+    if (relevant.length === 0) return ''
+
+    return relevant
+      .map(h => {
+        const typeTag = h.type !== 'note' ? ` [${h.type}]` : ''
+        const body = h.content.length > 1500
+          ? h.content.slice(0, 1500) + '\n[…]'
+          : h.content
+        return `### ${h.title}${typeTag}\n${body}`
+      })
+      .join('\n\n')
+  } catch {
+    return ''
+  }
+}
+
 /**
  * Compute semantic edges for ALL notes. For initial backfill.
  */

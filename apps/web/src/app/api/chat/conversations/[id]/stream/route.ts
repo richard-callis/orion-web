@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { createSSEStream } from '@/lib/sse'
 import { streamClaudeResponse, streamAgentChat, streamOllamaChat, streamGeminiChat, streamOpenAIChat, type AgentContextConfig } from '@/lib/claude'
+import { retrieveKnowledgeContext } from '@/lib/embeddings'
 import { prisma } from '@/lib/db'
 import { getPrompt } from '@/lib/system-prompts'
 import { getToken } from 'next-auth/jwt'
@@ -113,6 +114,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       : m.content,
   }))
 
+  // RAG: embed the user's query and retrieve the top-3 most relevant notes.
+  // Runs in parallel with other setup — fails silently if no provider configured.
+  const knowledgeContext = await retrieveKnowledgeContext(prompt)
+
   const abortCtrl = new AbortController()
 
   return createSSEStream((send, close) => {
@@ -122,14 +127,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         : undefined
 
       const generator = agentSystemPrompt
-        ? streamAgentChat(prompt, conversationId, agentSystemPrompt, history, agentContextConfig, agentChat?.id, userId, targetEnvironmentId)
+        ? streamAgentChat(prompt, conversationId, agentSystemPrompt, history, agentContextConfig, agentChat?.id, userId, targetEnvironmentId, knowledgeContext)
         : openaiModel && openaiBaseUrl
-        ? streamOpenAIChat(prompt, conversationId, history, openaiModel, openaiBaseUrl, openaiApiKey, abortCtrl.signal, userId, targetEnvironmentId, agentCreationPrompt)
+        ? streamOpenAIChat(prompt, conversationId, history, openaiModel, openaiBaseUrl, openaiApiKey, abortCtrl.signal, userId, targetEnvironmentId, agentCreationPrompt, knowledgeContext)
         : ollamaModel
-        ? streamOllamaChat(prompt, conversationId, history, ollamaModel, ollamaBaseUrl, abortCtrl.signal, userId, targetEnvironmentId, agentCreationPrompt)
+        ? streamOllamaChat(prompt, conversationId, history, ollamaModel, ollamaBaseUrl, abortCtrl.signal, userId, targetEnvironmentId, agentCreationPrompt, knowledgeContext)
         : geminiModel
-        ? streamGeminiChat(prompt, conversationId, history, geminiModel, abortCtrl.signal)
-        : streamClaudeResponse(prompt, conversationId, history, planTarget, agentCreationPrompt, undefined, abortCtrl.signal)
+        ? streamGeminiChat(prompt, conversationId, history, geminiModel, abortCtrl.signal, knowledgeContext)
+        : streamClaudeResponse(prompt, conversationId, history, planTarget, agentCreationPrompt, undefined, abortCtrl.signal, knowledgeContext)
       for await (const chunk of generator) {
         send(chunk.type, chunk)
         if (chunk.type === 'done' || chunk.type === 'error') {

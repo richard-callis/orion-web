@@ -104,6 +104,10 @@ export default function MessagesPage() {
     }
   }
 
+  const handleRename = (id: string, title: string) => {
+    setConvos(prev => prev.map(c => c.id === id ? { ...c, title: title || null } : c))
+  }
+
   const handleNewRoom = async () => {
     try {
       const res = await fetch('/api/chatrooms', {
@@ -152,6 +156,8 @@ export default function MessagesPage() {
           activeId={activeId ?? undefined}
           onMobileSelect={() => setMobileShowList(false)}
           onCreateNew={view === 'rooms' ? handleNewRoom : handleCreateNew}
+          onDelete={handleDelete}
+          onRename={handleRename}
           convos={regularConvos}
           planningConvos={planningConvos}
           agentConvos={agentConvos}
@@ -170,6 +176,7 @@ export default function MessagesPage() {
           activeId={activeId}
           onMobileBack={() => setMobileShowList(true)}
           onConversationCreated={handleConversationCreated}
+          onDelete={handleDelete}
           view={view}
         />
       </div>
