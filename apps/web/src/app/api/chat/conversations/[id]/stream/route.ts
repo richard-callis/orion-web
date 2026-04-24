@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { createSSEStream } from '@/lib/sse'
 import { streamClaudeResponse, streamAgentChat, streamOllamaChat, streamGeminiChat, streamOpenAIChat, type AgentContextConfig } from '@/lib/claude'
 import { prisma } from '@/lib/db'
+import { getPrompt } from '@/lib/system-prompts'
 import { getToken } from 'next-auth/jwt'
 
 export const dynamic = 'force-dynamic'
@@ -71,8 +72,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       ollamaModel = rawModel.startsWith('ollama:') ? rawModel.slice('ollama:'.length) : rawModel
     }
   }
-  const planTarget = meta?.planTarget as { type: string; id: string } | undefined
-  const agentChat  = meta?.agentChat  as { id: string; name: string } | undefined
+  const planTarget  = meta?.planTarget  as { type: string; id: string } | undefined
+  const agentChat   = meta?.agentChat   as { id: string; name: string } | undefined
+  const agentDraft  = meta?.agentDraft  as boolean | undefined
 
   // If this is an agent chat, load the agent's system prompt and context config
   let agentSystemPrompt: string | undefined
@@ -115,6 +117,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   return createSSEStream((send, close) => {
     ;(async () => {
+      const agentCreationPrompt = agentDraft && !agentSystemPrompt
+        ? await getPrompt('system.agent-creation')
+        : undefined
+
       const generator = agentSystemPrompt
         ? streamAgentChat(prompt, conversationId, agentSystemPrompt, history, agentContextConfig, agentChat?.id, userId, targetEnvironmentId)
         : openaiModel && openaiBaseUrl
@@ -123,7 +129,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         ? streamOllamaChat(prompt, conversationId, history, ollamaModel, ollamaBaseUrl, abortCtrl.signal, userId, targetEnvironmentId)
         : geminiModel
         ? streamGeminiChat(prompt, conversationId, history, geminiModel, abortCtrl.signal)
-        : streamClaudeResponse(prompt, conversationId, history, planTarget, undefined, undefined, abortCtrl.signal)
+        : streamClaudeResponse(prompt, conversationId, history, planTarget, agentCreationPrompt, undefined, abortCtrl.signal)
       for await (const chunk of generator) {
         send(chunk.type, chunk)
         if (chunk.type === 'done' || chunk.type === 'error') {
