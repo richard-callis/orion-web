@@ -34,10 +34,10 @@ export async function POST(
   )
   if (already) return NextResponse.json({ error: 'Already a member' }, { status: 409 })
 
-  // Lead-only: must be a lead member or the room creator
-  const isLead = room.members.some(m => m.userId === session.user.id && m.role === 'lead')
-  if (!isLead && room.createdBy !== session.user.id) {
-    return NextResponse.json({ error: 'Only room leads or the creator can invite members' }, { status: 403 })
+  // Any room member can invite
+  const isMember = room.members.some(m => m.userId === session.user.id)
+  if (!isMember) {
+    return NextResponse.json({ error: 'You must be a member of this room to invite others' }, { status: 403 })
   }
 
   const roleValue = typeof body.role === 'string' ? body.role : 'member'
