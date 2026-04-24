@@ -66,6 +66,7 @@ export function RoomChat({ roomId, onMobileBack }: Props) {
   const [inviteSearch, setInviteSearch] = useState('')
   const [inviteTab, setInviteTab] = useState<'agents' | 'users'>('agents')
   const [isInviting, setIsInviting] = useState<string | null>(null)
+  const [inviteError, setInviteError] = useState<string | null>(null)
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -114,21 +115,30 @@ export function RoomChat({ roomId, onMobileBack }: Props) {
 
   const handleInvite = useCallback(async (option: InviteOption) => {
     if (isInviting) return
+    setInviteError(null)
     setIsInviting(option.id)
     try {
       const isAgent = option.type === 'agent'
       const body: Record<string, string> = {}
       body[isAgent ? 'agentId' : 'userId'] = option.id
-      await fetch(`/api/chatrooms/${roomId}/invite`, {
+      const res = await fetch(`/api/chatrooms/${roomId}/invite`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
+      const data = await res.json().catch(() => ({})) as { error?: string }
+      if (!res.ok) {
+        setInviteError(data.error || `HTTP ${res.status}`)
+        setIsInviting(null)
+        return
+      }
       setShowInvite(false)
       setInviteSearch('')
       setInviteTab('agents')
       await loadRoom()
-    } catch { /* ignore */ }
+    } catch (e) {
+      setInviteError(e instanceof Error ? e.message : 'Unknown error')
+    }
     setIsInviting(null)
   }, [roomId, isInviting, loadRoom])
 
@@ -237,6 +247,14 @@ export function RoomChat({ roomId, onMobileBack }: Props) {
               <span className="text-sm font-semibold text-text-primary">Add Member</span>
               <button onClick={() => setShowInvite(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
             </div>
+
+            {/* Error */}
+            {inviteError && (
+              <div className="px-4 py-2 border-b border-status-error/30 bg-status-error/10 flex items-center gap-2 flex-shrink-0">
+                <span className="text-xs text-status-error flex-1">{inviteError}</span>
+                <button onClick={() => setInviteError(null)} className="text-status-error hover:text-status-error/60"><X size={14} /></button>
+              </div>
+            )}
 
             {/* Search */}
             <div className="px-3 py-2 border-b border-border-subtle flex-shrink-0">
