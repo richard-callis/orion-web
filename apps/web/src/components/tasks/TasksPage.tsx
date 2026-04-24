@@ -1,7 +1,7 @@
 'use client'
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Plus, X, Trash2, ChevronRight, Flag, Menu, Terminal, CheckCircle2, XCircle, Play, MessageSquare, ChevronDown, ChevronUp } from 'lucide-react'
+import { Plus, X, Trash2, ChevronRight, Flag, Menu, Terminal, CheckCircle2, XCircle, Play, MessageSquare, ChevronDown, ChevronUp, Send, Loader2 } from 'lucide-react'
 import type { Agent, Task, Feature, Epic, SelectionState, PlanTarget, Bug } from '@/types/tasks'
 import { BugManager } from './BugManager'
 
@@ -123,10 +123,32 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   const titleRef = useRef<HTMLInputElement>(null)
 
   // Task log tab
-  const [taskTab, setTaskTab]           = useState<'details' | 'log'>('details')
+  const [taskTab, setTaskTab]           = useState<'details' | 'log' | 'chat'>('details')
   const [taskEvents, setTaskEvents]     = useState<TaskEvent[]>([])
   const [eventsLoading, setEventsLoading] = useState(false)
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set())
+
+  // Task chat tab
+  interface ChatMsg {
+    id: string
+    senderType: string
+    content: string
+    sender: { type: string; id: string | null; name: string }
+    createdAt: string
+  }
+  interface ChatRoom {
+    id: string
+    name: string
+    type: string
+    messages: ChatMsg[]
+    members: Array<{ agentId: string | null; userId: string | null; agent: { id: string; name: string } | null; user: { id: string; name: string } | null }>
+  }
+  const [taskChatRooms, setTaskChatRooms]   = useState<ChatRoom[]>([])
+  const [chatLoading, setChatLoading]       = useState(false)
+  const [chatInput, setChatInput]           = useState('')
+  const [chatSending, setChatSending]       = useState(false)
+  const [activeChatRoom, setActiveChatRoom] = useState<string | null>(null)
+  const chatInputRef = useRef<HTMLInputElement>(null)
 
   const loadEvents = useCallback(async (taskId: string) => {
     setEventsLoading(true)
@@ -137,6 +159,48 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
       setEventsLoading(false)
     }
   }, [])
+
+  const loadChat = useCallback(async (taskId: string) => {
+    setChatLoading(true)
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/chat`)
+      if (res.ok) {
+        const data = await res.json()
+        setTaskChatRooms(data.rooms || [])
+        if (data.rooms?.length && !activeChatRoom) {
+          setActiveChatRoom(data.rooms[0].id)
+        }
+      }
+    } finally {
+      setChatLoading(false)
+    }
+  }, [activeChatRoom])
+
+  const sendChatMessage = async () => {
+    const content = chatInput.trim()
+    if (!content || chatSending || !activeChatRoom || panel?.kind !== 'task') return
+    setChatSending(true)
+    setChatInput('')
+    try {
+      const res = await fetch(`/api/chatrooms/${activeChatRoom}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      })
+      if (res.ok) {
+        // Refresh room messages
+        const roomRes = await fetch(`/api/tasks/${panel.task.id}/chat`)
+        if (roomRes.ok) {
+          const data = await roomRes.json()
+          setTaskChatRooms(data.rooms || [])
+        }
+      }
+    } catch (e) {
+      console.error('Failed to send message:', e)
+    } finally {
+      setChatSending(false)
+    }
+  }
 
 
   // Sync task detail panel when task changes
@@ -149,6 +213,9 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
       setTaskTab('details')
       setTaskEvents([])
       setExpandedEvents(new Set())
+      setTaskChatRooms([])
+      setActiveChatRoom(null)
+      setChatInput('')
     }
   }, [panel?.kind === 'task' ? panel.task.id : null])
 
@@ -635,6 +702,10 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
               className={`px-3 py-2 text-[11px] font-medium border-b-2 transition-colors ${taskTab === 'log' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
               Run Log
             </button>
+            <button onClick={() => { setTaskTab('chat'); loadChat(panel.task.id) }}
+              className={`px-3 py-2 text-[11px] font-medium border-b-2 transition-colors ${taskTab === 'chat' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
+              Chat
+            </button>
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {taskTab === 'details' && (<>
@@ -718,6 +789,12 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
                   return next
                 })}
                 onRefresh={() => loadEvents(panel.task.id)} />
+            )}
+
+            {taskTab === 'chat' && (
+              <TaskChat rooms={taskChatRooms} loading={chatLoading} activeRoom={activeChatRoom}
+                onRoomChange={setActiveChatRoom} onSend={sendChatMessage} sending={chatSending}
+                inputRef={chatInputRef} onInput={setChatInput} input={chatInput} />
             )}
           </div>
           {taskTab === 'details' && (
@@ -974,6 +1051,126 @@ function TaskRunLog({
             )
           })}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ── TaskChat ───────────────────────────────────────────────────────────────────
+
+const SENDER_BG: Record<string, string> = {
+  agent: 'bg-accent/15 text-accent border-accent/20',
+  user: 'bg-bg-raised text-text-secondary border-border-subtle',
+  system: 'bg-bg-raised text-text-muted border-border-subtle italic',
+}
+
+function TaskChat({
+  rooms, loading, activeRoom, onRoomChange, onSend, sending, inputRef, onInput, input
+}: {
+  rooms: Array<{id:string;name:string;type:string;messages:Array<{id:string;senderType:string;content:string;sender:{type:string;id:string|null;name:string};createdAt:string}>}>
+  loading: boolean
+  activeRoom: string | null
+  onRoomChange: (id: string) => void
+  onSend: () => void
+  sending: boolean
+  inputRef: React.RefObject<HTMLInputElement | null>
+  onInput: (v: string) => void
+  input: string
+}) {
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  // Scroll to bottom when messages change
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [rooms, activeRoom])
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-12 text-text-muted text-xs">Loading chat…</div>
+  )
+
+  const allRooms = rooms.length > 0 ? rooms : [{
+    id: '', name: 'Task Chat', type: 'task', messages: [] as Array<{id:string;senderType:string;content:string;sender:{type:string;id:string|null;name:string};createdAt:string}>,
+  }]
+
+  const currentRoom = activeRoom
+    ? allRooms.find(r => r.id === activeRoom)
+    : allRooms[0]
+
+  if (!currentRoom) return null
+
+  const messages = currentRoom.messages.length > 0 ? currentRoom.messages : []
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Room selector */}
+      {rooms.length > 1 && (
+        <div className="flex gap-1.5 mb-3 overflow-x-auto pb-1">
+          {rooms.map(room => (
+            <button
+              key={room.id}
+              onClick={() => onRoomChange(room.id)}
+              className={`flex-shrink-0 px-2.5 py-1 rounded text-[10px] border transition-colors ${
+                activeRoom === room.id
+                  ? 'bg-accent/15 border-accent/40 text-accent'
+                  : 'bg-bg-raised border-border-subtle text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              {room.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+        {!messages.length ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center text-text-muted">
+            <div className="w-12 h-12 rounded-full bg-accent/20 flex items-center justify-center mb-3">
+              <MessageSquare size={22} className="text-accent" />
+            </div>
+            <p className="text-xs">No messages yet</p>
+            <p className="text-[10px] mt-1 opacity-60">Bot conversations for this task appear here.</p>
+          </div>
+        ) : (
+          messages.map(msg => {
+            const isAgent = msg.senderType === 'agent'
+            const isSystem = msg.senderType === 'system'
+            return (
+              <div key={msg.id} className={`rounded-lg border px-3 py-2 text-xs ${SENDER_BG[msg.senderType] ?? SENDER_BG.system}`}>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-[9px] font-semibold text-text-secondary">
+                    {isAgent ? msg.sender.name : msg.sender.name || 'system'}
+                  </span>
+                  <span className="text-[8px] text-text-muted flex-shrink-0">
+                    {new Date(msg.createdAt).toLocaleTimeString()}
+                  </span>
+                </div>
+                <pre className="whitespace-pre-wrap break-words leading-relaxed font-mono text-[11px]">{msg.content}</pre>
+              </div>
+            )
+          })
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input */}
+      <div className="border-t border-border-subtle p-2.5 flex gap-2 flex-shrink-0 mt-2">
+        <input
+          ref={inputRef as any}
+          value={input}
+          onChange={e => onInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend() }}}
+          placeholder="Send a message…"
+          disabled={sending}
+          className="flex-1 px-3 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+        />
+        <button
+          onClick={onSend}
+          disabled={!input.trim() || sending}
+          className="p-1.5 rounded-lg bg-accent text-white hover:bg-accent/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+        >
+          {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+        </button>
       </div>
     </div>
   )
