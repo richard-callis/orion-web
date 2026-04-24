@@ -86,6 +86,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
   const [planningInput, setPlanningInput] = useState('')
   const [draftForm, setDraftForm] = useState({ name: '', role: '', type: 'claude' })
   const [draftCreating, setDraftCreating] = useState(false)
+  const initialContextRef = useRef<string | null>(null)
   const planningAbortRef = useRef<AbortController | null>(null)
   const planningBottomRef = useRef<HTMLDivElement>(null)
   const planningInputRef = useRef<HTMLInputElement>(null)
@@ -142,16 +143,19 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
     setPlanningInput('')
     try {
       const tmplRes = await fetch('/api/admin/prompts/context.agent-create')
-      const initialContext = tmplRes.ok
+     const ctx = tmplRes.ok
         ? ((await tmplRes.json() as { content: string }).content)
         : "I want to create a new agent for my homelab team. Help me define what this agent should do. Ask me what kind of agent I need, its responsibilities, and if it's an AI agent, help me write a good system prompt for it."
+      initialContextRef.current = ctx
       const r = await fetch('/api/chat/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: `Plan: ${form.name || 'New Agent'}`, agentDraft: true, initialContext }),
+        body: JSON.stringify({ title: `Plan: ${form.name || 'New Agent'}`, agentDraft: true, initialContext: ctx }),
       })
       const convo = await r.json()
       setPlanningConvId(convo.id)
+      // Auto-send the initial context so Claude gets its planning instructions
+      sendToPlanning(ctx)
     } catch (err) {
       console.error('Failed to start planning:', err)
       setPlanningMode(false)
