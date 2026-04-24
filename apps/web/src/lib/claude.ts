@@ -246,6 +246,7 @@ export async function* streamOllamaChat(
   abortSignal?: AbortSignal,
   userId?: string,
   targetEnvironmentId?: string,
+  systemPromptOverride?: string,
 ): AsyncGenerator<StreamChunk> {
   // Load tools from the specified (or first connected) gateway
   const { GatewayClient } = await import('./agent-runner/gateway-client')
@@ -271,7 +272,8 @@ export async function* streamOllamaChat(
 
   // No gateway — fall through to regular streaming chat with an honest system prompt
   if (!gatewayTools.length || !gatewayClient) {
-    yield* streamOllamaAgentChat(prompt, conversationId, await getSystemPrompt([]), history, model, baseUrl, undefined, abortSignal)
+    const sp = systemPromptOverride ?? await getSystemPrompt([])
+    yield* streamOllamaAgentChat(prompt, conversationId, sp, history, model, baseUrl, undefined, abortSignal)
     return
   }
 
@@ -709,6 +711,7 @@ export async function* streamOpenAIChat(
   abortSignal?: AbortSignal,
   userId?: string,
   targetEnvironmentId?: string,
+  systemPromptOverride?: string,
 ): AsyncGenerator<StreamChunk> {
   // Load gateway tools from specified or first connected environment
   const { GatewayClient } = await import('./agent-runner/gateway-client')
@@ -728,7 +731,7 @@ export async function* streamOpenAIChat(
     try { gatewayTools = await gatewayClient.listTools() } catch { /* proceed without tools */ }
   }
 
-  const systemPrompt = await getSystemPrompt(gatewayTools.map(t => t.name), undefined, conversationId)
+  const systemPrompt = systemPromptOverride ?? await getSystemPrompt(gatewayTools.map(t => t.name), undefined, conversationId)
   yield* streamOpenAIChatCore(
     prompt, conversationId, systemPrompt, history,
     model, baseUrl, apiKey,
