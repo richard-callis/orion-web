@@ -143,7 +143,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
     setPlanningInput('')
     try {
       const tmplRes = await fetch('/api/admin/prompts/context.agent-create')
-      const ctx = tmplRes.ok
+     const ctx = tmplRes.ok
         ? ((await tmplRes.json() as { content: string }).content)
         : "I want to create a new agent for my homelab team. Help me define what this agent should do. Ask me what kind of agent I need, its responsibilities, and if it's an AI agent, help me write a good system prompt for it."
       initialContextRef.current = ctx
