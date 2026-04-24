@@ -45,6 +45,7 @@ interface InviteOption {
 interface Props {
   roomId: string
   onMobileBack: () => void
+  onLeave?: () => void
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -54,7 +55,7 @@ const TYPE_COLORS: Record<string, string> = {
   ops: 'bg-orange-500/20 text-orange-400',
 }
 
-export function RoomChat({ roomId, onMobileBack }: Props) {
+export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   const [room, setRoom] = useState<RoomDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
@@ -89,11 +90,12 @@ export function RoomChat({ roomId, onMobileBack }: Props) {
     if (!message.trim() || !room || sending) return
     setSending(true)
     try {
-      await fetch(`/api/chatrooms/${room.id}/messages`, {
+      const res = await fetch(`/api/chatrooms/${room.id}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: message.trim() }),
       })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setMessage('')
       await loadRoom()
     } catch { /* ignore */ }
@@ -147,8 +149,9 @@ export function RoomChat({ roomId, onMobileBack }: Props) {
       await fetch(`/api/chatrooms/${roomId}/join`, { method: 'DELETE' })
     } catch { /* ignore */ }
     setShowLeaveConfirm(false)
-    loadRoom()
-  }, [roomId, loadRoom])
+    if (onLeave) onLeave()
+    else onMobileBack()
+  }, [roomId, onLeave, onMobileBack])
 
   // Filter invite list by search
   const filteredUsers = inviteUsers.filter(u =>
