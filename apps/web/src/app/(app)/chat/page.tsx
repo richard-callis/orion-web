@@ -3,6 +3,8 @@ import { Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { ChatWindow } from '@/components/chat/ChatWindow'
 
+export const dynamic = 'force-dynamic'
+
 interface Conversation {
   id: string
   title: string | null
