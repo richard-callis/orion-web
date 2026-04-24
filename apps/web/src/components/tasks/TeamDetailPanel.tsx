@@ -1,8 +1,8 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { X, Plus, Trash2, Bot, User, Cpu, MessageSquarePlus, MessageSquare, Rocket } from 'lucide-react'
+import { X, Plus, Trash2, Bot, User, Cpu, MessageSquarePlus, MessageSquare, Rocket, Loader2, Check, Send, Square } from 'lucide-react'
 import type { Agent } from '@/types/tasks'
 import { NovaBrowser } from '@/components/nova/NovaBrowser'
 
@@ -77,6 +77,18 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
   const [showNovaBrowser, setShowNovaBrowser] = useState(false)
   const [saving, setSaving]             = useState(false)
   const [availableModels, setAvailableModels] = useState<Array<{id: string; name: string; provider: string; builtIn: boolean}>>([])
+
+  // Planning mode state
+  const [planningMode, setPlanningMode] = useState(false)
+  const [planningConvId, setPlanningConvId] = useState('')
+  const [planningMessages, setPlanningMessages] = useState<Array<{role: string; content: string; toolCalls?: Array<{tool: string; input: string; output?: string}>; streaming?: boolean}>>([])
+  const [planningStreaming, setPlanningStreaming] = useState(false)
+  const [planningInput, setPlanningInput] = useState('')
+  const [draftForm, setDraftForm] = useState({ name: '', role: '', type: 'claude' })
+  const [draftCreating, setDraftCreating] = useState(false)
+  const planningAbortRef = useRef<AbortController | null>(null)
+  const planningBottomRef = useRef<HTMLDivElement>(null)
+  const planningInputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
 
   useEffect(() => { fetch('/api/models').then(r => r.json()).then(setAvailableModels).catch(() => {}) }, [])
@@ -123,18 +135,128 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
     router.push(`/chat?conversation=${convo.id}`)
   }
 
-  const createWithClaude = async () => {
-    const tmplRes = await fetch('/api/admin/prompts/context.agent-create')
-    const initialContext = tmplRes.ok
-      ? ((await tmplRes.json() as { content: string }).content)
-      : "I want to create a new agent for my homelab team. Help me define what this agent should do. Ask me what kind of agent I need, its responsibilities, and if it's an AI agent, help me write a good system prompt for it."
-    const r = await fetch('/api/chat/conversations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'New Agent', agentDraft: true, initialContext }),
-    })
-    const convo = await r.json()
-    router.push(`/chat?conversation=${convo.id}`)
+   const startPlanning = async () => {
+    setPlanningMode(true)
+    setPlanningMessages([])
+    setDraftForm({ name: '', role: '', type: 'claude' })
+    setPlanningInput('')
+    try {
+      const tmplRes = await fetch('/api/admin/prompts/context.agent-create')
+      const initialContext = tmplRes.ok
+        ? ((await tmplRes.json() as { content: string }).content)
+        : "I want to create a new agent for my homelab team. Help me define what this agent should do. Ask me what kind of agent I need, its responsibilities, and if it's an AI agent, help me write a good system prompt for it."
+      const r = await fetch('/api/chat/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: `Plan: ${form.name || 'New Agent'}`, agentDraft: true, initialContext }),
+      })
+      const convo = await r.json()
+      setPlanningConvId(convo.id)
+    } catch (err) {
+      console.error('Failed to start planning:', err)
+      setPlanningMode(false)
+    }
+  }
+
+  const sendToPlanning = async (promptOverride?: string) => {
+    const prompt = (promptOverride ?? planningInput).trim()
+    if (!prompt || planningStreaming || !planningConvId) return
+    setPlanningInput('')
+    setPlanningStreaming(true)
+
+    const abort = new AbortController()
+    planningAbortRef.current = abort
+
+    const userMsg = { role: 'user' as const, content: prompt, toolCalls: [] as Array<{tool: string; input: string; output?: string}> }
+    const assistantMsg = { role: 'assistant' as const, content: '', toolCalls: [], streaming: true }
+    setPlanningMessages(prev => [...prev, userMsg, assistantMsg])
+
+    try {
+      const resp = await fetch(`/api/chat/conversations/${planningConvId}/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+        signal: abort.signal,
+      })
+      const reader = resp.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n\n')
+        buffer = lines.pop() ?? ''
+        for (const block of lines) {
+          const eventLine = block.split('\n').find(l => l.startsWith('event:'))
+          const dataLine  = block.split('\n').find(l => l.startsWith('data:'))
+          if (!eventLine || !dataLine) continue
+          const event = eventLine.replace('event: ', '').trim()
+          const data = JSON.parse(dataLine.replace('data: ', ''))
+          setPlanningMessages(prev => {
+            const msgs = [...prev]
+            const last = msgs[msgs.length - 1]
+            if (!last || last.role !== 'assistant') return prev
+            if (event === 'text' && data.content) last.content += data.content
+            else if (event === 'tool_call') last.toolCalls = [...(last.toolCalls ?? []), { tool: data.tool!, input: data.input! }]
+            else if (event === 'tool_result') { const tc = last.toolCalls?.[last.toolCalls.length - 1]; if (tc) tc.output = data.output }
+            else if (event === 'done' || event === 'error') {
+              last.streaming = false
+              if (event === 'error') last.content += `\n\n⚠ ${data.error ?? 'Error'}`
+            }
+            return msgs
+          })
+        }
+      }
+    } catch (err) {
+      if (!(err instanceof Error && err.name === 'AbortError')) {
+        setPlanningMessages(prev => {
+          const msgs = [...prev]
+          const last = msgs[msgs.length - 1]
+          if (last?.role === 'assistant') { last.streaming = false; last.content += `\n\n⚠ Error: ${err}` }
+          return msgs
+        })
+      }
+    } finally {
+      planningAbortRef.current = null
+      setPlanningStreaming(false)
+      setPlanningMessages(prev => {
+        const msgs = [...prev]
+        const last = msgs[msgs.length - 1]
+        if (last?.role === 'assistant') last.streaming = false
+        return msgs
+      })
+    }
+  }
+
+  const createFromDraft = async () => {
+    if (!draftForm.name.trim()) return
+    setDraftCreating(true)
+    try {
+      const lastAssistant = [...planningMessages].reverse().find(m => m.role === 'assistant')
+      const agentRes = await fetch('/api/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: draftForm.name,
+          type: (draftForm.type === 'custom' ? 'claude' : draftForm.type),
+          role: draftForm.role || null,
+          metadata: lastAssistant?.content?.trim() ? { systemPrompt: lastAssistant.content.trim() } : undefined,
+        }),
+      })
+      if (!agentRes.ok) { const err = await agentRes.json().catch(() => ({})); throw new Error(err.error ?? 'Failed to create agent') }
+      const agent = await agentRes.json()
+      if (onCreate) onCreate(agent)
+      else setLocalAgents(prev => [...prev, agent])
+      setPlanningMode(false)
+      setPlanningConvId('')
+      setPlanningMessages([])
+      setDraftForm({ name: '', role: '', type: 'claude' })
+    } catch (err) {
+      console.error('Failed to create agent:', err)
+      alert(`Failed to create agent: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      setDraftCreating(false)
+    }
   }
 
   const handleNovaImport = (novaName: string) => {
@@ -279,11 +401,6 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
             className="flex-1 flex items-center gap-2 px-4 py-2.5 text-xs text-text-muted hover:text-accent hover:bg-bg-raised transition-colors">
             <Plus size={13} /> Add Agent
           </button>
-          <button onClick={createWithClaude}
-            className="flex items-center gap-2 px-4 py-2.5 text-xs text-text-muted hover:text-accent hover:bg-bg-raised transition-colors border-l border-border-subtle"
-            title="Start a conversation to plan the agent with Claude">
-            <MessageSquarePlus size={13} /> Create with Claude
-          </button>
           <button onClick={() => setShowNovaBrowser(true)}
             className="flex items-center gap-2 px-4 py-2.5 text-xs text-text-muted hover:text-accent hover:bg-bg-raised transition-colors border-l border-border-subtle"
             title="Browse Nebula service catalog to import agents">
@@ -339,10 +456,98 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
               <button onClick={closeCreate} className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
                 Cancel
               </button>
+              <button onClick={() => { setCreateModal(false); startPlanning(); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-accent/15 text-accent hover:bg-accent/25 transition-colors">
+                <MessageSquarePlus size={11} /> Plan with AI
+              </button>
               <button onClick={create} disabled={!form.name.trim() || saving}
                 className="px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
                 {saving ? 'Adding…' : 'Add Agent'}
               </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Planning mode — inline chat with Claude for agent creation */}
+      {planningMode && planningConvId && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setPlanningMode(false)}>
+          <div className="w-full max-w-2xl bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col"
+               style={{ maxHeight: 'min(70vh, 700px)' }} onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <Bot size={14} className="text-accent" />
+                <span className="text-xs font-semibold text-text-primary">Plan with AI</span>
+              </div>
+              <button onClick={() => setPlanningMode(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
+            </div>
+            {/* Agent creation banner — shown after Claude responds */}
+            {planningMessages.some(m => m.role === 'assistant') && (
+              <>
+                <div className="flex items-center gap-2 px-4 py-2 border-b border-border-subtle bg-accent/5 flex-shrink-0">
+                  <Bot size={13} className="text-accent flex-shrink-0" />
+                  <span className="text-xs text-accent flex-1">Agent creation mode — chat with Claude to define your agent</span>
+                </div>
+                <div className="flex items-center gap-2 px-4 pb-2.5 flex-shrink-0">
+                  <input value={draftForm.name} onChange={e => setDraftForm(f => ({ ...f, name: e.target.value }))}
+                    placeholder="Agent name *"
+                    className="flex-1 min-w-0 px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent" />
+                  <input value={draftForm.role} onChange={e => setDraftForm(f => ({ ...f, role: e.target.value }))}
+                    placeholder="Role (e.g. DevOps)"
+                    className="flex-1 min-w-0 px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent" />
+                  <select value={draftForm.type} onChange={e => setDraftForm(f => ({ ...f, type: e.target.value }))}
+                    className="px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent">
+                    <option value="claude">Claude</option>
+                    <option value="human">Human</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                  <button onClick={createFromDraft} disabled={!draftForm.name.trim() || draftCreating}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium bg-accent/15 text-accent hover:bg-accent/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap">
+                    {draftCreating ? <><Loader2 size={11} className="animate-spin" /> Creating…</> : <><Check size={11} /> Create Agent</>}
+                  </button>
+                </div>
+              </>
+            )}
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {!planningMessages.length ? (
+                <div className="flex flex-col items-center justify-center h-full text-center text-text-muted">
+                  <div className="w-12 h-12 rounded-full bg-accent/20 flex items-center justify-center mb-4"><Bot size={22} className="text-accent" /></div>
+                  <p className="text-sm">Creating a new agent</p>
+                  <p className="text-xs mt-1 opacity-60">Describe what you need — Claude will help define the role, responsibilities, and system prompt.</p>
+                </div>
+              ) : (
+                planningMessages.map((msg, i) => (
+                  <div key={i} className={msg.role === 'user' ? 'text-right' : ''}>
+                    <div className={`inline-block max-w-[85%] rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${
+                      msg.role === 'user' ? 'bg-accent/20 text-accent' : 'bg-bg-raised text-text-secondary border border-border-subtle'
+                    }`}>
+                      {msg.content}
+                      {msg.toolCalls?.map((tc, j) => (
+                        <div key={j} className="mt-1 text-[10px] text-text-muted">Tool: {tc.tool}</div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+              <div ref={planningBottomRef} />
+            </div>
+            {/* Input */}
+            <div className="border-t border-border-subtle p-3 flex-shrink-0">
+              <div className="flex gap-2">
+                <input ref={planningInputRef} value={planningInput} onChange={e => setPlanningInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendToPlanning() }}}
+                  placeholder={planningMessages.length === 0 ? "Describe what kind of agent you need…" : "Type your message…"}
+                  disabled={planningStreaming}
+                  className="flex-1 px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent" />
+                {planningStreaming ? (
+                  <button onClick={() => planningAbortRef.current?.abort()} className="p-2.5 rounded-lg bg-status-error/15 text-status-error hover:bg-status-error/30"><Square size={16} /></button>
+                ) : (
+                  <button onClick={() => sendToPlanning()} disabled={!planningInput.trim()} className="p-2.5 rounded-lg bg-accent text-white hover:bg-accent/80 disabled:opacity-40"><Send size={16} /></button>
+                )}
+              </div>
             </div>
           </div>
         </div>,
