@@ -504,7 +504,7 @@ export async function* streamAgentChat(
 
   if (llm.startsWith('ollama:') || llm.startsWith('ext:')) {
     // Resolve model + baseUrl + provider
-    let model: string
+    let model: string = ''
     let baseUrl: string | undefined
     let timeoutSecs = 120
     let provider = 'ollama'
@@ -514,7 +514,7 @@ export async function* streamAgentChat(
       const extId = llm.slice('ext:'.length)
       const extModel = await prisma.externalModel.findUnique({ where: { id: extId } })
       if (!extModel) { yield { type: 'error', error: `External model not found: ${extId}` }; return }
-      model = extModel.modelId
+      model = extModel.modelId || 'default'
       baseUrl = extModel.baseUrl ?? undefined
       timeoutSecs = extModel.timeoutSecs ?? 120
       provider = extModel.provider   // 'ollama' | 'openai' | 'custom' | etc.
@@ -536,13 +536,28 @@ export async function* streamAgentChat(
       }
     } else {
       // OpenAI-compatible endpoint (custom / openai / llama.cpp / etc.)
-      if (!baseUrl) { yield { type: 'error', error: `No baseUrl configured for model ${model}` }; return }
-      const systemPrompt = gw
-        ? await getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt, conversationId)
-        : agentSystemPrompt + noGwSuffix
+      // Don't use getSystemPrompt — its ORION template would conflict with the agent's persona.
+      // agentSystemPrompt is already the raw agent identity prompt.
+      let openAISystemPrompt: string
+      if (gw) {
+        // Build system prompt: persona + tool definitions + cluster context
+        const toolDefs = gw.tools.map(t => `  - ${t.name}: ${t.description || 'No description'}`).join('\n')
+        openAISystemPrompt = `${agentSystemPrompt}
+
+You have the following MCP tools available:
+${toolDefs}
+
+Tool usage rules:
+- Call tools immediately when you need real data. Do not ask permission first.
+- NEVER make up or hallucinate tool output. Always use a tool and return its real result.
+
+${readClusterContext()}`
+      } else {
+        openAISystemPrompt = agentSystemPrompt + noGwSuffix
+      }
       yield* streamOpenAIChatCore(
-        prompt, conversationId, systemPrompt, trimmedHistory,
-        model, baseUrl, apiKey,
+        prompt, conversationId, openAISystemPrompt, trimmedHistory,
+        model!, baseUrl!, apiKey,
         gw?.tools ?? [], gw?.gc ?? null, gw?.environmentId,
         undefined, userId,
       )
