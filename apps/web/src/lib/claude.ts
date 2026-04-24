@@ -4,6 +4,20 @@ import { prisma } from './db'
 import { getPrompt, interpolate } from './system-prompts'
 import type { SDKAssistantMessage, SDKResultMessage } from '@anthropic-ai/claude-code'
 
+async function getActiveTasksSection(): Promise<string> {
+  const tasks = await prisma.task.findMany({
+    where: { status: { in: ['pending', 'running'] } },
+    select: { id: true, title: true, description: true, plan: true, priority: true, status: true },
+    orderBy: { priority: 'desc' },
+    take: 20,
+  })
+  if (!tasks.length) return ''
+  const lines = tasks.map(t =>
+    `  • [${t.status}] ${t.title}${t.priority ? ` (priority: ${t.priority})` : ''}${t.description ? `\n    ${t.description.slice(0, 200)}` : ''}`
+  )
+  return `\nYou have a task board with active work items:\n${lines.join('\n')}\nUse these as guidance for what work is expected. Do not claim to have completed tasks you haven't verified.\n`
+}
+
 // Tool allowlist — read-only kubectl only
 export const ALLOWED_TOOLS = [
   'Bash(kubectl get:*)',
@@ -528,21 +542,23 @@ export async function* streamAgentChat(
     const noGwSuffix = '\n\nNo MCP gateway is connected right now. You cannot run tools or commands. Be honest about this limitation.'
 
     if (provider === 'ollama') {
+      const activeTasks = await getActiveTasksSection()
       if (gw) {
-        const systemPrompt = await getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt, conversationId)
+        const systemPrompt = await getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt + activeTasks, conversationId)
         yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, trimmedHistory, model, baseUrl, gw.tools, gw.gc, gw.environmentId, undefined, userId)
       } else {
-        yield* streamOllamaAgentChat(prompt, conversationId, agentSystemPrompt + noGwSuffix, trimmedHistory, model, baseUrl, timeoutSecs)
+        yield* streamOllamaAgentChat(prompt, conversationId, agentSystemPrompt + activeTasks + noGwSuffix, trimmedHistory, model, baseUrl, timeoutSecs)
       }
     } else {
       // OpenAI-compatible endpoint (custom / openai / llama.cpp / etc.)
       // Don't use getSystemPrompt — its ORION template would conflict with the agent's persona.
       // agentSystemPrompt is already the raw agent identity prompt.
+      const activeTasks = await getActiveTasksSection()
       let openAISystemPrompt: string
       if (gw) {
-        // Build system prompt: persona + tool definitions + cluster context
+        // Build system prompt: persona + tasks + tool definitions + cluster context
         const toolDefs = gw.tools.map(t => `  - ${t.name}: ${t.description || 'No description'}`).join('\n')
-        openAISystemPrompt = `${agentSystemPrompt}
+        openAISystemPrompt = `${agentSystemPrompt}${activeTasks}
 
 You have the following MCP tools available:
 ${toolDefs}
@@ -553,7 +569,7 @@ Tool usage rules:
 
 ${readClusterContext()}`
       } else {
-        openAISystemPrompt = agentSystemPrompt + noGwSuffix
+        openAISystemPrompt = agentSystemPrompt + activeTasks + noGwSuffix
       }
       yield* streamOpenAIChatCore(
         prompt, conversationId, openAISystemPrompt, trimmedHistory,
