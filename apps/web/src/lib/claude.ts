@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import { prisma } from './db'
 import { getPrompt, interpolate } from './system-prompts'
+import { generateEmbedding, vectorSearch } from './embeddings'
 import type { SDKAssistantMessage, SDKResultMessage } from '@anthropic-ai/claude-code'
 
 async function getActiveTasksSection(): Promise<string> {
@@ -35,6 +36,7 @@ async function getSystemPrompt(
   toolNames: string[] = [],
   basePrompt?: string,
   conversationId?: string,  // Optional: inject conversation memories
+  knowledgeContext?: string, // Optional: pre-fetched RAG context to inject
 ): Promise<string> {
   const clusterContext = readClusterContext()
   const persona = basePrompt ?? 'You are ORION, an AI assistant for homelab infrastructure management.'
@@ -53,9 +55,13 @@ async function getSystemPrompt(
     }
   }
 
+  const kcSection = knowledgeContext
+    ? '\n\n---\n## Relevant Knowledge Base\n\nThe following notes are semantically relevant to this query. Reference them when helpful:\n\n' + knowledgeContext + '\n---'
+    : ''
+
   if (toolNames.length === 0) {
     const template = await getPrompt('system.main.no-gateway')
-    return interpolate(template, { persona }) + memorySection
+    return interpolate(template, { persona }) + memorySection + kcSection
   }
 
   const template = await getPrompt('system.main')
@@ -63,7 +69,7 @@ async function getSystemPrompt(
     toolCount:      String(toolNames.length),
     toolList:       toolNames.join(', '),
     clusterContext,
-  }) + memorySection
+  }) + memorySection + kcSection
 }
 
 async function getPlanningSystemPrompt(targetType: string): Promise<string> {
@@ -247,6 +253,7 @@ export async function* streamOllamaChat(
   userId?: string,
   targetEnvironmentId?: string,
   systemPromptOverride?: string,
+  knowledgeContext?: string,
 ): AsyncGenerator<StreamChunk> {
   // Load tools from the specified (or first connected) gateway
   const { GatewayClient } = await import('./agent-runner/gateway-client')
@@ -272,13 +279,13 @@ export async function* streamOllamaChat(
 
   // No gateway — fall through to regular streaming chat with an honest system prompt
   if (!gatewayTools.length || !gatewayClient) {
-    const sp = systemPromptOverride ?? await getSystemPrompt([])
+    const sp = systemPromptOverride ?? await getSystemPrompt([], undefined, undefined, knowledgeContext)
     yield* streamOllamaAgentChat(prompt, conversationId, sp, history, model, baseUrl, undefined, abortSignal)
     return
   }
 
   // Tools available — run agentic loop (non-streaming turns with tool execution)
-  const systemPrompt = await getSystemPrompt(gatewayTools.map(t => t.name))
+  const systemPrompt = await getSystemPrompt(gatewayTools.map(t => t.name), undefined, undefined, knowledgeContext)
   yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, history, model, baseUrl, gatewayTools, gatewayClient, connectedEnv!.id, abortSignal, userId)
 }
 
@@ -314,32 +321,64 @@ async function* streamOllamaToolLoop(
     timeoutSecs = extModel.timeoutSecs ?? 120
   }
 
-  // Synthetic propose_tool — handled locally, never forwarded to the gateway
-  const proposeToolDef = {
-    type: 'function',
-    function: {
-      name: 'propose_tool',
-      description: 'Propose a new tool to be added to this environment\'s gateway. Use this when you need a command that isn\'t available. A human must approve it before you can use it.',
-      parameters: {
-        type: 'object',
-        properties: {
-          name:        { type: 'string', description: 'snake_case tool name, e.g. kubectl_get_pods' },
-          description: { type: 'string', description: 'What the tool does' },
-          command:     { type: 'string', description: 'Shell command with {param} placeholders, e.g. kubectl get pods -n {namespace}' },
-          parameters:  { type: 'object', description: 'Parameter definitions — keys are param names, values have type and description' },
-          reason:      { type: 'string', description: 'Why this tool is needed right now' },
+  // Synthetic management tools — handled locally, never forwarded to the gateway
+  const localToolDefs = [
+    {
+      type: 'function',
+      function: {
+        name: 'propose_tool',
+        description: 'Propose a new tool to be added to this environment\'s gateway. Use this when you need a command that isn\'t available. A human must approve it before you can use it.',
+        parameters: {
+          type: 'object',
+          properties: {
+            name:        { type: 'string', description: 'snake_case tool name, e.g. kubectl_get_pods' },
+            description: { type: 'string', description: 'What the tool does' },
+            command:     { type: 'string', description: 'Shell command with {param} placeholders, e.g. kubectl get pods -n {namespace}' },
+            parameters:  { type: 'object', description: 'Parameter definitions — keys are param names, values have type and description' },
+            reason:      { type: 'string', description: 'Why this tool is needed right now' },
+          },
+          required: ['name', 'description', 'command'],
         },
-        required: ['name', 'description', 'command'],
       },
     },
-  }
+    {
+      type: 'function',
+      function: {
+        name: 'knowledge_search',
+        description: 'Semantically search the knowledge base (notes, runbooks, wiki pages) for content relevant to a query.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query:          { type: 'string',  description: 'Natural language search query' },
+            limit:          { type: 'number',  description: 'Max results (1-20, default 5)' },
+            includeContent: { type: 'boolean', description: 'Include note content (default true)' },
+          },
+          required: ['query'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'knowledge_graph',
+        description: 'Get the full knowledge graph — all notes with wikilink dependencies and semantic connections.',
+        parameters: {
+          type: 'object',
+          properties: {
+            threshold:      { type: 'number',  description: 'Min similarity for semantic edges (default 0.5)' },
+            includeContent: { type: 'boolean', description: 'Include content snippet per note (default false)' },
+          },
+        },
+      },
+    },
+  ]
 
   const ollamaToolDefs = [
     ...tools.map(t => ({
       type: 'function',
       function: { name: t.name, description: t.description, parameters: t.inputSchema },
     })),
-    proposeToolDef,
+    ...localToolDefs,
   ]
 
   const messages: OllamaMsg[] = [
@@ -413,6 +452,24 @@ async function* streamOllamaToolLoop(
             continue
           }
 
+          // Knowledge tools — handled server-side
+          if (fn.name === 'knowledge_search') {
+            const argsStr = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments)
+            yield { type: 'tool_call', tool: fn.name, input: argsStr }
+            const result = await handleKnowledgeSearch(argsStr)
+            yield { type: 'tool_result', tool: fn.name, output: result }
+            messages.push({ role: 'tool', content: result })
+            continue
+          }
+          if (fn.name === 'knowledge_graph') {
+            const argsStr = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments)
+            yield { type: 'tool_call', tool: fn.name, input: argsStr }
+            const result = await handleKnowledgeGraph(argsStr)
+            yield { type: 'tool_result', tool: fn.name, output: result }
+            messages.push({ role: 'tool', content: result })
+            continue
+          }
+
           yield { type: 'tool_call', tool: fn.name, input: typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments) }
 
           // Permission check — must happen before forwarding to gateway
@@ -466,6 +523,7 @@ export async function* streamAgentChat(
   agentId?: string,
   userId?: string,
   targetEnvironmentId?: string,
+  knowledgeContext?: string,
 ): AsyncGenerator<StreamChunk> {
   const historyLimit   = contextConfig.historyMessages ?? 6
   const summarizeAfter = contextConfig.summarizeAfter  ?? 20
@@ -543,13 +601,17 @@ export async function* streamAgentChat(
     const gw = await loadAgentGateway()
     const noGwSuffix = '\n\nNo MCP gateway is connected right now. You cannot run tools or commands. Be honest about this limitation.'
 
+    const kcSection = knowledgeContext
+      ? '\n\n---\n## Relevant Knowledge Base\n\n' + knowledgeContext + '\n---'
+      : ''
+
     if (provider === 'ollama') {
       const activeTasks = await getActiveTasksSection()
       if (gw) {
-        const systemPrompt = await getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt + activeTasks, conversationId)
+        const systemPrompt = await getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt + activeTasks, conversationId, knowledgeContext)
         yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, trimmedHistory, model, baseUrl, gw.tools, gw.gc, gw.environmentId, undefined, userId)
       } else {
-        yield* streamOllamaAgentChat(prompt, conversationId, agentSystemPrompt + activeTasks + noGwSuffix, trimmedHistory, model, baseUrl, timeoutSecs)
+        yield* streamOllamaAgentChat(prompt, conversationId, agentSystemPrompt + activeTasks + noGwSuffix + kcSection, trimmedHistory, model, baseUrl, timeoutSecs)
       }
     } else {
       // OpenAI-compatible endpoint (custom / openai / llama.cpp / etc.)
@@ -569,9 +631,9 @@ Tool usage rules:
 - Call tools immediately when you need real data. Do not ask permission first.
 - NEVER make up or hallucinate tool output. Always use a tool and return its real result.
 
-${readClusterContext()}`
+${readClusterContext()}${kcSection}`
       } else {
-        openAISystemPrompt = agentSystemPrompt + activeTasks + noGwSuffix
+        openAISystemPrompt = agentSystemPrompt + activeTasks + noGwSuffix + kcSection
       }
       yield* streamOpenAIChatCore(
         prompt, conversationId, openAISystemPrompt, trimmedHistory,
@@ -594,11 +656,15 @@ ${readClusterContext()}`
   const maxTurns     = contextConfig.maxTurns    ?? 6
   const allowedTools = contextConfig.allowedTools ?? []
 
+  const kcSectionClaude = knowledgeContext
+    ? '\n\n---\n## Relevant Knowledge Base\n\n' + knowledgeContext + '\n---'
+    : ''
+
   const overridePrompt = `You are NOT Claude Code and NOT the Claude CLI. Do not mention or reference Claude Code, Anthropic's CLI, or any developer tooling.
 
 ${agentSystemPrompt}
 
-Respond only in the persona described above. Never break character or refer to yourself as Claude Code.`
+Respond only in the persona described above. Never break character or refer to yourself as Claude Code.${kcSectionClaude}`
 
   yield* streamClaudeResponse(prompt, conversationId, trimmedHistory, null, overridePrompt, {
     maxTurns,
@@ -712,6 +778,7 @@ export async function* streamOpenAIChat(
   userId?: string,
   targetEnvironmentId?: string,
   systemPromptOverride?: string,
+  knowledgeContext?: string,
 ): AsyncGenerator<StreamChunk> {
   // Load gateway tools from specified or first connected environment
   const { GatewayClient } = await import('./agent-runner/gateway-client')
@@ -731,7 +798,7 @@ export async function* streamOpenAIChat(
     try { gatewayTools = await gatewayClient.listTools() } catch { /* proceed without tools */ }
   }
 
-  const systemPrompt = systemPromptOverride ?? await getSystemPrompt(gatewayTools.map(t => t.name), undefined, conversationId)
+  const systemPrompt = systemPromptOverride ?? await getSystemPrompt(gatewayTools.map(t => t.name), undefined, conversationId, knowledgeContext)
   yield* streamOpenAIChatCore(
     prompt, conversationId, systemPrompt, history,
     model, baseUrl, apiKey,
@@ -934,6 +1001,94 @@ async function handleGitopsPropose(argsRaw: string, conversationId: string): Pro
   }
 }
 
+// ── Knowledge graph management tool handlers ─────────────────────────────────
+
+async function handleKnowledgeSearch(argsRaw: string): Promise<string> {
+  try {
+    const { query, limit = 5, includeContent = true } = JSON.parse(argsRaw || '{}') as {
+      query?: string; limit?: number; includeContent?: boolean
+    }
+    if (!query) return 'Error: query is required'
+
+    const embedding = await generateEmbedding(query.slice(0, 2000))
+    if (!embedding) return 'No embedding provider configured. Add an embedding model in Admin → Models to enable semantic search.'
+
+    const results = await vectorSearch(embedding.vector, Math.min(limit, 20))
+    if (!results.length) return 'No relevant notes found for this query.'
+
+    return JSON.stringify(
+      results.map(r => ({
+        title:  r.title,
+        type:   r.type,
+        folder: r.folder,
+        score:  parseFloat(r.score.toFixed(3)),
+        ...(includeContent && { content: r.content.slice(0, 2000) }),
+      })),
+      null, 2
+    )
+  } catch (e) {
+    return `Error: ${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+async function handleKnowledgeGraph(argsRaw: string): Promise<string> {
+  try {
+    const { threshold = 0.5, includeContent = false } = JSON.parse(argsRaw || '{}') as {
+      threshold?: number; includeContent?: boolean
+    }
+
+    const [notes, semanticEdges] = await Promise.all([
+      prisma.note.findMany({
+        select: { id: true, title: true, type: true, folder: true, content: true },
+        orderBy: { title: 'asc' },
+      }),
+      prisma.semanticConnection.findMany({
+        where: { score: { gte: threshold } },
+        select: { sourceNoteId: true, targetNoteId: true, score: true },
+        orderBy: { score: 'desc' },
+        take: 200,
+      }),
+    ])
+
+    const noteById = new Map(notes.map(n => [n.id, n]))
+
+    // Parse wikilinks from note content
+    const wikilinkEdges: Array<{ from: string; to: string }> = []
+    const noteByTitle = new Map(notes.map(n => [n.title.toLowerCase(), n.title]))
+    const wikilinkRegex = /\[\[([^\]|#]+)(?:[|#][^\]]+)?\]\]/g
+    for (const note of notes) {
+      for (const match of note.content.matchAll(wikilinkRegex)) {
+        const target = match[1].trim()
+        if (noteByTitle.has(target.toLowerCase()) && target.toLowerCase() !== note.title.toLowerCase()) {
+          wikilinkEdges.push({ from: note.title, to: target })
+        }
+      }
+    }
+
+    const nodeLines = notes.map(n => {
+      const tag = n.type !== 'note' ? ` [${n.type}]` : ''
+      const folder = n.folder ? ` (${n.folder})` : ''
+      const snippet = includeContent ? `\n  ${n.content.slice(0, 200).replace(/\n/g, ' ')}` : ''
+      return `- ${n.title}${tag}${folder}${snippet}`
+    })
+
+    const wikiLines = wikilinkEdges.map(e => `  ${e.from} → ${e.to}`)
+    const semLines = semanticEdges
+      .map(e => {
+        const src = noteById.get(e.sourceNoteId)?.title ?? e.sourceNoteId
+        const tgt = noteById.get(e.targetNoteId)?.title ?? e.targetNoteId
+        return `  ${src} ↔ ${tgt} (${(e.score * 100).toFixed(0)}%)`
+      })
+
+    let output = `Knowledge Graph — ${notes.length} notes\n\n## Notes\n${nodeLines.join('\n')}`
+    if (wikiLines.length) output += `\n\n## Wikilink Dependencies\n${wikiLines.join('\n')}`
+    if (semLines.length)  output += `\n\n## Semantic Connections (≥${(threshold * 100).toFixed(0)}% similar)\n${semLines.join('\n')}`
+    return output
+  } catch (e) {
+    return `Error: ${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
 async function* streamOpenAIChatCore(
   prompt: string,
   conversationId: string,
@@ -1015,6 +1170,36 @@ async function* streamOpenAIChatCore(
             environment_id: { type: 'string', description: 'Environment ID' },
           },
           required: ['environment_id'],
+        },
+      },
+    },
+    {
+      type: 'function' as const,
+      function: {
+        name: 'knowledge_search',
+        description: 'Semantically search the knowledge base (notes, runbooks, wiki pages) for content relevant to a query. Returns notes ranked by similarity.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query:          { type: 'string',  description: 'Natural language search query' },
+            limit:          { type: 'number',  description: 'Max results to return (1-20, default 5)' },
+            includeContent: { type: 'boolean', description: 'Whether to include full note content (default true)' },
+          },
+          required: ['query'],
+        },
+      },
+    },
+    {
+      type: 'function' as const,
+      function: {
+        name: 'knowledge_graph',
+        description: 'Get the full knowledge graph — all notes with their types, wikilink dependencies, and semantic connections. Use this to understand what documentation exists and how topics relate to each other.',
+        parameters: {
+          type: 'object',
+          properties: {
+            threshold:      { type: 'number',  description: 'Minimum similarity score for semantic edges (0.0-1.0, default 0.5)' },
+            includeContent: { type: 'boolean', description: 'Include a short content snippet per note (default false)' },
+          },
         },
       },
     },
@@ -1175,6 +1360,10 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
           result = await handleOrionBootstrapEnvironment(tc.argsRaw)
         } else if (tc.name === 'gitops_propose') {
           result = await handleGitopsPropose(tc.argsRaw, conversationId)
+        } else if (tc.name === 'knowledge_search') {
+          result = await handleKnowledgeSearch(tc.argsRaw)
+        } else if (tc.name === 'knowledge_graph') {
+          result = await handleKnowledgeGraph(tc.argsRaw)
         } else if (gateway && environmentId) {
           // ── Gateway tools ─────────────────────────────────────────────────
           try {
@@ -1233,8 +1422,10 @@ export async function* streamGeminiChat(
   history: Array<{ role: string; content: string }>,
   model: string,
   abortSignal?: AbortSignal,
+  knowledgeContext?: string,
 ): AsyncGenerator<StreamChunk> {
-  yield* streamGeminiAgentChat(prompt, conversationId, await getSystemPrompt(), history, model, abortSignal)
+  const sp = await getSystemPrompt([], undefined, undefined, knowledgeContext)
+  yield* streamGeminiAgentChat(prompt, conversationId, sp, history, model, abortSignal)
 }
 
 async function* streamGeminiAgentChat(
@@ -1461,6 +1652,7 @@ export async function* streamClaudeResponse(
   agentSystemPrompt?: string,
   overrides?: { maxTurns?: number; allowedTools?: string[]; model?: string },
   abortSignal?: AbortSignal,
+  knowledgeContext?: string,
 ): AsyncGenerator<StreamChunk> {
   const start = Date.now()
   const toolsUsed: string[] = []
@@ -1481,9 +1673,12 @@ export async function* streamClaudeResponse(
       process.env.HOME = claudeHome
     }
 
-    const systemPrompt = agentSystemPrompt ?? (planTarget
+    const baseSystemPrompt = agentSystemPrompt ?? (planTarget
       ? await getPlanningSystemPrompt(planTarget.type)
-      : await getSystemPrompt([], undefined, conversationId))
+      : await getSystemPrompt([], undefined, conversationId, knowledgeContext))
+    const systemPrompt = agentSystemPrompt && knowledgeContext
+      ? agentSystemPrompt + '\n\n---\n## Relevant Knowledge Base\n\n' + knowledgeContext + '\n---'
+      : baseSystemPrompt
 
     const fullPrompt = previousMessages.length > 0
       ? previousMessages.map(m => `${m.role}: ${m.content}`).join('\n\n') + `\n\nuser: ${prompt}`

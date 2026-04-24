@@ -45,6 +45,8 @@ interface Props {
   activeId?: string
   onMobileSelect?: () => void
   onCreateNew?: () => void
+  onDelete?: (prefixedId: string) => void
+  onRename?: (id: string, title: string) => void
   // AI data
   convos?: Conversation[]
   planningConvos?: PlanningConvo[]
@@ -66,7 +68,7 @@ const TYPE_COLORS: Record<string, string> = {
 }
 
 export function MessageList({
-  view, onSelect, activeId, onMobileSelect, onCreateNew,
+  view, onSelect, activeId, onMobileSelect, onCreateNew, onDelete, onRename,
   convos = [], planningConvos = [], agentConvos = [], debugConvos = [],
   epics = [], agents = [],
   rooms = [], roomFilter, onRoomFilterChange,
@@ -113,6 +115,7 @@ export function MessageList({
   const removeConvo = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
     await fetch(`/api/chat/conversations/${id}`, { method: 'DELETE' })
+    onDelete?.(`c_${id}`)
   }
 
   const startEdit = (e: React.MouseEvent, convo: Conversation) => {
@@ -129,6 +132,7 @@ export function MessageList({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title }),
     })
+    onRename?.(id, title ?? '')
     setEditingId(null)
   }
 
@@ -148,7 +152,7 @@ export function MessageList({
   const renderConversation = (c: Conversation) => (
     <div
       key={c.id}
-      className={`group w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${activeId === c.id ? 'bg-accent/10 border-l-2 border-l-accent' : 'hover:bg-bg-raised'}`}
+      className={`group w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${activeId === `c_${c.id}` ? 'bg-accent/10 border-l-2 border-l-accent' : 'hover:bg-bg-raised'}`}
       onClick={() => { if (editingId !== c.id) { onSelect(`c_${c.id}`); onMobileSelect?.() } }}
     >
       <MessageSquare size={14} className="flex-shrink-0 mt-0.5 text-text-muted" />
@@ -267,7 +271,7 @@ export function MessageList({
                   )
                 })}
                 {orphanConvos.map(c => (
-                  <div key={c.id} onClick={() => onSelect(`c_${c.id}`)} className={`${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
+                  <div key={c.id} onClick={() => { onSelect(`c_${c.id}`); onMobileSelect?.() }} className={`${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
                     <MessageSquare size={10} className="flex-shrink-0" />
                     <span className="flex-1 truncate text-[10px]">{c.title ?? 'Planning chat'}</span>
                   </div>
@@ -333,7 +337,7 @@ export function MessageList({
                     )
                   })}
                   {orphans.map(c => (
-                    <div key={c.id} onClick={() => onSelect(`c_${c.id}`)} className={`group ${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
+                    <div key={c.id} onClick={() => { onSelect(`c_${c.id}`); onMobileSelect?.() }} className={`group ${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
                       <MessageSquare size={10} className="flex-shrink-0" />
                       <span className="flex-1 truncate text-[10px]">{c.title ?? 'Chat'}</span>
                     </div>

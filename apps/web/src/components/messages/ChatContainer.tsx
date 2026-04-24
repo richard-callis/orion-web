@@ -13,10 +13,11 @@ interface Props {
   activeId: string | null
   onMobileBack: () => void
   onConversationCreated: (convo: Conversation) => void
+  onDelete?: (prefixedId: string) => void
   view: 'ai' | 'rooms'
 }
 
-export function ChatContainer({ activeId, onMobileBack, onConversationCreated, view }: Props) {
+export function ChatContainer({ activeId, onMobileBack, onConversationCreated, onDelete, view }: Props) {
   if (!activeId) {
     return (
       <div className="flex-1 flex items-center justify-center bg-bg-card">
@@ -31,7 +32,7 @@ export function ChatContainer({ activeId, onMobileBack, onConversationCreated, v
 
   if (activeId.startsWith('r_')) {
     const roomId = activeId.slice(2)
-    return <RoomChat roomId={roomId} onMobileBack={onMobileBack} />
+    return <RoomChat roomId={roomId} onMobileBack={onMobileBack} onLeave={() => onDelete?.(`r_${roomId}`)} />
   }
 
   const conversationId = activeId.startsWith('c_') ? activeId.slice(2) : activeId
