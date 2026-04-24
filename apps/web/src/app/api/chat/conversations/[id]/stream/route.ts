@@ -124,9 +124,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       const generator = agentSystemPrompt
         ? streamAgentChat(prompt, conversationId, agentSystemPrompt, history, agentContextConfig, agentChat?.id, userId, targetEnvironmentId)
         : openaiModel && openaiBaseUrl
-        ? streamOpenAIChat(prompt, conversationId, history, openaiModel, openaiBaseUrl, openaiApiKey, abortCtrl.signal, userId, targetEnvironmentId)
+        ? streamOpenAIChat(prompt, conversationId, history, openaiModel, openaiBaseUrl, openaiApiKey, abortCtrl.signal, userId, targetEnvironmentId, agentCreationPrompt)
         : ollamaModel
-        ? streamOllamaChat(prompt, conversationId, history, ollamaModel, ollamaBaseUrl, abortCtrl.signal, userId, targetEnvironmentId)
+        ? streamOllamaChat(prompt, conversationId, history, ollamaModel, ollamaBaseUrl, abortCtrl.signal, userId, targetEnvironmentId, agentCreationPrompt)
         : geminiModel
         ? streamGeminiChat(prompt, conversationId, history, geminiModel, abortCtrl.signal)
         : streamClaudeResponse(prompt, conversationId, history, planTarget, agentCreationPrompt, undefined, abortCtrl.signal)
