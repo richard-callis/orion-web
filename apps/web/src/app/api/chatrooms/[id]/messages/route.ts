@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/db'
+import { triggerRoomAgentReplies } from '@/lib/room-agents'
 
 async function getRoomMembership(roomId: string, userId: string | undefined) {
   const member = await prisma.chatRoomMember.findFirst({
@@ -90,6 +91,13 @@ export async function POST(
     where: { id },
     data: { updatedAt: new Date() },
   })
+
+  // Fire agent replies asynchronously — don't block the HTTP response
+  if (msg.senderType !== 'agent') {
+    triggerRoomAgentReplies(id, content.trim()).catch(e =>
+      console.error('[room-agents] trigger failed:', e instanceof Error ? e.message : e)
+    )
+  }
 
   return NextResponse.json({
     id: msg.id, senderType: msg.senderType, content: msg.content,
