@@ -11,7 +11,7 @@ const dnsLookup = promisifyCb(lookup)
  * SSRF protection: validate HTTP URL against private/reserved IP ranges.
  * Returns the validated URL or throws.
  */
-function validateHttpUrl(url: string): string {
+async function validateHttpUrl(url: string): Promise<string> {
   let parsed: URL
   try {
     parsed = new URL(url)
@@ -46,12 +46,10 @@ function validateHttpUrl(url: string): string {
         throw new Error(`Tool HTTP execType blocked: ${hostname} resolves to a private/reserved IP address`)
       }
     } catch (err) {
-      // If DNS lookup fails, still allow if it's not an obvious IP (might be a valid internal DNS name)
-      // But block if it looks like it could resolve to a private IP
-      if (!/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
-        // DNS name — log warning but allow (common in K8s internal DNS)
-        // In production, consider adding an explicit allowlist
-      }
+      // DNS lookup failed — block by default (defense-in-depth)
+      // This prevents DNS rebinding attacks and ensures validation happens
+      const errMsg = err instanceof Error ? err.message : String(err)
+      throw new Error(`Tool HTTP execType blocked: DNS lookup failed for ${hostname}: ${errMsg}`)
     }
   }
 
