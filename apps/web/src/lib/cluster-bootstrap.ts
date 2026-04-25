@@ -559,8 +559,8 @@ export async function bootstrapCluster(
 
     if (vaultInitSetting?.value && rawToken) {
       const rootToken  = decrypt(String(rawToken))
-      const policyName = `orion-cluster-${env.name}`
-      const roleName   = `orion-cluster-${env.name}`
+      const policyName = `orion-cluster-${toSlug(env.name)}`
+      const roleName   = `orion-cluster-${toSlug(env.name)}`
 
       emit({ type: 'step', message: 'Configuring Vault AppRole for this cluster...' })
 
