@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { writeFile, mkdir } from 'fs/promises'
+import { join } from 'path'
 import { prisma } from '@/lib/db'
 import { requireWizardSession } from '@/lib/setup-guard'
 
 const VAULT_ADDR = process.env.VAULT_ADDR ?? 'http://vault:8200'
+const UNSEAL_KEYS_DIR = process.env.VAULT_UNSEAL_KEYS_DIR ?? '/vault/unseal-keys'
 
 export async function POST(req: NextRequest) {
   if (!await requireWizardSession(req)) {
@@ -46,6 +49,14 @@ export async function POST(req: NextRequest) {
     }
 
     const { keys, root_token } = await initRes.json()
+
+    // Write unseal keys 1-3 to disk so vault-unsealer can reseal on restart
+    await mkdir(UNSEAL_KEYS_DIR, { recursive: true })
+    await Promise.all(
+      [0, 1, 2].map((i) =>
+        writeFile(join(UNSEAL_KEYS_DIR, `unseal-key-${i + 1}`), keys[i], { mode: 0o600 })
+      )
+    )
 
     // Unseal with first 3 of the 5 keys
     for (let i = 0; i < 3; i++) {
