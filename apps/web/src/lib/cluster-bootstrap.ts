@@ -443,7 +443,9 @@ export async function bootstrapCluster(
     emit({ type: 'step', message: 'Writing kubeconfig...' })
     const kubeconfigYaml = Buffer.from(env.kubeconfig, 'base64').toString('utf8')
     await writeFile(kubeconfigPath, kubeconfigYaml, { mode: 0o600 })
-    const kenv = { KUBECONFIG: kubeconfigPath }
+    // KUBECTL_CACHE_DIR: use a per-run temp dir so kubectl never reads a stale
+    // API discovery cache (e.g. one built before ESO CRDs were installed).
+    const kenv = { KUBECONFIG: kubeconfigPath, KUBECTL_CACHE_DIR: join(tmpDir, 'kubectl-cache') }
 
     // 2. Verify cluster connectivity
     emit({ type: 'step', message: 'Verifying cluster connectivity...' })
