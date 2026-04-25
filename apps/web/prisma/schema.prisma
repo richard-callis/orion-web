@@ -355,6 +355,13 @@ model User {
   lastSeen      DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  // SOC2: [M-002] TOTP multi-factor authentication
+  totpSecret      String?   // Base32 TOTP secret (encrypted at rest)
+  totpEnabled     Boolean   @default(false)
+  totpRecoveryCodes String? // JSON array of bcrypt-hashed recovery codes
+  totpEnabledAt   DateTime? // When MFA was enabled (audit trail)
+
   assignedTasks Task[]    @relation("AssignedUserTasks")
   assignedBugs  Bug[]     @relation("AssignedBugUser")
   sessions      Session[]
