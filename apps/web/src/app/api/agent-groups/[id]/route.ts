@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+  await requireAdmin()
   const body = await req.json()
   const g = await prisma.agentGroup.update({
     where: { id: params.id },
@@ -15,6 +17,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 }
 
 export async function DELETE(_: NextRequest, { params }: { params: { id: string } }) {
+  await requireAdmin()
   await prisma.agentGroup.delete({ where: { id: params.id } })
   return new NextResponse(null, { status: 204 })
 }
