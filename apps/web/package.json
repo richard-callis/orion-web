@@ -40,7 +40,8 @@
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^2.5.5",
     "three": "^0.184.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zod": "^3.25.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

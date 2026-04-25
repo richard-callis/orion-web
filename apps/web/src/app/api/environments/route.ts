@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { Prisma } from '@prisma/client'
 import { getDefaultTools } from '@/lib/default-tools'
 import { getCurrentUser, requireAdmin } from '@/lib/auth'
+import { CreateEnvironmentSchema } from '@/lib/validate'
 
 export async function GET() {
   // SOC2: CR-002 — require authentication to list environments
@@ -24,27 +25,30 @@ export async function POST(req: NextRequest) {
   // SOC2: CR-002 — require admin to create environments
   const user = await requireAdmin()
 
-  const body = await req.json()
-  if (!body.name?.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 })
+  // SOC2: Input validation — validate and sanitize all request body fields
+  const rawBody = await req.json().catch(() => ({}))
+  const body = typeof rawBody === 'object' && rawBody !== null ? rawBody : {}
 
-  const VALID_TYPES = ['cluster', 'docker', 'localhost']
-  const type = body.type ?? 'cluster'
-  if (!VALID_TYPES.includes(type)) {
-    return NextResponse.json({ error: `type must be one of: ${VALID_TYPES.join(', ')}` }, { status: 400 })
+  const parsed = CreateEnvironmentSchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: 'Invalid input', details: parsed.error.errors.map(e => ({ field: e.path.join('.'), message: e.message })) },
+      { status: 400 },
+    )
   }
 
   const env = await prisma.environment.create({
     data: {
-      name:         body.name.trim(),
-      type,
-      description:  body.description  ?? null,
-      gatewayUrl:   body.gatewayUrl   ?? null,
-      gatewayToken: body.gatewayToken ?? null,
-      gitOwner:     body.gitOwner     ?? null,
-      gitRepo:      body.gitRepo      ?? null,
-      policyConfig: body.policyConfig ?? undefined,
-      kubeconfig:   body.kubeconfig   ?? null,
-      metadata:     body.metadata     ?? undefined,
+      name:         parsed.data.name,
+      type:         parsed.data.type,
+      description:  parsed.data.description ?? null,
+      gatewayUrl:   parsed.data.gatewayUrl ?? null,
+      gatewayToken: parsed.data.gatewayToken ?? null,
+      gitOwner:     parsed.data.gitOwner ?? null,
+      gitRepo:      parsed.data.gitRepo ?? null,
+      policyConfig: parsed.data.policyConfig,
+      kubeconfig:   parsed.data.kubeconfig ?? null,
+      metadata:     parsed.data.metadata,
     },
     include: { tools: true, agents: { include: { agent: true } } },
   })
