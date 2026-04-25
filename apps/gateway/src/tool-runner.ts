@@ -127,6 +127,8 @@ async function ensurePackages(packages: string[]): Promise<void> {
  * Execute a tool based on its execType and execConfig.
  * Returns a string result (stdout/response body).
  */
+export { validateHttpUrl }
+
 export async function runTool(tool: McpToolConfig, args: Record<string, unknown>): Promise<string> {
   switch (tool.execType) {
     case 'builtin':
