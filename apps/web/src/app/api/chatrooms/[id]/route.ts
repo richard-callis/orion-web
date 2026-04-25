@@ -46,7 +46,18 @@ export async function GET(
     return NextResponse.json({ error: 'Chat room not found' }, { status: 404 })
   }
 
-  const messages = (room as any).messages.reverse()
+  const messages = (room as any).messages.reverse().map((msg: any) => ({
+    id: msg.id,
+    senderType: msg.senderType,
+    content: msg.content,
+    attachments: msg.attachments,
+    sender: msg.agent
+      ? { type: 'agent', id: msg.agent.id, name: msg.agent.name }
+      : msg.user
+      ? { type: 'user', id: msg.user.id, name: msg.user.name || msg.user.username }
+      : { type: msg.senderType ?? 'unknown', id: null, name: 'System' },
+    createdAt: msg.createdAt instanceof Date ? msg.createdAt.toISOString() : msg.createdAt,
+  }))
   const members = (room as any).members
 
   return NextResponse.json({
