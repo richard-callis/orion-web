@@ -15,20 +15,41 @@ export interface AppUser {
 export const authOptions: NextAuthOptions = {
   session: { strategy: 'jwt' },
   secret: process.env.NEXTAUTH_SECRET,
-  // Use plain (non-__Secure-prefixed) cookie names so the app works over both HTTP and HTTPS.
-  // Consistent names are set here AND in the middleware getToken call so they always agree.
+  // SOC2: [M-002] secure flag is now conditional — true behind TLS (prod/reverse-proxy),
+  // false only for local dev over plain HTTP. The __Secure- prefix is used when secure=true
+  // so browsers will not send cookies on insecure requests.
   cookies: {
     sessionToken: {
-      name: 'next-auth.session-token',
-      options: { httpOnly: true, sameSite: 'lax' as const, path: '/', secure: false },
+      name: process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https'
+        ? '__Secure-next-auth.session-token'
+        : 'next-auth.session-token',
+      options: {
+        httpOnly: true,
+        sameSite: 'lax' as const,
+        path: '/',
+        secure: process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https',
+      },
     },
     callbackUrl: {
-      name: 'next-auth.callback-url',
-      options: { sameSite: 'lax' as const, path: '/', secure: false },
+      name: process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https'
+        ? '__Secure-next-auth.callback-url'
+        : 'next-auth.callback-url',
+      options: {
+        sameSite: 'lax' as const,
+        path: '/',
+        secure: process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https',
+      },
     },
     csrfToken: {
-      name: 'next-auth.csrf-token',
-      options: { httpOnly: true, sameSite: 'lax' as const, path: '/', secure: false },
+      name: process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https'
+        ? '__Secure-next-auth.csrf-token'
+        : 'next-auth.csrf-token',
+      options: {
+        httpOnly: true,
+        sameSite: 'lax' as const,
+        path: '/',
+        secure: process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https',
+      },
     },
   },
   pages: {
