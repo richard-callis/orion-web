@@ -45,17 +45,28 @@ type ChatMsg = { role: 'system' | 'user' | 'assistant'; content: string }
 /**
  * Build the system prompt with a hard identity constraint at the very top.
  * The constraint must come FIRST so the model cannot ignore it.
+ * otherParticipants lists the names of other agents/users in the room so the
+ * model knows who it can @mention to continue the conversation.
  */
-function buildSystemPrompt(agentName: string, agentBasePrompt: string): string {
+function buildSystemPrompt(agentName: string, agentBasePrompt: string, otherParticipants: string[]): string {
+  const othersLine = otherParticipants.length > 0
+    ? `Other participants in this chat: ${otherParticipants.join(', ')}`
+    : 'You are the only agent in this chat.'
+  const mentionHint = otherParticipants.length > 0
+    ? `To address or continue the conversation with another participant, use @TheirName in your reply (e.g. "@${otherParticipants[0]} what do you think?"). This will notify them and invite their response.`
+    : ''
   return `IMPORTANT — YOUR ROLE:
 You are ${agentName}. You are ONE participant in a group chat.
+${othersLine}
+
 Rules you must follow without exception:
 1. Write ONE short reply as yourself only.
 2. Do NOT write responses, speech, or dialogue for any other participant.
 3. Do NOT use speaker labels like "${agentName}:" or any name prefix in your reply.
 4. Do NOT write scripts, screenplays, or simulated multi-turn exchanges.
 5. Do NOT invent what other participants might say next.
-6. If the conversation has naturally concluded or you have nothing meaningful to add, reply with exactly the single word: SILENT
+6. ${mentionHint}
+7. If the conversation has naturally concluded or you have nothing meaningful to add, reply with exactly the single word: SILENT
 
 ---
 ${agentBasePrompt}`
@@ -83,13 +94,14 @@ function buildChatMessages(history: HistoryEntry[], latestMessage: string): Chat
 async function callClaude(
   agentName: string,
   agentBasePrompt: string,
+  otherParticipants: string[],
   history: HistoryEntry[],
   latestMessage: string,
   modelId?: string,
 ): Promise<string | null> {
   setupClaudeCredentials()
   const { query } = await import('@anthropic-ai/claude-code')
-  const sys = buildSystemPrompt(agentName, agentBasePrompt)
+  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants)
   // Claude query() only accepts a single prompt string — prepend history as context
   const historyBlock = history.length
     ? history.map(e => `${e.name}: ${e.content}`).join('\n') + '\n\n'
@@ -122,12 +134,13 @@ async function callClaude(
 async function callOllamaChat(
   agentName: string,
   agentBasePrompt: string,
+  otherParticipants: string[],
   history: HistoryEntry[],
   latestMessage: string,
   model: string,
   baseUrl: string,
 ): Promise<string | null> {
-  const sys = buildSystemPrompt(agentName, agentBasePrompt)
+  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants)
   const chatMsgs = buildChatMessages(history, latestMessage)
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: 'POST',
@@ -151,13 +164,14 @@ async function callOllamaChat(
 async function callOpenAIChat(
   agentName: string,
   agentBasePrompt: string,
+  otherParticipants: string[],
   history: HistoryEntry[],
   latestMessage: string,
   model: string,
   baseUrl: string,
   apiKey?: string | null,
 ): Promise<string | null> {
-  const sys = buildSystemPrompt(agentName, agentBasePrompt)
+  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants)
   const chatMsgs = buildChatMessages(history, latestMessage)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
@@ -272,6 +286,11 @@ export async function triggerRoomAgentReplies(
         ? `${agent.role ? `Role: ${agent.role}\n\n` : ''}${rawPrompt}`
         : `${agent.role ? `Role: ${agent.role}\n\n` : ''}${agent.description ?? ''}`
 
+      // Names of other agents/users in the room so the model can @mention them
+      const otherParticipants = agentMembers
+        .filter(a => a.id !== agent.id)
+        .map(a => a.name)
+
       console.log(`[room-agents] ${agent.name} (${llm}) → replying to room ${roomId}`)
 
       let reply: string | null = null
@@ -285,19 +304,19 @@ export async function triggerRoomAgentReplies(
         }
         const baseUrl = extModel.baseUrl ?? 'http://localhost:11434'
         if (extModel.provider === 'ollama') {
-          reply = await callOllamaChat(agent.name, agentBasePrompt, history, latestTurn, extModel.modelId, baseUrl)
+          reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl)
         } else {
           // openai / custom — OpenAI-compatible
-          reply = await callOpenAIChat(agent.name, agentBasePrompt, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey)
+          reply = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey)
         }
       } else if (llm.startsWith('ollama:')) {
         const model   = llm.slice('ollama:'.length)
         const baseUrl = await resolveOllamaBaseUrl()
-        reply = await callOllamaChat(agent.name, agentBasePrompt, history, latestTurn, model, baseUrl)
+        reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl)
       } else {
         // claude / claude:<model>
         const claudeModel = llm.startsWith('claude:') ? llm.slice('claude:'.length) : undefined
-        reply = await callClaude(agent.name, agentBasePrompt, history, latestTurn, claudeModel)
+        reply = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel)
       }
 
       if (!reply) {
