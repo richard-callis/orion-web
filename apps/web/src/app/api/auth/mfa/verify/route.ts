@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { compare } from 'bcryptjs'
 import { verifyTOTP, verifyRecoveryCode } from '@/lib/totp'
+import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
@@ -30,13 +31,13 @@ export async function POST(req: NextRequest) {
   }
 
   if (isRecovery) {
-    return handleRecoveryLogin(username, password, code)
+    return handleRecoveryLogin(username, password, code, req)
   }
 
-  return handleTotpLogin(username, password, code)
+  return handleTotpLogin(username, password, code, req)
 }
 
-async function handleTotpLogin(username: string, password: string, code?: string) {
+async function handleTotpLogin(username: string, password: string, code?: string, req?: NextRequest) {
   if (!code || typeof code !== 'string') {
     return NextResponse.json({ error: 'TOTP code required' }, { status: 400 })
   }
@@ -65,6 +66,12 @@ async function handleTotpLogin(username: string, password: string, code?: string
 
   // Verify TOTP
   if (!verifyTOTP(user.totpSecret, code)) {
+    // SOC2: [M-005] Log MFA verification failure (non-blocking)
+    logAudit({
+      userId: user.id, action: 'mfa_verify_failure', target: 'mfa:verify',
+      detail: { reason: 'invalid_totp_code', method: 'totp' },
+      ipAddress: req ? getClientIp(req) : undefined,
+    }).catch(() => {})
     return NextResponse.json({ error: 'Invalid TOTP code' }, { status: 401 })
   }
 
@@ -73,6 +80,14 @@ async function handleTotpLogin(username: string, password: string, code?: string
     where: { id: user.id },
     data: { lastSeen: new Date() },
   })
+
+  // SOC2: [M-005] Log successful MFA verification (non-blocking)
+  logAudit({
+    userId: user.id, action: 'mfa_verify_success', target: 'mfa:verify',
+    detail: { method: 'totp' },
+    ipAddress: req ? getClientIp(req) : undefined,
+    userAgent: req ? getUserAgent(req.headers) : undefined,
+  }).catch(() => {})
 
   return NextResponse.json({
     ok: true,
@@ -87,7 +102,7 @@ async function handleTotpLogin(username: string, password: string, code?: string
   })
 }
 
-async function handleRecoveryLogin(username: string, password: string, code?: string) {
+async function handleRecoveryLogin(username: string, password: string, code?: string, req?: NextRequest) {
   if (!code || typeof code !== 'string') {
     return NextResponse.json({ error: 'Recovery code required' }, { status: 400 })
   }
@@ -118,6 +133,12 @@ async function handleRecoveryLogin(username: string, password: string, code?: st
   // Verify recovery code
   const hashedCodes: string[] = user.totpRecoveryCodes ? JSON.parse(user.totpRecoveryCodes) : []
   if (!hashedCodes.length || !(await verifyRecoveryCode(code, hashedCodes))) {
+    // SOC2: [M-005] Log MFA verification failure (non-blocking)
+    logAudit({
+      userId: user.id, action: 'mfa_verify_failure', target: 'mfa:verify',
+      detail: { reason: 'invalid_recovery_code', method: 'recovery' },
+      ipAddress: req ? getClientIp(req) : undefined,
+    }).catch(() => {})
     return NextResponse.json({ error: 'Invalid recovery code' }, { status: 401 })
   }
 
@@ -125,6 +146,14 @@ async function handleRecoveryLogin(username: string, password: string, code?: st
     where: { id: user.id },
     data: { lastSeen: new Date() },
   })
+
+  // SOC2: [M-005] Log successful MFA verification via recovery code (non-blocking)
+  logAudit({
+    userId: user.id, action: 'mfa_verify_success', target: 'mfa:verify',
+    detail: { method: 'recovery_code' },
+    ipAddress: req ? getClientIp(req) : undefined,
+    userAgent: req ? getUserAgent(req.headers) : undefined,
+  }).catch(() => {})
 
   return NextResponse.json({
     ok: true,
