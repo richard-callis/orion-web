@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
   })
 
   // Seed default tools based on environment type
-  const defaultTools = getDefaultTools(type)
+  const defaultTools = getDefaultTools(parsed.data.type)
   if (defaultTools.length > 0) {
     await prisma.mcpTool.createMany({
       data: defaultTools.map(t => ({
