@@ -213,14 +213,14 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
               <div className="text-center text-text-muted text-xs py-8">No messages yet. Start the conversation!</div>
             )}
             {room?.messages?.map(msg => (
-              <div key={msg.id} className={`max-w-[80%] ${msg.senderType === 'system' ? 'mx-auto text-center' : msg.sender.type === 'human' || msg.sender.type === 'user' ? 'ml-auto' : 'mr-auto'}`}>
+              <div key={msg.id} className={`max-w-[80%] ${msg.senderType === 'system' ? 'mx-auto text-center' : msg.sender?.type === 'human' || msg.sender?.type === 'user' ? 'ml-auto' : 'mr-auto'}`}>
                 {msg.senderType === 'system' ? (
                   <div className="text-[10px] text-text-muted py-1">{msg.content}</div>
                 ) : (
-                  <div className={`rounded-lg px-3 py-2 ${msg.sender.type === 'human' || msg.sender.type === 'user' ? 'bg-accent/20 text-text-primary' : 'bg-bg-raised border border-border-subtle text-text-primary'}`}>
+                  <div className={`rounded-lg px-3 py-2 ${msg.sender?.type === 'human' || msg.sender?.type === 'user' ? 'bg-accent/20 text-text-primary' : 'bg-bg-raised border border-border-subtle text-text-primary'}`}>
                     <div className="flex items-center gap-1.5 mb-1">
-                      {msg.sender.type === 'agent' ? <Bot size={11} className="text-accent" /> : <UserIcon size={11} />}
-                      <span className="text-[10px] font-medium text-text-secondary">{msg.sender.name}</span>
+                      {msg.sender?.type === 'agent' ? <Bot size={11} className="text-accent" /> : <UserIcon size={11} />}
+                      <span className="text-[10px] font-medium text-text-secondary">{msg.sender?.name}</span>
                       <span className="text-[9px] text-text-muted">{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                     <p className="text-xs leading-relaxed whitespace-pre-wrap">{msg.content}</p>
