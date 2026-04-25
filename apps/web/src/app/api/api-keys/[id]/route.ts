@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { revokeApiKey, verifyApiKey } from '@/lib/api-key'
+import { sanitizeError } from '@/lib/errors'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 type User = { id: string }
@@ -51,7 +52,7 @@ export async function DELETE(
 
     return NextResponse.json({ ok: true })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = sanitizeError(err)
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
