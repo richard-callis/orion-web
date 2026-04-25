@@ -39,27 +39,64 @@ function setupClaudeCredentials(): void {
 
 // ── LLM call helpers ──────────────────────────────────────────────────────────
 
-function buildMessages(agentName: string, systemPrompt: string, historyText: string, latestMessage: string) {
-  const roleGuard = `\nYou are ${agentName}. Respond only as yourself — never write dialogue or responses on behalf of other participants. If the conversation has naturally concluded, or there is nothing meaningful to add, reply with the single word: SILENT`
-  const sys = historyText
-    ? `${systemPrompt}${roleGuard}\n\n---\nRecent room conversation:\n${historyText}\n---`
-    : systemPrompt + roleGuard
-  return { sys, user: latestMessage }
+type HistoryEntry = { name: string; content: string; isSelf: boolean }
+type ChatMsg = { role: 'system' | 'user' | 'assistant'; content: string }
+
+/**
+ * Build the system prompt with a hard identity constraint at the very top.
+ * The constraint must come FIRST so the model cannot ignore it.
+ */
+function buildSystemPrompt(agentName: string, agentBasePrompt: string): string {
+  return `IMPORTANT — YOUR ROLE:
+You are ${agentName}. You are ONE participant in a group chat.
+Rules you must follow without exception:
+1. Write ONE short reply as yourself only.
+2. Do NOT write responses, speech, or dialogue for any other participant.
+3. Do NOT use speaker labels like "${agentName}:" or any name prefix in your reply.
+4. Do NOT write scripts, screenplays, or simulated multi-turn exchanges.
+5. Do NOT invent what other participants might say next.
+6. If the conversation has naturally concluded or you have nothing meaningful to add, reply with exactly the single word: SILENT
+
+---
+${agentBasePrompt}`
+}
+
+/**
+ * Convert structured history + latest message into a proper messages array.
+ * Prior messages FROM this agent → role: "assistant"
+ * All other messages → role: "user" (with speaker name prefix so the model knows who said it)
+ */
+function buildChatMessages(history: HistoryEntry[], latestMessage: string): ChatMsg[] {
+  const messages: ChatMsg[] = []
+  for (const entry of history) {
+    if (entry.isSelf) {
+      messages.push({ role: 'assistant', content: entry.content })
+    } else {
+      messages.push({ role: 'user', content: `${entry.name}: ${entry.content}` })
+    }
+  }
+  messages.push({ role: 'user', content: latestMessage })
+  return messages
 }
 
 /** Claude Code SDK — OAuth credentials, same path as streamClaudeResponse */
 async function callClaude(
   agentName: string,
-  systemPrompt: string,
-  historyText: string,
+  agentBasePrompt: string,
+  history: HistoryEntry[],
   latestMessage: string,
   modelId?: string,
 ): Promise<string | null> {
   setupClaudeCredentials()
   const { query } = await import('@anthropic-ai/claude-code')
-  const { sys, user } = buildMessages(agentName, systemPrompt, historyText, latestMessage)
+  const sys = buildSystemPrompt(agentName, agentBasePrompt)
+  // Claude query() only accepts a single prompt string — prepend history as context
+  const historyBlock = history.length
+    ? history.map(e => `${e.name}: ${e.content}`).join('\n') + '\n\n'
+    : ''
+  const prompt = historyBlock + latestMessage
   const response = query({
-    prompt: user,
+    prompt,
     options: {
       allowedTools: [],
       maxTurns: 1,
@@ -84,23 +121,21 @@ async function callClaude(
 /** Ollama native /api/chat endpoint */
 async function callOllamaChat(
   agentName: string,
-  systemPrompt: string,
-  historyText: string,
+  agentBasePrompt: string,
+  history: HistoryEntry[],
   latestMessage: string,
   model: string,
   baseUrl: string,
 ): Promise<string | null> {
-  const { sys, user } = buildMessages(agentName, systemPrompt, historyText, latestMessage)
+  const sys = buildSystemPrompt(agentName, agentBasePrompt)
+  const chatMsgs = buildChatMessages(history, latestMessage)
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model,
       stream: false,
-      messages: [
-        { role: 'system', content: sys },
-        { role: 'user',   content: user },
-      ],
+      messages: [{ role: 'system', content: sys }, ...chatMsgs],
     }),
     signal: AbortSignal.timeout(120_000),
   })
@@ -115,14 +150,15 @@ async function callOllamaChat(
 /** OpenAI-compatible /v1/chat/completions endpoint */
 async function callOpenAIChat(
   agentName: string,
-  systemPrompt: string,
-  historyText: string,
+  agentBasePrompt: string,
+  history: HistoryEntry[],
   latestMessage: string,
   model: string,
   baseUrl: string,
   apiKey?: string | null,
 ): Promise<string | null> {
-  const { sys, user } = buildMessages(agentName, systemPrompt, historyText, latestMessage)
+  const sys = buildSystemPrompt(agentName, agentBasePrompt)
+  const chatMsgs = buildChatMessages(history, latestMessage)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
   const res = await fetch(`${baseUrl}/v1/chat/completions`, {
@@ -131,10 +167,7 @@ async function callOpenAIChat(
     body: JSON.stringify({
       model,
       stream: false,
-      messages: [
-        { role: 'system', content: sys },
-        { role: 'user',   content: user },
-      ],
+      messages: [{ role: 'system', content: sys }, ...chatMsgs],
     }),
     signal: AbortSignal.timeout(120_000),
   })
@@ -196,7 +229,7 @@ export async function triggerRoomAgentReplies(
         orderBy: { createdAt: 'desc' },
         take: 21,
         include: {
-          agent: { select: { name: true } },
+          agent: { select: { id: true, name: true } },
           user:  { select: { username: true, name: true } },
         },
       })
@@ -209,21 +242,22 @@ export async function triggerRoomAgentReplies(
       const lastSender  = lastMsg?.agent?.name ?? lastMsg?.user?.name ?? lastMsg?.user?.username ?? 'User'
       const latestTurn  = lastMsg ? `${lastSender}: ${lastMsg.content}` : triggerContent
 
-      const historyText = historyMsgs
-        .map(m => {
-          const name = m.agent?.name ?? m.user?.name ?? m.user?.username ?? 'User'
-          return `${name}: ${m.content}`
-        })
-        .join('\n')
+      // Build structured history with isSelf flag so LLMs can use proper role assignments
+      const history: HistoryEntry[] = historyMsgs.map(m => ({
+        name:   m.agent?.name ?? m.user?.name ?? m.user?.username ?? 'User',
+        content: m.content,
+        isSelf: m.agentId === agent.id,
+      }))
 
       const meta          = (agent.metadata ?? {}) as Record<string, unknown>
       const contextConfig = (meta.contextConfig ?? {}) as Record<string, unknown>
       const rawPrompt     = meta.systemPrompt as string | undefined
       const llm           = (contextConfig.llm as string | undefined) ?? 'claude:claude-haiku-4-5-20251001'
 
-      const systemPrompt = rawPrompt
-        ? `You are ${agent.name}${agent.role ? `, a ${agent.role}` : ''}.\n\n${rawPrompt}`
-        : `You are ${agent.name}${agent.role ? `, a ${agent.role}` : ''}${agent.description ? `.\n\n${agent.description}` : '.'}`
+      // Base persona description — identity constraint is added by buildSystemPrompt()
+      const agentBasePrompt = rawPrompt
+        ? `${agent.role ? `Role: ${agent.role}\n\n` : ''}${rawPrompt}`
+        : `${agent.role ? `Role: ${agent.role}\n\n` : ''}${agent.description ?? ''}`
 
       console.log(`[room-agents] ${agent.name} (${llm}) → replying to room ${roomId}`)
 
@@ -238,19 +272,19 @@ export async function triggerRoomAgentReplies(
         }
         const baseUrl = extModel.baseUrl ?? 'http://localhost:11434'
         if (extModel.provider === 'ollama') {
-          reply = await callOllamaChat(agent.name, systemPrompt, historyText, latestTurn, extModel.modelId, baseUrl)
+          reply = await callOllamaChat(agent.name, agentBasePrompt, history, latestTurn, extModel.modelId, baseUrl)
         } else {
           // openai / custom — OpenAI-compatible
-          reply = await callOpenAIChat(agent.name, systemPrompt, historyText, latestTurn, extModel.modelId, baseUrl, extModel.apiKey)
+          reply = await callOpenAIChat(agent.name, agentBasePrompt, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey)
         }
       } else if (llm.startsWith('ollama:')) {
         const model   = llm.slice('ollama:'.length)
         const baseUrl = await resolveOllamaBaseUrl()
-        reply = await callOllamaChat(agent.name, systemPrompt, historyText, latestTurn, model, baseUrl)
+        reply = await callOllamaChat(agent.name, agentBasePrompt, history, latestTurn, model, baseUrl)
       } else {
         // claude / claude:<model>
         const claudeModel = llm.startsWith('claude:') ? llm.slice('claude:'.length) : undefined
-        reply = await callClaude(agent.name, systemPrompt, historyText, latestTurn, claudeModel)
+        reply = await callClaude(agent.name, agentBasePrompt, history, latestTurn, claudeModel)
       }
 
       if (!reply) {
