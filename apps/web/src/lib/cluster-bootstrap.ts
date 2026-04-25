@@ -20,7 +20,7 @@
  */
 
 import { spawn } from 'child_process'
-import { writeFile, rm, mkdir } from 'fs/promises'
+import { writeFile, readFile, rm, mkdir } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
@@ -243,7 +243,45 @@ spec:
 
 // ── ESO + Vault manifests ─────────────────────────────────────────────────────
 
-function esoVaultManifest(roleId: string, secretId: string, vaultAddr: string): string {
+interface TLSConfig {
+  caBundleB64: string
+  clientCertPem: string
+  clientKeyPem: string
+}
+
+function esoVaultManifest(
+  roleId: string,
+  secretId: string,
+  vaultAddr: string,
+  tls?: TLSConfig,
+): string {
+  const hasMTLS = tls && tls.clientCertPem && tls.clientKeyPem
+
+  const tlsSection = tls ? `
+      caBundle: "${tls.caBundleB64}"` + (hasMTLS ? `
+      tls:
+        certSecretRef:
+          name: orion-vault-client-tls
+          namespace: external-secrets
+          key: tls.crt
+        keySecretRef:
+          name: orion-vault-client-tls
+          namespace: external-secrets
+          key: tls.key` : '') : ''
+
+  const clientCertSecret = hasMTLS ? `---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orion-vault-client-tls
+  namespace: external-secrets
+stringData:
+  tls.crt: |
+${tls.clientCertPem.split('\n').map(l => `    ${l}`).join('\n')}
+  tls.key: |
+${tls.clientKeyPem.split('\n').map(l => `    ${l}`).join('\n')}
+` : ''
+
   return `---
 apiVersion: v1
 kind: Namespace
@@ -258,7 +296,7 @@ metadata:
 stringData:
   roleId: "${roleId}"
   secretId: "${secretId}"
----
+${clientCertSecret}---
 apiVersion: external-secrets.io/v1beta1
 kind: ClusterSecretStore
 metadata:
@@ -268,7 +306,7 @@ spec:
     vault:
       server: "${vaultAddr}"
       path: "secret"
-      version: "v2"
+      version: "v2"${tlsSection}
       auth:
         appRole:
           path: "approle"
@@ -296,6 +334,54 @@ async function vaultRequest(
   })
   const data = res.status !== 204 ? await res.json().catch(() => ({})) : {}
   return { ok: res.ok, status: res.status, data }
+}
+
+// ── mTLS client cert generation ───────────────────────────────────────────────
+
+const VAULT_PROXY_CERTS_DIR = '/vault-proxy-certs'
+
+/** Generate a per-cluster client cert signed by the vault-proxy CA. */
+async function generateClientCert(
+  envName: string,
+  tmpDir: string,
+): Promise<{ certPem: string; keyPem: string } | null> {
+  const caKeyPath  = join(VAULT_PROXY_CERTS_DIR, 'ca.key')
+  const caCertPath = join(VAULT_PROXY_CERTS_DIR, 'ca.crt')
+
+  // Check CA key is accessible (proxy may not be set up yet)
+  const caKey = await readFile(caKeyPath, 'utf8').catch(() => null)
+  if (!caKey) return null
+
+  const keyPath  = join(tmpDir, `${envName}-client.key`)
+  const csrPath  = join(tmpDir, `${envName}-client.csr`)
+  const certPath = join(tmpDir, `${envName}-client.crt`)
+  const extPath  = join(tmpDir, `${envName}-client.ext`)
+
+  await writeFile(extPath, [
+    '[req_ext]',
+    'subjectAltName = @alt_names',
+    '[alt_names]',
+    `DNS.1 = eso-${envName}`,
+  ].join('\n'))
+
+  const steps: Array<[string, string[]]> = [
+    ['openssl', ['genrsa', '-out', keyPath, '4096']],
+    ['openssl', ['req', '-new', '-key', keyPath, '-out', csrPath, '-subj', `/CN=eso-${envName}/O=ORION`]],
+    ['openssl', ['x509', '-req', '-days', '3650',
+      '-in', csrPath, '-CA', caCertPath, '-CAkey', caKeyPath,
+      '-CAcreateserial', '-out', certPath, '-extfile', extPath, '-extensions', 'req_ext']],
+  ]
+
+  for (const [cmd, args] of steps) {
+    const result = await runQuiet(cmd, args, {})
+    if (!result.ok) throw new Error(`Client cert generation failed (${cmd}): ${result.out}`)
+  }
+
+  const [certPem, keyPem] = await Promise.all([
+    readFile(certPath, 'utf8'),
+    readFile(keyPath, 'utf8'),
+  ])
+  return { certPem, keyPem }
 }
 
 // ── Main bootstrap ────────────────────────────────────────────────────────────
@@ -422,13 +508,21 @@ export async function bootstrapCluster(
     }
 
     // 8. Configure Vault AppRole + install ESO (if Vault is initialized in ORION)
-    const [vaultTokenSetting, vaultInitSetting] = await Promise.all([
+    const [vaultAdminSetting, vaultRootSetting, vaultInitSetting] = await Promise.all([
+      prisma.systemSetting.findUnique({ where: { key: 'vault.adminToken' } }),
       prisma.systemSetting.findUnique({ where: { key: 'vault.rootToken' } }),
       prisma.systemSetting.findUnique({ where: { key: 'vault.initialized' } }),
     ])
 
-    if (vaultInitSetting?.value && vaultTokenSetting?.value) {
-      const rootToken  = String(vaultTokenSetting.value)
+    // Prefer the scoped admin token; fall back to root token for instances
+    // initialized before the admin-token migration (emit a warning).
+    const vaultToken = vaultAdminSetting?.value ?? vaultRootSetting?.value
+    if (vaultRootSetting?.value && !vaultAdminSetting?.value) {
+      emit({ type: 'log', message: 'WARNING: Vault is using a root token. Re-initialize Vault in ORION settings to rotate to a scoped admin token.' })
+    }
+
+    if (vaultInitSetting?.value && vaultToken) {
+      const rootToken  = String(vaultToken)
       const policyName = `orion-cluster-${env.name}`
       const roleName   = `orion-cluster-${env.name}`
 
@@ -515,10 +609,40 @@ export async function bootstrapCluster(
       )
 
       // 10. Apply ClusterSecretStore + AppRole credentials Secret
+      //     If vault-proxy certs exist: use HTTPS + mTLS. Otherwise fall back to HTTP.
       emit({ type: 'step', message: 'Configuring ClusterSecretStore → ORION Vault...' })
-      const vaultExtAddr = `http://${MANAGEMENT_IP}:8200`
+
+      const caCertPem = await readFile(join(VAULT_PROXY_CERTS_DIR, 'ca.crt'), 'utf8').catch(() => null)
+
+      let vaultExtAddr: string
+      let tlsConfig: TLSConfig | undefined
+
+      if (caCertPem) {
+        vaultExtAddr = `https://${MANAGEMENT_IP}:8200`
+        const clientCert = await generateClientCert(env.name, tmpDir)
+        if (clientCert) {
+          tlsConfig = {
+            caBundleB64: Buffer.from(caCertPem).toString('base64'),
+            clientCertPem: clientCert.certPem,
+            clientKeyPem: clientCert.keyPem,
+          }
+          emit({ type: 'log', message: 'mTLS enabled: cluster client cert generated and signed by ORION Vault CA' })
+        } else {
+          // CA cert exists but CA key not readable — one-way TLS only
+          tlsConfig = {
+            caBundleB64: Buffer.from(caCertPem).toString('base64'),
+            clientCertPem: '',
+            clientKeyPem: '',
+          }
+          emit({ type: 'log', message: 'One-way TLS: CA cert found but CA key not readable — client cert skipped' })
+        }
+      } else {
+        vaultExtAddr = `http://${MANAGEMENT_IP}:8200`
+        emit({ type: 'log', message: 'No vault-proxy certs found — using plain HTTP (run generate-vault-certs.sh to enable mTLS)' })
+      }
+
       const esoYaml = join(tmpDir, 'eso-vault.yaml')
-      await writeFile(esoYaml, esoVaultManifest(roleId, secretId, vaultExtAddr))
+      await writeFile(esoYaml, esoVaultManifest(roleId, secretId, vaultExtAddr, tlsConfig))
       await runCommand(
         'kubectl', ['apply', '-f', esoYaml],
         kenv, msg => emit({ type: 'log', message: msg }),

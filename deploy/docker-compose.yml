@@ -38,6 +38,7 @@ services:
       - /root/.ssh:/root/.ssh:ro
       - /root/.kube:/root/.kube:ro
       - /root/.talos:/root/.talos:ro
+      - ./vault-proxy/certs:/vault-proxy-certs:ro
     ports:
       - "3000:3000"
     healthcheck:
@@ -132,8 +133,6 @@ services:
         condition: service_completed_successfully
     cap_add:
       - IPC_LOCK
-    ports:
-      - "8200:8200"
     environment:
       SKIP_SETCAP: "true"
       SKIP_CHOWN: "true"
@@ -152,6 +151,7 @@ services:
         cluster_addr = "http://vault:8201"
     volumes:
       - vault-data:/vault/data
+      - ./vault-proxy/certs:/vault-proxy-certs:ro
     healthcheck:
       # exit 0 = active, exit 1 = uninitialized, exit 2 = sealed — all mean vault is running
       test: ["CMD-SHELL", "vault status -address=http://127.0.0.1:8200; [ $? -le 2 ]"]
@@ -164,6 +164,30 @@ services:
       traefik.http.routers.vault.rule: "Host(`${VAULT_DOMAIN:-vault.khalis.corp}`)"
       traefik.http.routers.vault.entrypoints: "websecure"
       traefik.http.services.vault.loadbalancer.server.port: "8200"
+
+  # ── Vault proxy (Envoy) ───────────────────────────────────────────────────
+  # Sole external entry point for Vault. Vault itself exposes no host port.
+  # Provides: mTLS termination, IP allowlisting, rate limiting, circuit breaking,
+  # per-connection access logs, and Prometheus metrics on :9901.
+  # Run ./generate-vault-certs.sh once before starting to create the certs.
+  vault-proxy:
+    image: envoyproxy/envoy:v1.29-latest
+    restart: unless-stopped
+    depends_on:
+      vault:
+        condition: service_healthy
+    ports:
+      - "${MANAGEMENT_IP:-10.2.2.9}:8200:8200"
+      - "127.0.0.1:9901:9901"
+    volumes:
+      - ./vault-proxy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./vault-proxy/certs:/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9901/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   # ── Vault auto-unsealer ────────────────────────────────────────────────────
   # Polls every 30s and submits the 3 unseal keys whenever Vault restarts sealed.
