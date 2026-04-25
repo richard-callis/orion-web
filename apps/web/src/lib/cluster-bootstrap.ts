@@ -5,12 +5,18 @@
  * Called from POST /api/environments/[id]/bootstrap.
  *
  * Steps:
- *   1. Write kubeconfig to a temp file
- *   2. Ensure Gitea repo exists for this environment
- *   3. Deploy ArgoCD via Helm
- *   4. Configure ArgoCD (AppProject + root Application → Gitea repo)
- *   5. Deploy Gateway via kubectl apply (uses manifest from join token)
- *   6. Clean up temp files
+ *   1.  Write kubeconfig to a temp file
+ *   2.  Verify cluster connectivity
+ *   3.  Ensure Gitea repo exists for this environment
+ *   4.  Add ArgoCD Helm repo
+ *   5.  Install ArgoCD via Helm
+ *   6.  Configure ArgoCD (AppProject + root Application → Gitea repo)
+ *   7.  Deploy Gateway via kubectl apply
+ *   8.  Create Vault AppRole + policy scoped to this environment
+ *   9.  Install External Secrets Operator via Helm
+ *   10. Apply ClusterSecretStore pointing to ORION Vault
+ *   11. Resolve ArgoCD NodePort URL
+ *   12. Update environment record + clean up temp files
  */
 
 import { spawn } from 'child_process'
@@ -22,7 +28,9 @@ import { prisma } from './db'
 import { bootstrapEnvironmentRepo } from './gitops'
 import { getGitProvider } from './git-provider'
 
-const ORION_URL = process.env.NEXTAUTH_URL ?? 'http://localhost:3000'
+const ORION_URL       = process.env.NEXTAUTH_URL  ?? 'http://localhost:3000'
+const VAULT_ADDR      = process.env.VAULT_ADDR    ?? 'http://vault:8200'
+const MANAGEMENT_IP   = process.env.MANAGEMENT_IP ?? 'localhost'
 
 export type BootstrapEvent =
   | { type: 'step'; message: string }
@@ -233,6 +241,63 @@ spec:
 `
 }
 
+// ── ESO + Vault manifests ─────────────────────────────────────────────────────
+
+function esoVaultManifest(roleId: string, secretId: string, vaultAddr: string): string {
+  return `---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-secrets
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orion-vault-approle
+  namespace: external-secrets
+stringData:
+  roleId: "${roleId}"
+  secretId: "${secretId}"
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: orion-vault
+spec:
+  provider:
+    vault:
+      server: "${vaultAddr}"
+      path: "secret"
+      version: "v2"
+      auth:
+        appRole:
+          path: "approle"
+          roleId: "${roleId}"
+          secretRef:
+            name: orion-vault-approle
+            namespace: external-secrets
+            key: secretId
+`
+}
+
+// ── Vault helpers ─────────────────────────────────────────────────────────────
+
+async function vaultRequest(
+  path: string,
+  token: string,
+  method: string = 'GET',
+  body?: unknown,
+): Promise<{ ok: boolean; status: number; data: unknown }> {
+  const res = await fetch(`${VAULT_ADDR}/v1/${path}`, {
+    method,
+    headers: { 'X-Vault-Token': token, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(10000),
+  })
+  const data = res.status !== 204 ? await res.json().catch(() => ({})) : {}
+  return { ok: res.ok, status: res.status, data }
+}
+
 // ── Main bootstrap ────────────────────────────────────────────────────────────
 
 export async function bootstrapCluster(
@@ -356,7 +421,114 @@ export async function bootstrapCluster(
       )
     }
 
-    // 8. Resolve ArgoCD NodePort + node IP → accessible URL
+    // 8. Configure Vault AppRole + install ESO (if Vault is initialized in ORION)
+    const [vaultTokenSetting, vaultInitSetting] = await Promise.all([
+      prisma.systemSetting.findUnique({ where: { key: 'vault.rootToken' } }),
+      prisma.systemSetting.findUnique({ where: { key: 'vault.initialized' } }),
+    ])
+
+    if (vaultInitSetting?.value && vaultTokenSetting?.value) {
+      const rootToken  = String(vaultTokenSetting.value)
+      const policyName = `orion-cluster-${env.name}`
+      const roleName   = `orion-cluster-${env.name}`
+
+      emit({ type: 'step', message: 'Configuring Vault AppRole for this cluster...' })
+
+      // Enable KV v2 at path "secret" (400 = already exists, which is fine)
+      await vaultRequest('sys/mounts/secret', rootToken, 'POST', { type: 'kv', options: { version: '2' } })
+
+      // Enable AppRole auth method (400 = already exists, which is fine)
+      await vaultRequest('sys/auth/approle', rootToken, 'POST', { type: 'approle' })
+
+      // Create policy scoped to this env's secret paths
+      const policyRes = await vaultRequest(`sys/policies/acl/${policyName}`, rootToken, 'PUT', {
+        policy: [
+          `path "secret/data/${env.name}/*" { capabilities = ["read", "list"] }`,
+          `path "secret/metadata/${env.name}/*" { capabilities = ["read", "list"] }`,
+        ].join('\n'),
+      })
+      if (!policyRes.ok) throw new Error(`Vault policy creation failed (${policyRes.status})`)
+
+      // Create AppRole role bound to the policy
+      const roleRes = await vaultRequest(`auth/approle/role/${roleName}`, rootToken, 'POST', {
+        policies: [policyName],
+        token_ttl: '1h',
+        token_max_ttl: '24h',
+      })
+      if (!roleRes.ok) throw new Error(`Vault AppRole role creation failed (${roleRes.status})`)
+
+      // Fetch role-id
+      const roleIdRes = await vaultRequest(`auth/approle/role/${roleName}/role-id`, rootToken)
+      if (!roleIdRes.ok) throw new Error(`Could not fetch Vault role-id (${roleIdRes.status})`)
+      const roleId = (roleIdRes.data as { data: { role_id: string } }).data.role_id
+
+      // Check if ClusterSecretStore secret already exists (idempotent re-run)
+      const secretCheck = await runQuiet(
+        'kubectl', ['get', 'secret', 'orion-vault-approle', '-n', 'external-secrets', '--ignore-not-found'],
+        kenv,
+      )
+      let secretId: string
+      if (secretCheck.out.includes('orion-vault-approle')) {
+        emit({ type: 'log', message: 'Vault AppRole secret already exists in cluster — skipping secret-id generation' })
+        // Fetch secretId from the existing K8s secret so we can rebuild the manifest if needed
+        const secretIdFetch = await runQuiet(
+          'kubectl', ['get', 'secret', 'orion-vault-approle', '-n', 'external-secrets',
+                      '-o', 'jsonpath={.data.secretId}'],
+          kenv,
+        )
+        secretId = Buffer.from(secretIdFetch.out.trim(), 'base64').toString('utf8')
+      } else {
+        // Generate a new secret-id (no TTL — persists until explicitly revoked)
+        const secretIdRes = await vaultRequest(`auth/approle/role/${roleName}/secret-id`, rootToken, 'POST', {})
+        if (!secretIdRes.ok) throw new Error(`Could not generate Vault secret-id (${secretIdRes.status})`)
+        secretId = (secretIdRes.data as { data: { secret_id: string } }).data.secret_id
+      }
+
+      emit({ type: 'log', message: `Vault AppRole '${roleName}' ready` })
+
+      // 9. Install External Secrets Operator via Helm
+      emit({ type: 'step', message: 'Installing External Secrets Operator...' })
+      await runCommand(
+        'helm',
+        ['repo', 'add', 'external-secrets', 'https://charts.external-secrets.io', '--force-update'],
+        kenv,
+        msg => emit({ type: 'log', message: msg }),
+      )
+      await runCommand(
+        'helm',
+        ['repo', 'update', 'external-secrets'],
+        kenv,
+        msg => emit({ type: 'log', message: msg }),
+      )
+      await runCommand(
+        'helm',
+        [
+          'upgrade', '--install', 'external-secrets', 'external-secrets/external-secrets',
+          '--namespace', 'external-secrets',
+          '--create-namespace',
+          '--wait',
+          '--timeout', '5m',
+          '--set', 'installCRDs=true',
+        ],
+        kenv,
+        msg => emit({ type: 'log', message: msg }),
+      )
+
+      // 10. Apply ClusterSecretStore + AppRole credentials Secret
+      emit({ type: 'step', message: 'Configuring ClusterSecretStore → ORION Vault...' })
+      const vaultExtAddr = `http://${MANAGEMENT_IP}:8200`
+      const esoYaml = join(tmpDir, 'eso-vault.yaml')
+      await writeFile(esoYaml, esoVaultManifest(roleId, secretId, vaultExtAddr))
+      await runCommand(
+        'kubectl', ['apply', '-f', esoYaml],
+        kenv, msg => emit({ type: 'log', message: msg }),
+      )
+      emit({ type: 'log', message: `ClusterSecretStore 'orion-vault' → ${vaultExtAddr}` })
+    } else {
+      emit({ type: 'log', message: 'Vault not initialized in ORION — skipping ESO setup (run Vault setup in ORION first, then re-bootstrap)' })
+    }
+
+    // 11. Resolve ArgoCD NodePort + node IP → accessible URL
     emit({ type: 'step', message: 'Resolving ArgoCD URL...' })
     let argoCdUrl: string | null = null
     const portResult = await runQuiet(
@@ -379,7 +551,7 @@ export async function bootstrapCluster(
       emit({ type: 'log', message: 'Could not determine ArgoCD URL — set it manually in environment settings' })
     }
 
-    // 9. Update environment record with git repo info + ArgoCD URL
+    // 12. Update environment record with git repo info + ArgoCD URL
     await prisma.environment.update({
       where: { id: environmentId },
       data: {
