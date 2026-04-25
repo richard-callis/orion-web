@@ -257,6 +257,11 @@ model AuditLog {
   target    String
   detail    Json?
   createdAt DateTime @default(now())
+
+  // SOC2: [M-005, L-001] Indexes for user-specific queries and date range filters
+  @@index([userId])
+  @@index([createdAt])
+  @@index([userId, createdAt])
 }
 
 model SavedView {
