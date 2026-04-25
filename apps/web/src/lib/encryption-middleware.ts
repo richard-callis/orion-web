@@ -106,24 +106,40 @@ export function registerEncryptionMiddleware(prisma: PrismaClient): void {
     // Encrypt before writes (POST = create, PUT/PATCH = update)
     const isWrite = ['create', 'connectOrCreate', 'upsert', 'update', 'updateMany'].includes(params.action)
     if (isWrite && params.args) {
-      // Handle upsert/create data
-      if (params.args.data) {
-        const data = params.args.data
-        if (isRecord(data)) {
-          const processed = preProcess(data, params.model)
-          if (processed !== data) {
-            params = { ...params, args: { ...params.args, data: processed } }
-          }
-        } else if (Array.isArray(data)) {
-          // upsert takes { where, create, update }
-          params = {
-            ...params,
-            args: {
-              ...params.args,
-              data: data.map((item) => isRecord(item) ? preProcess(item, params.model) : item),
-            },
-          }
+      let newArgs = { ...params.args }
+
+      // Handle standard data field (create, update, updateMany)
+      if (newArgs.data && isRecord(newArgs.data)) {
+        const processed = preProcess(newArgs.data, params.model)
+        if (processed !== newArgs.data) {
+          newArgs = { ...newArgs, data: processed }
         }
+      }
+
+      // Handle upsert's create and update fields
+      if (newArgs.create && isRecord(newArgs.create)) {
+        const processed = preProcess(newArgs.create, params.model)
+        if (processed !== newArgs.create) {
+          newArgs = { ...newArgs, create: processed }
+        }
+      }
+      if (newArgs.update && isRecord(newArgs.update)) {
+        const processed = preProcess(newArgs.update, params.model)
+        if (processed !== newArgs.update) {
+          newArgs = { ...newArgs, update: processed }
+        }
+      }
+
+      // Handle connectOrCreate's create field
+      if (newArgs.connectOrCreate && isRecord(newArgs.connectOrCreate) && isRecord(newArgs.connectOrCreate.create)) {
+        const processed = preProcess(newArgs.connectOrCreate.create as Record<string, unknown>, params.model)
+        if (processed !== newArgs.connectOrCreate.create) {
+          newArgs = { ...newArgs, connectOrCreate: { ...newArgs.connectOrCreate, create: processed } }
+        }
+      }
+
+      if (newArgs !== params.args) {
+        params = { ...params, args: newArgs }
       }
     }
 
