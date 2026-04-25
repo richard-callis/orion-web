@@ -6,6 +6,7 @@
  */
 
 import { prisma } from './db'
+import type { NextRequest } from 'next/server'
 
 export type AuditAction =
   | 'user_login'
@@ -72,13 +73,15 @@ export async function logAudit(params: {
 
 /**
  * Extract IP address from a Next.js request (respects X-Forwarded-For).
+ * Works with NextRequest and other request objects.
  */
-export function getClientIp(req: { ip?: string; socket?: { remoteAddress?: string } }): string | undefined {
-  const forwarded = req.ip
+export function getClientIp(req: NextRequest | { headers: Headers; ip?: string }): string | undefined {
+  // Next.js App Router: check x-forwarded-for header (set by Traefik/reverse proxy)
+  const forwarded = req.headers.get('x-forwarded-for')
   if (forwarded) return forwarded.split(',')[0].trim()
-  return req.socket?.remoteAddress
-    ? req.socket.remoteAddress.replace(/^::ffff:/, '')
-    : undefined
+  // Fallback: NextRequest.ip (available in some deployments)
+  if ('ip' in req && req.ip) return req.ip
+  return undefined
 }
 
 /**
