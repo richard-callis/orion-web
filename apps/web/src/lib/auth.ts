@@ -2,6 +2,7 @@ import { getServerSession, type NextAuthOptions } from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import { compare } from 'bcryptjs'
 import { prisma } from './db'
+import { verifyTOTP, verifyRecoveryCode } from './totp'
 
 export interface AppUser {
   id: string
@@ -10,7 +11,18 @@ export interface AppUser {
   name: string | null
   role: string
   active: boolean
+  totpEnabled?: boolean // SOC2: [M-002] whether this user has MFA enabled
 }
+
+/**
+ * SOC2: [M-002] MFA login state.
+ * Returned from the TOTP login endpoint before creating a session.
+ */
+export type MfaLoginResult =
+  | { status: 'mfa_required'; totpEnabled: true }
+  | { status: 'mfa_recovery'; totpEnabled: true; codesRemaining: number }
+  | { status: 'success'; user: AppUser }
+  | { status: 'error'; message: string }
 
 export const authOptions: NextAuthOptions = {
   session: { strategy: 'jwt' },
@@ -61,18 +73,60 @@ export const authOptions: NextAuthOptions = {
       credentials: {
         username: { label: 'Username', type: 'text' },
         password: { label: 'Password', type: 'password' },
+        totpCode: { label: 'TOTP Code', type: 'text' },
+        isRecovery: { label: 'Is Recovery', type: 'hidden' },
       },
       async authorize(credentials) {
         if (!credentials?.username || !credentials?.password) return null
 
         const user = await prisma.user.findUnique({
           where: { username: credentials.username },
+          select: {
+            id: true, username: true, email: true, name: true,
+            role: true, active: true, passwordHash: true,
+            totpEnabled: true, totpSecret: true, totpRecoveryCodes: true,
+          },
         })
 
         if (!user || !user.active || !user.passwordHash) return null
 
-        const valid = await compare(credentials.password, user.passwordHash)
-        if (!valid) return null
+        const passwordValid = await compare(credentials.password, user.passwordHash)
+        if (!passwordValid) return null
+
+        // SOC2: [M-002] Check MFA requirement
+        if (user.totpEnabled) {
+          const isRecovery = credentials.isRecovery === 'true'
+
+          if (isRecovery) {
+            // Recovery code login
+            const code = credentials.totpCode as string
+            const hashedCodes: string[] = user.totpRecoveryCodes ? JSON.parse(user.totpRecoveryCodes) : []
+            if (!code || !(await verifyRecoveryCode(code, hashedCodes))) {
+              return { error: 'Invalid recovery code' }
+            }
+          } else {
+            // TOTP code login
+            const code = credentials.totpCode as string
+            if (!user.totpSecret) return { error: 'MFA not configured' }
+            if (!code || typeof code !== 'string') {
+              // No TOTP code provided — signal MFA required
+              return { mfaRequired: true, totpEnabled: true, username: user.username }
+            }
+            if (!verifyTOTP(user.totpSecret, code)) {
+              return { error: 'Invalid TOTP code' }
+            }
+          }
+
+          // MFA verified — mark as such on the user object
+          return {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            username: user.username,
+            role: user.role,
+            mfaVerified: true,
+          }
+        }
 
         await prisma.user.update({
           where: { id: user.id },
@@ -85,6 +139,7 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           username: user.username,
           role: user.role,
+          mfaVerified: false,
         }
       },
     }),
@@ -96,6 +151,9 @@ export const authOptions: NextAuthOptions = {
         token.sub = user.id
         token.username = (user as AppUser & { username: string }).username
         token.role = (user as AppUser & { role: string }).role
+        // SOC2: [M-002] Propagate MFA verified state from authorize()
+        token.mfaVerified = (user as { mfaVerified?: boolean }).mfaVerified ?? false
+        token.mfaVerifiedAt = Date.now()
       } else if (token.sub) {
         // Subsequent requests — verify the user still exists in the DB.
         // If the DB was wiped the user row is gone, so we invalidate the token
@@ -106,6 +164,13 @@ export const authOptions: NextAuthOptions = {
         })
         if (!dbUser || !dbUser.active) {
           token.sub = undefined
+        }
+        // MFA verification expires after 15 minutes
+        if (token.mfaVerifiedAt && token.mfaVerified) {
+          const now = Date.now()
+          if (now - (token.mfaVerifiedAt as number) > 15 * 60 * 1000) {
+            token.mfaVerified = false
+          }
         }
       }
       return token
@@ -132,6 +197,7 @@ export async function getCurrentUser(): Promise<AppUser | null> {
       name: session.user.name ?? null,
       role: session.user.role,
       active: true,
+      totpEnabled: (session.user as AppUser & { totpEnabled?: boolean }).totpEnabled,
     }
   }
 
