@@ -56,3 +56,34 @@ export function decryptJson<T>(value: unknown): T {
   }
   return value as T   // legacy: value is already the parsed object
 }
+
+/**
+ * Encrypt with a custom key (for key rotation).
+ * keyBase64: 32-byte key in base64 format
+ */
+export function encryptWithKey(plaintext: string, keyBase64: string): string {
+  const key = Buffer.from(keyBase64, 'base64')
+  if (key.byteLength !== 32) throw new Error(`Key must be 32 bytes (got ${key.byteLength})`)
+  const iv  = randomBytes(IV_BYTES)
+  const cipher = createCipheriv(ALGORITHM, key, iv)
+  const body = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
+  const tag  = cipher.getAuthTag()
+  return PREFIX + Buffer.concat([iv, tag, body]).toString('base64')
+}
+
+/**
+ * Decrypt with a custom key (for key rotation).
+ * keyBase64: 32-byte key in base64 format
+ */
+export function decryptWithKey(value: string, keyBase64: string): string {
+  if (!value.startsWith(PREFIX)) return value   // plaintext passthrough
+  const key = Buffer.from(keyBase64, 'base64')
+  if (key.byteLength !== 32) throw new Error(`Key must be 32 bytes (got ${key.byteLength})`)
+  const packed = Buffer.from(value.slice(PREFIX.length), 'base64')
+  const iv         = packed.subarray(0, IV_BYTES)
+  const tag        = packed.subarray(IV_BYTES, IV_BYTES + TAG_BYTES)
+  const ciphertext = packed.subarray(IV_BYTES + TAG_BYTES)
+  const decipher = createDecipheriv(ALGORITHM, key, iv)
+  decipher.setAuthTag(tag)
+  return decipher.update(ciphertext).toString('utf8') + decipher.final('utf8')
+}
