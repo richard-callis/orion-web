@@ -3,6 +3,7 @@ import { promisify } from 'util'
 import { lookup } from 'dns'
 import { promisify as promisifyCb } from 'util'
 import type { McpToolConfig } from './orion-client.js'
+import { quote, validatePackageName } from './lib/shell-quote.js'
 
 const exec = promisify(execFile)
 const dnsLookup = promisifyCb(lookup)
@@ -87,18 +88,28 @@ function isAllowedIp(ip: string): boolean {
 /**
  * Ensure required packages are installed in the gateway container.
  * Uses `apk add` (Alpine) — falls back to a clear error if unavailable.
+ * SOC2: [H-006] Validates package names before passing to apk.
+ * SOC2: [H-005] Properly quotes all shell arguments.
  */
 async function ensurePackages(packages: string[]): Promise<void> {
   for (const pkg of packages) {
-    // Check if the binary is already available
-    const binaryName = pkg.split('-').pop() ?? pkg  // e.g. "nmap-ncat" → "ncat", "nmap" → "nmap"
+    // Validate package name — prevents injection via tool definitions (H-006)
+    if (!validatePackageName(pkg)) {
+      throw new Error(
+        `Invalid package name '${pkg}' — must match: ^[a-zA-Z][a-zA-Z0-9._+-]*$ (max 127 chars)`
+      )
+    }
+
+    const binaryName = pkg.split('-').pop() ?? pkg  // e.g. "nmap-ncat" → "ncat"
     try {
-      await exec('sh', ['-c', `which ${binaryName} || command -v ${binaryName}`], { timeout: 5_000 })
+      // SOC2: [H-005] Properly quote binaryName for safe shell interpolation
+      await exec('sh', ['-c', `which ${quote(binaryName)} || command -v ${quote(binaryName)}`], { timeout: 5_000 })
       // Already installed
     } catch {
       console.log(`[tool-runner] Package '${pkg}' not found — attempting auto-install via apk...`)
       try {
-        const { stdout, stderr } = await exec('sh', ['-c', `apk add --no-cache ${pkg} 2>&1`], { timeout: 120_000 })
+        // Package name validated above; quote for defense in depth
+        const { stdout, stderr } = await exec('sh', ['-c', `apk add --no-cache ${quote(pkg)} 2>&1`], { timeout: 120_000 })
         console.log(`[tool-runner] Installed '${pkg}':`, (stdout || stderr).trim())
       } catch (installErr) {
         const msg = installErr instanceof Error ? installErr.message : String(installErr)
@@ -134,17 +145,16 @@ export async function runTool(tool: McpToolConfig, args: Record<string, unknown>
       // Determine which params are required (per inputSchema)
       const requiredParams = (tool.inputSchema?.required as string[] | undefined) ?? []
 
-      // Substitute {arg_name} placeholders from the tool's arguments
+      // SOC2: [H-005] All arguments are properly shell-quoted via quote().
+      // This is bulletproof — single-quoted args cannot break out regardless of content.
       const interpolated = command.replace(/\{(\w+)\}/g, (_, k) => {
         const val = args[k]
         if (val === undefined) {
           if (requiredParams.includes(k)) throw new Error(`Missing required argument: ${k}`)
           return '' // optional param not provided — substitute empty string
         }
-        // Basic safety: reject args containing shell metacharacters
-        const str = String(val)
-        if (/[;&|`$<>\\]/.test(str)) throw new Error(`Argument '${k}' contains disallowed characters`)
-        return str
+        // Properly quote the argument for safe shell interpolation
+        return quote(String(val))
       })
       const { stdout, stderr } = await exec('sh', ['-c', interpolated], { timeout: 30_000 })
       return stdout || stderr
