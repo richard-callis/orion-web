@@ -87,11 +87,16 @@ function runCommand(
 
 // ── ArgoCD manifests ──────────────────────────────────────────────────────────
 
+function toSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '')
+}
+
 function argoCdAppProject(envName: string, repoUrl: string): string {
+  const slug = toSlug(envName)
   return `apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: ${envName}
+  name: ${slug}
   namespace: argocd
 spec:
   description: ORION-managed environment ${envName}
@@ -107,15 +112,16 @@ spec:
 }
 
 function argoCdApplication(envName: string, repoUrl: string): string {
+  const slug = toSlug(envName)
   return `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: ${envName}
+  name: ${slug}
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
-  project: ${envName}
+  project: ${slug}
   source:
     repoURL: ${repoUrl}
     targetRevision: main
