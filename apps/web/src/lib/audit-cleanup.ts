@@ -28,9 +28,21 @@ async function getRetentionDays(): Promise<number> {
 
 async function cleanupBatch(retentionDays: number): Promise<number> {
   const cutoff = new Date(Date.now() - retentionDays * 86400000)
-  const result = await prisma.auditLog.deleteMany({
+
+  // Find up to BATCH_SIZE records to delete
+  const batch = await prisma.auditLog.findMany({
     where: { createdAt: { lt: cutoff } },
+    select: { id: true },
+    take: BATCH_SIZE,
   })
+
+  if (batch.length === 0) return 0
+
+  // Delete the batch by ID
+  const result = await prisma.auditLog.deleteMany({
+    where: { id: { in: batch.map(r => r.id) } },
+  })
+
   return result.count
 }
 
