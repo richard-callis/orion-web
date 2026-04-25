@@ -2,6 +2,51 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { readFileSync, statSync } from 'fs'
 
+/**
+ * Dangerous command patterns that should never be allowed in shell_exec.
+ * SOC2: [H-005] Defense-in-depth for the localhost shell_exec tool.
+ * Since shell_exec takes a full command string (not interpolated args),
+ * we can't use quote(). Instead we block dangerous patterns.
+ */
+const DANGEROUS_PATTERNS = [
+  /;\s*(rm|dd|chmod|chown|mkfs|fdisk|wipe|mke2fs|cfdisk|parted|sgdisk|hdparm|blkdiscard)\b/i,
+  /&&\s*(rm|dd|chmod|chown|mkfs|fdisk|wipe|mke2fs|cfdisk|parted|sgdisk|hdparm|blkdiscard)\b/i,
+  /\|\s*(rm|dd|chmod|chown|mkfs|fdisk|wipe|mke2fs|cfdisk|parted|sgdisk|hdparm|blkdiscard)\b/i,
+  /\|\|\s*(rm|dd|chmod|chown|mkfs|fdisk|wipe|mke2fs|cfdisk|parted|sgdisk|hdparm|blkdiscard)\b/i,
+  /&&\s*(curl|wget)\b/i,
+  /;\s*(curl|wget)\b/i,
+  />>\s*(\/etc\/|\/root\/|\/\.ssh\/)/i,
+  />\s*\/etc\/(passwd|shadow|sudoers|crontab)/i,
+  />\s*\/root\/\.ssh\/(authorized_keys|id_|known_hosts)/i,
+  /\|\s*(nc|ncat|socat|netcat)\b/i,
+  /\/proc\/(self|fs|sys)/i,
+  /\/dev\/(sda|sdb|vda|vdb|nbd|loop|xvd)/i,
+  /eval\b/,
+  /source\b.*\/etc\//i,
+  /base64\s+-[di]/i,
+] as const
+
+/**
+ * Blocklist of shell metacharacters that could enable injection.
+ * SOC2: [H-005] Comprehensive blocklist for shell_exec command input.
+ * Note: The command IS shell syntax, so we can't quote it.
+ * We block characters that enable subcommand injection.
+ */
+const SHELL_META_RE = /[;&|`$<>\\!{}()\[\]]/
+
+/**
+ * Check if a command string contains dangerous patterns.
+ * Returns null if safe, or the reason it's blocked.
+ */
+function checkDangerous(cmd: string): string | null {
+  for (const pattern of DANGEROUS_PATTERNS) {
+    if (pattern.test(cmd)) {
+      return `Blocked: command matches dangerous pattern '${pattern.source}'`
+    }
+  }
+  return null
+}
+
 const exec = promisify(execFile)
 
 async function sh(cmd: string, args: string[], timeoutMs = 30_000): Promise<string> {
@@ -30,6 +75,18 @@ export const localhostTools = [
     async execute(args: Record<string, unknown>) {
       const command = String(args.command ?? '').trim()
       if (!command) return 'Error: command is required'
+
+      // SOC2: [H-005] Check for shell metacharacters that could enable injection
+      if (SHELL_META_RE.test(command)) {
+        return 'Error: command contains disallowed shell metacharacters'
+      }
+
+      // SOC2: [H-005] Check for dangerous command patterns
+      const dangerReason = checkDangerous(command)
+      if (dangerReason) {
+        return `Error: ${dangerReason}`
+      }
+
       const timeoutMs = Math.min((Number(args.timeout_secs ?? 30)) * 1000, 120_000)
 
       console.log(`[localhost] shell_exec: ${command}`)

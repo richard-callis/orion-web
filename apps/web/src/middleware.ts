@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 
+// SOC2: [M-004] Wrap console.log BEFORE any other import to catch all log output
+import { wrapConsoleLog } from './lib/redact'
+wrapConsoleLog()
+
 // ─── Rate Limiting (SOC2: M-003) ─────────────────────────────────────────────
 // Simple in-memory rate limiter. For production with multiple replicas,
 // swap to Redis-backed (e.g., @upstash/ratelimit).
