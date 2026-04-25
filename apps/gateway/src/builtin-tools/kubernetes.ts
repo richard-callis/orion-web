@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { writeFileSync, unlinkSync } from 'fs'
+import { validateHttpUrl } from '../tool-runner.js'
 
 const exec = promisify(execFile)
 
@@ -174,13 +175,17 @@ export const kubernetesTools = [
     inputSchema: {
       type: 'object',
       properties: {
-        url:       { type: 'string', description: 'URL of the manifest to apply' },
+        url:       { type: 'string', description: 'HTTPS URL of a publicly accessible manifest to apply' },
         namespace: { type: 'string', description: 'Namespace (optional)' },
       },
       required: ['url'],
     },
     async execute(args: Record<string, unknown>) {
-      const cmdArgs = ['apply', '-f', String(args.url)]
+      // SOC2: SSRF protection — validate URL before passing to kubectl
+      // kubectl fetches from arbitrary URLs, so this prevents reaching
+      // internal metadata services (169.254.169.254) or private networks
+      const url = await validateHttpUrl(String(args.url))
+      const cmdArgs = ['apply', '-f', url]
       if (args.namespace) cmdArgs.push('-n', String(args.namespace))
       return kubectl(cmdArgs, 120_000) // 2 min — large manifests take time to download + apply
     },
