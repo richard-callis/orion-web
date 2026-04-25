@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
     await mkdir(UNSEAL_KEYS_DIR, { recursive: true })
     await Promise.all(
       thresholdKeys.map((key: string, i: number) =>
-        writeFile(join(UNSEAL_KEYS_DIR, `unseal-key-${i + 1}`), key, { mode: 0o600 })
+        writeFile(join(UNSEAL_KEYS_DIR, `unseal-key-${i + 1}`), key, { mode: 0o644 })
       )
     )
 
