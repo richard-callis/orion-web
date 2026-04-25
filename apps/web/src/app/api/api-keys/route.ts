@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { createApiKey, listUserKeys, verifyApiKey } from '@/lib/api-key'
+import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 type User = { id: string }
 
@@ -70,6 +71,16 @@ export async function POST(req: NextRequest) {
     const { name, expiresInDays } = body as { name?: string; expiresInDays?: number }
 
     const apiKeyResult = await createApiKey(result.user!.id, name || 'Default', expiresInDays)
+
+    // SOC2: [M-005] Audit API key creation (non-blocking)
+    logAudit({
+      userId: result.user!.id,
+      action: 'api_key_create',
+      target: `api_key:${apiKeyResult.info.id}`,
+      detail: { name: apiKeyResult.info.name, expiresInDays },
+      ipAddress: getClientIp(req),
+      userAgent: getUserAgent(req.headers),
+    }).catch(() => {})
 
     return NextResponse.json({
       key: apiKeyResult.key, // Shown ONCE — can't be retrieved again

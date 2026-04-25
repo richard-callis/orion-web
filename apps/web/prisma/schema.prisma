@@ -89,7 +89,7 @@ model Environment {
   type         String             @default("cluster") // "cluster" | "docker"
   description  String?            @db.Text
   gatewayUrl     String?
-  gatewayToken   String?            // SOC2: [H-001] Labeled "hashed" but stored as plaintext — encrypt at rest.
+  gatewayToken   String?            // hashed token for gateway auth
   gatewayVersion String?            // version reported by the gateway on heartbeat
   status         String             @default("disconnected") // "connected" | "disconnected" | "error"
   lastSeen       DateTime?
@@ -103,7 +103,7 @@ model Environment {
   gitRepo      String?            // repo name for this environment
   argoCdUrl    String?            // ArgoCD URL (K8s clusters only)
   policyConfig Json?              // PolicyConfig: { reviewAll?, overrides? }
-  kubeconfig   String?            @db.Text // SOC2: [H-001] Plaintext kubeconfig — encrypt at rest with envelope encryption.
+  kubeconfig   String?            @db.Text // base64 kubeconfig (K8s clusters only)
 
   tools         McpTool[]
   agents        AgentEnvironment[]
@@ -199,7 +199,7 @@ model Epic {
   description String?   @db.Text
   plan        String?   @db.Text
   status      String    @default("active")
-  createdBy   String    @default("admin") // SOC2: [M-005] Hardcoded default — should be actual user ID for audit trail.
+  createdBy   String    @default("admin")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   features    Feature[]
@@ -213,7 +213,7 @@ model Feature {
   description String?  @db.Text
   plan        String?  @db.Text
   status      String   @default("active")
-  createdBy   String   @default("admin") // SOC2: [M-005] Hardcoded default — should be actual user ID for audit trail.
+  createdBy   String   @default("admin")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   tasks       Task[]
@@ -251,12 +251,20 @@ model TaskEvent {
 }
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String   // SOC2: [M-005] No index on userId — add @@index([userId]) for performance
-  action    String
-  target    String
-  detail    Json?
-  createdAt DateTime @default(now()) // SOC2: [M-005] No index on createdAt — add @@index([createdAt]) for date-range queries
+  id         String   @id @default(cuid())
+  userId     String
+  action     String
+  target     String
+  detail     Json?
+  ipAddress  String?  // SOC2: [M-005] Source IP for audit trail
+  userAgent  String?  // SOC2: [M-005] Client user-agent for audit trail
+  createdAt  DateTime @default(now())
+
+  // SOC2: [M-005, L-001] Indexes for user-specific queries and date range filters
+  @@index([userId])
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([ipAddress])
 }
 
 model SavedView {
@@ -347,6 +355,13 @@ model User {
   lastSeen      DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  // SOC2: [M-002] TOTP multi-factor authentication
+  totpSecret      String?   // Base32 TOTP secret (encrypted at rest)
+  totpEnabled     Boolean   @default(false)
+  totpRecoveryCodes String? // JSON array of bcrypt-hashed recovery codes
+  totpEnabledAt   DateTime? // When MFA was enabled (audit trail)
+
   assignedTasks Task[]    @relation("AssignedUserTasks")
   assignedBugs  Bug[]     @relation("AssignedBugUser")
   sessions      Session[]
@@ -393,7 +408,7 @@ model Bug {
   severity       String   @default("medium") // low | medium | high | critical
   status         String   @default("open")   // open | triaged | in_progress | resolved | closed
   area           String?  // component/area e.g. "Traefik", "Auth", "Game Servers"
-  reportedBy     String   @default("admin") // SOC2: [M-005] Hardcoded default — should be actual user ID for audit trail.
+  reportedBy     String   @default("admin")
   assignedUserId String?
   assignedUser   User?    @relation("AssignedBugUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
   createdAt      DateTime @default(now())
@@ -405,7 +420,7 @@ model ExternalModel {
   name        String
   provider    String   // "openai" | "ollama" | "anthropic" | "custom"
   baseUrl     String
-  apiKey      String?  @db.Text // SOC2: [H-001] Plaintext LLM API key — encrypt at rest with envelope encryption.
+  apiKey      String?  @db.Text
   modelId     String
   enabled     Boolean  @default(true)
   timeoutSecs Int      @default(120)

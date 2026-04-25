@@ -1,0 +1,64 @@
+/**
+ * Sensitive data redaction for logging.
+ * SOC2: [M-004] Prevents sensitive data (tokens, keys, passwords) from being logged in plaintext.
+ */
+
+// Patterns that indicate sensitive data — order matters (longer patterns first)
+const SENSITIVE_PATTERNS = [
+  /(?:orion_ak_[a-zA-Z0-9]{36})/g,                                      // API keys
+  /(?:Bearer\s+[a-zA-Z0-9._-]+)/gi,                                     // Bearer tokens
+  /(?:password(?:Hash)?["\s:=]+)["']?[^"'\s,}\]]+/gi,                   // password=password_hash
+  /(?:token|secret|apiKey|kubeconfig|gatewayToken)["\s:=]+["']?[^"'\s,}\]]+/gi,  // key=value pairs
+  /(?:eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]+)/g,          // JWT tokens
+  /(?:mcg_[a-f0-9]{64})/g,                                              // Gateway join tokens
+  /(?:setup\.token["\s:=]+)["']?([a-f0-9]{64})/gi,                     // Setup tokens
+  /(?:GATEWAY_TOKEN|NEXTAUTH_SECRET|ORION_ENCRYPTION_KEY)["\s:=]+["']?[^"'\s,}\]]+/gi,  // Known secret env vars
+] as const
+
+/**
+ * Redact sensitive data from a string for safe logging.
+ * Preserves the first/last 4 chars of values to maintain log readability.
+ */
+export function redactSensitive(input: string): string {
+  let result = input
+  for (const pattern of SENSITIVE_PATTERNS) {
+    result = result.replace(pattern, (match, ...captureGroups) => {
+      for (const group of captureGroups) {
+        if (group && typeof group === 'string' && group.length > 8) {
+          const masked = group.slice(0, 4) + '*'.repeat(Math.max(group.length - 8, 0)) + group.slice(-4)
+          return masked
+        }
+      }
+      return '***REDACTED***'
+    })
+  }
+  return result
+}
+
+/**
+ * Wrap global console.log to automatically redact all log output.
+ * Call this once at application startup.
+ */
+let wrapped = false
+export function wrapConsoleLog(): void {
+  if (wrapped) return
+  wrapped = true
+  const originalLog = console.log.bind(console)
+  console.log = function (...args: unknown[]) {
+    const redacted = args.map(arg => {
+      if (typeof arg === 'string') return redactSensitive(arg)
+      if (arg && typeof arg === 'object') {
+        try {
+          return JSON.stringify(arg, (_key, value) => {
+            if (typeof value === 'string') return redactSensitive(value)
+            return value
+          }, 2)
+        } catch {
+          return String(arg)
+        }
+      }
+      return arg
+    })
+    originalLog(...redacted)
+  }
+}

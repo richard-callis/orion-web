@@ -4,9 +4,13 @@ import { requireAdmin } from '@/lib/auth'
 
 // POST /api/environments/[id]/tools/[toolId]/approve
 // Approves a pending tool proposal — activates it so the gateway picks it up on next heartbeat.
-// SOC2: [CR-001] No authentication — any unauthenticated actor can activate tools.
 export async function POST(req: NextRequest, { params }: { params: { id: string; toolId: string } }) {
+  // SOC2: CR-001 — require admin to approve tools (prevents unauthorized tool activation)
   const user = await requireAdmin()
+
+  // Verify env exists
+  const env = await prisma.environment.findUnique({ where: { id: params.id }, select: { id: true } })
+  if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const tool = await prisma.mcpTool.findFirst({ where: { id: params.toolId, environmentId: params.id } })
   if (!tool) return NextResponse.json({ error: 'Not found' }, { status: 404 })

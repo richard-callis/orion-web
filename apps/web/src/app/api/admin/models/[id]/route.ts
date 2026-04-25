@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 function maskKey(key: string | null): string | null {
   if (!key) return null
@@ -8,6 +9,7 @@ function maskKey(key: string | null): string | null {
 }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+  await requireAdmin()
   const body = await req.json()
 
   // Only update apiKey if a new one was provided
@@ -28,6 +30,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+  await requireAdmin()
   await prisma.externalModel.delete({ where: { id: params.id } })
   return new NextResponse(null, { status: 204 })
 }

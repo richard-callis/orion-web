@@ -3,17 +3,14 @@ import { prisma } from '@/lib/db'
 import { Prisma } from '@prisma/client'
 import { getDefaultTools } from '@/lib/default-tools'
 import { getCurrentUser, requireAdmin } from '@/lib/auth'
-
-// SOC2: [CR-002] No authentication on environments CRUD — unauthenticated actors can read/create environments.
-// Remediation: Add requireAuth() to GET (list own environments); requireAdmin() to POST (create env).
+import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 export async function GET() {
-  // SOC2: [CR-002] No auth — any unauthenticated user can list all environments.
+  // SOC2: CR-002 — require authentication to list environments
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const environments = await prisma.environment.findMany({
-    // TODO: Implement proper user-environment ownership. For now, return all environments to authenticated users.
     orderBy: { name: 'asc' },
     include: {
       tools:  { orderBy: { name: 'asc' } },
@@ -25,7 +22,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  // SOC2: [CR-002] No auth on environment creation — any unauthenticated user can create environments.
+  // SOC2: CR-002 — require admin to create environments
   const user = await requireAdmin()
 
   const body = await req.json()
@@ -76,6 +73,16 @@ export async function POST(req: NextRequest) {
     where: { id: env.id },
     include: { tools: true, agents: { include: { agent: true } } },
   })
+
+  // SOC2: [M-005] Audit environment creation (non-blocking)
+  logAudit({
+    userId: user.id,
+    action: 'environment_create',
+    target: `environment:${env.id}`,
+    detail: { name: env.name, type: env.type },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req.headers),
+  }).catch(() => {})
 
   return NextResponse.json(
     { ...envWithTools, gatewayToken: envWithTools?.gatewayToken ? '••••' : null, kubeconfig: envWithTools?.kubeconfig ? '••••' : null },

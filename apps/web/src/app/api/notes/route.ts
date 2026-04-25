@@ -1,13 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { embedNote } from '@/lib/embeddings'
-import { getCurrentUser } from '@/lib/auth'
+import { requireServiceAuth } from '@/lib/auth'
 
 export async function GET(req: NextRequest) {
-  // SOC2: [H-004] No authentication — any unauthenticated user can read all notes.
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
+  await requireServiceAuth(req)
   const { searchParams } = new URL(req.url)
   const type = searchParams.get('type')
   const notes = await prisma.note.findMany({
@@ -18,10 +15,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  // SOC2: [H-004] No authentication — any unauthenticated user can create notes.
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
+  await requireServiceAuth(req)
   const body = await req.json()
   const note = await prisma.note.create({
     data: {

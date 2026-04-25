@@ -1,6 +1,74 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 
+// SOC2: [M-004] Wrap console.log BEFORE any other import to catch all log output
+import { wrapConsoleLog } from './lib/redact'
+wrapConsoleLog()
+
+// ─── Rate Limiting (SOC2: M-003) ─────────────────────────────────────────────
+// Redis-backed sliding window rate limiter with in-memory fallback.
+// See: src/lib/rate-limit-redis.ts
+
+import { rateLimitRedis } from './lib/rate-limit-redis'
+
+function getRateLimitKey(req: NextRequest): string {
+  // Use X-Forwarded-For if available (behind reverse proxy), else IP
+  const forwarded = req.headers.get('x-forwarded-for')
+  if (forwarded) {
+    // x-forwarded-for can contain multiple IPs: client, proxy1, proxy2
+    return forwarded.split(',')[0].trim()
+  }
+  return req.ip || req.socket.remoteAddress || 'unknown'
+}
+
+// Per-path rate limit configs: [maxRequests, windowMs]
+const RATE_LIMITS: Record<string, [number, number]> = {
+  // Auth endpoints — strict limit to prevent brute-force
+  '/login': [10, 15 * 60 * 1000],
+  '/api/setup': [10, 15 * 60 * 1000],
+  '/api/auth': [10, 15 * 60 * 1000],
+
+  // Chat/streaming — moderate limit (cost control for LLM calls)
+  '/api/chat': [30, 15 * 60 * 1000],
+  '/api/k8s': [30, 15 * 60 * 1000],
+
+  // Webhooks — higher limit (they're automated)
+  '/api/webhooks': [60, 15 * 60 * 1000],
+
+  // Tool generation — moderate limit (cost control)
+  '/api/tools/generate': [20, 15 * 60 * 1000],
+
+  // Default — global limit
+  'default': [100, 15 * 60 * 1000],
+}
+
+async function applyRateLimit(req: NextRequest): Promise<NextResponse | null> {
+  const key = getRateLimitKey(req)
+  const { pathname } = req.nextUrl
+
+  // Find the most specific rate limit config for this path
+  let maxRequests = RATE_LIMITS['default']?.[0] ?? 100
+  let windowMs = RATE_LIMITS['default']?.[1] ?? 15 * 60 * 1000
+
+  for (const [path, [max, window]] of Object.entries(RATE_LIMITS)) {
+    if (path !== 'default' && pathname.startsWith(path)) {
+      maxRequests = max
+      windowMs = window
+      break
+    }
+  }
+
+  const rateKey = `${key}:${pathname}`
+  if (!(await rateLimitRedis(rateKey, maxRequests, windowMs))) {
+    return NextResponse.json(
+      { error: 'Too many requests, please try again later' },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(windowMs / 1000)) } }
+    )
+  }
+
+  return null
+}
+
 const PUBLIC_PATHS = [
   '/setup',
   '/login',
@@ -24,14 +92,79 @@ const BEARER_PATHS = [
   '/api/internal',     // internal service-to-service routes (e.g. vault-unsealer)
 ]
 
+// Prefixes that accept service token auth — any sub-path works
+const SERVICE_TOKEN_PREFIXES = [
+  '/api/notes',
+  '/api/agent-groups',
+  '/api/features',
+  '/api/epics',
+  '/api/tasks',
+  '/api/bugs',
+  '/api/admin',
+]
+
+// SOC2: [H-002, L-002] Security headers middleware
+function addSecurityHeaders(res: NextResponse): NextResponse {
+  // CSP: style-src 'unsafe-inline' required because React/Next.js uses inline styles
+  res.headers.set('Content-Security-Policy',
+    "default-src 'self'; " +
+    "script-src 'self' 'strict-dynamic'; " +
+    "style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data: https:; " +
+    "connect-src 'self' https:; " +
+    "font-src 'self'; " +
+    "frame-ancestors 'none'; " +
+    "base-uri 'self'; " +
+    "form-action 'self'; " +
+    "object-src 'none'; " +
+    "upgrade-insecure-requests"
+  )
+  res.headers.set('X-Frame-Options', 'DENY')
+  res.headers.set('X-Content-Type-Options', 'nosniff')
+  res.headers.set('X-XSS-Protection', '1; mode=block')
+  res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+  res.headers.set('Permissions-Policy',
+    'camera=(), microphone=(), geolocation=(), payment=()'
+  )
+
+  // HSTS — only in production
+  if (process.env.NODE_ENV === 'production') {
+    res.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload')
+  }
+
+  return res
+}
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
+
+  // SOC2: [M-003] Apply rate limiting before auth check (prevents auth DoS)
+  // Public endpoints that are rate-limited still get the check, others skip
+  if (!PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
+    const rateLimited = await applyRateLimit(req)
+    if (rateLimited) return rateLimited
+  }
 
   if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
     return NextResponse.next()
   }
 
-  // Gateway calls use Bearer token auth — let them through, routes handle validation.
+  // Service token (gateway) calls — accept Bearer token instead of session.
+  // Gateway tools need to read/write notes, list agent-groups, etc.
+  const gatewayToken = process.env.ORION_GATEWAY_TOKEN
+  if (
+    gatewayToken &&
+    req.headers.get('authorization') === `Bearer ${gatewayToken}`
+  ) {
+    // Gateway can do anything except DELETE on notes (safety)
+    if (req.method === 'DELETE' && pathname.startsWith('/api/notes')) {
+      // fall through to session auth for DELETE on notes
+    } else {
+      return NextResponse.next()
+    }
+  }
+
+  // Legacy: Bearer token auth for specific paths — let them through, routes handle validation.
   // DELETE is never a gateway operation and must always require a session.
   if (
     req.method !== 'DELETE' &&
@@ -51,10 +184,12 @@ export async function middleware(req: NextRequest) {
   if (!token || !token.sub) {
     const loginUrl = new URL('/login', req.url)
     loginUrl.searchParams.set('callbackUrl', pathname)
-    return NextResponse.redirect(loginUrl)
+    const res = NextResponse.redirect(loginUrl)
+    return addSecurityHeaders(res)
   }
 
-  return NextResponse.next()
+  const res = NextResponse.next()
+  return addSecurityHeaders(res)
 }
 
 export const config = {

@@ -1,19 +1,17 @@
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createSSEStream } from '@/lib/sse'
 import { coreApi } from '@/lib/k8s'
 import { getCurrentUser } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
-// SOC2: [CR-003] No authentication — unauthenticated access to any pod's logs (may contain secrets/tokens).
-// Remediation: Add requireAuth() check; verify user has access to the target namespace.
+// SOC2: CR-003 — pod logs exposed without authentication (may contain secrets/tokens)
 export async function GET(
   _req: NextRequest,
   { params }: { params: { ns: string; pod: string } }
 ) {
   const user = await getCurrentUser()
-  if (!user) throw new Response('Unauthorized', { status: 401 })
-
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   return createSSEStream((send, close) => {
     ;(async () => {
       try {

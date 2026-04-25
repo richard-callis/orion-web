@@ -1,14 +1,14 @@
+import { NextResponse } from 'next/server'
 import { createSSEStream } from '@/lib/sse'
 import { addSseClient, removeSseClient, getCache, startWatchers } from '@/lib/k8s'
 import { getCurrentUser } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
-// SOC2: [CR-003] No authentication — unauthenticated access to real-time K8s events.
-// Remediation: Add requireAuth() check; verify user has access to requested cluster/namespaces.
+// SOC2: CR-003 — K8s events exposed real-time without authentication
 export async function GET() {
   const user = await getCurrentUser()
-  if (!user) throw new Response('Unauthorized', { status: 401 })
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   await startWatchers()
 
