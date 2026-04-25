@@ -139,7 +139,7 @@ function addSecurityHeaders(res: NextResponse): NextResponse {
   res.headers.set('Content-Security-Policy',
     "default-src 'self'; " +
     "script-src 'self' 'strict-dynamic'; " +
-    "style-src 'self' 'unsafe-inline'; " +
+    "style-src 'self' 'unsafe-inline'; // Required: React/Next.js uses inline styles " +
     "img-src 'self' data: https:; " +
     "connect-src 'self' https:; " +
     "font-src 'self'; " +
