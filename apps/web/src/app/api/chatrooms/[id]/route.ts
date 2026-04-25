@@ -19,28 +19,31 @@ export async function GET(
   const { searchParams } = new URL(_req.url)
   const messageLimit = Math.min(parseInt(searchParams.get('messages') ?? '50') || 50, 200)
 
-  const room = await prisma.chatRoom.findUnique({
-    where: { id },
-    include: {
-      members: {
-        select: {
-          agentId: true, userId: true, role: true,
-          joinedAt: true, lastReadAt: true,
-          agent: { select: { id: true, name: true, type: true } },
-          user: { select: { id: true, username: true, name: true } },
+  const [room, totalMessages] = await Promise.all([
+    prisma.chatRoom.findUnique({
+      where: { id },
+      include: {
+        members: {
+          select: {
+            agentId: true, userId: true, role: true,
+            joinedAt: true, lastReadAt: true,
+            agent: { select: { id: true, name: true, type: true } },
+            user: { select: { id: true, username: true, name: true } },
+          },
         },
-      },
-      messages: {
-        orderBy: { createdAt: 'desc' },
-        take: messageLimit,
-        include: {
-          agent: { select: { id: true, name: true } },
-          user: { select: { id: true, username: true, name: true } },
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: messageLimit,
+          include: {
+            agent: { select: { id: true, name: true } },
+            user: { select: { id: true, username: true, name: true } },
+          },
         },
+        task: { select: { id: true, title: true } },
       },
-      task: { select: { id: true, title: true } },
-    },
-  })
+    }),
+    prisma.chatMessage.count({ where: { roomId: id } }),
+  ])
 
   if (!room) {
     return NextResponse.json({ error: 'Chat room not found' }, { status: 404 })
@@ -66,6 +69,7 @@ export async function GET(
     createdAt: room.createdAt.toISOString(),
     updatedAt: room.updatedAt.toISOString(),
     members, messages,
+    totalMessages,
   })
 }
 
