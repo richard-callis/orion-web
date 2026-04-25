@@ -24,6 +24,48 @@ const BEARER_PATHS = [
   '/api/internal',     // internal service-to-service routes (e.g. vault-unsealer)
 ]
 
+// Prefixes that accept service token auth — any sub-path works
+const SERVICE_TOKEN_PREFIXES = [
+  '/api/notes',
+  '/api/agent-groups',
+  '/api/features',
+  '/api/epics',
+  '/api/tasks',
+  '/api/bugs',
+  '/api/admin',
+]
+
+// SOC2: [H-002, L-002] Security headers middleware
+function addSecurityHeaders(res: NextResponse): NextResponse {
+  res.headers.set('Content-Security-Policy',
+    "default-src 'self'; " +
+    "script-src 'self' 'strict-dynamic'; " +
+    "style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data: https:; " +
+    "connect-src 'self' https:; " +
+    "font-src 'self'; " +
+    "frame-ancestors 'none'; " +
+    "base-uri 'self'; " +
+    "form-action 'self'; " +
+    "object-src 'none'; " +
+    "upgrade-insecure-requests"
+  )
+  res.headers.set('X-Frame-Options', 'DENY')
+  res.headers.set('X-Content-Type-Options', 'nosniff')
+  res.headers.set('X-XSS-Protection', '1; mode=block')
+  res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+  res.headers.set('Permissions-Policy',
+    'camera=(), microphone=(), geolocation=(), payment=()'
+  )
+
+  // HSTS — only in production
+  if (process.env.NODE_ENV === 'production') {
+    res.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload')
+  }
+
+  return res
+}
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
@@ -31,7 +73,22 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
-  // Gateway calls use Bearer token auth — let them through, routes handle validation.
+  // Service token (gateway) calls — accept Bearer token instead of session.
+  // Gateway tools need to read/write notes, list agent-groups, etc.
+  const gatewayToken = process.env.ORION_GATEWAY_TOKEN
+  if (
+    gatewayToken &&
+    req.headers.get('authorization') === `Bearer ${gatewayToken}`
+  ) {
+    // Gateway can do anything except DELETE on notes (safety)
+    if (req.method === 'DELETE' && pathname.startsWith('/api/notes')) {
+      // fall through to session auth for DELETE on notes
+    } else {
+      return NextResponse.next()
+    }
+  }
+
+  // Legacy: Bearer token auth for specific paths — let them through, routes handle validation.
   // DELETE is never a gateway operation and must always require a session.
   if (
     req.method !== 'DELETE' &&
@@ -51,10 +108,12 @@ export async function middleware(req: NextRequest) {
   if (!token || !token.sub) {
     const loginUrl = new URL('/login', req.url)
     loginUrl.searchParams.set('callbackUrl', pathname)
-    return NextResponse.redirect(loginUrl)
+    const res = NextResponse.redirect(loginUrl)
+    return addSecurityHeaders(res)
   }
 
-  return NextResponse.next()
+  const res = NextResponse.next()
+  return addSecurityHeaders(res)
 }
 
 export const config = {

@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { computeOutgoingEdges } from '@/lib/wiki-links'
+import { requireServiceAuth } from '@/lib/auth'
 
 interface NoteRow {
   id: string
@@ -24,6 +25,7 @@ interface NoteRow {
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  await requireServiceAuth(req)
   const { searchParams } = new URL(req.url)
   const includeSemantic = searchParams.get('includeSemantic') !== 'false'
   const threshold = parseFloat(searchParams.get('threshold') ?? '0.5') || 0.5

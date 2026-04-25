@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireServiceAuth } from '@/lib/auth'
 
 export async function GET(req: NextRequest) {
+  await requireServiceAuth(req)
   const { searchParams } = new URL(req.url)
   const status        = searchParams.get('status')        // pending|in_progress|completed|blocked
   const featureId     = searchParams.get('featureId')
@@ -23,6 +25,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
   const body = await req.json()
   const task = await prisma.task.create({
     data: {
@@ -31,7 +35,7 @@ export async function POST(req: NextRequest) {
       priority:      body.priority ?? 'medium',
       featureId:     body.featureId ?? null,
       assignedAgent: body.assignedAgent ?? null,
-      createdBy:     body.createdBy ?? 'admin',
+      createdBy:     body.createdBy ?? caller?.id ?? 'gateway',
     },
     include: { agent: true },
   })

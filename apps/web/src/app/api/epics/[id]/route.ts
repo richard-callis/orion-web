@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  await requireServiceAuth(req)
   const epic = await prisma.epic.findUnique({
     where: { id: params.id },
     include: { features: { include: { _count: { select: { tasks: true } } } } },
@@ -11,6 +13,14 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
+
+  // Check ownership
+  const existing = await prisma.epic.findUnique({ where: { id: params.id } })
+  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await assertCanModify(caller, isService, existing.createdBy)
+
   const body = await req.json()
   const data: Record<string, unknown> = {}
   if (body.title       !== undefined) data.title       = body.title
@@ -21,7 +31,15 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json(epic)
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
+
+  // Check ownership
+  const existing = await prisma.epic.findUnique({ where: { id: params.id } })
+  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await assertCanModify(caller, isService, existing.createdBy)
+
   await prisma.epic.delete({ where: { id: params.id } })
   return new NextResponse(null, { status: 204 })
 }

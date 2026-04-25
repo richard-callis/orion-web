@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 function maskKey(key: string | null): string | null {
   if (!key) return null
@@ -8,6 +9,7 @@ function maskKey(key: string | null): string | null {
 }
 
 export async function GET() {
+  await requireAdmin()
   const models = await prisma.externalModel.findMany({
     orderBy: { createdAt: 'asc' },
   })
@@ -16,6 +18,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  await requireAdmin()
   const body = await req.json()
   const model = await prisma.externalModel.create({
     data: {

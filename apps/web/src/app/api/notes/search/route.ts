@@ -8,10 +8,12 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { generateEmbedding, vectorSearch } from '@/lib/embeddings'
+import { requireServiceAuth } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+  await requireServiceAuth(req)
   const body = await req.json()
   const query = typeof body.query === 'string' ? body.query.trim() : ''
   const limit = Math.min(Math.max(parseInt(body.limit ?? '10', 10) || 10, 1), 50)

@@ -152,3 +152,50 @@ export async function requireAdmin(): Promise<AppUser> {
   }
   return user
 }
+
+/**
+ * Require either a logged-in user OR the gateway service token.
+ *
+ * Returns the session user if authenticated via session, or null if
+ * accessed via gateway service token (middleware already validated the token).
+ *
+ * Callers should handle the null case as "service/gateway auth".
+ * Throws if neither session nor service token auth is present.
+ */
+export async function requireServiceAuth(
+  req: { headers: Headers }
+): Promise<AppUser | null> {
+  const user = await getCurrentUser()
+  if (user) return user
+
+  // No session — check if this is a service token call
+  // Middleware already validated the Bearer token, so if we get here
+  // it's a gateway request. Detect it by checking for the service token header.
+  const auth = req.headers.get('authorization')
+  const gatewayToken = process.env.ORION_GATEWAY_TOKEN
+  if (gatewayToken && auth === `Bearer ${gatewayToken}`) {
+    return null // service/gateway auth — caller should handle
+  }
+
+  throw new Error('Unauthorized')
+}
+
+/**
+ * Check if a user (or service) is authorized to modify a resource.
+ *
+ * Allows if:
+ * - caller is an admin
+ * - caller created the resource
+ * - caller is the service/gateway (nullUser)
+ */
+export async function assertCanModify(
+  user: AppUser | null,
+  isService: boolean,
+  recordCreatedBy: string
+): Promise<void> {
+  if (isService) return // gateway has full access
+  if (!user) throw new Error('Unauthorized')
+  if (user.role === 'admin') return
+  if (user.id === recordCreatedBy) return
+  throw new Error('Forbidden')
+}
