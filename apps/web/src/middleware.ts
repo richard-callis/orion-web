@@ -6,41 +6,10 @@ import { wrapConsoleLog } from './lib/redact'
 wrapConsoleLog()
 
 // ─── Rate Limiting (SOC2: M-003) ─────────────────────────────────────────────
-// Simple in-memory rate limiter. For production with multiple replicas,
-// swap to Redis-backed (e.g., @upstash/ratelimit).
+// Redis-backed sliding window rate limiter with in-memory fallback.
+// See: src/lib/rate-limit-redis.ts
 
-const rateLimitStore = new Map<string, number[]>()
-
-function rateLimit(key: string, maxRequests: number, windowMs: number): boolean {
-  const now = Date.now()
-  const windowStart = now - windowMs
-
-  // Get existing requests in window
-  const existing = rateLimitStore.get(key) || []
-  const recent = existing.filter(t => t > windowStart)
-
-  if (recent.length >= maxRequests) {
-    return false // rate limited
-  }
-
-  recent.push(now)
-  rateLimitStore.set(key, recent)
-
-  // Cleanup old entries every 100 requests
-  if (recent.length % 100 === 0) {
-    const cutoff = now - windowMs * 2
-    for (const [k, timestamps] of rateLimitStore) {
-      const filtered = timestamps.filter(t => t > cutoff)
-      if (filtered.length === 0) {
-        rateLimitStore.delete(k)
-      } else {
-        rateLimitStore.set(k, filtered)
-      }
-    }
-  }
-
-  return true
-}
+import { rateLimitRedis } from './lib/rate-limit-redis'
 
 function getRateLimitKey(req: NextRequest): string {
   // Use X-Forwarded-For if available (behind reverse proxy), else IP
@@ -73,7 +42,7 @@ const RATE_LIMITS: Record<string, [number, number]> = {
   'default': [100, 15 * 60 * 1000],
 }
 
-function applyRateLimit(req: NextRequest): NextResponse | null {
+async function applyRateLimit(req: NextRequest): Promise<NextResponse | null> {
   const key = getRateLimitKey(req)
   const { pathname } = req.nextUrl
 
@@ -90,7 +59,7 @@ function applyRateLimit(req: NextRequest): NextResponse | null {
   }
 
   const rateKey = `${key}:${pathname}`
-  if (!rateLimit(rateKey, maxRequests, windowMs)) {
+  if (!(await rateLimitRedis(rateKey, maxRequests, windowMs))) {
     return NextResponse.json(
       { error: 'Too many requests, please try again later' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil(windowMs / 1000)) } }
@@ -170,8 +139,8 @@ export async function middleware(req: NextRequest) {
 
   // SOC2: [M-003] Apply rate limiting before auth check (prevents auth DoS)
   // Public endpoints that are rate-limited still get the check, others skip
-  if (!PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
-    const rateLimited = applyRateLimit(req)
+  if (!PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
+    const rateLimited = await applyRateLimit(req)
     if (rateLimited) return rateLimited
   }
 
