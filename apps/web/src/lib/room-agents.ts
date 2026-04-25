@@ -39,15 +39,17 @@ function setupClaudeCredentials(): void {
 
 // ── LLM call helpers ──────────────────────────────────────────────────────────
 
-function buildMessages(systemPrompt: string, historyText: string, latestMessage: string) {
+function buildMessages(agentName: string, systemPrompt: string, historyText: string, latestMessage: string) {
+  const roleGuard = `\nYou are ${agentName}. Respond only as yourself — never write dialogue or responses on behalf of other participants. If the conversation has naturally concluded, or there is nothing meaningful to add, reply with the single word: SILENT`
   const sys = historyText
-    ? `${systemPrompt}\n\n---\nRecent room conversation:\n${historyText}\n---`
-    : systemPrompt
+    ? `${systemPrompt}${roleGuard}\n\n---\nRecent room conversation:\n${historyText}\n---`
+    : systemPrompt + roleGuard
   return { sys, user: latestMessage }
 }
 
 /** Claude Code SDK — OAuth credentials, same path as streamClaudeResponse */
 async function callClaude(
+  agentName: string,
   systemPrompt: string,
   historyText: string,
   latestMessage: string,
@@ -55,7 +57,7 @@ async function callClaude(
 ): Promise<string | null> {
   setupClaudeCredentials()
   const { query } = await import('@anthropic-ai/claude-code')
-  const { sys, user } = buildMessages(systemPrompt, historyText, latestMessage)
+  const { sys, user } = buildMessages(agentName, systemPrompt, historyText, latestMessage)
   const response = query({
     prompt: user,
     options: {
@@ -81,13 +83,14 @@ async function callClaude(
 
 /** Ollama native /api/chat endpoint */
 async function callOllamaChat(
+  agentName: string,
   systemPrompt: string,
   historyText: string,
   latestMessage: string,
   model: string,
   baseUrl: string,
 ): Promise<string | null> {
-  const { sys, user } = buildMessages(systemPrompt, historyText, latestMessage)
+  const { sys, user } = buildMessages(agentName, systemPrompt, historyText, latestMessage)
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -111,6 +114,7 @@ async function callOllamaChat(
 
 /** OpenAI-compatible /v1/chat/completions endpoint */
 async function callOpenAIChat(
+  agentName: string,
   systemPrompt: string,
   historyText: string,
   latestMessage: string,
@@ -118,7 +122,7 @@ async function callOpenAIChat(
   baseUrl: string,
   apiKey?: string | null,
 ): Promise<string | null> {
-  const { sys, user } = buildMessages(systemPrompt, historyText, latestMessage)
+  const { sys, user } = buildMessages(agentName, systemPrompt, historyText, latestMessage)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
   const res = await fetch(`${baseUrl}/v1/chat/completions`, {
@@ -184,29 +188,34 @@ export async function triggerRoomAgentReplies(
 
   if (triggeredAgents.length === 0) return
 
-  // Build history transcript (last 20 messages, excluding the trigger itself)
-  const recentMessages = await prisma.chatMessage.findMany({
-    where: { roomId },
-    orderBy: { createdAt: 'desc' },
-    take: 21,
-    include: {
-      agent: { select: { name: true } },
-      user:  { select: { username: true, name: true } },
-    },
-  })
-  recentMessages.reverse()
-
-  const historyText = recentMessages
-    .slice(0, -1)                           // drop the trigger message
-    .filter(m => m.senderType !== 'system')
-    .map(m => {
-      const name = m.agent?.name ?? m.user?.name ?? m.user?.username ?? 'User'
-      return `${name}: ${m.content}`
-    })
-    .join('\n')
-
   for (const agent of triggeredAgents) {
     try {
+      // Re-fetch history each iteration so each agent sees the previous agent's reply
+      const recentMessages = await prisma.chatMessage.findMany({
+        where: { roomId },
+        orderBy: { createdAt: 'desc' },
+        take: 21,
+        include: {
+          agent: { select: { name: true } },
+          user:  { select: { username: true, name: true } },
+        },
+      })
+      recentMessages.reverse()
+
+      // All messages except the very last are history context.
+      // The very last message is what this agent is directly responding to.
+      const historyMsgs = recentMessages.slice(0, -1).filter(m => m.senderType !== 'system')
+      const lastMsg     = recentMessages[recentMessages.length - 1]
+      const lastSender  = lastMsg?.agent?.name ?? lastMsg?.user?.name ?? lastMsg?.user?.username ?? 'User'
+      const latestTurn  = lastMsg ? `${lastSender}: ${lastMsg.content}` : triggerContent
+
+      const historyText = historyMsgs
+        .map(m => {
+          const name = m.agent?.name ?? m.user?.name ?? m.user?.username ?? 'User'
+          return `${name}: ${m.content}`
+        })
+        .join('\n')
+
       const meta          = (agent.metadata ?? {}) as Record<string, unknown>
       const contextConfig = (meta.contextConfig ?? {}) as Record<string, unknown>
       const rawPrompt     = meta.systemPrompt as string | undefined
@@ -229,23 +238,27 @@ export async function triggerRoomAgentReplies(
         }
         const baseUrl = extModel.baseUrl ?? 'http://localhost:11434'
         if (extModel.provider === 'ollama') {
-          reply = await callOllamaChat(systemPrompt, historyText, triggerContent, extModel.modelId, baseUrl)
+          reply = await callOllamaChat(agent.name, systemPrompt, historyText, latestTurn, extModel.modelId, baseUrl)
         } else {
           // openai / custom — OpenAI-compatible
-          reply = await callOpenAIChat(systemPrompt, historyText, triggerContent, extModel.modelId, baseUrl, extModel.apiKey)
+          reply = await callOpenAIChat(agent.name, systemPrompt, historyText, latestTurn, extModel.modelId, baseUrl, extModel.apiKey)
         }
       } else if (llm.startsWith('ollama:')) {
         const model   = llm.slice('ollama:'.length)
         const baseUrl = await resolveOllamaBaseUrl()
-        reply = await callOllamaChat(systemPrompt, historyText, triggerContent, model, baseUrl)
+        reply = await callOllamaChat(agent.name, systemPrompt, historyText, latestTurn, model, baseUrl)
       } else {
         // claude / claude:<model>
         const claudeModel = llm.startsWith('claude:') ? llm.slice('claude:'.length) : undefined
-        reply = await callClaude(systemPrompt, historyText, triggerContent, claudeModel)
+        reply = await callClaude(agent.name, systemPrompt, historyText, latestTurn, claudeModel)
       }
 
       if (!reply) {
         console.warn(`[room-agents] ${agent.name} returned empty reply`)
+        continue
+      }
+      if (reply.trim().toUpperCase() === 'SILENT') {
+        console.log(`[room-agents] ${agent.name} chose not to respond`)
         continue
       }
 
