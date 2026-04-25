@@ -2,8 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { Prisma } from '@prisma/client'
 import { getDefaultTools } from '@/lib/default-tools'
+import { getCurrentUser, requireAdmin } from '@/lib/auth'
 
 export async function GET() {
+  // SOC2: CR-002 — require authentication to list environments
+  const user = await getCurrentUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const environments = await prisma.environment.findMany({
     orderBy: { name: 'asc' },
     include: {
@@ -16,6 +21,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  // SOC2: CR-002 — require admin to create environments
+  const user = await requireAdmin()
+
   const body = await req.json()
   if (!body.name?.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 })
 

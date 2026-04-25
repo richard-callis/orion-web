@@ -1,9 +1,16 @@
+import { NextResponse } from 'next/server'
 import { createSSEStream } from '@/lib/sse'
 import { addSseClient, removeSseClient, getCache, startWatchers } from '@/lib/k8s'
+import { getCurrentUser } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
+// SOC2: CR-003 — K8s events exposed real-time without authentication
 export async function GET() {
+  const user = await getCurrentUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  await startWatchers()
   await startWatchers()
 
   return createSSEStream((send, close) => {
