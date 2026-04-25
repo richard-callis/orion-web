@@ -392,6 +392,7 @@ async function generateClientCert(
   const csrPath  = join(tmpDir, `${envName}-client.csr`)
   const certPath = join(tmpDir, `${envName}-client.crt`)
   const extPath  = join(tmpDir, `${envName}-client.ext`)
+  const srlPath  = join(tmpDir, 'ca.srl')   // serial file — must be writable, not next to the CA
 
   await writeFile(extPath, [
     '[req_ext]',
@@ -405,7 +406,7 @@ async function generateClientCert(
     ['openssl', ['req', '-new', '-key', keyPath, '-out', csrPath, '-subj', `/CN=eso-${envName}/O=ORION`]],
     ['openssl', ['x509', '-req', '-days', '3650',
       '-in', csrPath, '-CA', caCertPath, '-CAkey', caKeyPath,
-      '-CAcreateserial', '-out', certPath, '-extfile', extPath, '-extensions', 'req_ext']],
+      '-CAserial', srlPath, '-CAcreateserial', '-out', certPath, '-extfile', extPath, '-extensions', 'req_ext']],
   ]
 
   for (const [cmd, args] of steps) {
