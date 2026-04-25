@@ -647,6 +647,19 @@ export async function bootstrapCluster(
         msg => emit({ type: 'log', message: msg }),
       )
 
+      // Wait for ESO CRDs to be established before applying ClusterSecretStore
+      emit({ type: 'log', message: 'Waiting for ESO CRDs to be established...' })
+      await runCommand(
+        'kubectl',
+        [
+          'wait', '--for=condition=established', '--timeout=120s',
+          'crd/clustersecretstores.external-secrets.io',
+          'crd/externalsecrets.external-secrets.io',
+        ],
+        kenv,
+        msg => emit({ type: 'log', message: msg }),
+      )
+
       // 10. Apply ClusterSecretStore + AppRole credentials Secret
       //     If vault-proxy certs exist: use HTTPS + mTLS. Otherwise fall back to HTTP.
       emit({ type: 'step', message: 'Configuring ClusterSecretStore → ORION Vault...' })
