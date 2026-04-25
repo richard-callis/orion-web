@@ -8,6 +8,7 @@
  * Auth: session cookie (via requireAdmin) OR x-api-key header
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { sanitizeError } from '@/lib/errors'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { createApiKey, listUserKeys, verifyApiKey } from '@/lib/api-key'
@@ -55,7 +56,7 @@ export async function GET(req: NextRequest) {
       })),
     })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = sanitizeError(err)
     return NextResponse.json({ error: msg }, { status: 401 })
   }
 }
@@ -88,7 +89,7 @@ export async function POST(req: NextRequest) {
       id: apiKeyResult.info.id,
     })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = sanitizeError(err)
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

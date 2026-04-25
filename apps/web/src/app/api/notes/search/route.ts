@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { generateEmbedding, vectorSearch } from '@/lib/embeddings'
 import { requireServiceAuth } from '@/lib/auth'
+import { sanitizeError } from '@/lib/errors'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,7 +48,7 @@ export async function POST(req: NextRequest) {
       results,
     })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = sanitizeError(err)
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
