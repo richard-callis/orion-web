@@ -32,6 +32,8 @@ services:
       COREDNS_DIR: /etc/coredns-managed
       LOCALHOST_JOIN_TOKEN: ${LOCALHOST_JOIN_TOKEN}
       EMBED_TRIGGER_TOKEN: ${EMBED_TRIGGER_TOKEN:-}
+      # Service token for gateway↔ORION authentication (SOC2: [AC-001])
+      ORION_GATEWAY_TOKEN: ${ORION_GATEWAY_TOKEN:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - orion-claude-creds:/claude-creds
@@ -67,6 +69,8 @@ services:
       GATEWAY_TYPE: localhost
       GATEWAY_URL: http://gateway:3001
       GATEWAY_CREDS_FILE: /gateway-creds/credentials.json
+      # Token to authenticate with ORION's API (e.g. for knowledge graph tools)
+      ORION_GATEWAY_TOKEN: ${ORION_GATEWAY_TOKEN:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - gateway-creds:/gateway-creds

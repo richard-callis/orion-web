@@ -9,11 +9,11 @@
 | Tier | Status | Details |
 |------|--------|---------|
 | **CRITICAL (P0)** | 4/5 fixed | CR-005 is a draft PR pending review |
-| **HIGH (P1)** | 1/6 fixed | H-002 (security headers) done. H-001 through H-006 have open GitHub issues. |
+| **HIGH (P1)** | 4/6 fixed | H-002, H-005, H-006, L-002 (security headers) done. H-001, H-003, H-004 have open PRs. |
 | **MEDIUM (P2)** | 5/5 fixed | M-001 through M-005 all have PRs created |
 | **LOW (P3)** | 1/3 fixed | L-002 (security headers) done. L-001 (indexes) done. L-003 (JWT rotation) is policy, not code. |
 
-**Overall: ~18 of 25 findings have active PRs on GitHub.**
+**Overall: ~19 of 25 findings have active PRs on GitHub.**
 
 ---
 
@@ -45,6 +45,7 @@ All findings are tracked as GitHub issues on the repo:
 | [#90](https://github.com/richard-callis/orion-web/pull/90) | M-003 | Per-path rate limiting (10-100 req/15min) | `apps/web/src/middleware.ts` |
 | [#91](https://github.com/richard-callis/orion-web/pull/91) | M-004, M-005, L-001 | Log redaction utility + AuditLog DB indexes | New: `apps/web/src/lib/redact.ts`, `schema.prisma` |
 | [#92](https://github.com/richard-callis/orion-web/pull/92) | H-002, L-002 | Security headers (CSP, X-Frame-Options, HSTS, etc.) | `apps/web/src/middleware.ts` |
+| [#96](https://github.com/richard-callis/orion-web/pull/96) | H-005, H-006, M-004 | Shell quoting, package validation, log redaction wiring | New: `gateway/src/lib/*`, `tool-runner.ts`, `localhost.ts`, `redact.ts` |
 
 ### In Review (Draft)
 
@@ -130,14 +131,11 @@ All findings are tracked as GitHub issues on the repo:
 
 **GitHub:** #77 | **Severity:** HIGH | **SOC 2:** CC6.7
 
-**Current state:** `apps/gateway/src/tool-runner.ts` uses regex `/[;&|`$<>\\]/` to block shell metacharacters in tool arguments. But this does NOT block: `||`, `&&`, `|&`, or shell globbing.
+**Status: FIXED** in [PR #96](https://github.com/richard-callis/orion-web/pull/96).
 
-**Decision needed:**
-1. **Approach A (Recommended):** Replace string interpolation with `shlex`-style shell escaping. Create a TypeScript `quote()` function that wraps each argument in single quotes and escapes internal single quotes.
-2. **Approach B:** Extend the regex to also block `||`, `&&`, `$()`, backticks, globbing characters.
-3. **Approach C:** Switch from `exec('sh', ['-c', interpolated])` to `execFile()` with argument arrays — but this changes the execution model significantly.
+**Implementation:** Replaced regex blocklist with `quote()` function in `apps/gateway/src/lib/shell-quote.ts`. All `{arg_name}` placeholders are now properly single-quoted. Defense-in-depth: `localhost.ts` `shell_exec` also has dangerous pattern blocklist + metacharacter check for full-command input.
 
-**Recommended approach:** Approach A — implement a proper shell argument quote function. It's the smallest change with the strongest guarantee.
+**Approach taken:** Approach A — proper shell quoting. Strongest guarantee with minimal changes.
 
 ---
 
@@ -145,13 +143,11 @@ All findings are tracked as GitHub issues on the repo:
 
 **GitHub:** #78 | **Severity:** HIGH | **SOC 2:** CC6.8
 
-**Current state:** Gateway runs `apk add` with package names from tool definitions without validation.
+**Status: FIXED** in [PR #96](https://github.com/richard-callis/orion-web/pull/96).
 
-**Decision needed:**
-1. **Approach A:** Package name regex validation: `^[a-zA-Z0-9][a-zA-Z0-9.+-]*$`
-2. **Approach B:** Maintain a allowlist of approved packages per toolset.
+**Implementation:** Added `validatePackageName()` in `apps/gateway/src/lib/shell-quote.ts` — package names must match `^[a-zA-Z][a-zA-Z0-9._+-]*$` (max 127 chars). All `apk add` calls now go through this validation before execution.
 
-**Recommended approach:** Approach A (regex). Approach B is too brittle — packages get updated, removed, new ones added. Regex validation + the LLM command sanitization from CR-005 provides sufficient protection.
+**Approach taken:** Approach A (regex validation).
 
 ---
 
@@ -159,15 +155,13 @@ All findings are tracked as GitHub issues on the repo:
 
 **GitHub:** #82 | **SOC 2:** Confidentiality
 
-**Current state:** Created `apps/web/src/lib/redact.ts` with `redactSensitive()` and `makeRedactedLog()` functions. But it's not wired into any existing code.
+**Status: FIXED** in [PR #96](https://github.com/richard-callis/orion-web/pull/96).
 
-**Decision needed:**
-1. How broadly should redaction be applied?
-   - **Option A:** Replace all `console.log` calls with `makeRedactedLog()` calls across the codebase. Thorough but many changes.
-   - **Option B:** Add a global `console.log` wrapper that applies redaction to all log output. Minimal changes, automatic.
-   - **Option C:** Target only the most sensitive log sites: setup tokens, tool arguments/results, shell commands.
+**Implementation:** Added `wrapConsoleLog()` in `apps/web/src/lib/redact.ts` and `apps/gateway/src/lib/redact.ts`. Called once at startup in both `middleware.ts` and `index.ts`. Automatically redacts tokens, keys, passwords from all `console.log` output.
 
-**Recommended approach:** Option B — a global wrapper that redacts before every `console.log` call. Apply to both `apps/web/src/` and `apps/gateway/src/`. This is a one-line change per file that imports `console.log`.
+**Approach taken:** Option B — global `console.log` wrapper. One-line call per entry point.
+
+**Deployment note:** `ORION_GATEWAY_TOKEN` must be set in `.env` for both `orion` and `gateway` services in `docker-compose.yml`. The gateway needs this token to authenticate API calls back to ORION.
 
 ---
 
@@ -223,6 +217,11 @@ This is a procedural concern, not a code fix. SOC 2 auditors will want to see a 
 | `apps/web/src/app/api/k8s/pods/[ns]/[pod]/logs/route.ts` | CR-003 | Auth on pod logs |
 | `apps/web/src/app/api/tools/generate/route.ts` | CR-005 | Auth + command sanitization |
 | `apps/gateway/src/tool-runner.ts` | CR-004 | SSRF URL validation |
+| `apps/gateway/src/lib/shell-quote.ts` | H-005, H-006 (in #96) | **NEW:** `quote()` + `validatePackageName()` |
+| `apps/gateway/src/lib/redact.ts` | M-004 (in #96) | **NEW:** `wrapConsoleLog()` |
+| `apps/gateway/src/builtin-tools/localhost.ts` | H-005 (in #96) | Dangerous pattern blocklist |
+| `apps/web/src/lib/redact.ts` | M-004 (in #96) | `wrapConsoleLog()` export |
+| `deploy/docker-compose.yml` | M-004 (in #96) | `ORION_GATEWAY_TOKEN` env var
 
 ---
 
@@ -231,9 +230,6 @@ This is a procedural concern, not a code fix. SOC 2 auditors will want to see a 
 1. **H-001** — Encrypt secrets (straightforward, uses existing `encryption.ts`)
 2. **H-003** — Path traversal validation (simple regex + path check)
 3. **H-004** — Authorization (needs decisions above, then follow ChatRooms pattern)
-4. **H-005** — Shell argument quoting (new `quote()` function in gateway)
-5. **H-006** — Package name validation (simple regex in gateway)
-6. **M-004** — Wire in log redaction (global `console.log` wrapper)
 
 ---
 
@@ -246,7 +242,7 @@ This is a procedural concern, not a code fix. SOC 2 auditors will want to see a 
 | CC6.3 Role-Based Access | FAIL | PARTIAL | PASS |
 | CC6.5 Boundary Protection | FAIL | PASS (H-002, CR-004) | PASS |
 | CC6.6 System Failure | FAIL | PASS (M-003) | PASS |
-| CC6.7 Data Injection | FAIL | PARTIAL | PASS |
-| CC6.8 Authorized Software | FAIL | PARTIAL | PASS |
+| CC6.7 Data Injection | FAIL | PASS (H-005) | PASS |
+| CC6.8 Authorized Software | FAIL | PASS (H-006) | PASS |
 | CC7.1 Monitoring | WARN | PASS (M-005) | PASS |
 | Confidentiality | FAIL | PASS (M-002) | PASS |
