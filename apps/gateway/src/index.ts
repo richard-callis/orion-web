@@ -15,6 +15,10 @@
  *   GATEWAY_CREDS_FILE — Path to persist credentials for restart resilience (localhost mode)
  */
 
+// SOC2: [M-004] Wrap console.log BEFORE any other import to catch all log output
+import { wrapConsoleLog } from './lib/redact.js'
+wrapConsoleLog()
+
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
