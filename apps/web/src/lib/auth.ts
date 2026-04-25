@@ -25,7 +25,7 @@ export const authOptions: NextAuthOptions = {
         : 'next-auth.session-token',
       options: {
         httpOnly: true,
-        sameSite: 'lax' as const,
+        sameSite: 'strict' as const,
         path: '/',
         secure: process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https',
       },
