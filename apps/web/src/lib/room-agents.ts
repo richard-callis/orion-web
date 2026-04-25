@@ -18,6 +18,7 @@ import fs from 'fs'
 import path from 'path'
 import { prisma } from './db'
 import { setTyping, clearTyping } from './typing-state'
+import { ORION_TOOL_DEFINITIONS, TOOLS_SYSTEM_ADDENDUM, executeTool } from './agent-tools'
 
 // ── Mention parsing ───────────────────────────────────────────────────────────
 
@@ -49,7 +50,7 @@ type ChatMsg = { role: 'system' | 'user' | 'assistant'; content: string }
  * otherParticipants lists the names of other agents/users in the room so the
  * model knows who it can @mention to continue the conversation.
  */
-function buildSystemPrompt(agentName: string, agentBasePrompt: string, otherParticipants: string[]): string {
+function buildSystemPrompt(agentName: string, agentBasePrompt: string, otherParticipants: string[], hasTools = false): string {
   const othersLine = otherParticipants.length > 0
     ? `Other participants in this chat: ${otherParticipants.join(', ')}`
     : 'You are the only agent in this chat.'
@@ -70,7 +71,7 @@ Rules you must follow without exception:
 7. If the conversation has naturally concluded or you have nothing meaningful to add, reply with exactly the single word: SILENT
 
 ---
-${agentBasePrompt}`
+${agentBasePrompt}${hasTools ? TOOLS_SYSTEM_ADDENDUM : ''}`
 }
 
 /**
@@ -161,7 +162,10 @@ async function callOllamaChat(
   return data.message?.content?.trim() || null
 }
 
-/** OpenAI-compatible /v1/chat/completions endpoint */
+type OpenAIMessage = { role: string; content: string | null; tool_calls?: ToolCall[]; tool_call_id?: string; name?: string }
+type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } }
+
+/** OpenAI-compatible /v1/chat/completions endpoint — supports tool calling */
 async function callOpenAIChat(
   agentName: string,
   agentBasePrompt: string,
@@ -171,27 +175,62 @@ async function callOpenAIChat(
   model: string,
   baseUrl: string,
   apiKey?: string | null,
+  toolContext?: { roomId: string; agentId: string; llm: string },
 ): Promise<string | null> {
-  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants)
+  const hasTools = !!toolContext
+  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools)
   const chatMsgs = buildChatMessages(history, latestMessage)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
-  const res = await fetch(`${baseUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      model,
-      stream: false,
-      messages: [{ role: 'system', content: sys }, ...chatMsgs],
-    }),
-    signal: AbortSignal.timeout(120_000),
-  })
-  if (!res.ok) {
-    console.error(`[room-agents] OpenAI-compat ${baseUrl} returned HTTP ${res.status}`)
-    return null
+
+  const messages: OpenAIMessage[] = [{ role: 'system', content: sys }, ...chatMsgs]
+
+  // Tool-call loop — keep going until the model produces a text reply
+  const MAX_TOOL_ROUNDS = 5
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const body: Record<string, unknown> = { model, stream: false, messages }
+    if (hasTools) body.tools = ORION_TOOL_DEFINITIONS
+
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(120_000),
+    })
+    if (!res.ok) {
+      console.error(`[room-agents] OpenAI-compat ${baseUrl} returned HTTP ${res.status}`)
+      return null
+    }
+
+    type Choice = { finish_reason: string; message: { role: string; content: string | null; tool_calls?: ToolCall[] } }
+    const data = await res.json() as { choices?: Choice[] }
+    const choice = data.choices?.[0]
+    if (!choice) return null
+
+    // Plain text reply — done
+    if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
+      return choice.message.content?.trim() || null
+    }
+
+    // Tool calls — execute each and feed results back
+    messages.push({ role: 'assistant', content: choice.message.content, tool_calls: choice.message.tool_calls })
+
+    for (const tc of choice.message.tool_calls) {
+      let args: Record<string, unknown> = {}
+      try { args = JSON.parse(tc.function.arguments) } catch { /* ignore */ }
+      console.log(`[room-agents] ${agentName} calling tool: ${tc.function.name}`, args)
+      const result = await executeTool(tc.function.name, args, {
+        roomId:        toolContext!.roomId,
+        callerAgentId: toolContext!.agentId,
+        callerLlm:     toolContext!.llm,
+      })
+      console.log(`[room-agents] tool result: ${result}`)
+      messages.push({ role: 'tool', content: result, tool_call_id: tc.id, name: tc.function.name })
+    }
   }
-  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> }
-  return data.choices?.[0]?.message?.content?.trim() || null
+
+  console.warn(`[room-agents] ${agentName} hit MAX_TOOL_ROUNDS without a text reply`)
+  return null
 }
 
 /** Resolve a fallback Ollama base URL from configured ExternalModels */
@@ -294,6 +333,7 @@ export async function triggerRoomAgentReplies(
       const contextConfig = (meta.contextConfig ?? {}) as Record<string, unknown>
       const rawPrompt     = meta.systemPrompt as string | undefined
       const llm           = (contextConfig.llm as string | undefined) ?? 'claude:claude-haiku-4-5-20251001'
+      const toolsEnabled  = !!(contextConfig.tools)
 
       // Base persona description — identity constraint is added by buildSystemPrompt()
       const agentBasePrompt = rawPrompt
@@ -305,7 +345,12 @@ export async function triggerRoomAgentReplies(
         .filter(a => a.id !== agent.id)
         .map(a => a.name)
 
-      console.log(`[room-agents] ${agent.name} (${llm}) → replying to room ${roomId}`)
+      // Tool context passed to OpenAI-compatible calls when tools are enabled
+      const toolContext = toolsEnabled
+        ? { roomId, agentId: agent.id, llm }
+        : undefined
+
+      console.log(`[room-agents] ${agent.name} (${llm}${toolsEnabled ? ', tools' : ''}) → replying to room ${roomId}`)
 
       let reply: string | null = null
 
@@ -322,8 +367,8 @@ export async function triggerRoomAgentReplies(
           if (extModel.provider === 'ollama') {
             reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl)
           } else {
-            // openai / custom — OpenAI-compatible
-            reply = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey)
+            // openai / custom — OpenAI-compatible (supports tool calling)
+            reply = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey, toolContext)
           }
         } else if (llm.startsWith('ollama:')) {
           const model   = llm.slice('ollama:'.length)
