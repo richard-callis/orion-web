@@ -205,10 +205,10 @@ async function resolveOllamaBaseUrl(): Promise<string> {
 // ── Main export ───────────────────────────────────────────────────────────────
 
 /**
- * Max rounds of agent-to-agent chaining after the initial human trigger.
- * depth=0 → human triggered, depth=1..MAX → agent reply triggered by prior agent reply.
+ * Safety guard: if this many agent messages have been saved in the last minute
+ * for a room, stop chaining to prevent a runaway loop.
  */
-const MAX_AGENT_CHAIN_DEPTH = 3
+const MAX_AGENT_MESSAGES_PER_MINUTE = 40
 
 /**
  * Trigger agent replies for a chat room message (fire-and-forget from POST handler).
@@ -217,15 +217,28 @@ const MAX_AGENT_CHAIN_DEPTH = 3
  * - @mention present → only mentioned agents reply
  * - No @mention      → all agent members reply
  *
- * After each round, if any saved reply @mentions another agent the chain recurses
- * (up to MAX_AGENT_CHAIN_DEPTH) so agents can respond to each other naturally.
+ * After each round, if any saved reply names another agent the chain continues so
+ * agents can hold a natural back-and-forth conversation. It stops when:
+ *   1. No agent name appears in the last reply (natural end of conversation), or
+ *   2. An agent replies with the single word SILENT, or
+ *   3. The room has exceeded MAX_AGENT_MESSAGES_PER_MINUTE (runaway loop guard).
  */
 export async function triggerRoomAgentReplies(
   roomId: string,
   triggerContent: string,
-  depth = 0,
 ): Promise<void> {
-  if (depth >= MAX_AGENT_CHAIN_DEPTH) return
+  // Runaway loop guard — count agent messages in this room in the last minute
+  const recentAgentCount = await prisma.chatMessage.count({
+    where: {
+      roomId,
+      senderType: 'agent',
+      createdAt: { gte: new Date(Date.now() - 60_000) },
+    },
+  })
+  if (recentAgentCount >= MAX_AGENT_MESSAGES_PER_MINUTE) {
+    console.warn(`[room-agents] room ${roomId} hit rate limit (${recentAgentCount} agent msgs/min) — stopping chain`)
+    return
+  }
   const room = await prisma.chatRoom.findUnique({
     where: { id: roomId },
     include: {
@@ -349,8 +362,8 @@ export async function triggerRoomAgentReplies(
     if (addressed.length > 0) {
       // Build a synthetic trigger with @mentions so the next round routes correctly
       const syntheticTrigger = addressed.map(a => `@${a.name}`).join(' ')
-      console.log(`[room-agents] depth=${depth} — chaining to: ${addressed.map(a => a.name).join(', ')}`)
-      await triggerRoomAgentReplies(roomId, syntheticTrigger, depth + 1)
+      console.log(`[room-agents] chaining to: ${addressed.map(a => a.name).join(', ')}`)
+      await triggerRoomAgentReplies(roomId, syntheticTrigger)
     }
   }
 }
