@@ -23,6 +23,7 @@ import { prisma } from '@/lib/db'
 import { requireWizardSession } from '@/lib/setup-guard'
 import { createProvider, invalidateGitProviderCache, type GitProviderConfig, type GitProviderType } from '@/lib/git-provider'
 import { GiteaGitProvider } from '@/lib/git-provider/gitea-provider'
+import { sanitizeError } from '@/lib/errors'
 import { encryptJson } from '@/lib/encryption'
 import { randomBytes } from 'crypto'
 
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest) {
         const tokenName = `orion-admin-${Date.now()}`
         token = await giteaProvider.createAdminToken(adminUser, adminPassword, tokenName)
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err)
+        const msg = sanitizeError(err)
         return NextResponse.json(
           { error: `Failed to create Gitea admin token: ${msg}` },
           { status: 502 },
@@ -100,7 +101,7 @@ export async function POST(req: NextRequest) {
       )
     }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = sanitizeError(err)
     return NextResponse.json(
       { error: `Git provider connection failed: ${msg}` },
       { status: 502 },
