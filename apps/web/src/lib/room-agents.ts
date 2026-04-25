@@ -207,8 +207,10 @@ async function resolveOllamaBaseUrl(): Promise<string> {
 /**
  * Max rounds of agent-to-agent chaining after the initial human trigger.
  * depth=0 → human triggered, depth=1..MAX → agent reply triggered by prior agent reply.
+ * Agents are expected to reply SILENT when the conversation winds down naturally.
+ * Hard cap is just a safety net against infinite loops.
  */
-const MAX_AGENT_CHAIN_DEPTH = 3
+const MAX_AGENT_CHAIN_DEPTH = 20
 
 /**
  * Trigger agent replies for a chat room message (fire-and-forget from POST handler).
