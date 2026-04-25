@@ -38,7 +38,8 @@ async function migrate() {
 
     if (env.gatewayToken) {
       const plaintext = decrypt(env.gatewayToken)
-      if (plaintext !== env.gatewayToken) {
+      // If decrypt() returns the same value, it was plaintext (no enc:v1: prefix) — needs encryption
+      if (plaintext === env.gatewayToken) {
         updates.gatewayToken = encrypt(plaintext)
         envMigrated++
         console.log(`  encrypted gatewayToken for "${env.name}"`)
@@ -49,7 +50,8 @@ async function migrate() {
 
     if (env.kubeconfig) {
       const plaintext = decrypt(env.kubeconfig)
-      if (plaintext !== env.kubeconfig) {
+      // If decrypt() returns the same value, it was plaintext (no enc:v1: prefix) — needs encryption
+      if (plaintext === env.kubeconfig) {
         updates.kubeconfig = encrypt(plaintext)
         envMigrated++
         console.log(`  encrypted kubeconfig for "${env.name}"`)
@@ -76,7 +78,8 @@ async function migrate() {
   for (const ext of extModels) {
     if (ext.apiKey) {
       const plaintext = decrypt(ext.apiKey)
-      if (plaintext !== ext.apiKey) {
+      // If decrypt() returns the same value, it was plaintext (no enc:v1: prefix) — needs encryption
+      if (plaintext === ext.apiKey) {
         const encrypted = encrypt(plaintext)
         await prisma.externalModel.update({
           where: { id: ext.id },
