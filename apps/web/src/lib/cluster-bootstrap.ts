@@ -163,6 +163,33 @@ subjects:
     name: orion-gateway
     namespace: orion-management
 ---
+# Allows the gateway to write its registered credentials back to the Secret
+# so they survive pod restarts without needing a PVC.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: orion-gateway-credentials
+  namespace: orion-management
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["orion-gateway-credentials"]
+  verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: orion-gateway-credentials
+  namespace: orion-management
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: orion-gateway-credentials
+subjects:
+  - kind: ServiceAccount
+    name: orion-gateway
+    namespace: orion-management
+---
 apiVersion: v1
 kind: Secret
 metadata:
@@ -203,6 +230,8 @@ spec:
               value: "cluster"
             - name: ENV_NAME
               value: "${envName}"
+            - name: GATEWAY_NAMESPACE
+              value: "orion-management"
             - name: ORION_URL
               valueFrom:
                 secretKeyRef:
