@@ -6,6 +6,8 @@ import { requireWizardSession } from '@/lib/setup-guard'
 
 const VAULT_ADDR = process.env.VAULT_ADDR ?? 'http://vault:8200'
 const UNSEAL_KEYS_DIR = process.env.VAULT_UNSEAL_KEYS_DIR ?? '/vault/unseal-keys'
+const UNSEAL_SHARES = 5
+const UNSEAL_THRESHOLD = 3
 
 export async function POST(req: NextRequest) {
   if (!await requireWizardSession(req)) {
@@ -36,7 +38,7 @@ export async function POST(req: NextRequest) {
     const initRes = await fetch(`${VAULT_ADDR}/v1/sys/init`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ secret_shares: 5, secret_threshold: 3 }),
+      body: JSON.stringify({ secret_shares: UNSEAL_SHARES, secret_threshold: UNSEAL_THRESHOLD }),
       signal: AbortSignal.timeout(15000),
     })
 
@@ -50,25 +52,26 @@ export async function POST(req: NextRequest) {
 
     const { keys, root_token } = await initRes.json()
 
-    // Write unseal keys 1-3 to disk so vault-unsealer can reseal on restart
+    const thresholdKeys = keys.slice(0, UNSEAL_THRESHOLD)
+
     await mkdir(UNSEAL_KEYS_DIR, { recursive: true })
     await Promise.all(
-      [0, 1, 2].map((i) =>
-        writeFile(join(UNSEAL_KEYS_DIR, `unseal-key-${i + 1}`), keys[i], { mode: 0o600 })
+      thresholdKeys.map((key: string, i: number) =>
+        writeFile(join(UNSEAL_KEYS_DIR, `unseal-key-${i + 1}`), key, { mode: 0o600 })
       )
     )
 
-    // Unseal with first 3 of the 5 keys
-    for (let i = 0; i < 3; i++) {
-      await fetch(`${VAULT_ADDR}/v1/sys/unseal`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: keys[i] }),
-        signal: AbortSignal.timeout(5000),
-      })
-    }
+    await Promise.all(
+      thresholdKeys.map((key: string) =>
+        fetch(`${VAULT_ADDR}/v1/sys/unseal`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key }),
+          signal: AbortSignal.timeout(5000),
+        })
+      )
+    )
 
-    // Persist root token and initialized state
     await prisma.$transaction([
       prisma.systemSetting.upsert({
         where: { key: 'vault.rootToken' },
