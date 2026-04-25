@@ -69,12 +69,8 @@ function sanitizeCommand(command: string, envType: string): string {
   const firstWord = trimmed.split(/\s+/)[0] ?? ''
   const allowed = ALLOWED_COMMAND_PREFIXES[envType as keyof typeof ALLOWED_COMMAND_PREFIXES]
   if (allowed && !allowed.some(prefix => firstWord.startsWith(prefix))) {
-    // Allow if it's a relative path or the command starts with a known-safe utility
-    const safePrefixes = ['sh', 'bash', 'curl', 'wget', 'jq']
-    if (!safePrefixes.includes(firstWord) && !allowed.includes(firstWord)) {
-      // Log warning but allow — the command validation above should catch most issues
-      console.warn(`[tools/generate] Unusual command prefix: ${firstWord} for env ${envType}`)
-    }
+    // Enforce: reject commands not on the allowlist for this environment
+    throw new Error(`Command '${firstWord}' not allowed in '${envType}' environment. Allowed: ${allowed.join(', ')}`)
   }
 
   return trimmed
@@ -118,8 +114,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Description too long (max 500 characters)' }, { status: 400 })
   }
 
-  // Validate description content (block obvious injection attempts)
-  if (/^(create|add|install|execute|run|delete|exfil|download|upload|reverse\s|bind|shell)\b/i.test(description.trim())) {
+  // Validate description content (block obvious attack keywords)
+  // Note: We rely on the command sanitization in sanitizeCommand() for the real defense
+  if (/\b(exfil|reverse\s+shell|bind\s+shell|payload|backdoor)\b/i.test(description.trim())) {
     return NextResponse.json({ error: 'Description contains suspicious keywords' }, { status: 400 })
   }
 
