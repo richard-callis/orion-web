@@ -126,6 +126,6 @@ export async function verifyApiKey(key: string): Promise<string | null> {
  */
 export async function revokeApiKey(keyId: string, userId: string): Promise<boolean> {
   // SOC2: [M-001] use Prisma ORM — not raw SQL (prevents SQL injection)
-  const count = await prisma.apiKey.deleteMany({ where: { id: keyId, userId } })
-  return count > 0
+  const result = await prisma.apiKey.deleteMany({ where: { id: keyId, userId } })
+  return result.count > 0
 }
