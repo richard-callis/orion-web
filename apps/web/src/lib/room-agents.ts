@@ -339,9 +339,18 @@ export async function triggerRoomAgentReplies(
     }
   }
 
-  // Chain: if the last reply @mentions another agent, trigger the next round
-  if (lastSavedReply && parseMentions(lastSavedReply).length > 0) {
-    console.log(`[room-agents] depth=${depth} — chaining reply with @mentions`)
-    await triggerRoomAgentReplies(roomId, lastSavedReply, depth + 1)
+  // Chain: if the last reply names another agent (with or without @), trigger them.
+  // Models often write "Hey Orion" instead of "@Orion", so we check bare names too.
+  if (lastSavedReply) {
+    const addressed = agentMembers.filter(a => {
+      const pattern = new RegExp(`(?:^|\\s|@)${a.name}\\b`, 'i')
+      return pattern.test(lastSavedReply!)
+    })
+    if (addressed.length > 0) {
+      // Build a synthetic trigger with @mentions so the next round routes correctly
+      const syntheticTrigger = addressed.map(a => `@${a.name}`).join(' ')
+      console.log(`[room-agents] depth=${depth} — chaining to: ${addressed.map(a => a.name).join(', ')}`)
+      await triggerRoomAgentReplies(roomId, syntheticTrigger, depth + 1)
+    }
   }
 }
