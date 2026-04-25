@@ -43,7 +43,7 @@
     "three": "^0.184.0",
     "ws": "^8.18.0",
     "zod": "^3.25.0",
-    "otplib": "^4.4.1",
+    "otplib": "^13.4.0",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
