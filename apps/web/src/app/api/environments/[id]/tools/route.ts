@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth'
+
+async function verifyEnvAccess(userId: string, envId: string): Promise<{ error: NextResponse['body']; env: { id: string } } | null> {
+  const env = await prisma.environment.findUnique({ where: { id: envId }, select: { id: true } })
+  if (!env) return { error: NextResponse.json({ error: 'Not found' }, { status: 404 }).body, env: {} as any }
+  return null // access OK (any authenticated user can list/manage tools on any env for now)
+}
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  // Support gateway Bearer auth (existing) OR user session auth (SOC2: CR-001)
   const auth = req.headers.get('authorization')
   if (auth?.startsWith('Bearer ')) {
-    // Called by the gateway — validate the token
     const env = await prisma.environment.findUnique({
       where: { id: params.id },
       select: { gatewayToken: true },
@@ -13,6 +20,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     if (!env.gatewayToken || auth !== `Bearer ${env.gatewayToken}`) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+  } else {
+    const user = await getCurrentUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const { searchParams } = new URL(req.url)
@@ -29,6 +39,13 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  // SOC2: CR-001 — require authenticated user
+  const user = await getCurrentUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Verify env exists
+  const env = await prisma.environment.findUnique({ where: { id: params.id }, select: { id: true } })
+  if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
   const body = await req.json()
 
   if (!body.name?.trim())        return NextResponse.json({ error: 'name is required' }, { status: 400 })
