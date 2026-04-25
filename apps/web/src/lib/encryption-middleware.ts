@@ -29,26 +29,36 @@ function decryptField(raw: unknown): unknown {
   }
 }
 
-function processRow(obj: unknown): unknown {
+function processRow(obj: unknown, model?: string): unknown {
   if (!isRecord(obj)) return obj
 
   const copy = { ...obj }
 
+  // Decrypt Environment fields
   for (const field of ENCRYPTED_ENV_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(copy, field)) {
       copy[field] = decryptField(copy[field])
     }
   }
 
+  // Decrypt ExternalModel fields
+  if (model === 'ExternalModel') {
+    for (const field of ENCRYPTED_EXT_FIELDS) {
+      if (Object.prototype.hasOwnProperty.call(copy, field)) {
+        copy[field] = decryptField(copy[field])
+      }
+    }
+  }
+
   return copy
 }
 
-function processResult(result: unknown): unknown {
+function processResult(result: unknown, model?: string): unknown {
   if (Array.isArray(result)) {
-    return result.map((r) => (isRecord(r) ? processRow(r) : r))
+    return result.map((r) => (isRecord(r) ? processRow(r, model) : r))
   }
 
-  return isRecord(result) ? processRow(result) : result
+  return isRecord(result) ? processRow(result, model) : result
 }
 
 export function registerEncryptionMiddleware(prisma: PrismaClient): void {
@@ -58,6 +68,6 @@ export function registerEncryptionMiddleware(prisma: PrismaClient): void {
     }
 
     const result = await next(params)
-    return processResult(result)
+    return processResult(result, params.model)
   })
 }
