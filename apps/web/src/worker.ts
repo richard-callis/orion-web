@@ -33,17 +33,17 @@ const MAX_NOTE_LENGTH = 8000
 function sanitizeContextNote(title: string, content: string): string {
   // Known prompt injection patterns (case-insensitive)
   const INJECTION_PATTERNS = [
-    /^(ignore\s+(previous|above|prior)\s+(instructions|prompts|context|system))/im,
-    /^(you\s+are\s+now)/im,
-    /^(from\s+now\s+on)/im,
-    /^(override\s+(all|the)?\s*(system|previous|original)\s*(instructions|prompt|rules|behavior))/im,
-    /^(do\s+not\s+(follow|obey|respond))/im,
-    /^(disregard\s+(all|the)?\s*(instructions|previous|context))/im,
-    /^(begin\s+(new|all)\s*(instructions|system))/im,
-    /^(you\s+have\s+(been|been)?\s*(new|been))\s+role/im,
-    /^(change\s+(your|the)?\s*(role|persona|identity))/im,
-    /^(reveal|print|output|show|display|dump|list)\s+(your|the)?\s*(system|original|full|complete)\s*(prompt|instructions|rules|context)/im,
-    /^(show\s+me\s+(your|the|this))\s+(prompt|instructions|context)/im,
+    /^\s*(ignore\s+(previous|above|prior)\s+(instructions|prompts|context|system))/im,
+    /^\s*(you\s+are\s+now)/im,
+    /^\s*(from\s+now\s+on)/im,
+    /^\s*(override\s+(all|the)?\s*(system|previous|original)\s*(instructions|prompt|rules|behavior))/im,
+    /^\s*(do\s+not\s+(follow|obey|respond))/im,
+    /^\s*(disregard\s+(all|the)?\s*(instructions|previous|context))/im,
+    /^\s*(begin\s+(new|all)\s*(instructions|system))/im,
+    /^\s*(you\s+have\s+(been|been)?\s*(new|been))\s+role/im,
+    /^\s*(change\s+(your|the)?\s*(role|persona|identity))/im,
+    /^\s*(reveal|print|output|show|display|dump|list)\s+(your|the)?\s*(system|original|full|complete)\s*(prompt|instructions|rules|context)/im,
+    /^\s*(show\s+me\s+(your|the|this))\s+(prompt|instructions|context)/im,
   ]
 
   // Check for injection patterns and warn
