@@ -120,7 +120,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     setInviteError(null)
     setIsInviting(option.id)
     try {
-      const isAgent = option.type === 'agent'
+      const isAgent = inviteTab === 'agents'
       const body: Record<string, string> = {}
       body[isAgent ? 'agentId' : 'userId'] = option.id
       const res = await fetch(`/api/chatrooms/${roomId}/invite`, {
@@ -142,7 +142,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       setInviteError(e instanceof Error ? e.message : 'Unknown error')
     }
     setIsInviting(null)
-  }, [roomId, isInviting, loadRoom])
+  }, [roomId, isInviting, inviteTab, loadRoom])
 
   const handleLeave = useCallback(async () => {
     try {
