@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { revokeApiKey, verifyApiKey } from '@/lib/api-key'
+import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 type User = { id: string }
 
@@ -38,6 +39,15 @@ export async function DELETE(
     if (!ok) {
       return NextResponse.json({ error: 'API key not found or unauthorized' }, { status: 404 })
     }
+
+    // SOC2: [M-005] Audit API key revocation (non-blocking)
+    logAudit({
+      userId: result.user!.id,
+      action: 'api_key_revoke',
+      target: `api_key:${id}`,
+      ipAddress: getClientIp(req),
+      userAgent: getUserAgent(req.headers),
+    }).catch(() => {})
 
     return NextResponse.json({ ok: true })
   } catch (err) {

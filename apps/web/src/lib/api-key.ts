@@ -47,13 +47,12 @@ function mapRow(r: ApiKeyRow): ApiKeyInfo {
 // Raw SQL queries for the api_keys table (managed by Prisma schema)
 // Column names are camelCase (Prisma default), table name is api_keys (via @@map)
 // PostgreSQL lowercases unquoted identifiers, so we use double-quoted mixed-case names
+// SOC2: [M-001] findByHash, listByUser, verifyByHash use parameterized queries ($1, $2)
+// updateLastUsed and deleteByKey use Prisma ORM instead of raw SQL to prevent SQL injection
 const sql = {
   findByHash: `SELECT "id", "hashPrefix", name, active, "expiresAt", "lastUsedAt", "createdAt" FROM api_keys WHERE "hashPrefix" = $1 AND hash = $2`,
   listByUser: `SELECT "id", "hashPrefix", name, active, "expiresAt", "lastUsedAt", "createdAt" FROM api_keys WHERE "userId" = $1 ORDER BY "createdAt" DESC`,
   verifyByHash: `SELECT "id", "userId", "expiresAt", "lastUsedAt", active FROM api_keys WHERE "hashPrefix" = $1 AND hash = $2`,
-  updateLastUsed: (h: string) => `UPDATE api_keys SET "lastUsedAt" = now() WHERE hash = '${h.replace(/'/g, "''")}'`,
-  deleteByKey: (keyId: string, userId: string) =>
-    `DELETE FROM api_keys WHERE id = '${keyId.replace(/'/g, "''")}' AND "userId" = '${userId.replace(/'/g, "''")}'`,
 } as const
 
 /**
@@ -115,8 +114,8 @@ export async function verifyApiKey(key: string): Promise<string | null> {
   const match = await compare(key, r.hash)
   if (!match) return null
 
-  // Update lastUsedAt
-  await prisma.$executeRawUnsafe(sql.updateLastUsed(r.hash))
+  // Update lastUsedAt (SOC2: [M-001] use Prisma ORM — not raw SQL)
+  await prisma.apiKey.updateMany({ where: { hash: r.hash, userId: r.userId }, data: { lastUsedAt: new Date() } })
 
   return r.userId
 }
@@ -126,6 +125,7 @@ export async function verifyApiKey(key: string): Promise<string | null> {
  * Only the owning user or an admin can revoke.
  */
 export async function revokeApiKey(keyId: string, userId: string): Promise<boolean> {
-  const count = await prisma.$executeRawUnsafe(sql.deleteByKey(keyId, userId))
-  return count > 0
+  // SOC2: [M-001] use Prisma ORM — not raw SQL (prevents SQL injection)
+  const result = await prisma.apiKey.deleteMany({ where: { id: keyId, userId } })
+  return result.count > 0
 }

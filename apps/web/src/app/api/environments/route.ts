@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client'
 import { getDefaultTools } from '@/lib/default-tools'
 import { getCurrentUser, requireAdmin } from '@/lib/auth'
 import { CreateEnvironmentSchema } from '@/lib/validate'
+import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 export async function GET() {
   // SOC2: CR-002 — require authentication to list environments
@@ -76,6 +77,16 @@ export async function POST(req: NextRequest) {
     where: { id: env.id },
     include: { tools: true, agents: { include: { agent: true } } },
   })
+
+  // SOC2: [M-005] Audit environment creation (non-blocking)
+  logAudit({
+    userId: user.id,
+    action: 'environment_create',
+    target: `environment:${env.id}`,
+    detail: { name: env.name, type: env.type },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req.headers),
+  }).catch(() => {})
 
   return NextResponse.json(
     { ...envWithTools, gatewayToken: envWithTools?.gatewayToken ? '••••' : null, kubeconfig: envWithTools?.kubeconfig ? '••••' : null },
