@@ -45,6 +45,7 @@ interface RoomDetail {
   createdAt: string
   updatedAt: string
   _count?: { messages: number; members: number }
+  totalMessages?: number
   members?: RoomMember[]
   messages?: RoomMessage[]
 }
@@ -84,6 +85,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   const [inviteError, setInviteError] = useState<string | null>(null)
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
   const [mentionSearch, setMentionSearch] = useState<string | null>(null)
+  const [messageLimit, setMessageLimit] = useState(100)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -120,14 +122,20 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     inputRef.current?.focus()
   }
 
-  const loadRoom = useCallback(async () => {
+  const loadRoom = useCallback(async (limit?: number) => {
     try {
-      const res = await fetch(`/api/chatrooms/${roomId}?messages=100`)
+      const res = await fetch(`/api/chatrooms/${roomId}?messages=${limit ?? messageLimit}`)
       const detail = await res.json()
       setRoom(detail)
     } catch { /* ignore */ }
     setLoading(false)
-  }, [roomId])
+  }, [roomId, messageLimit])
+
+  const loadMore = useCallback(() => {
+    const next = messageLimit + 100
+    setMessageLimit(next)
+    loadRoom(next)
+  }, [messageLimit, loadRoom])
 
   useEffect(() => { loadRoom() }, [loadRoom])
 
@@ -261,6 +269,13 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
           <div className="flex items-center justify-center h-full"><Loader2 size={20} className="animate-spin text-text-muted" /></div>
         ) : (
           <>
+            {room?.totalMessages && room.messages && room.totalMessages > room.messages.length && (
+              <div className="text-center py-2">
+                <button onClick={loadMore} className="text-xs text-accent hover:text-accent/80 transition-colors">
+                  ↑ Load more ({room.totalMessages - room.messages.length} older messages)
+                </button>
+              </div>
+            )}
             {(!room?.messages || room.messages.length === 0) && (
               <div className="text-center text-text-muted text-xs py-8">No messages yet. Start the conversation!</div>
             )}
