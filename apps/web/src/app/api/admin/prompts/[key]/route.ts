@@ -3,12 +3,14 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { PROMPT_DEFAULTS, invalidatePromptCache } from '@/lib/system-prompts'
+import { requireAdmin } from '@/lib/auth'
 
 /** GET /api/admin/prompts/:key — get a single prompt's current content */
 export async function GET(
   _req: NextRequest,
   { params }: { params: { key: string } },
 ) {
+  await requireAdmin()
   const key = decodeURIComponent(params.key)
   const def = PROMPT_DEFAULTS.find(p => p.key === key)
   if (!def) return NextResponse.json({ error: 'Unknown prompt key' }, { status: 404 })
@@ -27,6 +29,7 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: { key: string } },
 ) {
+  await requireAdmin()
   const { content } = await req.json() as { content?: string }
   if (typeof content !== 'string') {
     return NextResponse.json({ error: 'content is required' }, { status: 400 })
@@ -61,6 +64,7 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: { key: string } },
 ) {
+  await requireAdmin()
   const key = decodeURIComponent(params.key)
   const def = PROMPT_DEFAULTS.find(p => p.key === key)
   if (!def) return NextResponse.json({ error: 'Unknown prompt key' }, { status: 404 })

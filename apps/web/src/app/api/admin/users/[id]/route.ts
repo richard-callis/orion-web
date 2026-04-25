@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  await requireAdmin()
   const body = await req.json()
 
   const updateData: Record<string, unknown> = {}
@@ -16,6 +18,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+  await requireAdmin()
   await prisma.user.delete({ where: { id: params.id } })
   return new NextResponse(null, { status: 204 })
 }

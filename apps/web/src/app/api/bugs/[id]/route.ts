@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireServiceAuth } from '@/lib/auth'
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  await requireServiceAuth(req)
   const bug = await prisma.bug.findUnique({
     where: { id: params.id },
     include: { assignedUser: { select: { id: true, name: true, username: true, email: true, role: true } } },
@@ -11,6 +13,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+  await requireServiceAuth(req)
   const body = await req.json()
   const data: Record<string, unknown> = {}
   if (body.title          !== undefined) data.title          = body.title
@@ -27,7 +30,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json(bug)
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  await requireServiceAuth(req)
   await prisma.bug.delete({ where: { id: params.id } })
   return new NextResponse(null, { status: 204 })
 }
