@@ -1,13 +1,22 @@
+/**
+ * POST /api/setup/vault
+ *
+ * Initialises HashiCorp Vault during the ORION setup wizard:
+ *   1. Initialises Vault (Shamir 5-of-3)
+ *   2. Unseals with the threshold keys
+ *   3. Creates a scoped orion-admin policy (root is never persisted)
+ *   4. Mints a 1-year renewable admin token, revokes root
+ *   5. Stores unseal keys + admin token encrypted in DB (no files written to disk)
+ *   6. Generates vault-proxy TLS certs
+ */
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFile, mkdir } from 'fs/promises'
-import { join } from 'path'
 import { prisma } from '@/lib/db'
 import { requireWizardSession } from '@/lib/setup-guard'
 import { generateVaultProxyCerts } from '@/lib/vault-proxy'
+import { encrypt, encryptJson } from '@/lib/encryption'
 
-const VAULT_ADDR      = process.env.VAULT_ADDR ?? 'http://vault:8200'
-const UNSEAL_KEYS_DIR = process.env.VAULT_UNSEAL_KEYS_DIR ?? '/vault/unseal-keys'
-const UNSEAL_SHARES   = 5
+const VAULT_ADDR       = process.env.VAULT_ADDR ?? 'http://vault:8200'
+const UNSEAL_SHARES    = 5
 const UNSEAL_THRESHOLD = 3
 
 // Minimum policy ORION needs: manage AppRole auth, policies, KV mount, and secrets.
@@ -34,7 +43,6 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Check if Vault is reachable and its current state
     const healthRes = await fetch(`${VAULT_ADDR}/v1/sys/health`, {
       signal: AbortSignal.timeout(5000),
     })
@@ -64,16 +72,9 @@ export async function POST(req: NextRequest) {
     }
 
     const { keys, root_token } = await initRes.json()
+    const thresholdKeys: string[] = keys.slice(0, UNSEAL_THRESHOLD)
 
-    const thresholdKeys = keys.slice(0, UNSEAL_THRESHOLD)
-
-    await mkdir(UNSEAL_KEYS_DIR, { recursive: true })
-    await Promise.all(
-      thresholdKeys.map((key: string, i: number) =>
-        writeFile(join(UNSEAL_KEYS_DIR, `unseal-key-${i + 1}`), key, { mode: 0o644 })
-      )
-    )
-
+    // Unseal with threshold keys
     await Promise.all(
       thresholdKeys.map((key: string) =>
         fetch(`${VAULT_ADDR}/v1/sys/unseal`, {
@@ -85,7 +86,7 @@ export async function POST(req: NextRequest) {
       )
     )
 
-    // Create a scoped admin policy — root token is never stored
+    // Create scoped admin policy
     await fetch(`${VAULT_ADDR}/v1/sys/policies/acl/orion-admin`, {
       method: 'PUT',
       headers: { 'X-Vault-Token': root_token, 'Content-Type': 'application/json' },
@@ -114,21 +115,27 @@ export async function POST(req: NextRequest) {
     }
     const { auth: { client_token: adminToken } } = await adminTokenRes.json()
 
-    // Revoke the root token — it is never persisted
+    // Revoke root token — never persisted
     await fetch(`${VAULT_ADDR}/v1/auth/token/revoke-self`, {
       method: 'POST',
       headers: { 'X-Vault-Token': root_token },
       signal: AbortSignal.timeout(5000),
     })
 
+    // Store unseal keys + admin token encrypted in DB — no files written to disk
     await prisma.$transaction([
       prisma.systemSetting.upsert({
-        where: { key: 'vault.adminToken' },
-        update: { value: adminToken },
-        create: { key: 'vault.adminToken', value: adminToken },
+        where:  { key: 'vault.unsealKeys' },
+        update: { value: encryptJson(thresholdKeys) },
+        create: { key: 'vault.unsealKeys', value: encryptJson(thresholdKeys) },
       }),
       prisma.systemSetting.upsert({
-        where: { key: 'vault.initialized' },
+        where:  { key: 'vault.adminToken' },
+        update: { value: encrypt(adminToken) },
+        create: { key: 'vault.adminToken', value: encrypt(adminToken) },
+      }),
+      prisma.systemSetting.upsert({
+        where:  { key: 'vault.initialized' },
         update: { value: true },
         create: { key: 'vault.initialized', value: true },
       }),

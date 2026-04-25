@@ -13,6 +13,8 @@ services:
       DATABASE_URL: postgresql://orion:${POSTGRES_PASSWORD}@postgres:5432/orion
       NEXTAUTH_URL: https://${ORION_DOMAIN:-orion.khalis.corp}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      ORION_ENCRYPTION_KEY: ${ORION_ENCRYPTION_KEY}
+      ORION_UNSEALER_TOKEN: ${ORION_UNSEALER_TOKEN}
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: ${VAULT_TOKEN}
       # Git provider — configured via first-run wizard (stored in DB).
@@ -34,7 +36,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - orion-claude-creds:/claude-creds
       - ./coredns:/etc/coredns-managed
-      - ./vault-unseal-keys:/vault/unseal-keys
       - /root/.ssh:/root/.ssh:ro
       - /root/.kube:/root/.kube:ro
       - /root/.talos:/root/.talos:ro
@@ -169,7 +170,6 @@ services:
   # Sole external entry point for Vault. Vault itself exposes no host port.
   # Provides: mTLS termination, IP allowlisting, rate limiting, circuit breaking,
   # per-connection access logs, and Prometheus metrics on :9901.
-  # Run ./generate-vault-certs.sh once before starting to create the certs.
   vault-proxy:
     image: envoyproxy/envoy:v1.29-latest
     restart: unless-stopped
@@ -198,45 +198,29 @@ services:
       retries: 5
       start_period: 10s
 
-  # ── Vault auto-unsealer ────────────────────────────────────────────────────
-  # Polls every 30s and submits the 3 unseal keys whenever Vault restarts sealed.
-  # Keys are written here by the ORION setup wizard after Vault initialisation.
+  # ── Vault Unsealer Sidecar ─────────────────────────────────────────────────
+  # Fetches unseal keys from ORION's internal API on startup.
+  # Keys live in process memory only — never written to disk.
+  # For existing installs: set VAULT_UNSEAL_KEY_1/2/3 in .env once to trigger
+  # auto-migration to the encrypted DB store, then remove them.
   vault-unsealer:
-    image: curlimages/curl:8.10.1
+    build:
+      context: ./vault-unsealer
+      dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
-      vault:
+      orion:
         condition: service_healthy
-    user: "65534:65534"
     read_only: true
-    volumes:
-      - ./vault-unseal-keys:/vault/unseal-keys:ro
-    command:
-      - /bin/sh
-      - -c
-      - |
-        echo "vault-unsealer: waiting for Vault API..."
-        until curl -s http://vault:8200/v1/sys/health -o /dev/null 2>/dev/null; do
-          sleep 2
-        done
-        echo "vault-unsealer: Vault API is up."
-        while true; do
-          SEALED=$(curl -s http://vault:8200/v1/sys/health | grep -o '"sealed":[a-z]*' | cut -d: -f2)
-          if [ "$$SEALED" = "true" ]; then
-            echo "vault-unsealer: Vault is sealed, unsealing..."
-            for i in 1 2 3; do
-              KEY=$$(cat "/vault/unseal-keys/unseal-key-$${i}")
-              printf '{"key":"%s"}' "$$KEY" | \
-                curl -s -X PUT http://vault:8200/v1/sys/unseal \
-                  -H 'Content-Type: application/json' \
-                  -d @- > /dev/null
-              unset KEY
-            done
-            echo "vault-unsealer: unseal keys submitted."
-          fi
-          sleep 30
-        done
-
+    environment:
+      ORION_URL: http://orion:3000
+      VAULT_URL: http://vault:8200
+      ORION_UNSEALER_TOKEN: ${ORION_UNSEALER_TOKEN}
+      UNSEAL_POLL_INTERVAL: "30"
+      # Migration only — set these once for existing installs, remove after first run
+      VAULT_UNSEAL_KEY_1: ${VAULT_UNSEAL_KEY_1:-}
+      VAULT_UNSEAL_KEY_2: ${VAULT_UNSEAL_KEY_2:-}
+      VAULT_UNSEAL_KEY_3: ${VAULT_UNSEAL_KEY_3:-}
 
   # ── Claude Creds Refresh ───────────────────────────────────────────────────
   claude-refresh:

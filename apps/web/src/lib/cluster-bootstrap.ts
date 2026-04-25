@@ -25,6 +25,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
 import { prisma } from './db'
+import { decrypt } from './encryption'
 import { bootstrapEnvironmentRepo } from './gitops'
 import { getGitProvider } from './git-provider'
 
@@ -551,13 +552,13 @@ export async function bootstrapCluster(
 
     // Prefer the scoped admin token; fall back to root token for instances
     // initialized before the admin-token migration (emit a warning).
-    const vaultToken = vaultAdminSetting?.value ?? vaultRootSetting?.value
+    const rawToken = vaultAdminSetting?.value ?? vaultRootSetting?.value
     if (vaultRootSetting?.value && !vaultAdminSetting?.value) {
       emit({ type: 'log', message: 'WARNING: Vault is using a root token. Re-initialize Vault in ORION settings to rotate to a scoped admin token.' })
     }
 
-    if (vaultInitSetting?.value && vaultToken) {
-      const rootToken  = String(vaultToken)
+    if (vaultInitSetting?.value && rawToken) {
+      const rootToken  = decrypt(String(rawToken))
       const policyName = `orion-cluster-${env.name}`
       const roleName   = `orion-cluster-${env.name}`
 
