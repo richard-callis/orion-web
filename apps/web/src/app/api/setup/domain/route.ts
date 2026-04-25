@@ -62,6 +62,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Management IP is required' }, { status: 400 })
   }
 
+  // SOC2: [H-003] Path traversal risk — domain from user input used directly in file path.
+  // Remediation: Validate against RFC 1035 regex; reject `..`, `/`, null bytes; resolve final path and verify under zonesDir.
   const domain = internalDomain.trim().toLowerCase()
   const ip = managementIp.trim()
 
@@ -73,6 +75,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Write zone file
+    // SOC2: [H-003] No path traversal validation on domain — value could be `../../../etc`
     await writeFile(
       path.join(zonesDir, `${domain}.db`),
       generateZoneFile(domain, ip),

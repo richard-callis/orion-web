@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { getCurrentUser, requireAdmin } from '@/lib/auth'
 
 /**
  * POST /api/tools/generate
@@ -7,9 +8,16 @@ import { prisma } from '@/lib/db'
  * Returns { name, description, command, inputSchema, execType }
  */
 export async function POST(req: NextRequest) {
+  // SOC2: [CR-005] No authentication — any unauthenticated user can generate tools.
+  // Remediation: Add requireAuth() or requireAdmin(); validate description length/characters.
+  const user = await getCurrentUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const body = await req.json()
   const { description, environmentType } = body as { description?: string; environmentType?: string }
   if (!description?.trim()) return NextResponse.json({ error: 'description is required' }, { status: 400 })
+  // SOC2: [CR-005] No input length/character limit on description — attacker can craft injection prompt.
+  if (description.length > 500) return NextResponse.json({ error: 'Description too long' }, { status: 400 })
 
   // Find an Ollama model to use
   const extModel = await prisma.externalModel.findFirst({
@@ -90,6 +98,10 @@ Rules:
     }
     const inputSchema = { type: 'object', properties, required }
 
+    // SOC2: [CR-005] LLM-generated command stored directly in DB without validation.
+    // An attacker can craft a description that makes the LLM generate a malicious command.
+    // This tool is then executed by the gateway via sh -c on the next heartbeat (30s).
+    // Remediation: Validate command against allowlist per toolset; require human approval.
     const execConfig: Record<string, unknown> = { command: parsed.command }
     if (parsed.packages?.length) execConfig.packages = parsed.packages
 

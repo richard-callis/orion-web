@@ -9,6 +9,8 @@ const exec = promisify(execFile)
  * Uses `apk add` (Alpine) — falls back to a clear error if unavailable.
  */
 async function ensurePackages(packages: string[]): Promise<void> {
+  // SOC2: [H-006] Packages from tool definitions are not validated — potential arbitrary package install.
+  // Remediation: Validate package names with regex, enforce allowlist per toolset.
   for (const pkg of packages) {
     // Check if the binary is already available
     const binaryName = pkg.split('-').pop() ?? pkg  // e.g. "nmap-ncat" → "ncat", "nmap" → "nmap"
@@ -18,6 +20,7 @@ async function ensurePackages(packages: string[]): Promise<void> {
     } catch {
       console.log(`[tool-runner] Package '${pkg}' not found — attempting auto-install via apk...`)
       try {
+        // SOC2: [H-006] pkg interpolated into shell command — no validation of package name format.
         const { stdout, stderr } = await exec('sh', ['-c', `apk add --no-cache ${pkg} 2>&1`], { timeout: 120_000 })
         console.log(`[tool-runner] Installed '${pkg}':`, (stdout || stderr).trim())
       } catch (installErr) {
@@ -44,6 +47,8 @@ export async function runTool(tool: McpToolConfig, args: Record<string, unknown>
     case 'shell': {
       const command = tool.execConfig?.command as string | undefined
       if (!command) throw new Error(`Tool ${tool.name} has no execConfig.command`)
+      // SOC2: [CR-005] LLM-generated command stored in DB and executed here.
+      // Remediation: Validate commands against allowlist per toolset; require human approval.
 
       // Ensure required packages are installed before running
       const packages = tool.execConfig?.packages as string[] | undefined
@@ -61,11 +66,13 @@ export async function runTool(tool: McpToolConfig, args: Record<string, unknown>
           if (requiredParams.includes(k)) throw new Error(`Missing required argument: ${k}`)
           return '' // optional param not provided — substitute empty string
         }
-        // Basic safety: reject args containing shell metacharacters
+        // SOC2: [H-005] Incomplete shell injection filter — blocks [;&|`$<>\\] but NOT ||, &&, $(), {}
+        // Remediation: Use shlex.quote equivalent or pass args as array to execFile.
         const str = String(val)
         if (/[;&|`$<>\\]/.test(str)) throw new Error(`Argument '${k}' contains disallowed characters`)
         return str
       })
+      // SOC2: [H-005] Full interpolated command passed to sh -c — partial injection bypass possible.
       const { stdout, stderr } = await exec('sh', ['-c', interpolated], { timeout: 30_000 })
       return stdout || stderr
     }
@@ -73,6 +80,9 @@ export async function runTool(tool: McpToolConfig, args: Record<string, unknown>
     case 'http': {
       const url = tool.execConfig?.url as string | undefined
       if (!url) throw new Error(`Tool ${tool.name} has no execConfig.url`)
+      // SOC2: [CR-004] No URL validation — gateway can make requests to ANY URL including internal services.
+      // Remediation: Block private IPs (169.254.169.254, 10.0.0.0/8, etc.), validate scheme (https only),
+      // implement domain allowlist per tool, limit request body size.
       // Substitute {arg_name} placeholders in the URL
       const interpolated = url.replace(/\{(\w+)\}/g, (_, k) => encodeURIComponent(String(args[k] ?? '')))
       const method = (tool.execConfig?.method as string | undefined) ?? 'GET'

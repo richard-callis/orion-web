@@ -2,9 +2,18 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { Prisma } from '@prisma/client'
 import { getDefaultTools } from '@/lib/default-tools'
+import { getCurrentUser, requireAdmin } from '@/lib/auth'
+
+// SOC2: [CR-002] No authentication on environments CRUD — unauthenticated actors can read/create environments.
+// Remediation: Add requireAuth() to GET (list own environments); requireAdmin() to POST (create env).
 
 export async function GET() {
+  // SOC2: [CR-002] No auth — any unauthenticated user can list all environments.
+  const user = await getCurrentUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const environments = await prisma.environment.findMany({
+    // TODO: Implement proper user-environment ownership. For now, return all environments to authenticated users.
     orderBy: { name: 'asc' },
     include: {
       tools:  { orderBy: { name: 'asc' } },
@@ -16,6 +25,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  // SOC2: [CR-002] No auth on environment creation — any unauthenticated user can create environments.
+  const user = await requireAdmin()
+
   const body = await req.json()
   if (!body.name?.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 })
 

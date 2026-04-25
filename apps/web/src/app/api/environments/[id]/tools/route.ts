@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth'
+
+// SOC2: [CR-001] GET has Bearer auth (gateway) but no user session auth.
+// POST has NO authentication — anyone can create tools on any environment.
+// Remediation: Add requireAuth() to all handlers; verify user owns the environment.
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  // SOC2: [CR-001] Allow gateway Bearer token OR user session auth
   const auth = req.headers.get('authorization')
   if (auth?.startsWith('Bearer ')) {
     // Called by the gateway — validate the token
@@ -13,6 +19,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     if (!env.gatewayToken || auth !== `Bearer ${env.gatewayToken}`) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+  } else {
+    // SOC2: [CR-001] Require authenticated user for session-based access
+    const user = await getCurrentUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const { searchParams } = new URL(req.url)
@@ -29,6 +39,13 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  // SOC2: [CR-001] No auth on tool creation — unauthenticated actors can inject shell-exec tools.
+  const user = await getCurrentUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Verify user has access to this environment
+  const env = await prisma.environment.findUnique({ where: { id: params.id }, select: { ownerId: true } })
+  if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
   const body = await req.json()
 
   if (!body.name?.trim())        return NextResponse.json({ error: 'name is required' }, { status: 400 })

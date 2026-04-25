@@ -17,18 +17,20 @@ export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET,
   // Use plain (non-__Secure-prefixed) cookie names so the app works over both HTTP and HTTPS.
   // Consistent names are set here AND in the middleware getToken call so they always agree.
+  // SOC2: [M-002] Cookies have secure: false — transmitted over HTTP, vulnerable to MITM.
+  // Remediation: Set secure: true when behind TLS (prod/reverse-proxy). Check X-Forwarded-Proto.
   cookies: {
     sessionToken: {
       name: 'next-auth.session-token',
-      options: { httpOnly: true, sameSite: 'lax' as const, path: '/', secure: false },
+      options: { httpOnly: true, sameSite: 'lax' as const, path: '/', secure: false }, // SOC2: [M-002]
     },
     callbackUrl: {
       name: 'next-auth.callback-url',
-      options: { sameSite: 'lax' as const, path: '/', secure: false },
+      options: { sameSite: 'lax' as const, path: '/', secure: false }, // SOC2: [M-002]
     },
     csrfToken: {
       name: 'next-auth.csrf-token',
-      options: { httpOnly: true, sameSite: 'lax' as const, path: '/', secure: false },
+      options: { httpOnly: true, sameSite: 'lax' as const, path: '/', secure: false }, // SOC2: [M-002]
     },
   },
   pages: {

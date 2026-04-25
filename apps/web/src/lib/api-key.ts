@@ -51,6 +51,8 @@ const sql = {
   findByHash: `SELECT "id", "hashPrefix", name, active, "expiresAt", "lastUsedAt", "createdAt" FROM api_keys WHERE "hashPrefix" = $1 AND hash = $2`,
   listByUser: `SELECT "id", "hashPrefix", name, active, "expiresAt", "lastUsedAt", "createdAt" FROM api_keys WHERE "userId" = $1 ORDER BY "createdAt" DESC`,
   verifyByHash: `SELECT "id", "userId", "expiresAt", "lastUsedAt", active FROM api_keys WHERE "hashPrefix" = $1 AND hash = $2`,
+  // SOC2: [M-001] SQL injection via string concatenation + naive quote escaping.
+  // Remediation: Use parameterized $executeRawUnsafe with positional params like the INSERT below.
   updateLastUsed: (h: string) => `UPDATE api_keys SET "lastUsedAt" = now() WHERE hash = '${h.replace(/'/g, "''")}'`,
   deleteByKey: (keyId: string, userId: string) =>
     `DELETE FROM api_keys WHERE id = '${keyId.replace(/'/g, "''")}' AND "userId" = '${userId.replace(/'/g, "''")}'`,
