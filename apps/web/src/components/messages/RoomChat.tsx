@@ -2,8 +2,22 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Users, Bot, User as UserIcon,
-  Hash, Send, X, Loader2, Plus, LogOut,
+  Hash, Send, X, Loader2, Plus, LogOut, AtSign,
 } from 'lucide-react'
+
+/** Render message content with @mention highlighting */
+function MessageContent({ content }: { content: string }) {
+  const parts = content.split(/(@[\w-]+)/g)
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.startsWith('@')
+          ? <span key={i} className="text-accent font-medium">{part}</span>
+          : <span key={i}>{part}</span>
+      )}
+    </>
+  )
+}
 
 interface RoomMember {
   userId: string | null
@@ -69,7 +83,42 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   const [isInviting, setIsInviting] = useState<string | null>(null)
   const [inviteError, setInviteError] = useState<string | null>(null)
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
+  const [mentionSearch, setMentionSearch] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Derive all mentionable members from loaded room data
+  const mentionableMembers = (room?.members ?? []).map(m => ({
+    id: m.agent?.id ?? m.user?.id ?? '',
+    name: m.agent?.name ?? m.user?.name ?? m.user?.username ?? '',
+    isAgent: !!m.agentId,
+  })).filter(m => m.name)
+
+  const mentionOptions = mentionSearch !== null
+    ? mentionableMembers.filter(m => m.name.toLowerCase().includes(mentionSearch.toLowerCase()))
+    : []
+
+  const handleMessageChange = (value: string) => {
+    setMessage(value)
+    // Detect active @mention: find the last @ with no space after it
+    const lastAt = value.lastIndexOf('@')
+    if (lastAt !== -1) {
+      const partial = value.slice(lastAt + 1)
+      if (!partial.includes(' ') && !partial.includes('\n')) {
+        setMentionSearch(partial)
+        return
+      }
+    }
+    setMentionSearch(null)
+  }
+
+  const insertMention = (name: string) => {
+    const lastAt = message.lastIndexOf('@')
+    const newMsg = message.slice(0, lastAt) + `@${name} `
+    setMessage(newMsg)
+    setMentionSearch(null)
+    inputRef.current?.focus()
+  }
 
   const loadRoom = useCallback(async () => {
     try {
@@ -98,6 +147,9 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setMessage('')
       await loadRoom()
+      // Poll for agent replies (they're async — typically arrive within 2–5s)
+      setTimeout(() => loadRoom(), 3000)
+      setTimeout(() => loadRoom(), 7000)
     } catch { /* ignore */ }
     setSending(false)
   }
@@ -223,7 +275,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
                       <span className="text-[10px] font-medium text-text-secondary">{msg.sender?.name}</span>
                       <span className="text-[9px] text-text-muted">{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
-                    <p className="text-xs leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                    <p className="text-xs leading-relaxed whitespace-pre-wrap"><MessageContent content={msg.content} /></p>
                   </div>
                 )}
               </div>
@@ -234,10 +286,38 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       </div>
 
       {/* Input */}
-      <div className="px-4 py-3 border-t border-border-subtle flex-shrink-0">
+      <div className="px-4 py-3 border-t border-border-subtle flex-shrink-0 relative">
+        {/* @mention dropdown */}
+        {mentionSearch !== null && mentionOptions.length > 0 && (
+          <div className="absolute bottom-full left-4 right-4 mb-1 bg-bg-sidebar border border-border-subtle rounded-lg shadow-lg overflow-hidden z-10">
+            {mentionOptions.map(m => (
+              <button
+                key={m.id}
+                onMouseDown={e => { e.preventDefault(); insertMention(m.name) }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-text-secondary hover:bg-bg-raised hover:text-text-primary transition-colors"
+              >
+                {m.isAgent ? <Bot size={11} className="text-accent flex-shrink-0" /> : <UserIcon size={11} className="text-text-muted flex-shrink-0" />}
+                <span>@{m.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex gap-2">
-          <input value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }} placeholder="Type a message..." className="flex-1 px-3 py-2 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent" />
-          <button onClick={() => { if (message.trim()) handleSendMessage(); }} disabled={!message.trim() || sending} className="px-4 py-2 text-xs rounded bg-accent/15 text-accent hover:bg-accent/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 flex-shrink-0"><Send size={14} /><span className="hidden sm:inline">Send</span></button>
+          <div className="flex-1 flex items-center relative">
+            <AtSign size={13} className="absolute left-2.5 text-text-muted pointer-events-none" />
+            <input
+              ref={inputRef}
+              value={message}
+              onChange={e => handleMessageChange(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Escape') { setMentionSearch(null); return }
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage() }
+              }}
+              placeholder="Type a message… use @ to mention"
+              className="w-full pl-8 pr-3 py-2 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+            />
+          </div>
+          <button onClick={() => { if (message.trim()) handleSendMessage() }} disabled={!message.trim() || sending} className="px-4 py-2 text-xs rounded bg-accent/15 text-accent hover:bg-accent/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 flex-shrink-0"><Send size={14} /><span className="hidden sm:inline">Send</span></button>
         </div>
       </div>
 
