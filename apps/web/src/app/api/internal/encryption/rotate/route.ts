@@ -6,7 +6,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { encrypt, decrypt } from '@/lib/encryption'
+import { encrypt, decrypt, encryptWithKey } from '@/lib/encryption'
 
 export async function POST(req: NextRequest) {
   const auth = req.headers.get('authorization')
@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
     if (env.gatewayToken) {
       try {
         const plaintext = decrypt(env.gatewayToken)
-        updates.gatewayToken = encrypt(plaintext)
+        updates.gatewayToken = encryptWithKey(plaintext, newKeyBase64)
         migrated++
       } catch (e) {
         errors.push({ model: 'Environment', id: env.id, field: 'gatewayToken', error: String(e) })
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     if (env.kubeconfig) {
       try {
         const plaintext = decrypt(env.kubeconfig)
-        updates.kubeconfig = encrypt(plaintext)
+        updates.kubeconfig = encryptWithKey(plaintext, newKeyBase64)
         migrated++
       } catch (e) {
         errors.push({ model: 'Environment', id: env.id, field: 'kubeconfig', error: String(e) })
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
     if (ext.apiKey) {
       try {
         const plaintext = decrypt(ext.apiKey)
-        const encrypted = encrypt(plaintext)
+        const encrypted = encryptWithKey(plaintext, newKeyBase64)
         await prisma.externalModel.update({ where: { id: ext.id }, data: { apiKey: encrypted } })
         migrated++
       } catch (e) {
