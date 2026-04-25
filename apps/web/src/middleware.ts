@@ -17,10 +17,11 @@ const PUBLIC_PATHS = [
 // API routes that may use x-api-key header — pass through, route handles auth
 const API_KEY_PATHS = ['/api/api-keys']
 
-// API routes that gateways call with Bearer tokens — middleware passes through,
+// API routes that use Bearer token auth — middleware passes through,
 // route handlers validate the token themselves
 const BEARER_PATHS = [
   '/api/environments',
+  '/api/internal',     // internal service-to-service routes (e.g. vault-unsealer)
 ]
 
 export async function middleware(req: NextRequest) {
