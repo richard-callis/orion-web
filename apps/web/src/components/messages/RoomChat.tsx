@@ -86,6 +86,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
   const [mentionSearch, setMentionSearch] = useState<string | null>(null)
   const [messageLimit, setMessageLimit] = useState(100)
+  const [typingAgents, setTypingAgents] = useState<string[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -142,6 +143,25 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [room?.messages?.length])
+
+  // Poll typing state and reload messages while agents are active
+  useEffect(() => {
+    let active = true
+    const poll = async () => {
+      if (!active) return
+      try {
+        const res = await fetch(`/api/chatrooms/${roomId}/typing`)
+        if (res.ok) {
+          const data = await res.json() as { typing: string[] }
+          setTypingAgents(data.typing)
+          // Reload messages while any agent is typing so replies appear promptly
+          if (data.typing.length > 0) loadRoom()
+        }
+      } catch { /* ignore */ }
+    }
+    const id = setInterval(poll, 2000)
+    return () => { active = false; clearInterval(id) }
+  }, [roomId, loadRoom])
 
   const handleSendMessage = async () => {
     if (!message.trim() || !room || sending) return
@@ -299,6 +319,22 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
           </>
         )}
       </div>
+
+      {/* Typing indicator */}
+      {typingAgents.length > 0 && (
+        <div className="px-4 py-1 flex items-center gap-1.5 flex-shrink-0">
+          <span className="flex gap-0.5 items-end">
+            <span className="w-1 h-1 rounded-full bg-accent animate-bounce" style={{ animationDelay: '0ms' }} />
+            <span className="w-1 h-1 rounded-full bg-accent animate-bounce" style={{ animationDelay: '150ms' }} />
+            <span className="w-1 h-1 rounded-full bg-accent animate-bounce" style={{ animationDelay: '300ms' }} />
+          </span>
+          <span className="text-[10px] text-text-muted italic">
+            {typingAgents.length === 1
+              ? `${typingAgents[0]} is typing…`
+              : `${typingAgents.slice(0, -1).join(', ')} and ${typingAgents[typingAgents.length - 1]} are typing…`}
+          </span>
+        </div>
+      )}
 
       {/* Input */}
       <div className="px-4 py-3 border-t border-border-subtle flex-shrink-0 relative">
