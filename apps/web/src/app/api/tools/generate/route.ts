@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
+import { sanitizeError } from '@/lib/errors'
 
 // Allowed shell commands per environment type (allowlist)
 const ALLOWED_COMMAND_PREFIXES = {
@@ -242,7 +243,6 @@ Rules:
       execConfig,
     })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: `Generation failed: ${msg}` }, { status: 500 })
+    return NextResponse.json({ error: `Generation failed: ${sanitizeError(err)}` }, { status: 500 })
   }
 }

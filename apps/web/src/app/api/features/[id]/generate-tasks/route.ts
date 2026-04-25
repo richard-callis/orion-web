@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { sanitizeError } from '@/lib/errors'
 import fs from 'fs'
 import path from 'path'
 
@@ -69,7 +70,7 @@ Return ONLY a valid JSON array. No markdown, no explanation, just the JSON:
       }
     }
   } catch (err) {
-    return NextResponse.json({ error: `Claude error: ${err instanceof Error ? err.message : String(err)}` }, { status: 500 })
+    return NextResponse.json({ error: `Claude error: ${sanitizeError(err)}` }, { status: 500 })
   }
 
   // Extract JSON array from response
