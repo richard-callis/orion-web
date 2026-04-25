@@ -136,6 +136,7 @@ const SERVICE_TOKEN_PREFIXES = [
 
 // SOC2: [H-002, L-002] Security headers middleware
 function addSecurityHeaders(res: NextResponse): NextResponse {
+  // CSP: style-src 'unsafe-inline' required because React/Next.js uses inline styles
   res.headers.set('Content-Security-Policy',
     "default-src 'self'; " +
     "script-src 'self' 'strict-dynamic'; " +
