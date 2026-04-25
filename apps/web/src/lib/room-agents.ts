@@ -184,29 +184,30 @@ export async function triggerRoomAgentReplies(
 
   if (triggeredAgents.length === 0) return
 
-  // Build history transcript (last 20 messages, excluding the trigger itself)
-  const recentMessages = await prisma.chatMessage.findMany({
-    where: { roomId },
-    orderBy: { createdAt: 'desc' },
-    take: 21,
-    include: {
-      agent: { select: { name: true } },
-      user:  { select: { username: true, name: true } },
-    },
-  })
-  recentMessages.reverse()
-
-  const historyText = recentMessages
-    .slice(0, -1)                           // drop the trigger message
-    .filter(m => m.senderType !== 'system')
-    .map(m => {
-      const name = m.agent?.name ?? m.user?.name ?? m.user?.username ?? 'User'
-      return `${name}: ${m.content}`
-    })
-    .join('\n')
-
   for (const agent of triggeredAgents) {
     try {
+      // Re-fetch history each iteration so each agent sees the previous agent's reply
+      const recentMessages = await prisma.chatMessage.findMany({
+        where: { roomId },
+        orderBy: { createdAt: 'desc' },
+        take: 21,
+        include: {
+          agent: { select: { name: true } },
+          user:  { select: { username: true, name: true } },
+        },
+      })
+      recentMessages.reverse()
+
+      // The last message is the trigger — everything before it is history
+      const historyText = recentMessages
+        .slice(0, -1)
+        .filter(m => m.senderType !== 'system')
+        .map(m => {
+          const name = m.agent?.name ?? m.user?.name ?? m.user?.username ?? 'User'
+          return `${name}: ${m.content}`
+        })
+        .join('\n')
+
       const meta          = (agent.metadata ?? {}) as Record<string, unknown>
       const contextConfig = (meta.contextConfig ?? {}) as Record<string, unknown>
       const rawPrompt     = meta.systemPrompt as string | undefined
