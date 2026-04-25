@@ -17,6 +17,7 @@
 import fs from 'fs'
 import path from 'path'
 import { prisma } from './db'
+import { setTyping, clearTyping } from './typing-state'
 
 // ── Mention parsing ───────────────────────────────────────────────────────────
 
@@ -308,28 +309,33 @@ export async function triggerRoomAgentReplies(
 
       let reply: string | null = null
 
-      if (llm.startsWith('ext:')) {
-        const extId  = llm.slice('ext:'.length)
-        const extModel = await prisma.externalModel.findUnique({ where: { id: extId } })
-        if (!extModel) {
-          console.error(`[room-agents] ext model ${extId} not found`)
-          continue
-        }
-        const baseUrl = extModel.baseUrl ?? 'http://localhost:11434'
-        if (extModel.provider === 'ollama') {
-          reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl)
+      setTyping(roomId, agent.name)
+      try {
+        if (llm.startsWith('ext:')) {
+          const extId  = llm.slice('ext:'.length)
+          const extModel = await prisma.externalModel.findUnique({ where: { id: extId } })
+          if (!extModel) {
+            console.error(`[room-agents] ext model ${extId} not found`)
+            continue
+          }
+          const baseUrl = extModel.baseUrl ?? 'http://localhost:11434'
+          if (extModel.provider === 'ollama') {
+            reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl)
+          } else {
+            // openai / custom — OpenAI-compatible
+            reply = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey)
+          }
+        } else if (llm.startsWith('ollama:')) {
+          const model   = llm.slice('ollama:'.length)
+          const baseUrl = await resolveOllamaBaseUrl()
+          reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl)
         } else {
-          // openai / custom — OpenAI-compatible
-          reply = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey)
+          // claude / claude:<model>
+          const claudeModel = llm.startsWith('claude:') ? llm.slice('claude:'.length) : undefined
+          reply = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel)
         }
-      } else if (llm.startsWith('ollama:')) {
-        const model   = llm.slice('ollama:'.length)
-        const baseUrl = await resolveOllamaBaseUrl()
-        reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl)
-      } else {
-        // claude / claude:<model>
-        const claudeModel = llm.startsWith('claude:') ? llm.slice('claude:'.length) : undefined
-        reply = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel)
+      } finally {
+        clearTyping(roomId, agent.name)
       }
 
       if (!reply) {
