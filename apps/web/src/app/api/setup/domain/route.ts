@@ -7,6 +7,28 @@ import { requireWizardSession } from '@/lib/setup-guard'
 
 const COREDNS_DIR = process.env.COREDNS_DIR ?? '/etc/coredns-managed'
 
+// RFC 1035 domain name validation: labels separated by dots, each label
+// 1-63 chars of [a-zA-Z0-9], labels cannot start/end with hyphen.
+// Root "." is allowed.
+const DOMAIN_RE = /^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$|^\.?$/
+
+function validateDomain(domain: string): string {
+  if (!DOMAIN_RE.test(domain)) {
+    throw new Error(
+      'Invalid domain name — must be a valid RFC 1035 domain (e.g. "khalis.corp")'
+    )
+  }
+  return domain
+}
+
+/** Resolve the final path and verify it is still under the intended base. */
+function assertPathSafe(finalPath: string, baseDir: string): void {
+  const resolved = path.resolve(baseDir, finalPath)
+  if (!resolved.startsWith(path.resolve(baseDir))) {
+    throw new Error('Path traversal detected — domain must not contain ".." or absolute paths')
+  }
+}
+
 function generateZoneFile(domain: string, managementIp: string): string {
   const serial = new Date().toISOString().replace(/\D/g, '').slice(0, 10)
   return `; ${domain} zone file — managed by ORION, do not edit manually
@@ -61,9 +83,24 @@ export async function POST(req: NextRequest) {
   if (!managementIp?.trim()) {
     return NextResponse.json({ error: 'Management IP is required' }, { status: 400 })
   }
+  if (publicDomain?.trim() && !DOMAIN_RE.test(publicDomain.trim().toLowerCase())) {
+    return NextResponse.json(
+      { error: 'Public domain must be a valid RFC 1035 domain (e.g. "khalisio.com")' },
+      { status: 400 }
+    )
+  }
 
   const domain = internalDomain.trim().toLowerCase()
   const ip = managementIp.trim()
+
+  // Validate domain name (RFC 1035) — prevents path traversal at source
+  const validated = validateDomain(domain)
+  if (validated !== domain) {
+    return NextResponse.json(
+      { error: 'Invalid domain name — must be a valid RFC 1035 domain (e.g. "khalis.corp")' },
+      { status: 400 }
+    )
+  }
 
   try {
     // Ensure zones directory exists
@@ -72,9 +109,13 @@ export async function POST(req: NextRequest) {
       await mkdir(zonesDir, { recursive: true })
     }
 
+    // Defense in depth: verify the resolved path is still under COREDNS_DIR
+    const zoneFilePath = path.resolve(zonesDir, `${domain}.db`)
+    assertPathSafe(zoneFilePath, COREDNS_DIR)
+
     // Write zone file
     await writeFile(
-      path.join(zonesDir, `${domain}.db`),
+      zoneFilePath,
       generateZoneFile(domain, ip),
       'utf8'
     )
