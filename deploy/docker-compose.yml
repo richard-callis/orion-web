@@ -34,9 +34,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - orion-claude-creds:/claude-creds
       - ./coredns:/etc/coredns-managed
+      - ./vault-unseal-keys:/vault/unseal-keys
       - /root/.ssh:/root/.ssh:ro
       - /root/.kube:/root/.kube:ro
       - /root/.talos:/root/.talos:ro
+      - ./vault-proxy/certs:/vault-proxy-certs:ro
     ports:
       - "3000:3000"
     healthcheck:
@@ -123,9 +125,8 @@ services:
 
   # ── Vault ──────────────────────────────────────────────────────────────────
   vault:
-    image: hashicorp/vault:latest
+    image: hashicorp/vault:1.17
     restart: unless-stopped
-    # Override the default "server -dev" CMD — use production mode with config only
     command: server
     depends_on:
       vault-init:
@@ -133,12 +134,14 @@ services:
     cap_add:
       - IPC_LOCK
     environment:
+      SKIP_SETCAP: "true"
+      SKIP_CHOWN: "true"
       VAULT_LOCAL_CONFIG: |
         ui = true
         disable_mlock = true
         storage "raft" {
           path = "/vault/data"
-          node_id = "mgmt-rpi"
+          node_id = "mgmt-node"
         }
         listener "tcp" {
           address = "0.0.0.0:8200"
@@ -148,6 +151,7 @@ services:
         cluster_addr = "http://vault:8201"
     volumes:
       - vault-data:/vault/data
+      - ./vault-proxy/certs:/vault-proxy-certs:ro
     healthcheck:
       # exit 0 = active, exit 1 = uninitialized, exit 2 = sealed — all mean vault is running
       test: ["CMD-SHELL", "vault status -address=http://127.0.0.1:8200; [ $? -le 2 ]"]
@@ -160,6 +164,78 @@ services:
       traefik.http.routers.vault.rule: "Host(`${VAULT_DOMAIN:-vault.khalis.corp}`)"
       traefik.http.routers.vault.entrypoints: "websecure"
       traefik.http.services.vault.loadbalancer.server.port: "8200"
+
+  # ── Vault proxy (Envoy) ───────────────────────────────────────────────────
+  # Sole external entry point for Vault. Vault itself exposes no host port.
+  # Provides: mTLS termination, IP allowlisting, rate limiting, circuit breaking,
+  # per-connection access logs, and Prometheus metrics on :9901.
+  # Run ./generate-vault-certs.sh once before starting to create the certs.
+  vault-proxy:
+    image: envoyproxy/envoy:v1.29-latest
+    restart: unless-stopped
+    depends_on:
+      vault:
+        condition: service_healthy
+    ports:
+      - "${MANAGEMENT_IP:-10.2.2.9}:8200:8200"
+      - "127.0.0.1:9901:9901"
+    volumes:
+      - ./vault-proxy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./vault-proxy/certs:/certs:ro
+    # Wait for ORION wizard to generate certs before starting Envoy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "vault-proxy: waiting for TLS certs from ORION..."
+        until [ -f /certs/tls.crt ] && [ -f /certs/ca.crt ]; do sleep 3; done
+        echo "vault-proxy: certs ready, starting Envoy"
+        exec /usr/local/bin/envoy -c /etc/envoy/envoy.yaml
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9901/ready 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Vault auto-unsealer ────────────────────────────────────────────────────
+  # Polls every 30s and submits the 3 unseal keys whenever Vault restarts sealed.
+  # Keys are written here by the ORION setup wizard after Vault initialisation.
+  vault-unsealer:
+    image: curlimages/curl:8.10.1
+    restart: unless-stopped
+    depends_on:
+      vault:
+        condition: service_healthy
+    user: "65534:65534"
+    read_only: true
+    volumes:
+      - ./vault-unseal-keys:/vault/unseal-keys:ro
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "vault-unsealer: waiting for Vault API..."
+        until curl -s http://vault:8200/v1/sys/health -o /dev/null 2>/dev/null; do
+          sleep 2
+        done
+        echo "vault-unsealer: Vault API is up."
+        while true; do
+          SEALED=$(curl -s http://vault:8200/v1/sys/health | grep -o '"sealed":[a-z]*' | cut -d: -f2)
+          if [ "$$SEALED" = "true" ]; then
+            echo "vault-unsealer: Vault is sealed, unsealing..."
+            for i in 1 2 3; do
+              KEY=$$(cat "/vault/unseal-keys/unseal-key-$${i}")
+              printf '{"key":"%s"}' "$$KEY" | \
+                curl -s -X PUT http://vault:8200/v1/sys/unseal \
+                  -H 'Content-Type: application/json' \
+                  -d @- > /dev/null
+              unset KEY
+            done
+            echo "vault-unsealer: unseal keys submitted."
+          fi
+          sleep 30
+        done
 
 
   # ── Claude Creds Refresh ───────────────────────────────────────────────────

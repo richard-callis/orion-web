@@ -1,0 +1,84 @@
+static_resources:
+
+  listeners:
+  - name: vault_listener
+    address:
+      socket_address: { address: 0.0.0.0, port_value: 8200 }
+    filter_chains:
+    - transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+          require_client_certificate: true
+          common_tls_context:
+            tls_certificates:
+            - certificate_chain: { filename: /certs/tls.crt }
+              private_key: { filename: /certs/tls.key }
+            validation_context:
+              trusted_ca: { filename: /certs/ca.crt }
+      filters:
+      # 1. Reject anything not from the LAN before spending any resources on it
+      - name: envoy.filters.network.rbac
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.rbac.v3.RBAC
+          stat_prefix: vault_rbac
+          rules:
+            action: ALLOW
+            policies:
+              allow-lan:
+                permissions:
+                - any: true
+                principals:
+                - remote_ip:
+                    address_prefix: 10.2.2.0
+                    prefix_len: 24
+      # 2. Rate-limit: max 100 new connections/s from any single source
+      - name: envoy.filters.network.local_ratelimit
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.local_ratelimit.v3.LocalRateLimit
+          stat_prefix: vault_rate_limit
+          token_bucket:
+            max_tokens: 100
+            tokens_per_fill: 100
+            fill_interval: 1s
+      # 3. Forward to Vault with access logging
+      - name: envoy.filters.network.tcp_proxy
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+          stat_prefix: vault_proxy
+          cluster: vault_cluster
+          access_log:
+          - name: envoy.access_loggers.stdout
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+              log_format:
+                text_format_source:
+                  inline_string: "[%START_TIME%] vault-proxy %DOWNSTREAM_REMOTE_ADDRESS% rx=%BYTES_RECEIVED%B tx=%BYTES_SENT%B duration=%DURATION%ms\n"
+
+  clusters:
+  - name: vault_cluster
+    connect_timeout: 5s
+    type: STRICT_DNS
+    circuit_breakers:
+      thresholds:
+      - priority: DEFAULT
+        max_connections: 100
+        max_pending_requests: 50
+        max_requests: 200
+        max_retries: 3
+    load_assignment:
+      cluster_name: vault_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address: { address: vault, port_value: 8200 }
+
+# Metrics + health on localhost only — scrape via `docker exec` or expose selectively
+admin:
+  address:
+    socket_address: { address: 0.0.0.0, port_value: 9901 }
+  access_log:
+  - name: envoy.access_loggers.stdout
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
