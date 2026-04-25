@@ -251,17 +251,20 @@ model TaskEvent {
 }
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String
-  action    String
-  target    String
-  detail    Json?
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  userId     String
+  action     String
+  target     String
+  detail     Json?
+  ipAddress  String?  // SOC2: [M-005] Source IP for audit trail
+  userAgent  String?  // SOC2: [M-005] Client user-agent for audit trail
+  createdAt  DateTime @default(now())
 
   // SOC2: [M-005, L-001] Indexes for user-specific queries and date range filters
   @@index([userId])
   @@index([createdAt])
   @@index([userId, createdAt])
+  @@index([ipAddress])
 }
 
 model SavedView {
