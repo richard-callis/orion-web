@@ -333,7 +333,7 @@ stringData:
   roleId: "${roleId}"
   secretId: "${secretId}"
 ${clientCertSecret}---
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
   name: orion-vault
