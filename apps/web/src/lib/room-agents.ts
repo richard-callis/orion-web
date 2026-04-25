@@ -191,16 +191,27 @@ async function resolveOllamaBaseUrl(): Promise<string> {
 // ── Main export ───────────────────────────────────────────────────────────────
 
 /**
+ * Max rounds of agent-to-agent chaining after the initial human trigger.
+ * depth=0 → human triggered, depth=1..MAX → agent reply triggered by prior agent reply.
+ */
+const MAX_AGENT_CHAIN_DEPTH = 3
+
+/**
  * Trigger agent replies for a chat room message (fire-and-forget from POST handler).
  *
  * Routing:
  * - @mention present → only mentioned agents reply
  * - No @mention      → all agent members reply
+ *
+ * After each round, if any saved reply @mentions another agent the chain recurses
+ * (up to MAX_AGENT_CHAIN_DEPTH) so agents can respond to each other naturally.
  */
 export async function triggerRoomAgentReplies(
   roomId: string,
   triggerContent: string,
+  depth = 0,
 ): Promise<void> {
+  if (depth >= MAX_AGENT_CHAIN_DEPTH) return
   const room = await prisma.chatRoom.findUnique({
     where: { id: roomId },
     include: {
@@ -220,6 +231,8 @@ export async function triggerRoomAgentReplies(
     : agentMembers
 
   if (triggeredAgents.length === 0) return
+
+  let lastSavedReply: string | null = null
 
   for (const agent of triggeredAgents) {
     try {
@@ -301,8 +314,15 @@ export async function triggerRoomAgentReplies(
       })
       await prisma.chatRoom.update({ where: { id: roomId }, data: { updatedAt: new Date() } })
       console.log(`[room-agents] ${agent.name} replied (${reply.length} chars)`)
+      lastSavedReply = reply
     } catch (e) {
       console.error(`[room-agents] ${agent.name} failed: ${e instanceof Error ? e.message : String(e)}`)
     }
+  }
+
+  // Chain: if the last reply @mentions another agent, trigger the next round
+  if (lastSavedReply && parseMentions(lastSavedReply).length > 0) {
+    console.log(`[room-agents] depth=${depth} — chaining reply with @mentions`)
+    await triggerRoomAgentReplies(roomId, lastSavedReply, depth + 1)
   }
 }
