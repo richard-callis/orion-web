@@ -24,16 +24,18 @@ export async function POST(req: NextRequest) {
 
   const passwordHash = await hash(password, 12)
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- passwordChangedAt added in schema, awaiting migration
   await prisma.user.create({
     data: {
       username: username.trim(),
       email: `${username.trim()}@local`,
       passwordHash,
+      passwordChangedAt: new Date(),
       role: 'admin',
       provider: 'local',
       active: true,
     },
-  })
+  } as any)
 
   return NextResponse.json({ ok: true })
 }
