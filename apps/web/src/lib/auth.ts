@@ -2,6 +2,7 @@ import { getServerSession, type NextAuthOptions } from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import { compare } from 'bcryptjs'
 import { prisma } from './db'
+import { verifySsoHmac } from './sso-hmac'
 
 export interface AppUser {
   id: string
@@ -143,6 +144,13 @@ export async function getCurrentUser(): Promise<AppUser | null> {
     if (username) {
       const ssoProvider = await prisma.oIDCProvider.findFirst()
       if (ssoProvider?.enabled && ssoProvider?.headerMode) {
+        // SOC2: [M-002] Verify HMAC signature on SSO headers if enabled
+        const timestamp = h.get('x-authentik-timestamp')
+        const signature = h.get('x-authentik-signature')
+        if (!verifySsoHmac(username, timestamp, signature)) {
+          return null // HMAC verification failed
+        }
+
         const user = await prisma.user.upsert({
           where: { username },
           update: { lastSeen: new Date() },
