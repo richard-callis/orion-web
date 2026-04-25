@@ -15,6 +15,75 @@ import type { TaskRunContext } from './lib/agent-runner'
 const POLL_INTERVAL_MS = 15_000
 const MAX_CONCURRENT   = 3
 
+// SOC2: [C-001] Maximum length per context note to prevent context overflow attacks
+const MAX_NOTE_LENGTH = 8000
+
+/**
+ * Sanitize llm-context note content before injecting into system prompts (SOC2: [C-001]).
+ *
+ * Mitigates prompt injection attacks where a malicious user could inject
+ * system-level instructions through note content (e.g., "Ignore previous instructions").
+ *
+ * Strategy:
+ * - Strip known injection patterns
+ * - Add clear boundary markers so LLMs distinguish data from instructions
+ * - Truncate overly long notes
+ * - Log warnings for suspicious content
+ */
+function sanitizeContextNote(title: string, content: string): string {
+  // Known prompt injection patterns (case-insensitive)
+  const INJECTION_PATTERNS = [
+    /^\s*(ignore\s+(previous|above|prior)\s+(instructions|prompts|context|system))/im,
+    /^\s*(you\s+are\s+now)/im,
+    /^\s*(from\s+now\s+on)/im,
+    /^\s*(override\s+(all|the)?\s*(system|previous|original)\s*(instructions|prompt|rules|behavior))/im,
+    /^\s*(do\s+not\s+(follow|obey|respond))/im,
+    /^\s*(disregard\s+(all|the)?\s*(instructions|previous|context))/im,
+    /^\s*(begin\s+(new|all)\s*(instructions|system))/im,
+    /^\s*(you\s+have\s+(been|been)?\s*(new|been))\s+role/im,
+    /^\s*(change\s+(your|the)?\s*(role|persona|identity))/im,
+    /^\s*(reveal|print|output|show|display|dump|list)\s+(your|the)?\s*(system|original|full|complete)\s*(prompt|instructions|rules|context)/im,
+    /^\s*(show\s+me\s+(your|the|this))\s+(prompt|instructions|context)/im,
+  ]
+
+  // Check for injection patterns and warn
+  for (const pattern of INJECTION_PATTERNS) {
+    if (pattern.test(content)) {
+      err(`[C-001] Potential prompt injection detected in note "${title}" — stripping suspicious lines`)
+      // Strip the matching line
+      content = content.split('\n')
+        .filter((line) => !INJECTION_PATTERNS.some((p) => p.test(line)))
+        .join('\n')
+    }
+  }
+
+  // Truncate if too long
+  if (content.length > MAX_NOTE_LENGTH) {
+    content = content.slice(0, MAX_NOTE_LENGTH) + '\n\n[Note truncated — exceeded maximum length]'
+    err(`[C-001] Context note "${title}" truncated to ${MAX_NOTE_LENGTH} chars`)
+  }
+
+  // Escape markdown that could break the prompt structure
+  content = content.replace(/^---+$/, '---') // normalize horizontal rules
+
+  return content
+}
+
+/**
+ * Build sanitized knowledge base context from llm-context notes.
+ * Returns a sanitized string to append to the system prompt.
+ */
+function buildWikiContext(notes: Array<{ title: string; content: string }>): string {
+  if (notes.length === 0) return ''
+
+  const sanitizedNotes = notes.map((n) => {
+    const sanitizedContent = sanitizeContextNote(n.title, n.content)
+    return `### ${n.title}\n${sanitizedContent}`
+  }).join('\n\n---\n\n')
+
+  return `\n\n---\n## Trusted Knowledge Base\n${sanitizedNotes}\n---\n## End Trusted Knowledge Base\n\n`
+}
+
 const runningTasks = new Set<string>()
 
 // ── Logging helpers ────────────────────────────────────────────────────────────
@@ -50,15 +119,13 @@ async function runTask(taskId: string): Promise<void> {
     const agentSystemPrompt = (meta.systemPrompt as string | undefined) ?? 'You are a helpful AI agent.'
     const modelId = contextConfig.llm ?? 'claude:claude-sonnet-4-6'
 
-    // Inject llm-context wiki notes into every agent's system prompt
+    // Inject llm-context wiki notes into every agent's system prompt (SOC2: [C-001])
     const contextNotes = await prisma.note.findMany({
       where: { type: 'llm-context' },
       orderBy: { updatedAt: 'desc' },
       select: { title: true, content: true },
     })
-    const wikiContext = contextNotes.length > 0
-      ? `\n\n---\n## Knowledge Base\n\n` + contextNotes.map(n => `### ${n.title}\n${n.content}`).join('\n\n')
-      : ''
+    const wikiContext = buildWikiContext(contextNotes)
     const systemPrompt = agentSystemPrompt + wikiContext
 
     // Get the agent's first linked environment (if any)
@@ -348,9 +415,7 @@ async function runWatchers() {
       buildSystemSnapshot(),
     ])
 
-    const wikiContext = contextNotes.length > 0
-      ? '\n\n---\n## Knowledge Base\n\n' + contextNotes.map(n => `### ${n.title}\n${n.content}`).join('\n\n')
-      : ''
+    const wikiContext = buildWikiContext(contextNotes)
 
     // The agent receives all data it needs as context — no outbound calls required.
     // If it wants to assign tasks, it outputs a ---DIRECTIVES--- JSON block.
