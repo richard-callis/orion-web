@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
+import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 export async function GET() {
   await requireAdmin()
@@ -19,7 +20,7 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
-  await requireAdmin()
+  const admin = await requireAdmin()
   const body = await req.json()
 
   const existing = await prisma.oIDCProvider.findFirst()
@@ -35,6 +36,17 @@ export async function PATCH(req: NextRequest) {
         name:         body.name         ?? existing.name,
       },
     })
+
+    // SOC2: [M-005] Log SSO config update (non-blocking)
+    logAudit({
+      userId: admin.id,
+      action: 'sso_config_update',
+      target: `sso:${existing.id}`,
+      detail: { name: body.name ?? existing.name, enabled: body.enabled, headerMode: body.headerMode },
+      ipAddress: getClientIp(req),
+      userAgent: getUserAgent(req.headers),
+    }).catch(() => {})
+
     return NextResponse.json(updated)
   }
 
@@ -48,5 +60,16 @@ export async function PATCH(req: NextRequest) {
       groupMapping: body.groupMapping ?? { 'orion-admins': 'admin', 'orion-users': 'user' },
     },
   })
+
+  // SOC2: [M-005] Log SSO config creation (non-blocking)
+  logAudit({
+    userId: admin.id,
+    action: 'sso_config_update',
+    target: `sso:create`,
+    detail: { name: body.name ?? 'Authentik' },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req.headers),
+  }).catch(() => {})
+
   return NextResponse.json(created)
 }
