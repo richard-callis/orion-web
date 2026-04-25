@@ -3,10 +3,15 @@
  *
  * Creates audit log entries with IP address and user-agent tracking.
  * Non-blocking — failures are silently logged to prevent impact on request processing.
+ *
+ * Hash chain for tamper-evidence: each entry's `previousHash` is SHA-256 of
+ * (previous entry's action + timestamp + detail + previousHash).
+ * This allows verification that the log has not been modified.
  */
 
 import { prisma } from './db'
 import type { NextRequest } from 'next/server'
+import { createHash } from 'crypto'
 
 export type AuditAction =
   | 'user_login'
@@ -49,6 +54,50 @@ export type AuditAction =
   | 'vault_reseal'
 
 /**
+ * Compute a SHA-256 hash of an audit entry's content for the hash chain.
+ */
+function hashAuditEntry(entry: {
+  id: string
+  userId: string
+  action: string
+  target: string
+  detail: unknown
+  ipAddress: string | null
+  userAgent: string | null
+  createdAt: Date
+  previousHash: string | null
+}): string {
+  const data = JSON.stringify({
+    id: entry.id,
+    userId: entry.userId,
+    action: entry.action,
+    target: entry.target,
+    detail: entry.detail,
+    ipAddress: entry.ipAddress,
+    userAgent: entry.userAgent,
+    createdAt: entry.createdAt.toISOString(),
+    previousHash: entry.previousHash,
+  })
+  return createHash('sha256').update(data).digest('hex')
+}
+
+/**
+ * Fetch the previous audit log's previousHash for the hash chain.
+ * Returns null if this is the first entry or the previous entry's hash is null.
+ */
+async function getPreviousHash(): Promise<string | null> {
+  try {
+    const prev = await prisma.auditLog.findFirst({
+      orderBy: { createdAt: 'desc' },
+      select: { previousHash: true },
+    })
+    return prev?.previousHash ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Log an audit event. Non-blocking — never throws.
  */
 export async function logAudit(params: {
@@ -60,6 +109,7 @@ export async function logAudit(params: {
   userAgent?: string | null
 }): Promise<void> {
   try {
+    const prevHash = await getPreviousHash()
     await prisma.auditLog.create({
       data: {
         userId: params.userId,
@@ -68,6 +118,7 @@ export async function logAudit(params: {
         detail: params.detail ?? {},
         ipAddress: params.ipAddress ?? undefined,
         userAgent: params.userAgent ?? undefined,
+        previousHash: prevHash ?? undefined,
       },
     })
   } catch {
