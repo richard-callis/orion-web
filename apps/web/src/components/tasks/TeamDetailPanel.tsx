@@ -33,10 +33,11 @@ interface AgentForm {
   persistent: boolean    // always-on watcher agent
   watchPrompt: string    // what to check/do on each watch cycle
   watchIntervalMin: number // how often to run (minutes)
+  tools: boolean         // enable ORION tool calling (create tasks, agents, etc.)
 }
 
 const DEFAULT_MODEL = 'claude:claude-sonnet-4-6'
-const emptyForm: AgentForm = { name: '', modelId: DEFAULT_MODEL, role: '', description: '', systemPrompt: '', persistent: false, watchPrompt: '', watchIntervalMin: 60 }
+const emptyForm: AgentForm = { name: '', modelId: DEFAULT_MODEL, role: '', description: '', systemPrompt: '', persistent: false, watchPrompt: '', watchIntervalMin: 60, tools: false }
 
 function modelIdToType(modelId: string): string {
   if (modelId === 'human')             return 'human'
@@ -107,6 +108,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
       persistent:       (contextConfig?.persistent as boolean) ?? false,
       watchPrompt:      (contextConfig?.watchPrompt as string) ?? '',
       watchIntervalMin: (contextConfig?.watchIntervalMin as number) ?? 60,
+      tools:            (contextConfig?.tools as boolean) ?? false,
     })
     setConfirmDelete(false)
     setModalAgent(agent)
@@ -287,7 +289,10 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
           description: form.description || null,
           metadata: !isHuman ? {
             systemPrompt: form.systemPrompt || undefined,
-            contextConfig: { llm: form.modelId },
+            contextConfig: {
+              llm: form.modelId,
+              ...(form.tools && { tools: true }),
+            },
           } : undefined,
         }),
       })
@@ -326,6 +331,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
             watchPrompt: editForm.watchPrompt,
             watchIntervalMin: editForm.watchIntervalMin,
           }),
+          ...(editForm.tools && { tools: true }),
         },
       } : null,
     }
@@ -448,12 +454,21 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
                   className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary resize-none focus:outline-none focus:border-accent" />
               </div>
               {form.modelId !== 'human' && (
-                <div>
-                  <label className="block text-xs text-text-muted mb-1">System Prompt</label>
-                  <textarea value={form.systemPrompt} onChange={e => setForm(f => ({ ...f, systemPrompt: e.target.value }))}
-                    rows={4} placeholder="How this agent should behave, its persona, constraints..."
-                    className="w-full px-3 py-2 text-sm rounded border border-accent/30 bg-accent/5 text-text-primary resize-none focus:outline-none focus:border-accent" />
-                </div>
+                <>
+                  <div>
+                    <label className="block text-xs text-text-muted mb-1">System Prompt</label>
+                    <textarea value={form.systemPrompt} onChange={e => setForm(f => ({ ...f, systemPrompt: e.target.value }))}
+                      rows={4} placeholder="How this agent should behave, its persona, constraints..."
+                      className="w-full px-3 py-2 text-sm rounded border border-accent/30 bg-accent/5 text-text-primary resize-none focus:outline-none focus:border-accent" />
+                  </div>
+                  <label className="flex items-center gap-2.5 cursor-pointer">
+                    <input type="checkbox" checked={form.tools}
+                      onChange={e => setForm(f => ({ ...f, tools: e.target.checked }))}
+                      className="w-3.5 h-3.5 accent-accent" />
+                    <span className="text-xs font-medium text-text-primary">ORION tools</span>
+                    <span className="text-[10px] text-text-muted">— can create tasks, agents, and more in chat</span>
+                  </label>
+                </>
               )}
             </div>
             <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle">
@@ -622,6 +637,13 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
                       className={`${modalInputCls} resize-none border-accent/30 bg-accent/5`} />
                   </div>
                   <div className="rounded-lg border border-border-subtle p-3 space-y-3">
+                    <label className="flex items-center gap-2.5 cursor-pointer">
+                      <input type="checkbox" checked={editForm.tools}
+                        onChange={e => setEditForm(f => ({ ...f, tools: e.target.checked }))}
+                        className="w-3.5 h-3.5 accent-accent" />
+                      <span className="text-xs font-medium text-text-primary">ORION tools</span>
+                      <span className="text-[10px] text-text-muted">— can create tasks, agents, and more in chat</span>
+                    </label>
                     <label className="flex items-center gap-2.5 cursor-pointer">
                       <input type="checkbox" checked={editForm.persistent}
                         onChange={e => setEditForm(f => ({ ...f, persistent: e.target.checked }))}
