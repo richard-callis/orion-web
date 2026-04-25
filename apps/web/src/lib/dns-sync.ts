@@ -12,6 +12,19 @@ interface GatewayExecFn {
   (toolName: string, args: Record<string, unknown>): Promise<string>
 }
 
+// Strict domain name validation — prevents path traversal and shell injection
+// in downstream zone file generation and shell commands.
+const DOMAIN_NAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/
+
+export function validateDomainName(name: string): string {
+  if (!DOMAIN_NAME_RE.test(name)) {
+    throw new Error(
+      `Invalid domain name "${name}" — must be a valid DNS label (e.g. "khalis")`
+    )
+  }
+  return name
+}
+
 // ── Zone file generation ──────────────────────────────────────────────────────
 
 export function buildZoneFile(domainName: string, records: { ip: string; hostnames: string[] }[], serial?: number): string {
@@ -83,6 +96,9 @@ export async function syncDomainDns(
   })
   const domain = await prisma.domain.findUnique({ where: { id: domainId } })
   if (!domain) throw new Error('Domain not found')
+
+  // Validate domain name before using it in shell commands or file paths
+  validateDomainName(domain.name)
 
   const zoneContent = buildZoneFile(
     domain.name,
