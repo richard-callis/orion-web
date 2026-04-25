@@ -392,7 +392,9 @@ async function generateClientCert(
   const csrPath  = join(tmpDir, `${envName}-client.csr`)
   const certPath = join(tmpDir, `${envName}-client.crt`)
   const extPath  = join(tmpDir, `${envName}-client.ext`)
-  const srlPath  = join(tmpDir, 'ca.srl')   // serial file — must be writable, not next to the CA
+  // Use a random serial number rather than a serial file — avoids any writes to the
+  // read-only /vault-proxy-certs mount that holds the CA key/cert.
+  const serial   = randomBytes(8).toString('hex')
 
   await writeFile(extPath, [
     '[req_ext]',
@@ -406,7 +408,7 @@ async function generateClientCert(
     ['openssl', ['req', '-new', '-key', keyPath, '-out', csrPath, '-subj', `/CN=eso-${envName}/O=ORION`]],
     ['openssl', ['x509', '-req', '-days', '3650',
       '-in', csrPath, '-CA', caCertPath, '-CAkey', caKeyPath,
-      '-CAserial', srlPath, '-CAcreateserial', '-out', certPath, '-extfile', extPath, '-extensions', 'req_ext']],
+      '-set_serial', `0x${serial}`, '-out', certPath, '-extfile', extPath, '-extensions', 'req_ext']],
   ]
 
   for (const [cmd, args] of steps) {
