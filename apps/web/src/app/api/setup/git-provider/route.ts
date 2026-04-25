@@ -23,6 +23,7 @@ import { prisma } from '@/lib/db'
 import { requireWizardSession } from '@/lib/setup-guard'
 import { createProvider, invalidateGitProviderCache, type GitProviderConfig, type GitProviderType } from '@/lib/git-provider'
 import { GiteaGitProvider } from '@/lib/git-provider/gitea-provider'
+import { encryptJson } from '@/lib/encryption'
 import { randomBytes } from 'crypto'
 
 export async function POST(req: NextRequest) {
@@ -110,10 +111,8 @@ export async function POST(req: NextRequest) {
 
   await prisma.systemSetting.upsert({
     where:  { key: 'git.provider.config' },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    update: { value: config as any },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    create: { key: 'git.provider.config', value: config as any },
+    update: { value: encryptJson(config) },
+    create: { key: 'git.provider.config', value: encryptJson(config) },
   })
 
   // Invalidate the in-process provider cache so the new config is picked up immediately
