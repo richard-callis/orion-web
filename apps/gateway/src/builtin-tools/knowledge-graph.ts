@@ -13,15 +13,24 @@
  */
 
 const ORION_URL = process.env.ORION_URL ?? 'http://localhost:3000'
+const ORION_TOKEN = process.env.ORION_GATEWAY_TOKEN
 
 /**
  * Fetch from ORION's API with basic error handling.
+ * Automatically includes the service bearer token if configured.
  */
 async function orionFetch(path: string, options?: RequestInit): Promise<unknown> {
   const url = `${ORION_URL}${path}`
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+
+  // Include service token for authentication
+  if (ORION_TOKEN) {
+    headers['Authorization'] = `Bearer ${ORION_TOKEN}`
+  }
+
   const res = await fetch(url, {
     ...options,
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    headers: { ...headers, ...(options?.headers as Record<string, string> || {}) },
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
@@ -57,7 +66,7 @@ export const knowledgeGraphTools = [
       required: ['query'],
     },
     async execute(args: Record<string, unknown>) {
-      const limit = Math.min(Math.max(parseInt(args.limit as number ?? '5', 10), 1), 20)
+      const limit = Math.min(Math.max(parseInt(String(args.limit ?? '5'), 10), 1), 20)
       const body = {
         query: args.query as string,
         limit,
@@ -198,7 +207,7 @@ export const knowledgeGraphTools = [
       required: [],
     },
     async execute(args: Record<string, unknown>) {
-      const limit = Math.min(Math.max(parseInt(args.limit as number ?? '5', 10), 1), 20)
+      const limit = Math.min(Math.max(parseInt(String(args.limit ?? '5'), 10), 1), 20)
 
       // Find the target note
       let noteId: string

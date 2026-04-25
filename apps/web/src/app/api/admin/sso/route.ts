@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 export async function GET() {
+  await requireAdmin()
   const provider = await prisma.oIDCProvider.findFirst()
   if (!provider) {
     // Return defaults
@@ -17,6 +19,7 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
+  await requireAdmin()
   const body = await req.json()
 
   const existing = await prisma.oIDCProvider.findFirst()

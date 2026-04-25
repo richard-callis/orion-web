@@ -24,6 +24,17 @@ const BEARER_PATHS = [
   '/api/internal',     // internal service-to-service routes (e.g. vault-unsealer)
 ]
 
+// Prefixes that accept service token auth — any sub-path works
+const SERVICE_TOKEN_PREFIXES = [
+  '/api/notes',
+  '/api/agent-groups',
+  '/api/features',
+  '/api/epics',
+  '/api/tasks',
+  '/api/bugs',
+  '/api/admin',
+]
+
 // SOC2: [H-002, L-002] Security headers middleware
 function addSecurityHeaders(res: NextResponse): NextResponse {
   res.headers.set('Content-Security-Policy',
@@ -62,7 +73,22 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
-  // Gateway calls use Bearer token auth — let them through, routes handle validation.
+  // Service token (gateway) calls — accept Bearer token instead of session.
+  // Gateway tools need to read/write notes, list agent-groups, etc.
+  const gatewayToken = process.env.ORION_GATEWAY_TOKEN
+  if (
+    gatewayToken &&
+    req.headers.get('authorization') === `Bearer ${gatewayToken}`
+  ) {
+    // Gateway can do anything except DELETE on notes (safety)
+    if (req.method === 'DELETE' && pathname.startsWith('/api/notes')) {
+      // fall through to session auth for DELETE on notes
+    } else {
+      return NextResponse.next()
+    }
+  }
+
+  // Legacy: Bearer token auth for specific paths — let them through, routes handle validation.
   // DELETE is never a gateway operation and must always require a session.
   if (
     req.method !== 'DELETE' &&

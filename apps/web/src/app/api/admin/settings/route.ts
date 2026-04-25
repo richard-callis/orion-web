@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 export async function GET() {
+  await requireAdmin()
   const rows = await prisma.systemSetting.findMany()
   const result: Record<string, unknown> = {}
   for (const row of rows) {
@@ -11,6 +13,7 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
+  await requireAdmin()
   const body: Record<string, unknown> = await req.json()
 
   const ops = Object.entries(body).map(([key, value]) =>
