@@ -3,6 +3,7 @@ import { writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 import { prisma } from '@/lib/db'
 import { requireWizardSession } from '@/lib/setup-guard'
+import { generateVaultProxyCerts } from '@/lib/vault-proxy'
 
 const VAULT_ADDR      = process.env.VAULT_ADDR ?? 'http://vault:8200'
 const UNSEAL_KEYS_DIR = process.env.VAULT_UNSEAL_KEYS_DIR ?? '/vault/unseal-keys'
@@ -132,6 +133,9 @@ export async function POST(req: NextRequest) {
         create: { key: 'vault.initialized', value: true },
       }),
     ])
+
+    // Generate vault-proxy TLS certs so the Envoy sidecar can start
+    await generateVaultProxyCerts()
 
     // Root token returned once for break-glass storage — not persisted in ORION
     return NextResponse.json({ ok: true, keys, rootToken: root_token })
