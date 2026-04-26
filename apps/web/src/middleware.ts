@@ -116,11 +116,12 @@ const SERVICE_TOKEN_PREFIXES = [
 
 // SOC2: [H-002, L-002] Security headers middleware
 function addSecurityHeaders(res: NextResponse): NextResponse {
-  // CSP: style-src 'self' only — all styles are now in CSS modules or use CSS variables
+  // CSP: Allow Next.js to load script chunks from same origin
+  // Note: 'strict-dynamic' is incompatible with Next.js dynamic chunk loading (no nonces on chunks)
   res.headers.set('Content-Security-Policy',
     "default-src 'self'; " +
-    "script-src 'self' 'strict-dynamic'; " +
-    "style-src 'self'; " +
+    "script-src 'self'; " +
+    "style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data: https:; " +
     "connect-src 'self' https:; " +
     "font-src 'self'; " +
