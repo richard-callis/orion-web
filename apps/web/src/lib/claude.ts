@@ -13,7 +13,7 @@ async function getActiveTasksSection(): Promise<string> {
     take: 20,
   })
   if (!tasks.length) return ''
-  const lines = tasks.map(t =>
+  const lines = tasks.map((t: any) =>
     `  • [${t.status}] ${t.title}${t.priority ? ` (priority: ${t.priority})` : ''}${t.description ? `\n    ${t.description.slice(0, 200)}` : ''}`
   )
   return `\nYou have a task board with active work items:\n${lines.join('\n')}\nUse these as guidance for what work is expected. Do not claim to have completed tasks you haven't verified.\n`
@@ -50,7 +50,7 @@ async function getSystemPrompt(
     })
     if (memories.length > 0) {
       memorySection = '\n\n### CONVERSATION MEMORY (Persistent Facts)\n' +
-        memories.map(m => `- ${m.key}: ${m.value}${m.context ? ` (${m.context})` : ''}`).join('\n') +
+        memories.map((m: any) => `- ${m.key}: ${m.value}${m.context ? ` (${m.context})` : ''}`).join('\n') +
         '\n\nThese facts were established earlier in this conversation. Reference them when relevant.'
     }
   }
@@ -189,7 +189,7 @@ async function checkToolPermission(
 
   // Check if user meets minimum tier for ANY of the groups this tool is in
   // (tool is accessible if the user qualifies for at least one of the groups)
-  const blocked = toolGroupMemberships.every(m => {
+  const blocked = toolGroupMemberships.every((m: any) => {
     const required = TIER_RANK[m.toolGroup.minimumTier] ?? 0
     return userTierRank < required
   })
@@ -214,7 +214,7 @@ async function checkToolPermission(
   }
 
   // Create an approval request
-  const minRequired = toolGroupMemberships.reduce((min, m) => {
+  const minRequired = toolGroupMemberships.reduce((min: any, m: any) => {
     const r = TIER_RANK[m.toolGroup.minimumTier] ?? 0
     return r > min ? r : min
   }, 0)
@@ -1050,11 +1050,11 @@ async function handleKnowledgeGraph(argsRaw: string): Promise<string> {
       }),
     ])
 
-    const noteById = new Map(notes.map(n => [n.id, n]))
+    const noteById = new Map(notes.map((n: any) => [n.id, n]))
 
     // Parse wikilinks from note content
     const wikilinkEdges: Array<{ from: string; to: string }> = []
-    const noteByTitle = new Map(notes.map(n => [n.title.toLowerCase(), n.title]))
+    const noteByTitle = new Map(notes.map((n: any) => [n.title.toLowerCase(), n.title]))
     const wikilinkRegex = /\[\[([^\]|#]+)(?:[|#][^\]]+)?\]\]/g
     for (const note of notes) {
       for (const match of note.content.matchAll(wikilinkRegex)) {
@@ -1065,16 +1065,16 @@ async function handleKnowledgeGraph(argsRaw: string): Promise<string> {
       }
     }
 
-    const nodeLines = notes.map(n => {
+    const nodeLines = notes.map((n: any) => {
       const tag = n.type !== 'note' ? ` [${n.type}]` : ''
       const folder = n.folder ? ` (${n.folder})` : ''
       const snippet = includeContent ? `\n  ${n.content.slice(0, 200).replace(/\n/g, ' ')}` : ''
       return `- ${n.title}${tag}${folder}${snippet}`
     })
 
-    const wikiLines = wikilinkEdges.map(e => `  ${e.from} → ${e.to}`)
+    const wikiLines = wikilinkEdges.map((e: any) => `  ${e.from} → ${e.to}`)
     const semLines = semanticEdges
-      .map(e => {
+      .map((e: any) => {
         const src = noteById.get(e.sourceNoteId)?.title ?? e.sourceNoteId
         const tgt = noteById.get(e.targetNoteId)?.title ?? e.targetNoteId
         return `  ${src} ↔ ${tgt} (${(e.score * 100).toFixed(0)}%)`
