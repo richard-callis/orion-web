@@ -71,7 +71,7 @@ export function PendingToolNotifications() {
   return createPortal(
     <>
       {/* ── Notification stack (bottom-right) ── */}
-      <div className="fixed bottom-16 right-4 z-40 flex flex-col gap-2 items-end" style={{ maxWidth: '360px' }}>
+      <div className="fixed bottom-16 right-4 z-40 flex flex-col gap-2 items-end max-w-sm">
         {visible.map(tool => (
           <div key={tool.id}
             className="w-full rounded-xl border border-yellow-500/40 bg-bg-sidebar shadow-2xl overflow-hidden animate-in slide-in-from-right-4 duration-200">

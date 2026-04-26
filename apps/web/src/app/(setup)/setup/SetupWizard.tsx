@@ -783,7 +783,7 @@ export default function SetupWizard() {
   }
 
   return (
-    <div className="w-full max-w-lg flex flex-col" style={{ maxHeight: '100dvh', padding: '1rem 0' }}>
+    <div className="w-full max-w-lg flex flex-col max-h-screen py-4">
       <div className="text-center mb-4 flex-shrink-0">
         <div className="text-2xl font-bold tracking-tight text-text-primary">ORION</div>
         <div className="text-xs text-text-muted mt-0.5">First-run setup</div>

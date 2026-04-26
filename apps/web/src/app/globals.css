@@ -35,3 +35,20 @@ code, pre, .font-mono { font-family: var(--font-jetbrains), ui-monospace, monosp
   50% { opacity: 0.4; }
 }
 .status-pulse { animation: pulse-dot 2s ease-in-out infinite; }
+
+/* CSS variables for dynamic inline styles (CSP-001 compliance) */
+[style*="--width"] {
+  width: var(--width);
+}
+
+[style*="--max-width"] {
+  max-width: var(--max-width);
+}
+
+[style*="--top"] {
+  top: var(--top);
+}
+
+[style*="--right"] {
+  right: var(--right);
+}

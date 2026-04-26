@@ -14,7 +14,7 @@ const tabs = [
 export function BottomNav() {
   const pathname = usePathname()
   return (
-    <nav className="flex md:hidden flex-shrink-0 border-t border-border-subtle bg-bg-sidebar" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+    <nav className="flex md:hidden flex-shrink-0 border-t border-border-subtle bg-bg-sidebar pb-safe-bottom">
       {tabs.map(({ href, icon: Icon, label }) => {
         const active = href === '/' ? pathname === '/' : pathname.startsWith(href)
         return (
