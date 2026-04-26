@@ -27,7 +27,7 @@ function UsageBar({ total, used, free }: { total: number; used: number; free: nu
   return (
     <div className="space-y-1.5">
       <div className="h-2 w-full rounded-full bg-bg-raised overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${usedPct.toFixed(1)}%` }} />
+        <div className={`h-full rounded-full transition-all ${color}`} style={{ '--width': `${usedPct.toFixed(1)}%` } as React.CSSProperties} />
       </div>
       <div className="flex justify-between text-[10px] font-mono text-text-muted">
         <span className="text-status-error">{formatBytes(used)} used</span>
@@ -49,7 +49,7 @@ function NodeRow({ node }: { node: StorageNode }) {
         <span className="text-[10px] text-text-muted font-mono">{formatBytes(node.totalBytes)}</span>
       </div>
       <div className="h-1.5 w-full rounded-full bg-bg-raised overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct.toFixed(1)}%` }} />
+        <div className={`h-full rounded-full ${color}`} style={{ '--width': `${pct.toFixed(1)}%` } as React.CSSProperties} />
       </div>
       <div className="flex justify-between text-[10px] text-text-muted font-mono">
         <span>{formatBytes(node.usedBytes)} used</span>

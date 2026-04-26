@@ -492,8 +492,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
       {/* Planning mode — inline chat with Claude for agent creation */}
       {planningMode && planningConvId && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setPlanningMode(false)}>
-          <div className="w-full max-w-2xl bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col"
-               style={{ maxHeight: 'min(70vh, 700px)' }} onClick={e => e.stopPropagation()}>
+          <div className="w-full max-w-2xl bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-modal-lg" onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
               <div className="flex items-center gap-2">
