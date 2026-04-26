@@ -5,7 +5,7 @@ ARG TARGETARCH
 FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN npm install --legacy-peer-deps
 COPY tsconfig.json ./
 COPY src/ ./src/
 RUN npm run build
@@ -38,7 +38,7 @@ RUN ARCH=${TARGETARCH:-amd64} \
     && chmod +x /usr/local/bin/helm
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev --legacy-peer-deps
 COPY --from=builder /app/dist ./dist
 
 EXPOSE 3001
