@@ -62,16 +62,8 @@ COPY --from=builder /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./.next/static
 COPY --from=builder /app/apps/web/prisma ./prisma
 
-# Install production dependencies for standalone server
-RUN npm install --omit=dev --legacy-peer-deps
-
-# Additional modules not bundled in standalone
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-# Full prisma CLI (needed for migrate at startup)
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
-# Claude Code SDK (dynamic import — not picked up by standalone bundler)
-COPY --from=builder /app/node_modules/@anthropic-ai ./node_modules/@anthropic-ai
+# Copy all node_modules from builder (includes all production + transitive dependencies)
+COPY --from=builder /app/node_modules ./node_modules
 
 COPY --from=builder /app/apps/web/worker.js ./worker.js
 COPY entrypoint.sh ./entrypoint.sh
