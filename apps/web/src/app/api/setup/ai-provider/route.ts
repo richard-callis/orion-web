@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireWizardSession } from '@/lib/setup-guard'
+import { validateBody, SetupAiProviderSchema } from '@/lib/validate'
 
 export async function POST(req: NextRequest) {
   if (!await requireWizardSession(req)) {
@@ -8,27 +9,22 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json()
-
   if (body.skip) {
     return NextResponse.json({ ok: true, skipped: true })
   }
 
-  const { name, provider, baseUrl, apiKey, modelId } = body
-
-  if (!name || !provider || !baseUrl || !modelId) {
-    return NextResponse.json(
-      { error: 'name, provider, baseUrl, and modelId are required' },
-      { status: 400 }
-    )
+  const data = validateBody(body, SetupAiProviderSchema)
+  if (!data) {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
 
   const created = await prisma.externalModel.create({
     data: {
-      name,
-      provider,
-      baseUrl,
-      apiKey: apiKey || null,
-      modelId,
+      name: data.name,
+      provider: data.provider,
+      baseUrl: data.baseUrl,
+      apiKey: data.apiKey || null,
+      modelId: data.modelId,
       enabled: true,
     },
   })

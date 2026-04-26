@@ -8,6 +8,7 @@
  * Auth: session cookie (via requireAdmin) OR x-api-key header
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { createApiKey, listUserKeys, verifyApiKey } from '@/lib/api-key'
@@ -68,9 +69,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: result.status! })
     }
     const body = await req.json()
-    const { name, expiresInDays } = body as { name?: string; expiresInDays?: number }
 
-    const apiKeyResult = await createApiKey(result.user!.id, name || 'Default', expiresInDays)
+    // Validate API key creation input
+    const parsed = z.object({
+      name: z.string().min(1).max(200).default('Default'),
+      expiresInDays: z.number().int().positive().max(365 * 10).optional(),
+    }).safeParse(body)
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+    }
+
+    const apiKeyResult = await createApiKey(result.user!.id, parsed.data.name, parsed.data.expiresInDays)
 
     // SOC2: [M-005] Audit API key creation (non-blocking)
     logAudit({
