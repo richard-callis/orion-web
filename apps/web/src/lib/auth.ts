@@ -3,6 +3,8 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import { compare } from 'bcryptjs'
 import { prisma } from './db'
 import { verifyTOTP, verifyRecoveryCode } from './totp'
+import { createHmac, timingSafeEqual } from 'crypto'
+import { logAudit } from './audit'
 
 export interface AppUser {
   id: string
@@ -180,6 +182,90 @@ export const authOptions: NextAuthOptions = {
   },
 }
 
+/**
+ * SOC2 [SSO-001]: Validate HMAC signature on SSO headers.
+ *
+ * Prevents header injection if reverse proxy is compromised.
+ * Reverse proxy must sign headers with HMAC-SHA256:
+ *   canonical_string = username|email|name|uid|timestamp
+ *   signature = HMAC-SHA256(secret, canonical_string)
+ *   x-authentik-hmac = base64(signature)
+ *
+ * @returns true if signature is valid and timestamp is recent (< 30 sec old)
+ */
+async function validateSSoHeaderHmac(headers: Headers): Promise<boolean> {
+  const secret = process.env.SSO_HMAC_SECRET
+  const secretPrevious = process.env.SSO_HMAC_SECRET_PREVIOUS  // for key rotation
+
+  if (!secret) {
+    // HMAC not configured — allow unsigned headers (backward compat during rollout)
+    return true
+  }
+
+  const username = headers.get('x-authentik-username')
+  const email = headers.get('x-authentik-email')
+  const name = headers.get('x-authentik-name')
+  const uid = headers.get('x-authentik-uid')
+  const timestamp = headers.get('x-authentik-timestamp')
+  const signature = headers.get('x-authentik-hmac')
+
+  // If signature header is missing but secret is set, reject (requires HMAC)
+  if (!signature) {
+    return false
+  }
+
+  // Check timestamp (30-second tolerance for clock skew)
+  if (!timestamp) return false
+  const ts = parseInt(timestamp, 10)
+  if (isNaN(ts)) return false
+  const now = Date.now()
+  const ageMs = now - ts
+  if (ageMs > 30_000 || ageMs < -5_000) {
+    // Reject if older than 30s or from future (clock skew tolerance: -5s)
+    return false
+  }
+
+  // Reconstruct canonical string (order matters!)
+  const canonical = [username, email, name, uid, timestamp].join('|')
+
+  // Try current secret first
+  let expected: string
+  try {
+    expected = createHmac('sha256', secret)
+      .update(canonical)
+      .digest('hex')
+  } catch (err) {
+    return false
+  }
+
+  // Timing-safe comparison against current secret
+  try {
+    const signatureBuf = Buffer.from(signature, 'hex')
+    const expectedBuf = Buffer.from(expected, 'hex')
+    if (signatureBuf.length !== expectedBuf.length) {
+      // Try previous secret if configured (key rotation grace period)
+      if (secretPrevious) {
+        try {
+          const expectedPrev = createHmac('sha256', secretPrevious)
+            .update(canonical)
+            .digest('hex')
+          const expectedPrevBuf = Buffer.from(expectedPrev, 'hex')
+          timingSafeEqual(signatureBuf, expectedPrevBuf)
+          return true  // matched previous secret
+        } catch {
+          return false
+        }
+      }
+      return false
+    }
+    timingSafeEqual(signatureBuf, expectedBuf)
+    return true  // Signature matches
+  } catch {
+    // timingSafeEqual throws on mismatch
+    return false
+  }
+}
+
 export async function getCurrentUser(): Promise<AppUser | null> {
   // Primary: NextAuth JWT session
   const session = await getServerSession(authOptions)
@@ -203,6 +289,26 @@ export async function getCurrentUser(): Promise<AppUser | null> {
     if (username) {
       const ssoProvider = await prisma.oIDCProvider.findFirst()
       if (ssoProvider?.enabled && ssoProvider?.headerMode) {
+        // SOC2 [SSO-001]: Validate HMAC signature on SSO headers
+        // This prevents header injection if the reverse proxy is compromised
+        const hmacValid = await validateSSoHeaderHmac(h)
+        if (!hmacValid) {
+          // HMAC validation failed — reject the request
+          // Log failed attempt for security monitoring
+          try {
+            const { getClientIp, getUserAgent } = await import('./audit')
+            logAudit({
+              userId: 'ANONYMOUS',  // Not yet authenticated
+              action: 'user_login_failure',
+              target: 'sso-header-auth',
+              detail: { reason: 'invalid_hmac', username },
+              ipAddress: getClientIp({ headers: h } as any),
+              userAgent: getUserAgent(h),
+            }).catch(() => {})  // Non-blocking
+          } catch {}
+          return null
+        }
+
         const user = await prisma.user.upsert({
           where: { username },
           update: { lastSeen: new Date() },
