@@ -42,7 +42,7 @@ export async function GET() {
 export async function PATCH(req: NextRequest) {
   await requireAdmin()
   const body = await req.json().catch(() => ({}))
-  const { retentionDays } = body as { retentionDays?: number }
+  const { retentionDays } = body as { retentionDays: number }
 
   if (!Number.isInteger(retentionDays) || retentionDays < MIN_DAYS || retentionDays > MAX_DAYS) {
     return NextResponse.json(
