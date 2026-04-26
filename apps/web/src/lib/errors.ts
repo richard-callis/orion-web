@@ -54,9 +54,11 @@ export function sanitizeError(err: unknown): string {
     } catch {
       // Not JSON — treat as plain string
     }
-    // Strip anything that looks like a file path or stack trace
-    const clean = err.replace(/(?:at\s+)?[^\n]*(?:\.ts|\.js|:\d+:\d+)/g, '').trim()
-    return clean || 'An unexpected error occurred'
+    // Clean up common error format lines: "at File.ts:line:col" or similar
+    let clean = err
+    // Remove TypeScript stack trace lines
+    clean = clean.split('\n').filter(line => !line.match(/\s+at\s+|\.ts|\.js/)).join(' ')
+    return clean.trim() || 'An unexpected error occurred'
   }
 
   return 'An unexpected error occurred'
