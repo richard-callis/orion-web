@@ -76,22 +76,53 @@ async function discoverNodeIp(): Promise<string | null> {
     try {
       const podName = process.env.POD_NAME ?? (await execFileAsync('hostname', [])).stdout.trim()
       nodeName = (await execFileAsync('kubectl', ['get', 'pod', podName, '-o', 'jsonpath={.spec.nodeName}'])).stdout.trim()
-    } catch { /* can't get node name */ }
+    } catch (err) {
+      console.warn('[gateway] Could not get pod node name:', err instanceof Error ? err.message : String(err))
+    }
   }
+
+  // Try to get InternalIP from the node
   if (nodeName) {
     try {
       const { stdout } = await execFileAsync('kubectl', ['get', 'node', nodeName, '-o', `jsonpath={.status.addresses[?(@.type=="InternalIP")].address}`])
       const ip = stdout.trim()
-      if (ip) return ip
-    } catch { /* fall through */ }
+      if (ip) {
+        console.log(`[gateway] Discovered node IP from InternalIP: ${ip}`)
+        return ip
+      }
+    } catch (err) {
+      console.warn(`[gateway] Could not get InternalIP for node ${nodeName}:`, err instanceof Error ? err.message : String(err))
+    }
+
+    // Fallback: try ExternalIP if InternalIP is missing (some cloud providers)
+    try {
+      const { stdout } = await execFileAsync('kubectl', ['get', 'node', nodeName, '-o', `jsonpath={.status.addresses[?(@.type=="ExternalIP")].address}`])
+      const ip = stdout.trim()
+      if (ip) {
+        console.log(`[gateway] Discovered node IP from ExternalIP: ${ip}`)
+        return ip
+      }
+    } catch {
+      /* fall through */
+    }
   }
-  // Final fallback: first non-loopback, non-pod-network IPv4
-  const { stdout } = await execFileAsync('hostname', ['-i'])
-  const addrs = stdout.trim().split(/\s+/)
-  for (const a of addrs) {
-    const ip = a.trim()
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(ip) && !ip.startsWith('10.244.')) return ip
+
+  // Final fallback: first non-loopback, non-pod-network IPv4 from hostname -i
+  try {
+    const { stdout } = await execFileAsync('hostname', ['-i'])
+    const addrs = stdout.trim().split(/\s+/)
+    for (const a of addrs) {
+      const ip = a.trim()
+      // Accept any valid IPv4 that's not loopback or pod network (10.244.x.x)
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(ip) && !ip.startsWith('127.') && !ip.startsWith('10.244.')) {
+        console.log(`[gateway] Discovered node IP from hostname -i: ${ip}`)
+        return ip
+      }
+    }
+  } catch (err) {
+    console.warn('[gateway] Could not get addresses from hostname -i:', err instanceof Error ? err.message : String(err))
   }
+
   return null
 }
 
@@ -146,6 +177,14 @@ if (!ORION_URL) {
   console.error('[gateway] FATAL: ORION_URL must be set')
   process.exit(1)
 }
+
+// Validate ORION_URL is a valid URL
+try {
+  new URL(ORION_URL)
+} catch {
+  console.error(`[gateway] FATAL: ORION_URL is not a valid URL: ${ORION_URL}`)
+  process.exit(1)
+}
 // Try loading from file before validating (file credentials take precedence over join token)
 loadPersistedCredentials()
 
@@ -162,21 +201,35 @@ if (WAITING_FOR_SETUP) {
 /** Exchange a one-time join token for permanent credentials */
 async function joinWithToken(joinToken: string): Promise<void> {
   console.log('[gateway] Joining ORION with join token…')
-  const res = await fetch(`${ORION_URL}/api/environments/join`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ joinToken, gatewayUrl: ACTUAL_GATEWAY_URL, gatewayType: GATEWAY_TYPE, machineId: MACHINE_ID }),
-  })
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`Join failed: ${res.status} ${err}`)
+  console.log(`[gateway]   ORION_URL: ${ORION_URL}`)
+  console.log(`[gateway]   GATEWAY_URL: ${ACTUAL_GATEWAY_URL}`)
+  console.log(`[gateway]   GATEWAY_TYPE: ${GATEWAY_TYPE}`)
+
+  try {
+    const res = await fetch(`${ORION_URL}/api/environments/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ joinToken, gatewayUrl: ACTUAL_GATEWAY_URL, gatewayType: GATEWAY_TYPE, machineId: MACHINE_ID }),
+    })
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`HTTP ${res.status}: ${err}`)
+    }
+    const data = await res.json()
+    ENVIRONMENT_ID = data.environmentId
+    GATEWAY_TOKEN  = data.apiToken
+    console.log(`[gateway] ✓ Joined as environment "${data.environmentName}" (${ENVIRONMENT_ID})`)
+    await persistCredentials()
+    saveCredentialsToFile()
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(`[gateway] ✗ Join failed: ${msg}`)
+    console.error('[gateway] Check:')
+    console.error('[gateway]   1. ORION_URL is correct and reachable from this pod')
+    console.error('[gateway]   2. JOIN_TOKEN is valid (24h expiry, not already used)')
+    console.error('[gateway]   3. Network connectivity: can you curl ORION_URL from the pod?')
+    throw new Error(`Join failed: ${msg}`)
   }
-  const data = await res.json()
-  ENVIRONMENT_ID = data.environmentId
-  GATEWAY_TOKEN  = data.apiToken
-  console.log(`[gateway] Joined as environment "${data.environmentName}" (${ENVIRONMENT_ID})`)
-  await persistCredentials()
-  saveCredentialsToFile()
 }
 
 /** Persist permanent credentials into the K8s Secret so restarts skip re-join */
@@ -371,10 +424,19 @@ async function start() {
   // Resolve placeholder GATEWAY_URL (e.g. http://<node-ip>:30001) to NodePort URL
   // Always use the NodePort pattern so the gateway is reachable from outside the cluster
   if (GATEWAY_URL.includes('<node-ip>') || GATEWAY_URL.match(/^\d+\.\d+\.\d+\.\d+:\d+$/)) {
+    console.log(`[gateway] Resolving GATEWAY_URL placeholder: ${GATEWAY_URL}`)
     const nodeIp = await discoverNodeIp()
+    if (!nodeIp) {
+      console.error('[gateway] FATAL: Could not discover node IP for GATEWAY_URL. Check:')
+      console.error('[gateway]   1. NODE_NAME / POD_NAME env vars are set or pod is in a namespace')
+      console.error('[gateway]   2. kubectl access works (ServiceAccount has permissions)')
+      console.error('[gateway]   3. Node has an InternalIP address (check: kubectl get nodes -o wide)')
+      console.error('[gateway]   4. hostname -i returns a valid IPv4 address')
+      console.error('[gateway] GATEWAY_URL will remain as placeholder; join will fail.')
+    }
     // Use port 30001 (NodePort) so ORION can reach the gateway from outside the cluster
     ACTUAL_GATEWAY_URL = `http://${nodeIp || '10.2.2.30'}:30001`
-    console.log(`[gateway] Resolved GATEWAY_URL to ${ACTUAL_GATEWAY_URL}`)
+    console.log(`[gateway] Resolved GATEWAY_URL: ${ACTUAL_GATEWAY_URL}`)
   }
 
   // Use persisted credentials if available, otherwise exchange join token
