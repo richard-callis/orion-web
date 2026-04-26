@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { embedNote } from '@/lib/embeddings'
 import { requireServiceAuth } from '@/lib/auth'
+import { parseBodyOrError, UpdateNoteSchema } from '@/lib/validate'
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   await requireServiceAuth(req)
@@ -12,19 +13,23 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   await requireServiceAuth(req)
-  const body = await req.json()
-  const data: Record<string, unknown> = {}
-  const isContentChange = body.content !== undefined
-  const isTitleChange = body.title !== undefined
+  // SOC2 [INPUT-001]: Validate request body with Zod schema
+  const result = await parseBodyOrError(req, UpdateNoteSchema)
+  if ('error' in result) return result.error
+  const { data } = result
 
-  if (body.title   !== undefined) data.title   = body.title
-  if (body.content !== undefined) data.content = body.content
-  if (body.folder  !== undefined) data.folder  = body.folder
-  if (body.pinned  !== undefined) data.pinned  = body.pinned
-  if (body.type    !== undefined) data.type    = body.type
-  if (body.tags    !== undefined) data.tags    = body.tags || null
+  const updateData: Record<string, unknown> = {}
+  const isContentChange = data.content !== undefined
+  const isTitleChange = data.title !== undefined
 
-  const note = await prisma.note.update({ where: { id: params.id }, data })
+  if (data.title   !== undefined) updateData.title   = data.title
+  if (data.content !== undefined) updateData.content = data.content
+  if (data.folder  !== undefined) updateData.folder  = data.folder
+  if (data.pinned  !== undefined) updateData.pinned  = data.pinned
+  if (data.type    !== undefined) updateData.type    = data.type
+  if (data.tags    !== undefined) updateData.tags    = data.tags || null
+
+  const note = await prisma.note.update({ where: { id: params.id }, data: updateData })
 
   // Re-embed if content or title changed
   if (isContentChange || isTitleChange) {

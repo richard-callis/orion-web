@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { parseBodyOrError, UpdateConversationSchema } from '@/lib/validate'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,14 +11,18 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const body = await req.json()
+  // SOC2 [INPUT-001]: Validate request body with Zod schema
+  const result = await parseBodyOrError(req, UpdateConversationSchema)
+  if ('error' in result) return result.error
+  const { data } = result
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const data: Record<string, any> = {}
-  if ('title'    in body) data.title    = body.title ?? null
-  if ('metadata' in body) data.metadata = body.metadata
+  const updateData: Record<string, any> = {}
+  if (data.title    !== undefined) updateData.title    = data.title ?? null
+  if (data.metadata !== undefined) updateData.metadata = data.metadata
   const convo = await prisma.conversation.update({
     where: { id: params.id },
-    data,
+    data: updateData,
     include: { _count: { select: { messages: true } } },
   })
   return NextResponse.json(convo)
