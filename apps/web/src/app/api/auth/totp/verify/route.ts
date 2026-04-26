@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Verify the code against the server-stored secret
-  if (!verifyTOTP(dbUser.totpSecret, data.code)) {
+  if (!(await verifyTOTP(dbUser.totpSecret, data.code))) {
     return NextResponse.json({ error: 'Invalid verification code' }, { status: 400 })
   }
 

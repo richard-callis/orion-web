@@ -108,7 +108,7 @@ export const authOptions: NextAuthOptions = {
               // No TOTP code provided — signal MFA required
               return { mfaRequired: true, totpEnabled: true, username: user.username }
             }
-            if (!verifyTOTP(user.totpSecret, code)) {
+            if (!(await verifyTOTP(user.totpSecret, code))) {
               return { error: 'Invalid TOTP code' }
             }
           }
