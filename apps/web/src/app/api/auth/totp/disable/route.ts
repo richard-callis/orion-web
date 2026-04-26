@@ -9,6 +9,7 @@ import { prisma } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { compare } from 'bcryptjs'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
+import { parseBodyOrError, TOTPDisableSchema } from '@/lib/validate'
 
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser()
@@ -16,12 +17,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await req.json().catch(() => ({}))
-  const { password } = body as { password?: string }
+  // SOC2 [INPUT-001]: Validate request body with Zod schema
+  const result = await parseBodyOrError(req, TOTPDisableSchema)
+  if ('error' in result) return result.error
 
-  if (!password) {
-    return NextResponse.json({ error: 'Password required to disable MFA' }, { status: 400 })
-  }
+  const { data } = result  // { password: string }
 
   // Verify password
   const dbUser = await prisma.user.findUnique({
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const valid = await compare(password, dbUser.passwordHash)
+  const valid = await compare(data.password, dbUser.passwordHash)
   if (!valid) {
     return NextResponse.json({ error: 'Incorrect password' }, { status: 401 })
   }
