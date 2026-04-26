@@ -198,8 +198,15 @@ async function validateSSoHeaderHmac(headers: Headers): Promise<boolean> {
   const secretPrevious = process.env.SSO_HMAC_SECRET_PREVIOUS  // for key rotation
 
   if (!secret) {
-    // HMAC not configured — allow unsigned headers (backward compat during rollout)
-    return true
+    // SOC2 [SSO-001]: HMAC secret not configured — reject SSO header auth to prevent
+    // header injection if operator enabled header mode but forgot to set SSO_HMAC_SECRET.
+    // Set SSO_ALLOW_UNSIGNED_SSO=true to allow unsigned headers during rollout only.
+    const allowUnsigned = process.env.SSO_ALLOW_UNSIGNED_SSO === 'true'
+    if (allowUnsigned) {
+      console.warn('[SSO] SSO_HMAC_SECRET not configured but SSO_ALLOW_UNSIGNED_SSO=true — unsigned headers allowed')
+      return true
+    }
+    return false
   }
 
   const username = headers.get('x-authentik-username')
