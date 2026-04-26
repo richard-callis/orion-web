@@ -6,10 +6,53 @@
  */
 
 import { z } from 'zod'
+import { NextRequest, NextResponse } from 'next/server'
 
 /**
- * Validate a JSON body against a Zod schema.
- * Returns a NextResponse error if invalid, null if valid.
+ * Parse and validate request body against a Zod schema.
+ * Returns either { data: T } or { error: NextResponse }.
+ *
+ * Usage:
+ *   const result = await parseBodyOrError(req, MySchema)
+ *   if ('error' in result) return result.error
+ *   const { data } = result  // type-safe T
+ */
+export async function parseBodyOrError<T extends z.ZodType>(
+  req: NextRequest,
+  schema: T,
+): Promise<{ data: z.infer<T> } | { error: NextResponse }> {
+  try {
+    const body = await req.json()
+    const data = schema.parse(body)
+    return { data }
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return {
+        error: NextResponse.json(
+          {
+            error: 'Invalid request body',
+            issues: err.issues.map(i => ({
+              path: i.path.join('.'),
+              message: i.message,
+            })),
+          },
+          { status: 400 }
+        )
+      }
+    }
+    return {
+      error: NextResponse.json(
+        { error: 'Bad request' },
+        { status: 400 }
+      )
+    }
+  }
+}
+
+/**
+ * Legacy: Validate a JSON body against a Zod schema.
+ * Returns null if invalid (caller must return 400).
+ * Use parseBodyOrError() in new code instead.
  */
 export function validateBody<T extends z.ZodType>(
   body: unknown,
@@ -65,6 +108,154 @@ export const CreateNoteSchema = z.object({
   pinned: z.boolean().default(false),
   type: z.enum(['note', 'wiki', 'runbook', 'llm-context']).default('note'),
   tags: z.array(z.string().max(50)).max(10).optional(),
+})
+
+export const UpdateNoteSchema = z.object({
+  title: z.string().trim().min(1).max(200).optional(),
+  content: z.string().max(50000).optional(),
+  folder: z.string().max(100).optional(),
+  pinned: z.boolean().optional(),
+  type: z.enum(['note', 'wiki', 'runbook', 'llm-context']).optional(),
+  tags: z.array(z.string().max(50)).max(10).optional(),
+})
+
+// ── Auth Schemas ────────────────────────────────────────────────────────────────
+
+export const TOTPVerifySchema = z.object({
+  code: z.string().length(6, 'Code must be 6 digits').regex(/^\d+$/, 'Code must be numeric'),
+})
+
+export const TOTPDisableSchema = z.object({
+  password: z.string().min(1, 'Password required'),
+})
+
+export const TOTPRecoverySchema = z.object({
+  code: z.string().min(1, 'Recovery code required'),
+})
+
+export const MfaVerifySchema = z.object({
+  code: z.string().length(6, '6-digit code required'),
+  isRecovery: z.boolean().optional(),
+})
+
+export const TOTPLoginSchema = z.object({
+  username: z.string().min(1),
+  password: z.string().min(1),
+  totpCode: z.string().length(6).optional(),
+  isRecovery: z.boolean().optional(),
+})
+
+// ── Admin User Schemas ──────────────────────────────────────────────────────────
+
+export const CreateUserSchema = z.object({
+  username: z.string().min(3).max(100).regex(/^[a-zA-Z0-9_-]+$/, 'Invalid username'),
+  email: z.string().email('Invalid email'),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  name: z.string().max(200).optional(),
+  role: z.enum(['admin', 'user', 'readonly']).default('user'),
+})
+
+export const UpdateUserSchema = z.object({
+  username: z.string().min(3).max(100).optional(),
+  email: z.string().email().optional(),
+  password: z.string().min(8).optional(),
+  name: z.string().max(200).optional(),
+  role: z.enum(['admin', 'user', 'readonly']).optional(),
+  active: z.boolean().optional(),
+})
+
+export const UpdateSettingsSchema = z.object({
+  key: z.string().min(1).max(200),
+  value: z.string().max(10000),
+})
+
+export const UpdateSystemPromptSchema = z.object({
+  key: z.string().min(1),
+  name: z.string().max(200),
+  content: z.string().max(50000),
+})
+
+// ── Agent Schemas ──────────────────────────────────────────────────────────────
+
+export const CreateAgentSchema = z.object({
+  name: z.string().min(1).max(200),
+  type: z.enum(['claude', 'ollama', 'human', 'custom']),
+  role: z.string().max(100).optional(),
+  metadata: z.record(z.unknown()).optional(),
+})
+
+export const UpdateAgentSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  type: z.enum(['claude', 'ollama', 'human', 'custom']).optional(),
+  role: z.string().max(100).optional(),
+  metadata: z.record(z.unknown()).optional(),
+})
+
+// ── Task Schemas ──────────────────────────────────────────────────────────────
+
+export const CreateTaskSchema = z.object({
+  title: z.string().min(1).max(500),
+  description: z.string().max(5000).optional(),
+  plan: z.string().max(10000).optional(),
+  priority: z.number().int().min(1).max(10).default(5),
+  featureId: z.string().optional(),
+  assignedAgentId: z.string().optional(),
+  assignedUserId: z.string().optional(),
+})
+
+export const UpdateTaskSchema = z.object({
+  title: z.string().min(1).max(500).optional(),
+  description: z.string().max(5000).optional(),
+  plan: z.string().max(10000).optional(),
+  priority: z.number().int().min(1).max(10).optional(),
+  status: z.enum(['pending', 'running', 'done', 'failed']).optional(),
+  assignedAgentId: z.string().optional(),
+  assignedUserId: z.string().optional(),
+})
+
+// ── Feature & Epic Schemas ─────────────────────────────────────────────────────
+
+export const CreateFeatureSchema = z.object({
+  title: z.string().min(1).max(500),
+  description: z.string().max(5000).optional(),
+  plan: z.string().max(10000).optional(),
+  status: z.enum(['pending', 'in_progress', 'done', 'blocked']).default('pending'),
+  epicId: z.string().optional(),
+})
+
+export const UpdateFeatureSchema = z.object({
+  title: z.string().min(1).max(500).optional(),
+  description: z.string().max(5000).optional(),
+  plan: z.string().max(10000).optional(),
+  status: z.enum(['pending', 'in_progress', 'done', 'blocked']).optional(),
+  epicId: z.string().optional(),
+})
+
+export const CreateEpicSchema = z.object({
+  title: z.string().min(1).max(500),
+  description: z.string().max(5000).optional(),
+  plan: z.string().max(10000).optional(),
+  status: z.enum(['pending', 'in_progress', 'done', 'blocked']).default('pending'),
+})
+
+export const UpdateEpicSchema = z.object({
+  title: z.string().min(1).max(500).optional(),
+  description: z.string().max(5000).optional(),
+  plan: z.string().max(10000).optional(),
+  status: z.enum(['pending', 'in_progress', 'done', 'blocked']).optional(),
+})
+
+// ── Tool Approval Schemas ──────────────────────────────────────────────────────
+
+export const CreateToolApprovalSchema = z.object({
+  toolName: z.string().min(1),
+  toolArgs: z.record(z.unknown()).optional(),
+  reason: z.string().max(500).optional(),
+})
+
+export const UpdateConversationSchema = z.object({
+  title: z.string().max(500).optional(),
+  metadata: z.record(z.unknown()).optional(),
 })
 
 // ── Generic Helpers ───────────────────────────────────────────────────────────
