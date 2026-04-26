@@ -52,7 +52,7 @@ async function handleTotpLogin(username: string, password: string, code?: string
   })
 
   if (!user || !user.active || !user.totpEnabled || !user.totpSecret) {
-    return NextResponse.json({ error: 'MFA not enabled for this account' }, { status: 403 })
+    return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 
   // Verify password
