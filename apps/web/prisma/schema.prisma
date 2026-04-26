@@ -251,14 +251,15 @@ model TaskEvent {
 }
 
 model AuditLog {
-  id         String   @id @default(cuid())
-  userId     String
-  action     String
-  target     String
-  detail     Json?
-  ipAddress  String?  // SOC2: [M-005] Source IP for audit trail
-  userAgent  String?  // SOC2: [M-005] Client user-agent for audit trail
-  createdAt  DateTime @default(now())
+  id          String   @id @default(cuid())
+  userId      String
+  action      String
+  target      String
+  detail      Json?
+  ipAddress   String?  // SOC2: [M-005] Source IP for audit trail
+  userAgent   String?  // SOC2: [M-005] Client user-agent for audit trail
+  createdAt   DateTime @default(now())
+  previousHash String?  // SOC2: [M-005] Hash chain for tamper-evidence
 
   // SOC2: [M-005, L-001] Indexes for user-specific queries and date range filters
   @@index([userId])
