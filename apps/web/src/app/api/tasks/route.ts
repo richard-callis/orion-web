@@ -37,14 +37,14 @@ export async function POST(req: NextRequest) {
 
   const task = await prisma.task.create({
     data: {
-      title:           data.title,
-      description:     data.description ?? null,
-      priority:        data.priority ?? 5,
-      featureId:       data.featureId ?? null,
-      assignedAgentId: data.assignedAgentId ?? null,
-      assignedUserId:  data.assignedUserId ?? null,
-      createdBy:       caller?.id ?? 'gateway',
-    },
+      title:       data.title,
+      description: data.description ?? null,
+      priority:    data.priority ?? 'medium',
+      featureId:   data.featureId ?? null,
+      ...(data.assignedAgentId && { assignedAgent: data.assignedAgentId }),
+      assignedUserId: data.assignedUserId ?? null,
+      createdBy:    caller?.id ?? 'gateway',
+    } as any,
     include: { agent: true },
   })
   return NextResponse.json(task, { status: 201 })
