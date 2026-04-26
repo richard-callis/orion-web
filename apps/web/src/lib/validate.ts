@@ -392,7 +392,10 @@ export const CreateSSOSchema = z.object({
   enabled: z.boolean().optional(),
   headerMode: z.boolean().optional(),
   issuerUrl: z.string().max(2000).optional(),
-  groupMapping: z.record(z.string().max(200)).max(20).optional(),
+  groupMapping: z.record(z.string().max(200)).refine(
+    (val) => Object.keys(val).length <= 20,
+    { message: 'Maximum 20 group mappings allowed' }
+  ).optional(),
 })
 
 // Agent Types enum (extracted from spawn/route.ts VALID_TYPES)

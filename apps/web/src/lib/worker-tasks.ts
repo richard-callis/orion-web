@@ -49,13 +49,20 @@ export async function cleanupAuditLogs(): Promise<{ deleted: number; durationMs:
     let deleted = 0
 
     for (let batch = 0; batch < Math.ceil(count / BATCH_SIZE); batch++) {
-      const batch_result = await prisma.auditLog.deleteMany({
+      // Find IDs of records to delete
+      const toDelete = await prisma.auditLog.findMany({
         where: { createdAt: { lt: cutoff } },
+        select: { id: true },
         take: BATCH_SIZE,
       })
-      deleted += batch_result.count
 
-      if (batch_result.count === 0) break
+      if (toDelete.length === 0) break
+
+      // Delete those records
+      const batch_result = await prisma.auditLog.deleteMany({
+        where: { id: { in: toDelete.map(r => r.id) } },
+      })
+      deleted += batch_result.count
 
       console.log(
         `[audit-cleanup] Batch ${batch + 1}: deleted ${batch_result.count} (total: ${deleted})`
@@ -68,13 +75,13 @@ export async function cleanupAuditLogs(): Promise<{ deleted: number; durationMs:
     await prisma.auditLog.create({
       data: {
         action: 'AUDIT_LOG_CLEANUP',
-        resource: 'System',
+        target: 'System',
         userId: 'system',
-        changes: {
+        detail: {
           deleted_count: deleted,
           cutoff_date: cutoff.toISOString(),
           retention_days: safeDays,
-        },
+        } as any,
       },
     })
 

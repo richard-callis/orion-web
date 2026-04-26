@@ -147,7 +147,7 @@ export function redactObjectFields<T extends SafeObject>(obj: T, fieldsToRedact:
 
   for (const field of fieldsToRedact) {
     if (field in redacted) {
-      redacted[field] = '[REDACTED]'
+      (redacted as any)[field] = '[REDACTED]'
     }
   }
 
