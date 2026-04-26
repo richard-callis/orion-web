@@ -23,7 +23,7 @@ function UsageBar({ label, pct, used, total }: { label: string; pct: number; use
       <div className="h-1 rounded-full bg-bg-raised overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${barColor(pct)}`}
-          style={{ width: `${Math.min(pct, 100)}%` }}
+          style={{ '--width': `${Math.min(pct, 100)}%` } as React.CSSProperties}
         />
       </div>
     </div>

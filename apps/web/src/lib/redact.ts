@@ -65,29 +65,57 @@ export function makeRedactedLog(prefix: string) {
 }
 
 /**
- * Wrap global console.log to automatically redact all log output.
+ * Redact arguments and call the original console method.
+ */
+function redactAndLog(originalMethod: (...args: unknown[]) => void, args: unknown[]): void {
+  const redacted = args.map(arg => {
+    if (typeof arg === 'string') return redactSensitive(arg)
+    if (arg && typeof arg === 'object') {
+      try {
+        return JSON.stringify(arg, (_key, value) => {
+          if (typeof value === 'string') return redactSensitive(value)
+          return value
+        }, 2)
+      } catch {
+        return String(arg)
+      }
+    }
+    return arg
+  })
+  originalMethod(...redacted)
+}
+
+/**
+ * Wrap global console methods (log, error, warn, info, debug) to automatically redact all output.
  * Call this once at application startup.
+ * SOC2: [K8S-001] Prevents secrets from leaking via any console output channel.
  */
 let wrapped = false
 export function wrapConsoleLog(): void {
   if (wrapped) return
   wrapped = true
+
+  // Preserve originals before wrapping
   const originalLog = console.log.bind(console)
+  const originalError = console.error.bind(console)
+  const originalWarn = console.warn.bind(console)
+  const originalInfo = console.info.bind(console)
+  const originalDebug = console.debug.bind(console)
+
+  // Wrap each method
   console.log = function (...args: unknown[]) {
-    const redacted = args.map(arg => {
-      if (typeof arg === 'string') return redactSensitive(arg)
-      if (arg && typeof arg === 'object') {
-        try {
-          return JSON.stringify(arg, (_key, value) => {
-            if (typeof value === 'string') return redactSensitive(value)
-            return value
-          }, 2)
-        } catch {
-          return String(arg)
-        }
-      }
-      return arg
-    })
-    originalLog(...redacted)
+    redactAndLog(originalLog, args)
+  }
+  console.error = function (...args: unknown[]) {
+    redactAndLog(originalError, args)
+  }
+  console.warn = function (...args: unknown[]) {
+    redactAndLog(originalWarn, args)
+  }
+  console.info = function (...args: unknown[]) {
+    redactAndLog(originalInfo, args)
+  }
+  console.debug = function (...args: unknown[]) {
+    redactAndLog(originalDebug, args)
   }
 }

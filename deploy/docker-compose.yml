@@ -9,6 +9,10 @@ services:
         condition: service_healthy
       vault:
         condition: service_started
+      minio:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://orion:${POSTGRES_PASSWORD}@postgres:5432/orion
       NEXTAUTH_URL: https://${ORION_DOMAIN:-orion.khalis.corp}
@@ -34,6 +38,20 @@ services:
       EMBED_TRIGGER_TOKEN: ${EMBED_TRIGGER_TOKEN:-}
       # Service token for gateway↔ORION authentication (SOC2: [AC-001])
       ORION_GATEWAY_TOKEN: ${ORION_GATEWAY_TOKEN:-}
+      # Audit Log Archival (S3 Export) — SOC2 [L-001]
+      AUDIT_EXPORT_S3_BACKEND: ${AUDIT_EXPORT_S3_BACKEND:-minio}
+      AUDIT_EXPORT_S3_ENDPOINT: ${AUDIT_EXPORT_S3_ENDPOINT:-http://minio:9000}
+      AUDIT_EXPORT_S3_REGION: ${AUDIT_EXPORT_S3_REGION:-us-east-1}
+      AUDIT_EXPORT_S3_BUCKET: ${AUDIT_EXPORT_S3_BUCKET:-orion-audit-logs}
+      AUDIT_EXPORT_RETENTION_DAYS: ${AUDIT_EXPORT_RETENTION_DAYS:-30}
+      AUDIT_EXPORT_MANIFEST_PATH: ${AUDIT_EXPORT_MANIFEST_PATH:-manifests/}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+      # Redis Sentinel for distributed rate limiting (SOC2: [RATE-001])
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-mymaster}
+      REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26380,redis-sentinel-3:26381}
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - orion-claude-creds:/claude-creds
@@ -248,9 +266,136 @@ services:
       - "53:53/udp"
       - "53:53/tcp"
 
+  # ── MinIO (S3-compatible object storage for audit log archival — SOC2 [L-001]) ──
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"    # S3 API
+      - "9001:9001"    # Web console
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    labels:
+      traefik.enable: "false"
+
+  # ── MinIO init container — creates orion-audit-logs bucket on startup ────────
+  minio-init:
+    image: minio/mc:latest
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc config host add myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/orion-audit-logs --ignore-existing;
+      /usr/bin/mc version enable myminio/orion-audit-logs;
+      echo 'MinIO bucket orion-audit-logs initialized with versioning';
+      "
+
+  # ── Redis Sentinel cluster (3 sentinels for HA + distributed rate limiting) ──
+  # Master node (port 6379)
+  redis-master:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --dir /data
+    volumes:
+      - redis-master-data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    labels:
+      traefik.enable: "false"
+
+  # ── Redis Sentinel 1 (port 26379) ──────────────────────────────────────────
+  redis-sentinel-1:
+    image: redis:7-alpine
+    restart: unless-stopped
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    command: redis-sentinel /etc/redis-sentinel.conf
+    volumes:
+      - ./redis-sentinel-1.conf:/etc/redis-sentinel.conf:ro
+      - redis-sentinel-1-data:/data
+    ports:
+      - "26379:26379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "sentinel", "masters"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    labels:
+      traefik.enable: "false"
+
+  # ── Redis Sentinel 2 (port 26380) ──────────────────────────────────────────
+  redis-sentinel-2:
+    image: redis:7-alpine
+    restart: unless-stopped
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    command: redis-sentinel /etc/redis-sentinel.conf
+    volumes:
+      - ./redis-sentinel-2.conf:/etc/redis-sentinel.conf:ro
+      - redis-sentinel-2-data:/data
+    ports:
+      - "26380:26380"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26380", "sentinel", "masters"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    labels:
+      traefik.enable: "false"
+
+  # ── Redis Sentinel 3 (port 26381) ──────────────────────────────────────────
+  redis-sentinel-3:
+    image: redis:7-alpine
+    restart: unless-stopped
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    command: redis-sentinel /etc/redis-sentinel.conf
+    volumes:
+      - ./redis-sentinel-3.conf:/etc/redis-sentinel.conf:ro
+      - redis-sentinel-3-data:/data
+    ports:
+      - "26381:26381"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26381", "sentinel", "masters"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    labels:
+      traefik.enable: "false"
+
 volumes:
   gitea-data:
   postgres-data:
   vault-data:
   orion-claude-creds:
   gateway-creds:
+  minio-data:
+  redis-master-data:
+  redis-sentinel-1-data:
+  redis-sentinel-2-data:
+  redis-sentinel-3-data:

@@ -58,11 +58,22 @@ async function applyRateLimit(req: NextRequest): Promise<NextResponse | null> {
     }
   }
 
-  const rateKey = `${key}:${pathname}`
-  if (!(await rateLimitRedis(rateKey, maxRequests, windowMs))) {
+  const rateKey = `rate-limit:ip:${key}:${pathname}`
+  const result = await rateLimitRedis(rateKey, maxRequests, windowMs)
+
+  if (!result.allowed) {
+    const retryAfterSeconds = Math.ceil((result.resetAt.getTime() - Date.now()) / 1000)
     return NextResponse.json(
       { error: 'Too many requests, please try again later' },
-      { status: 429, headers: { 'Retry-After': String(Math.ceil(windowMs / 1000)) } }
+      {
+        status: 429,
+        headers: {
+          'X-RateLimit-Limit': String(result.limit),
+          'X-RateLimit-Remaining': String(result.remaining),
+          'X-RateLimit-Reset': result.resetAt.toISOString(),
+          'Retry-After': String(Math.max(1, retryAfterSeconds)),
+        },
+      }
     )
   }
 
@@ -105,11 +116,11 @@ const SERVICE_TOKEN_PREFIXES = [
 
 // SOC2: [H-002, L-002] Security headers middleware
 function addSecurityHeaders(res: NextResponse): NextResponse {
-  // CSP: style-src 'unsafe-inline' required because React/Next.js uses inline styles
+  // CSP: style-src 'self' only — all styles are now in CSS modules or use CSS variables
   res.headers.set('Content-Security-Policy',
     "default-src 'self'; " +
     "script-src 'self' 'strict-dynamic'; " +
-    "style-src 'self' 'unsafe-inline'; " +
+    "style-src 'self'; " +
     "img-src 'self' data: https:; " +
     "connect-src 'self' https:; " +
     "font-src 'self'; " +

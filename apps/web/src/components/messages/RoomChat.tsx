@@ -324,9 +324,9 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       {typingAgents.length > 0 && (
         <div className="px-4 py-1 flex items-center gap-1.5 flex-shrink-0">
           <span className="flex gap-0.5 items-end">
-            <span className="w-1 h-1 rounded-full bg-accent animate-bounce" style={{ animationDelay: '0ms' }} />
-            <span className="w-1 h-1 rounded-full bg-accent animate-bounce" style={{ animationDelay: '150ms' }} />
-            <span className="w-1 h-1 rounded-full bg-accent animate-bounce" style={{ animationDelay: '300ms' }} />
+            <span className="w-1 h-1 rounded-full bg-accent animate-bounce0" />
+            <span className="w-1 h-1 rounded-full bg-accent animate-bounce150" />
+            <span className="w-1 h-1 rounded-full bg-accent animate-bounce300" />
           </span>
           <span className="text-[10px] text-text-muted italic">
             {typingAgents.length === 1
@@ -375,7 +375,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       {/* Invite Modal */}
       {showInvite && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowInvite(false)}>
-          <div className="w-full max-w-md bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col" style={{ maxHeight: 'min(60vh, 450px)' }} onClick={e => e.stopPropagation()}>
+          <div className="w-full max-w-md bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-60 md:max-h-96" onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
               <span className="text-sm font-semibold text-text-primary">Add Member</span>

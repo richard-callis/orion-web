@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireServiceAuth, assertCanModify } from '@/lib/auth'
+import { parseBodyOrError, UpdateTaskSchema } from '@/lib/validate'
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   await requireServiceAuth(req)
@@ -26,19 +27,22 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   await assertCanModify(caller, isService, existing.createdBy)
 
-  const body = await req.json()
-  const data: Record<string, unknown> = {}
-  if (body.status          !== undefined) data.status          = body.status
-  if (body.title           !== undefined) data.title           = body.title
-  if (body.description     !== undefined) data.description     = body.description
-  if (body.plan            !== undefined) data.plan            = body.plan
-  if (body.featureId       !== undefined) data.featureId       = body.featureId
-  if (body.priority        !== undefined) data.priority        = body.priority
-  if (body.assignedAgent   !== undefined) data.assignedAgent   = body.assignedAgent   || null
-  if (body.assignedUserId  !== undefined) data.assignedUserId  = body.assignedUserId  || null
+  // SOC2 [INPUT-001]: Validate request body with Zod schema
+  const result = await parseBodyOrError(req, UpdateTaskSchema)
+  if ('error' in result) return result.error
+
+  const { data } = result
+  const dbData: Record<string, unknown> = {}
+  if (data.status          !== undefined) dbData.status          = data.status
+  if (data.title           !== undefined) dbData.title           = data.title
+  if (data.description     !== undefined) dbData.description     = data.description
+  if (data.plan            !== undefined) dbData.plan            = data.plan
+  if (data.priority        !== undefined) dbData.priority        = data.priority
+  if (data.assignedAgentId !== undefined) dbData.assignedAgentId = data.assignedAgentId || null
+  if (data.assignedUserId  !== undefined) dbData.assignedUserId  = data.assignedUserId  || null
   const task = await prisma.task.update({
     where: { id: params.id },
-    data,
+    data: dbData,
     include: { agent: true, assignedUser: true },
   })
   return NextResponse.json(task)
