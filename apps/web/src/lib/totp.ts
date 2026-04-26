@@ -89,10 +89,22 @@ export async function consumeRecoveryCode(
   hashedCodes: string[],
   cost: number = 14,
 ): Promise<string[] | null> {
-  if (!await verifyRecoveryCode(code, hashedCodes, cost)) {
+  const { compare } = await import('bcryptjs')
+
+  // Find the index of the matching recovery code
+  let matchedIndex = -1
+  for (let i = 0; i < hashedCodes.length; i++) {
+    if (await compare(code, hashedCodes[i])) {
+      matchedIndex = i
+      break
+    }
+  }
+
+  // If no match found, return null
+  if (matchedIndex === -1) {
     return null
   }
-  const { hash } = await import('bcryptjs')
-  // Remove the matching code and rehash the rest
-  return hashedCodes.filter((hc) => hc !== (await hash(code, cost)))
+
+  // Return array without the consumed code
+  return hashedCodes.filter((_, i) => i !== matchedIndex)
 }
