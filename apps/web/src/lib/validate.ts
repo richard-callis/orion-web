@@ -134,14 +134,16 @@ export const TOTPRecoverySchema = z.object({
 })
 
 export const MfaVerifySchema = z.object({
-  code: z.string().length(6, '6-digit code required'),
+  username: z.string().min(1),
+  password: z.string().min(1),
+  code: z.string().min(1),
   isRecovery: z.boolean().optional(),
 })
 
 export const TOTPLoginSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
-  totpCode: z.string().length(6).optional(),
+  code: z.string().min(1).optional(),
   isRecovery: z.boolean().optional(),
 })
 
