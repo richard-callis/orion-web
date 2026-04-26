@@ -13,3 +13,4 @@ package-lock.json
 # Self-hosted GitHub Actions Runner (local only)
 runners/
 .gitnexus
+.claude/worktrees/
