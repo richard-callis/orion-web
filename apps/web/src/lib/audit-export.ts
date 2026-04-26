@@ -266,6 +266,11 @@ export async function generateManifest(
   const logsHash = await hashFile(logsFilePath)
   const previousManifestHash = await getPreviousManifestHash()
 
+  // Use a 64-char placeholder for the manifest hash during computation.
+  // The hash is computed on this placeholder, then replaced with the actual hash.
+  // Verification: replace the stored hash with the same placeholder, recompute, and compare.
+  const PLACEHOLDER_HASH = '0'.repeat(64)
+
   const manifest: AuditManifest = {
     exportDate: new Date().toISOString(),
     recordCount,
@@ -276,7 +281,7 @@ export async function generateManifest(
     s3Path,
     hashChain: {
       logs: logsHash,
-      manifest: '', // Placeholder, will be filled after computing manifest hash
+      manifest: PLACEHOLDER_HASH,  // Placeholder — hash computed on this value
       previousManifest: previousManifestHash,
     },
     checksums: {
@@ -288,13 +293,15 @@ export async function generateManifest(
     version: '1.0',
   }
 
-  // Compute manifest JSON hash
-  const manifestJson = JSON.stringify(manifest, null, 2)
-  const manifestHash = createHash('sha256').update(manifestJson).digest('hex')
+  // Compute manifest hash on JSON with placeholder value
+  const manifestJsonWithPlaceholder = JSON.stringify(manifest, null, 2)
+  const manifestHash = createHash('sha256').update(manifestJsonWithPlaceholder).digest('hex')
+
+  // Replace placeholder with actual hash
   manifest.hashChain.manifest = manifestHash
 
   // Update file size (approximately — actual size will be set after S3 upload)
-  manifest.checksums.fileSize = manifestJson.length
+  manifest.checksums.fileSize = manifestJsonWithPlaceholder.length
 
   return manifest
 }
