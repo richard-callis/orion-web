@@ -8,7 +8,7 @@ WORKDIR /app
 # Build tools needed for node-pty native compilation
 RUN apk add --no-cache make g++
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev --legacy-peer-deps
 
 FROM node:20-alpine AS builder
 WORKDIR /app
@@ -17,7 +17,7 @@ RUN apk add --no-cache openssl make g++
 COPY --from=deps /app/node_modules ./node_modules
 # Install devDependencies (esbuild, tsx, typescript) for the build step
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm install --legacy-peer-deps
 COPY . .
 RUN npx prisma generate
 ENV NEXT_TELEMETRY_DISABLED=1
