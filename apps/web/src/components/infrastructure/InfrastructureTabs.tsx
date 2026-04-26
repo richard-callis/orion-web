@@ -334,13 +334,19 @@ export function InfrastructureTabs() {
   // Load environments
   useEffect(() => {
     fetch('/api/environments')
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then((envs: Environment[]) => {
+        if (!Array.isArray(envs)) return
         const clusters = envs.filter(e => e.type === 'cluster' && e.gatewayUrl)
         setEnvironments(clusters)
         if (clusters.length === 1) setEnvId(clusters[0].id)
       })
-      .catch(() => {})
+      .catch((err) => {
+        console.error('[InfrastructureTabs] Failed to load environments:', err)
+      })
   }, [])
 
   const fetchInfrastructure = useCallback(async (id: string) => {
