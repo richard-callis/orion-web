@@ -55,7 +55,7 @@ function processRow(obj: unknown, model?: string): unknown {
 
 function processResult(result: unknown, model?: string): unknown {
   if (Array.isArray(result)) {
-    return result.map((r) => (isRecord(r) ? processRow(r, model) : r))
+    return result.map((r: any) => (isRecord(r) ? processRow(r, model) : r))
   }
 
   return isRecord(result) ? processRow(result, model) : result
