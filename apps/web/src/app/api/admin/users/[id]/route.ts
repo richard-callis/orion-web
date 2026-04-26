@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { hash } from 'bcryptjs'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
@@ -15,7 +16,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (data.active !== undefined) updateData.active = data.active
   if (data.username !== undefined) updateData.username = data.username
   if (data.email !== undefined) updateData.email = data.email
-  if (data.password !== undefined) updateData.password = data.password
+  if (data.password !== undefined) updateData.passwordHash = await hash(data.password, 14)
   if (data.name !== undefined) updateData.name = data.name
 
   const user = await prisma.user.update({
