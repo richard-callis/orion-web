@@ -5,15 +5,8 @@
  * Compatible with Google Authenticator, Authy, 1Password, and other TOTP apps.
  */
 
-const otplib = require("otplib") as any
-const { authenticator } = otplib
+import { generate, verify, generateSecret } from 'otplib'
 import crypto from 'crypto'
-
-// Configure TOTP settings
-authenticator.window = 1 // Allow ±1 time step (±30s) for clock skew
-authenticator.digit = 6
-authenticator.step = 30
-authenticator.type = 'sha1'
 
 const TOTP_ISSUER = 'ORION'
 const TOTP_LABEL = 'ORION'
@@ -22,8 +15,8 @@ const TOTP_LABEL = 'ORION'
  * Generate a new TOTP secret (Base32 encoded).
  * 20 bytes = 160-bit key, standard for TOTP.
  */
-export function generateSecret(): string {
-  return authenticator.generateSecret()
+export function generateSecretString(): string {
+  return generateSecret()
 }
 
 /**
@@ -31,15 +24,20 @@ export function generateSecret(): string {
  * The user scans this URL with their authenticator app.
  */
 export function generateQRCodeUrl(secret: string, username: string): string {
-  return authenticator.keyuri(username, TOTP_ISSUER, secret)
+  return `otpauth://totp/${TOTP_LABEL}:${username}?secret=${secret}&issuer=${TOTP_LABEL}&algorithm=SHA1&digits=6&period=30`
 }
 
 /**
  * Verify a TOTP code against a secret.
- * Returns true if the code is valid within the ±1 window.
+ * Returns true if the code is valid within the current time step.
  */
-export function verifyTOTP(secret: string, code: string): boolean {
-  return authenticator.verify({ token: code, secret })
+export async function verifyTOTP(secret: string, code: string): Promise<boolean> {
+  try {
+    const result = await verify({ token: code, secret })
+    return result.valid
+  } catch {
+    return false
+  }
 }
 
 /**
