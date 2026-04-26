@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getToken } from 'next-auth/jwt'
+import { timingSafeEqual } from 'crypto'
 import { getOrCreateCorrelationId } from './lib/correlation-id'
 
 // SOC2: [M-004] Wrap console.log BEFORE any other import to catch all log output
@@ -182,6 +183,18 @@ function nextWithNonce(req: NextRequest, nonce: string, correlationId: string): 
   return NextResponse.next({ request: { headers: requestHeaders } })
 }
 
+/** Constant-time string comparison to prevent timing attacks on token auth (SOC2 #166) */
+function timingSafeCompare(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  const bufA = Buffer.from(a)
+  const bufB = Buffer.from(b)
+  try {
+    return timingSafeEqual(bufA, bufB)
+  } catch {
+    return false
+  }
+}
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
@@ -204,10 +217,11 @@ export async function middleware(req: NextRequest) {
 
   // Service token (gateway) calls — accept Bearer token instead of session.
   // Gateway tools need to read/write notes, list agent-groups, etc.
+  // Use constant-time comparison to prevent timing attacks (SOC2 #166)
   const gatewayToken = process.env.ORION_GATEWAY_TOKEN
   if (
     gatewayToken &&
-    req.headers.get('authorization') === `Bearer ${gatewayToken}`
+    timingSafeCompare(req.headers.get('authorization') ?? '', `Bearer ${gatewayToken}`)
   ) {
     // Gateway can do anything except DELETE on notes (safety)
     if (req.method === 'DELETE' && pathname.startsWith('/api/notes')) {
