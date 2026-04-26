@@ -21,6 +21,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
 import type { S3Client } from '@aws-sdk/client-s3'
+import { createS3Client, loadS3Config, getBackendName, logBackendConfig } from './s3-backends'
 
 export type AuditExportResult = {
   success: boolean
@@ -53,6 +54,19 @@ export function loadAuditExportConfig(): AuditExportConfig {
     retentionDays: parseInt(process.env.AUDIT_EXPORT_RETENTION_DAYS || '30', 10),
     manifestPath: process.env.AUDIT_EXPORT_MANIFEST_PATH || 'manifests/',
   }
+}
+
+/**
+ * Get S3 client with automatic backend detection
+ * Delegates to s3-backends.ts factory for all backend-specific logic
+ *
+ * This function is deprecated — use createS3Client() from s3-backends.ts instead.
+ * Kept for backwards compatibility.
+ *
+ * @deprecated Use createS3Client() from './s3-backends'
+ */
+export async function getS3ClientConfig() {
+  return createS3Client()
 }
 
 /**
@@ -288,6 +302,7 @@ export async function generateManifest(
 /**
  * Upload logs file to S3
  * Returns: S3 path of uploaded file
+ * Uses backend-agnostic factory (s3-backends.ts) for client creation
  */
 export async function uploadToS3(
   logsFilePath: string,
@@ -295,12 +310,10 @@ export async function uploadToS3(
   retryCount: number = 3
 ): Promise<string> {
   // Dynamically import AWS SDK only if needed
-  let S3Client: typeof import('@aws-sdk/client-s3').S3Client
   let PutObjectCommand: typeof import('@aws-sdk/client-s3').PutObjectCommand
 
   try {
     const aws = await import('@aws-sdk/client-s3')
-    S3Client = aws.S3Client
     PutObjectCommand = aws.PutObjectCommand
   } catch {
     throw new Error(
@@ -308,7 +321,8 @@ export async function uploadToS3(
     )
   }
 
-  const s3Client = config.s3Client || new S3Client({ region: config.region })
+  // Use injected client (for testing) or create new one via factory
+  const s3Client = config.s3Client || (await createS3Client())
   const exportDate = new Date().toISOString().split('T')[0]
   const fileName = `audit-logs-${exportDate}.json.gz`
   const s3Key = `${exportDate}/${fileName}`
@@ -393,6 +407,12 @@ export async function exportAuditLogs(config?: Partial<AuditExportConfig>): Prom
   const startTime = Date.now()
 
   try {
+    // Log backend being used (diagnostics)
+    const backendName = getBackendName()
+    const s3Config = loadS3Config()
+    console.log(`[audit-export] Using backend: ${backendName}`)
+    console.log(`[audit-export] Bucket: ${s3Config.bucket}, Region: ${s3Config.region}`)
+
     // Get retention period
     const retentionDays = await getRetentionDays()
 
@@ -463,6 +483,7 @@ export async function exportAuditLogs(config?: Partial<AuditExportConfig>): Prom
 
 /**
  * Upload manifest JSON to S3
+ * Uses backend-agnostic factory (s3-backends.ts) for client creation
  */
 async function uploadManifestToS3(
   manifest: AuditManifest,
@@ -470,17 +491,16 @@ async function uploadManifestToS3(
   config: AuditExportConfig
 ): Promise<void> {
   let PutObjectCommand: typeof import('@aws-sdk/client-s3').PutObjectCommand
-  let S3Client: typeof import('@aws-sdk/client-s3').S3Client
 
   try {
     const aws = await import('@aws-sdk/client-s3')
-    S3Client = aws.S3Client
     PutObjectCommand = aws.PutObjectCommand
   } catch {
     throw new Error('AWS SDK not installed')
   }
 
-  const s3Client = config.s3Client || new S3Client({ region: config.region })
+  // Use injected client (for testing) or create new one via factory
+  const s3Client = config.s3Client || (await createS3Client())
 
   // Extract bucket and key from s3Path
   const match = s3Path.match(/s3:\/\/([^/]+)\/(.+)/)
