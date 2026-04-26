@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createSSEStream } from '@/lib/sse'
 import { coreApi } from '@/lib/k8s'
 import { getCurrentUser } from '@/lib/auth'
+import { redactSensitive } from '@/lib/redact'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,7 +33,7 @@ export async function GET(
         )
         const text: string = typeof res === 'string' ? res : (res.body ?? '')
         for (const line of text.split('\n')) {
-          if (line) send('message', line)
+          if (line) send('message', redactSensitive(line))
         }
         close()
       } catch (err) {
