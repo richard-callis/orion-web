@@ -260,6 +260,117 @@ export const UpdateConversationSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 })
 
+// ── Setup / Admin Schemas ──────────────────────────────────────────────────────
+
+export const SetupAdminSchema = z.object({
+  username: z.string().min(3).max(100).regex(/^[a-zA-Z0-9_-]+$/, 'Username must be alphanumeric (hyphens/underscores allowed)'),
+  password: z.string().min(10, 'Password must be at least 10 characters'),
+})
+
+export const SetupAiProviderSchema = z.object({
+  name: z.string().min(1).max(100),
+  provider: z.enum(['openai', 'anthropic', 'ollama', 'openrouter', 'custom']),
+  baseUrl: z.string().url().max(2000).optional(),
+  apiKey: z.string().min(1).max(1000),
+  modelId: z.string().max(200),
+})
+
+export const SetupGitProviderSchema = z.object({
+  type: z.enum(['github', 'gitlab', 'gitea']),
+  url: z.string().url().max(2000).optional(),
+  token: z.string().min(1).max(1000),
+  adminUser: z.string().max(100).optional(),
+  adminPassword: z.string().max(500).optional(),
+  org: z.string().max(100).optional(),
+})
+
+// ── Agent Schemas ──────────────────────────────────────────────────────────────
+
+export const AgentSpawnSchema = z.object({
+  name: z.string().min(1).max(200),
+  type: z.enum(['claude', 'ollama', 'human', 'custom']),
+  role: z.string().max(100).optional(),
+  description: z.string().max(5000).optional(),
+  metadata: z.record(z.unknown()).optional(),
+  startConversation: z.string().max(200).optional(),
+})
+
+export const AgentMessageSchema = z.object({
+  content: z.string().min(1).max(50000),
+  channel: z.enum(['default', 'private']).default('default'),
+  messageType: z.enum(['text', 'task', 'followup']).default('text'),
+  agentId: z.string().max(100).optional(),
+  metadata: z.record(z.unknown()).optional(),
+})
+
+// ── Environment Schemas ─────────────────────────────────────────────────────────
+
+export const JoinEnvironmentSchema = z.object({
+  joinToken: z.string().min(1).max(200),
+  gatewayType: z.enum(['cluster', 'docker', 'localhost']).default('localhost'),
+  machineId: z.string().max(100).optional(),
+  gatewayUrl: z.string().url().max(2000).optional(),
+})
+
+// ── Chat / Nova Schemas ─────────────────────────────────────────────────────────
+
+export const ChatroomMessageSchema = z.object({
+  content: z.string().min(1).max(50000),
+  senderType: z.enum(['user', 'agent']).default('user'),
+  attachments: z.array(z.string().max(2000)).max(10).optional(),
+})
+
+export const CreateConversationSchema2 = z.object({
+  initialContext: z.string().max(10000).optional(),
+  planTarget: z.string().max(200).optional(),
+  planModel: z.string().max(100).optional(),
+  agentTarget: z.string().max(100).optional(),
+  agentDraft: z.string().max(100).optional(),
+  agentChat: z.string().max(100).optional(),
+})
+
+export const ImportNovaSchema = z.object({
+  agentName: z.string().min(1).max(200),
+  agentRole: z.string().max(1000).optional(),
+  systemPrompt: z.string().max(50000).optional(),
+})
+
+// ── Bug Schemas ─────────────────────────────────────────────────────────────────
+
+export const CreateBugSchema = z.object({
+  title: z.string().min(1).max(500),
+  description: z.string().max(10000).optional(),
+  severity: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
+  status: z.enum(['open', 'in_progress', 'resolved', 'wont_fix']).default('open'),
+  area: z.string().max(100).optional(),
+  reportedBy: z.string().max(200).optional(),
+  assignedUserId: z.string().max(100).optional(),
+})
+
+// ── API Key Schemas ─────────────────────────────────────────────────────────────
+
+export const CreateApiKeySchema = z.object({
+  name: z.string().min(1).max(200),
+  scopes: z.array(z.string().min(1).max(100)).max(20),
+  expiresAt: z.string().datetime().optional(),
+})
+
+// ── Ingress Schemas ─────────────────────────────────────────────────────────────
+
+export const CreateIngressDomainSchema = z.object({
+  name: z.string().min(1).max(200).regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/, 'Invalid domain name'),
+  type: z.enum(['http', 'https', 'grpc']).default('http'),
+  notes: z.string().max(2000).optional(),
+})
+
+export const CreateIngressRouteSchema = z.object({
+  host: z.string().max(500),
+  paths: z.array(z.string().max(1000)).min(1),
+  tls: z.object({ enabled: z.boolean(), secretName: z.string().max(200).optional() }).optional(),
+  middlewares: z.array(z.string().max(200)).max(10).optional(),
+  comment: z.string().max(500).optional(),
+})
+
 // ── Generic Helpers ───────────────────────────────────────────────────────────
 
 /**
@@ -281,3 +392,28 @@ export function sanitizeTitle(title: string): string {
     .slice(0, 200)                   // enforce length
     .trim()
 }
+
+// ─── NEW SCHEMAS FOR #184 BATCH 1 ────────────────────────────────────────
+
+// SSO Configuration (moved from inline in admin/sso/route.ts)
+export const CreateSSOSchema = z.object({
+  name: z.string().max(200).optional(),
+  enabled: z.boolean().optional(),
+  headerMode: z.boolean().optional(),
+  issuerUrl: z.string().max(2000).optional(),
+  groupMapping: z.record(z.string().max(200)).max(20).optional(),
+})
+
+// Agent Types enum (extracted from spawn/route.ts VALID_TYPES)
+export const AGENT_TYPES = ['claude', 'ollama', 'human', 'custom'] as const
+export const AgentTypeEnum = z.enum(AGENT_TYPES)
+
+// Agent Spawn (corrected enum without type casting)
+export const AgentSpawnSchema = z.object({
+  name: z.string().min(1).max(200),
+  type: AgentTypeEnum.default('claude'),
+  role: z.string().max(200).nullable().optional(),
+  description: z.string().max(500).optional(),
+  metadata: z.record(z.unknown()).optional(),
+  startConversation: z.boolean().optional(),
+})

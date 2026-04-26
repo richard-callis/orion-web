@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
@@ -23,17 +24,29 @@ export async function PATCH(req: NextRequest) {
   const admin = await requireAdmin()
   const body = await req.json()
 
+  // Validate SSO config fields
+  const parsed = z.object({
+    name: z.string().max(200).optional(),
+    enabled: z.boolean().optional(),
+    headerMode: z.boolean().optional(),
+    issuerUrl: z.string().max(2000).optional(),
+    groupMapping: z.record(z.string().max(200)).max(20).optional(),
+  }).safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Invalid SSO configuration' }, { status: 400 })
+  }
+
   const existing = await prisma.oIDCProvider.findFirst()
 
   if (existing) {
     const updated = await prisma.oIDCProvider.update({
       where: { id: existing.id },
       data: {
-        groupMapping: body.groupMapping ?? existing.groupMapping,
-        enabled:      body.enabled      ?? existing.enabled,
-        headerMode:   body.headerMode   ?? existing.headerMode,
-        issuerUrl:    body.issuerUrl    ?? existing.issuerUrl,
-        name:         body.name         ?? existing.name,
+        groupMapping: parsed.data.groupMapping ?? existing.groupMapping,
+        enabled:      parsed.data.enabled      ?? existing.enabled,
+        headerMode:   parsed.data.headerMode   ?? existing.headerMode,
+        issuerUrl:    parsed.data.issuerUrl    ?? existing.issuerUrl,
+        name:         parsed.data.name         ?? existing.name,
       },
     })
 
@@ -42,7 +55,7 @@ export async function PATCH(req: NextRequest) {
       userId: admin.id,
       action: 'sso_config_update',
       target: `sso:${existing.id}`,
-      detail: { name: body.name ?? existing.name, enabled: body.enabled, headerMode: body.headerMode },
+      detail: { name: parsed.data.name ?? existing.name, enabled: parsed.data.enabled, headerMode: parsed.data.headerMode },
       ipAddress: getClientIp(req),
       userAgent: getUserAgent(req.headers),
     }).catch(() => {})
@@ -53,11 +66,11 @@ export async function PATCH(req: NextRequest) {
   // Create initial record
   const created = await prisma.oIDCProvider.create({
     data: {
-      name:         body.name         ?? 'Authentik',
-      enabled:      body.enabled      ?? true,
-      headerMode:   body.headerMode   ?? true,
-      issuerUrl:    body.issuerUrl    ?? '',
-      groupMapping: body.groupMapping ?? { 'orion-admins': 'admin', 'orion-users': 'user' },
+      name:         parsed.data.name         ?? 'Authentik',
+      enabled:      parsed.data.enabled      ?? true,
+      headerMode:   parsed.data.headerMode   ?? true,
+      issuerUrl:    parsed.data.issuerUrl    ?? '',
+      groupMapping: parsed.data.groupMapping ?? { 'orion-admins': 'admin', 'orion-users': 'user' },
     },
   })
 
@@ -66,7 +79,7 @@ export async function PATCH(req: NextRequest) {
     userId: admin.id,
     action: 'sso_config_update',
     target: `sso:create`,
-    detail: { name: body.name ?? 'Authentik' },
+    detail: { name: parsed.data.name ?? 'Authentik' },
     ipAddress: getClientIp(req),
     userAgent: getUserAgent(req.headers),
   }).catch(() => {})
