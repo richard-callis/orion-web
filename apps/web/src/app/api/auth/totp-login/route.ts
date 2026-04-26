@@ -128,7 +128,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Verify TOTP code
-  if (!verifyTOTP(user.totpSecret, data.code)) {
+  if (!(await verifyTOTP(user.totpSecret, data.code))) {
     // SOC2: [M-005] Log MFA verification failure (non-blocking)
     logAudit({
       userId: user.id, action: 'mfa_verify_failure', target: 'mfa:totp',
