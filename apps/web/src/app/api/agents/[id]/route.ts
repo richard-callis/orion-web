@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { parseBodyOrError, UpdateAgentSchema } from '@/lib/validate'
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const agent = await prisma.agent.findUnique({
@@ -14,17 +15,20 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
-  const body = await req.json()
+  // SOC2 [INPUT-001]: Validate request body with Zod schema
+  const result = await parseBodyOrError(req, UpdateAgentSchema)
+  if ('error' in result) return result.error
+
+  const { data: validatedData } = result
   const data: Record<string, unknown> = {}
-  if (body.name        !== undefined) data.name        = body.name
-  if (body.role        !== undefined) data.role        = body.role
-  if (body.description !== undefined) data.description = body.description
-  if (body.status      !== undefined) data.status      = body.status
-  if (body.metadata !== undefined) {
+  if (validatedData.name        !== undefined) data.name        = validatedData.name
+  if (validatedData.type        !== undefined) data.type        = validatedData.type
+  if (validatedData.role        !== undefined) data.role        = validatedData.role
+  if (validatedData.metadata !== undefined) {
     // Deep merge metadata so callers can update contextConfig without wiping systemPrompt
     const existing = await prisma.agent.findUnique({ where: { id: params.id }, select: { metadata: true } })
     const existingMeta = (existing?.metadata ?? {}) as Record<string, unknown>
-    data.metadata = { ...existingMeta, ...body.metadata }
+    data.metadata = { ...existingMeta, ...validatedData.metadata }
   }
   const agent = await prisma.agent.update({ where: { id: params.id }, data })
   return NextResponse.json(agent)
