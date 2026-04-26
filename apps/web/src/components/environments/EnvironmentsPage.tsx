@@ -182,7 +182,9 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   // ── helpers ──────────────────────────────────────────────────────────────────
 
   const reload = async () => {
-    const data: Environment[] = await fetch('/api/environments').then(r => r.json())
+    const res = await fetch('/api/environments')
+    if (!res.ok) return
+    const data: Environment[] = await res.json()
     setEnvironments(data)
     if (selected) setSelected(data.find(e => e.id === selected.id) ?? data[0] ?? null)
   }

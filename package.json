@@ -10,5 +10,8 @@
     "dev:gateway": "npm run dev --workspace=apps/gateway",
     "build:web": "npm run build --workspace=apps/web",
     "build:gateway": "npm run build --workspace=apps/gateway"
+  },
+  "dependencies": {
+    "playwright": "^1.59.1"
   }
 }

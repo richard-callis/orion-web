@@ -118,7 +118,13 @@ export async function GET(
   const env = await prisma.environment.findUnique({ where: { id: params.id } })
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
   if (!env.gatewayUrl || !env.gatewayToken) {
-    return NextResponse.json({ error: 'Gateway not connected' }, { status: 422 })
+    const missing = []
+    if (!env.gatewayUrl) missing.push('gatewayUrl')
+    if (!env.gatewayToken) missing.push('gatewayToken')
+    return NextResponse.json({
+      error: `Gateway not connected (missing: ${missing.join(', ')})`,
+      detail: 'The gateway pod may still be joining. Check the gateway pod logs: kubectl logs -n management -l app=orion-gateway-<env-name> -f',
+    }, { status: 422 })
   }
 
   try {
