@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireServiceAuth, assertCanModify } from '@/lib/auth'
+import { parseBodyOrError, UpdateEpicSchema } from '@/lib/validate'
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   await requireServiceAuth(req)
@@ -21,12 +22,16 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   await assertCanModify(caller, isService, existing.createdBy)
 
-  const body = await req.json()
+  // SOC2 [INPUT-001]: Validate request body with Zod schema
+  const result = await parseBodyOrError(req, UpdateEpicSchema)
+  if ('error' in result) return result.error
+
+  const { data: validatedData } = result
   const data: Record<string, unknown> = {}
-  if (body.title       !== undefined) data.title       = body.title
-  if (body.description !== undefined) data.description = body.description
-  if (body.plan        !== undefined) data.plan        = body.plan
-  if (body.status      !== undefined) data.status      = body.status
+  if (validatedData.title       !== undefined) data.title       = validatedData.title
+  if (validatedData.description !== undefined) data.description = validatedData.description
+  if (validatedData.plan        !== undefined) data.plan        = validatedData.plan
+  if (validatedData.status      !== undefined) data.status      = validatedData.status
   const epic = await prisma.epic.update({ where: { id: params.id }, data })
   return NextResponse.json(epic)
 }
