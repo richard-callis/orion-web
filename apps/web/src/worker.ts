@@ -11,6 +11,7 @@
 import { prisma } from './lib/db'
 import { createRunner } from './lib/agent-runner'
 import type { TaskRunContext } from './lib/agent-runner'
+import { writeFileSync } from 'fs'
 
 const POLL_INTERVAL_MS = 15_000
 const MAX_CONCURRENT   = 3
@@ -85,6 +86,27 @@ function buildWikiContext(notes: Array<{ title: string; content: string }>): str
 }
 
 const runningTasks = new Set<string>()
+
+// ── Shutdown state ─────────────────────────────────────────────────────────────
+
+let shuttingDown = false
+const startTime = Date.now()
+let lastPollTime = Date.now()
+
+export function getWorkerState() {
+  return {
+    uptime: Date.now() - startTime,
+    tasksRunning: runningTasks.size,
+    lastPoll: lastPollTime,
+    shuttingDown,
+  }
+}
+
+// Write state to a JSON file for the health endpoint to read
+const STATE_FILE = process.env.WORKER_STATE_FILE ?? '/tmp/orion-worker-state.json'
+setInterval(() => {
+  try { writeFileSync(STATE_FILE, JSON.stringify(getWorkerState()), 'utf8') } catch { /* ignore */ }
+}, 5_000)
 
 // ── Logging helpers ────────────────────────────────────────────────────────────
 
@@ -523,8 +545,10 @@ async function syncGitOpsPRs() {
 // ── Poll loop ──────────────────────────────────────────────────────────────────
 
 async function pollOnce() {
+  if (shuttingDown) return
   if (runningTasks.size >= MAX_CONCURRENT) return
 
+  lastPollTime = Date.now()
   const available = MAX_CONCURRENT - runningTasks.size
   const tasks = await prisma.task.findMany({
     where: {
@@ -573,3 +597,33 @@ async function main() {
 }
 
 main().catch(e => { err(`Fatal: ${e}`); process.exit(1) })
+
+// ── Graceful shutdown ────────────────────────────────────────────────────────────
+
+async function gracefulShutdown(signal: string) {
+  log(`Received ${signal} — shutting down…`)
+  shuttingDown = true
+
+  // Stop polling immediately
+  log('Polling stopped')
+
+  // Wait for in-flight tasks (max 30s)
+  if (runningTasks.size > 0) {
+    log(`Waiting for ${runningTasks.size} in-flight task(s)…`)
+    const deadline = Date.now() + 30_000
+    while (runningTasks.size > 0 && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+    if (runningTasks.size > 0) {
+      err(`Still ${runningTasks.size} in-flight tasks after 30s — exiting`)
+    } else {
+      log('All tasks completed')
+    }
+  }
+
+  log('Goodbye')
+  process.exit(0)
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
+process.on('SIGINT', () => gracefulShutdown('SIGINT'))
