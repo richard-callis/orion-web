@@ -27,12 +27,12 @@ export async function POST(req: NextRequest) {
 
   const feature = await prisma.feature.create({
     data: {
-      title: data.title,
+      title:       data.title,
       description: data.description ?? null,
-      ...(data.epicId && { epicId: data.epicId }),
-      status: data.status,
-      createdBy: caller?.id ?? 'gateway',
-    },
+      status:      data.status,
+      createdBy:   caller?.id ?? 'gateway',
+      ...(data.epicId ? { epicId: data.epicId } : {}),
+    } as any,
     include: { _count: { select: { tasks: true } } },
   })
   return NextResponse.json(feature, { status: 201 })

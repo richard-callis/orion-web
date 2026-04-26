@@ -116,7 +116,7 @@ export async function logAudit(params: {
         userId: params.userId,
         action: params.action,
         target: params.target,
-        detail: params.detail ?? {},
+        detail: (params.detail ?? {}) as any,
         ipAddress: params.ipAddress ?? undefined,
         userAgent: params.userAgent ?? undefined,
         previousHash: prevHash ?? undefined,
