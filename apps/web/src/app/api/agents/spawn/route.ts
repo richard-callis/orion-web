@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
       type: data.type ?? 'claude',
       role: data.role ?? null,
       description: data.description ?? null,
-      metadata: data.metadata ?? undefined,
+      metadata: (data.metadata ?? undefined) as any,
     },
   })
 

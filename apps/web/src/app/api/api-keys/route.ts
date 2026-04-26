@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
       userId: result.user!.id,
       action: 'api_key_create',
       target: `api_key:${apiKeyResult.info.id}`,
-      detail: { name: apiKeyResult.info.name, expiresInDays },
+      detail: { name: apiKeyResult.info.name, expiresInDays: parsed.data.expiresInDays },
       ipAddress: getClientIp(req),
       userAgent: getUserAgent(req.headers),
     }).catch(() => {})

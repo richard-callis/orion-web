@@ -30,7 +30,10 @@ export async function PATCH(req: NextRequest) {
     enabled: z.boolean().optional(),
     headerMode: z.boolean().optional(),
     issuerUrl: z.string().max(2000).optional(),
-    groupMapping: z.record(z.string().max(200)).max(20).optional(),
+    groupMapping: z.record(z.string().max(200)).refine(
+      (val) => Object.keys(val).length <= 20,
+      { message: 'Maximum 20 group mappings allowed' }
+    ).optional(),
   }).safeParse(body)
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid SSO configuration' }, { status: 400 })
@@ -39,15 +42,16 @@ export async function PATCH(req: NextRequest) {
   const existing = await prisma.oIDCProvider.findFirst()
 
   if (existing) {
+    const updateData: any = {}
+    if (parsed.data.groupMapping !== undefined) updateData.groupMapping = parsed.data.groupMapping
+    if (parsed.data.enabled !== undefined) updateData.enabled = parsed.data.enabled
+    if (parsed.data.headerMode !== undefined) updateData.headerMode = parsed.data.headerMode
+    if (parsed.data.issuerUrl !== undefined) updateData.issuerUrl = parsed.data.issuerUrl
+    if (parsed.data.name !== undefined) updateData.name = parsed.data.name
+
     const updated = await prisma.oIDCProvider.update({
       where: { id: existing.id },
-      data: {
-        groupMapping: parsed.data.groupMapping ?? existing.groupMapping,
-        enabled:      parsed.data.enabled      ?? existing.enabled,
-        headerMode:   parsed.data.headerMode   ?? existing.headerMode,
-        issuerUrl:    parsed.data.issuerUrl    ?? existing.issuerUrl,
-        name:         parsed.data.name         ?? existing.name,
-      },
+      data: updateData,
     })
 
     // SOC2: [M-005] Log SSO config update (non-blocking)
