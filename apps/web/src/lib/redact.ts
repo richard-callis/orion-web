@@ -119,3 +119,118 @@ export function wrapConsoleLog(): void {
     redactAndLog(originalDebug, args)
   }
 }
+
+/**
+ * ─── FIELD-LEVEL REDACTION (for #186) ────────────────────────────────────
+ * Complements regex redaction with explicit field-level stripping
+ * for known secret columns
+ */
+
+export interface SafeObject {
+  [key: string]: unknown
+}
+
+/**
+ * Redact sensitive fields in an object.
+ * Used for known secret columns: apiKey, gatewayToken, kubeconfig, passwordHash
+ */
+export function redactObjectFields<T extends SafeObject>(obj: T, fieldsToRedact: string[] = [
+  'apiKey',
+  'gatewayToken',
+  'kubeconfig',
+  'passwordHash',
+  'apiSecret',
+  'webhookSecret',
+  'privateKey',
+]): T {
+  const redacted = JSON.parse(JSON.stringify(obj)) as T
+
+  for (const field of fieldsToRedact) {
+    if (field in redacted) {
+      redacted[field] = '[REDACTED]'
+    }
+  }
+
+  return redacted
+}
+
+/**
+ * Recursively redact sensitive fields in nested objects/arrays.
+ * Performs deep walk of JSON structure.
+ */
+export function redactNestedFields(
+  value: unknown,
+  fieldsToRedact: string[] = [
+    'apiKey',
+    'gatewayToken',
+    'kubeconfig',
+    'passwordHash',
+    'apiSecret',
+    'webhookSecret',
+    'privateKey',
+  ]
+): unknown {
+  if (value === null || value === undefined) {
+    return value
+  }
+
+  if (typeof value !== 'object') {
+    return value
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(item => redactNestedFields(item, fieldsToRedact))
+  }
+
+  const obj = value as Record<string, unknown>
+  const result: Record<string, unknown> = {}
+
+  for (const [key, val] of Object.entries(obj)) {
+    if (fieldsToRedact.includes(key)) {
+      result[key] = '[REDACTED]'
+    } else {
+      result[key] = redactNestedFields(val, fieldsToRedact)
+    }
+  }
+
+  return result
+}
+
+/**
+ * JSON replacer function for use with JSON.stringify
+ * Redacts sensitive fields during serialization
+ */
+export function createRedactionReplacer(
+  fieldsToRedact: string[] = [
+    'apiKey',
+    'gatewayToken',
+    'kubeconfig',
+    'passwordHash',
+    'apiSecret',
+    'webhookSecret',
+    'privateKey',
+  ]
+) {
+  return (_key: string, value: unknown) => {
+    if (_key && fieldsToRedact.includes(_key)) {
+      return '[REDACTED]'
+    }
+    return value
+  }
+}
+
+/**
+ * Safe stringify: Redacts sensitive fields before JSON encoding
+ */
+export function safeStringify(obj: unknown): string {
+  const fieldsToRedact = [
+    'apiKey',
+    'gatewayToken',
+    'kubeconfig',
+    'passwordHash',
+    'apiSecret',
+    'webhookSecret',
+    'privateKey',
+  ]
+  return JSON.stringify(obj, createRedactionReplacer(fieldsToRedact))
+}
