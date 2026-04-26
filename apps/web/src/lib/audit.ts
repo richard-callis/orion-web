@@ -77,16 +77,17 @@ function hashAuditEntry(entry: {
 }
 
 /**
- * Fetch the previous audit log's previousHash for the hash chain.
- * Returns null if this is the first entry or the previous entry's hash is null.
+ * Compute the hash of the previous audit log entry for the hash chain.
+ * Returns null if this is the first entry.
  */
 async function getPreviousHash(): Promise<string | null> {
   try {
     const prev = await prisma.auditLog.findFirst({
       orderBy: { createdAt: 'desc' },
-      select: { previousHash: true },
     })
-    return prev?.previousHash ?? null
+    if (!prev) return null
+    // Compute the hash of the previous entry's full content
+    return hashAuditEntry(prev)
   } catch {
     return null
   }
