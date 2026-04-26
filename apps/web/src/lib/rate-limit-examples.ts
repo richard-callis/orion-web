@@ -209,7 +209,7 @@ function getClientIp(req: NextRequest): string {
   if (forwarded) {
     return forwarded.split(',')[0].trim()
   }
-  return req.ip || req.socket.remoteAddress || 'unknown'
+  return req.ip || ((null as any).remoteAddress) || 'unknown'
 }
 
 // ─── Usage Patterns ─────────────────────────────────────────────────────────────

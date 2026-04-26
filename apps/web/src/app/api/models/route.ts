@@ -40,7 +40,7 @@ export async function GET() {
     ...(process.env.GEMINI_API_KEY    ? GEMINI_MODELS(isDefault)  : []),
   ]
 
-  const extMapped: AppModel[] = external.map(m => ({
+  const extMapped: AppModel[] = external.map((m: any) => ({
     id: `ext:${m.id}`,
     name: m.name,
     provider: m.provider,

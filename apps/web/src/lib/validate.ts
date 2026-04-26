@@ -265,7 +265,7 @@ export const UpdateConversationSchema = z.object({
 /**
  * Truncate a string to a maximum length (SOC2: prevent oversized inputs).
  */
-export function truncate(str: string | undefined | null, maxLen: number): string | undefined {
+export function truncate(str: string | undefined | null, maxLen: number): string | null | undefined {
   if (!str) return str
   return str.length > maxLen ? str.slice(0, maxLen) : str
 }

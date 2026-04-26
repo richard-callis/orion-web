@@ -14,7 +14,7 @@ export async function GET() {
   const models = await prisma.externalModel.findMany({
     orderBy: { createdAt: 'asc' },
   })
-  const masked = models.map(m => ({ ...m, apiKey: maskKey(m.apiKey) }))
+  const masked = models.map((m: any) => ({ ...m, apiKey: maskKey(m.apiKey) }))
   return NextResponse.json(masked)
 }
 

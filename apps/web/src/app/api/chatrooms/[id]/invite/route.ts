@@ -29,13 +29,13 @@ export async function POST(
   if (!room) return NextResponse.json({ error: 'Chat room not found' }, { status: 404 })
 
   // Check if already a member
-  const already = room.members.find(m =>
+  const already = room.members.find((m: any) =>
     (userId && m.userId === userId) || (agentId && m.agentId === agentId)
   )
   if (already) return NextResponse.json({ error: 'Already a member' }, { status: 409 })
 
   // Any room member can invite
-  const isMember = room.members.some(m => m.userId === session.user.id)
+  const isMember = room.members.some((m: any) => m.userId === session.user.id)
   if (!isMember) {
     return NextResponse.json({ error: 'You must be a member of this room to invite others' }, { status: 403 })
   }

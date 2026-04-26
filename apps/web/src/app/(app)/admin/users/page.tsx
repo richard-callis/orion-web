@@ -9,7 +9,7 @@ export default async function UsersPage() {
   })
 
   // Serialize dates for client component
-  const users = rawUsers.map(u => ({
+  const users = rawUsers.map((u: any) => ({
     ...u,
     lastSeen: u.lastSeen?.toISOString() ?? null,
     createdAt: u.createdAt.toISOString(),

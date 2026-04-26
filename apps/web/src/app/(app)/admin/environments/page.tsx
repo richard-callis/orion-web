@@ -13,7 +13,7 @@ export default async function Page() {
   })
 
   // Mask tokens server-side before passing to client
-  const safe = environments.map(e => ({ ...e, gatewayToken: e.gatewayToken ? '••••' : null }))
+  const safe = environments.map((e: any) => ({ ...e, gatewayToken: e.gatewayToken ? '••••' : null }))
 
   return <EnvironmentsPage initialEnvironments={safe as Parameters<typeof EnvironmentsPage>[0]['initialEnvironments']} />
 }

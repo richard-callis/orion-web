@@ -23,8 +23,8 @@ export async function PATCH(req: NextRequest) {
   const ops = [
     prisma.systemSetting.upsert({
       where: { key: data.key },
-      update: { value: data.value as Parameters<typeof prisma.systemSetting.create>[0]['data']['value'] },
-      create: { key: data.key, value: data.value as Parameters<typeof prisma.systemSetting.create>[0]['data']['value'] },
+      update: { value: data.value as any },
+      create: { key: data.key, value: data.value as any },
     })
   ]
 

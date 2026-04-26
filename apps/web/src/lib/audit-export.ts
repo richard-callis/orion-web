@@ -379,7 +379,7 @@ async function deleteExportedLogs(retentionDays: number): Promise<number> {
     if (batch.length === 0) break
 
     const result = await prisma.auditLog.deleteMany({
-      where: { id: { in: batch.map(r => r.id) } },
+      where: { id: { in: batch.map((r: any) => r.id) } },
     })
 
     totalDeleted += result.count
