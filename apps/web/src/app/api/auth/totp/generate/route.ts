@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import {
-  generateSecret,
+  generateSecretString,
   generateQRCodeUrl,
   generateRecoveryCodes,
   hashRecoveryCode,
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Generate TOTP secret
-  const secret = generateSecret()
+  const secret = generateSecretString()
   const qrCodeUrl = generateQRCodeUrl(secret, user.username)
 
   // Generate 8 recovery codes (plaintext, returned once)

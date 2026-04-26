@@ -60,7 +60,7 @@ async function handleTotpLogin(username: string, password: string, code?: string
   }
 
   // Verify TOTP
-  if (!verifyTOTP(user.totpSecret, code)) {
+  if (!(await verifyTOTP(user.totpSecret, code))) {
     // SOC2: [M-005] Log MFA verification failure (non-blocking)
     logAudit({
       userId: user.id, action: 'mfa_verify_failure', target: 'mfa:verify',
