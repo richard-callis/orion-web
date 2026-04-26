@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { compare } from 'bcryptjs'
+import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser()
@@ -50,6 +51,16 @@ export async function POST(req: NextRequest) {
       totpEnabledAt: null,
     },
   })
+
+  // SOC2: [M-005] Log MFA disable (non-blocking)
+  logAudit({
+    userId: user.id,
+    action: 'mfa_disable',
+    target: `user:${user.id}`,
+    detail: { username: user.username },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req.headers),
+  }).catch(() => {})
 
   return NextResponse.json({
     ok: true,

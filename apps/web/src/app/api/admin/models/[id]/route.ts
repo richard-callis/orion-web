@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
+import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 function maskKey(key: string | null): string | null {
   if (!key) return null
@@ -9,7 +10,7 @@ function maskKey(key: string | null): string | null {
 }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
-  await requireAdmin()
+  const admin = await requireAdmin()
   const body = await req.json()
 
   // Only update apiKey if a new one was provided
@@ -26,11 +27,37 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     where: { id: params.id },
     data: updateData,
   })
+
+  // SOC2: [M-005] Log model update (non-blocking)
+  logAudit({
+    userId: admin.id,
+    action: 'model_update',
+    target: `model:${params.id}`,
+    detail: { name: model.name, provider: model.provider },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req.headers),
+  }).catch(() => {})
+
   return NextResponse.json({ ...model, apiKey: maskKey(model.apiKey) })
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
-  await requireAdmin()
+  const admin = await requireAdmin()
+  const model = await prisma.externalModel.findUnique({
+    where: { id: params.id },
+    select: { name: true },
+  })
   await prisma.externalModel.delete({ where: { id: params.id } })
+
+  // SOC2: [M-005] Log model delete (non-blocking)
+  logAudit({
+    userId: admin.id,
+    action: 'model_delete',
+    target: `model:${params.id}`,
+    detail: { name: model?.name },
+    ipAddress: getClientIp(_req),
+    userAgent: getUserAgent(_req.headers),
+  }).catch(() => {})
+
   return new NextResponse(null, { status: 204 })
 }

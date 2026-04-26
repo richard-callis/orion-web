@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { verifyTOTP } from '@/lib/totp'
+import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser()
@@ -52,6 +53,16 @@ export async function POST(req: NextRequest) {
       // totpSecret and totpRecoveryCodes already set by generate
     },
   })
+
+  // SOC2: [M-005] Log MFA enable (non-blocking)
+  logAudit({
+    userId: user.id,
+    action: 'mfa_enable',
+    target: `user:${user.id}`,
+    detail: { username: user.username },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req.headers),
+  }).catch(() => {})
 
   return NextResponse.json({
     ok: true,

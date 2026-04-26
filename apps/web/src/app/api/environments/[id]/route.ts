@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
+import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
   const env = await prisma.environment.findUnique({
@@ -42,9 +43,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     if (body.gatewayVersion !== undefined) data.gatewayVersion = body.gatewayVersion || null
   } else {
     // ── Browser / admin UI ─────────────────────────────────────────────
-    try { await requireAdmin() } catch {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const admin = await requireAdmin()
     if (body.name        !== undefined) data.name        = body.name.trim()
     if (body.type        !== undefined) data.type        = body.type
     if (body.description !== undefined) data.description = body.description || null
@@ -63,8 +62,35 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     if (body.kubeconfig   !== undefined && body.kubeconfig !== '••••') {
       data.kubeconfig = body.kubeconfig || null
     }
+
+    const env = await prisma.environment.update({
+      where: { id: params.id },
+      data,
+      include: {
+        tools:     { orderBy: { name: 'asc' } },
+        agents:    { include: { agent: true } },
+        gitOpsPRs: { orderBy: { createdAt: 'desc' }, take: 50 },
+      },
+    })
+
+    // SOC2: [M-005] Log environment update (non-blocking)
+    logAudit({
+      userId: admin.id,
+      action: 'environment_update',
+      target: `environment:${params.id}`,
+      detail: { name: body.name ?? env.name, changes: Object.keys(data) },
+      ipAddress: getClientIp(req),
+      userAgent: getUserAgent(req.headers),
+    }).catch(() => {})
+
+    return NextResponse.json({
+      ...env,
+      gatewayToken: env.gatewayToken ? '••••' : null,
+      kubeconfig:   env.kubeconfig   ? '••••' : null,
+    })
   }
 
+  // Gateway heartbeat path — return updated env without audit log
   const env = await prisma.environment.update({
     where: { id: params.id },
     data,
@@ -81,10 +107,23 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   })
 }
 
-export async function DELETE(_: NextRequest, { params }: { params: { id: string } }) {
-  try { await requireAdmin() } catch {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+  const admin = await requireAdmin()
+  const env = await prisma.environment.findUnique({
+    where: { id: params.id },
+    select: { name: true },
+  })
   await prisma.environment.delete({ where: { id: params.id } })
+
+  // SOC2: [M-005] Log environment deletion (non-blocking)
+  logAudit({
+    userId: admin.id,
+    action: 'environment_delete',
+    target: `environment:${params.id}`,
+    detail: { name: env?.name },
+    ipAddress: getClientIp(_req),
+    userAgent: getUserAgent(_req.headers),
+  }).catch(() => {})
+
   return new NextResponse(null, { status: 204 })
 }
