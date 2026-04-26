@@ -38,7 +38,7 @@ export function handleApiError(
 ): NextResponse {
   const isClientError = statusCode >= 400 && statusCode < 500
   const isSqlError = isSqlInjectionError(error)
-  const isPrismaError = isPrismaError(error)
+  const hasPrismaError = isPrismaError(error)
 
   // Log the full error server-side
   const logEntry = formatErrorLog(correlationId, 'API Error', error, context)
@@ -51,7 +51,7 @@ export function handleApiError(
   // Determine message for client
   let clientMessage = 'An error occurred'
 
-  if (isClientError && !isSqlError && !isPrismaError) {
+  if (isClientError && !isSqlError && !hasPrismaError) {
     // Safe to return detailed 4xx errors (validation, not found, etc.)
     if (error instanceof Error) {
       clientMessage = error.message
