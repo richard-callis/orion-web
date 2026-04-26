@@ -286,15 +286,6 @@ export const SetupGitProviderSchema = z.object({
 
 // ── Agent Schemas ──────────────────────────────────────────────────────────────
 
-export const AgentSpawnSchema = z.object({
-  name: z.string().min(1).max(200),
-  type: z.enum(['claude', 'ollama', 'human', 'custom']),
-  role: z.string().max(100).optional(),
-  description: z.string().max(5000).optional(),
-  metadata: z.record(z.unknown()).optional(),
-  startConversation: z.string().max(200).optional(),
-})
-
 export const AgentMessageSchema = z.object({
   content: z.string().min(1).max(50000),
   channel: z.enum(['default', 'private']).default('default'),
