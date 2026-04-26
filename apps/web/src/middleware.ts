@@ -69,6 +69,24 @@ async function applyRateLimit(req: NextRequest): Promise<NextResponse | null> {
   return null
 }
 
+/**
+ * SOC2: [M-003] Rate limit SSO header auth requests.
+ * Prevents brute-force user creation via x-authentik-username / x-forwarded-user headers.
+ * Uses IP-based rate limiting (5 req/min per IP).
+ */
+async function applySsoRateLimit(req: NextRequest): Promise<NextResponse | null> {
+  const ip = getRateLimitKey(req)
+  const key = `sso-rate:${ip}`
+  // 5 requests per minute per IP
+  if (!(await rateLimitRedis(key, 5, 60_000))) {
+    return NextResponse.json(
+      { error: 'Too many requests — SSO authentication rate limited' },
+      { status: 429, headers: { 'Retry-After': '60' } }
+    )
+  }
+  return null
+}
+
 const PUBLIC_PATHS = [
   '/setup',
   '/login',
@@ -147,6 +165,14 @@ export async function middleware(req: NextRequest) {
 
   if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
     return NextResponse.next()
+  }
+
+  // SOC2: Rate limit SSO header auth — prevents brute-force user creation
+  // via x-forwarded-user / x-authentik-username headers on non-authenticated requests
+  const ssoUser = req.headers.get('x-authentik-username') ?? req.headers.get('x-forwarded-user')
+  if (ssoUser && !req.headers.get('cookie')?.includes('next-auth.session-token')) {
+    const ssoRateLimited = await applySsoRateLimit(req)
+    if (ssoRateLimited) return ssoRateLimited
   }
 
   // Service token (gateway) calls — accept Bearer token instead of session.
