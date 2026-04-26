@@ -31,14 +31,20 @@ function sanitizeSvg(svgString: string): Element | null {
       }
     })
 
-    // Neutralize javascript: URIs in href/src
+    // Neutralize dangerous URI schemes in href/src (javascript:, data:, vbscript:)
     const href = el.getAttribute('href')
-    if (href && href.toLowerCase().startsWith('javascript:')) {
-      el.setAttribute('href', '#')
+    if (href) {
+      const lowerHref = href.toLowerCase()
+      if (lowerHref.startsWith('javascript:') || lowerHref.startsWith('data:') || lowerHref.startsWith('vbscript:')) {
+        el.setAttribute('href', '#')
+      }
     }
     const src = el.getAttribute('src')
-    if (src && src.toLowerCase().startsWith('javascript:')) {
-      el.setAttribute('src', '#')
+    if (src) {
+      const lowerSrc = src.toLowerCase()
+      if (lowerSrc.startsWith('javascript:') || lowerSrc.startsWith('data:') || lowerSrc.startsWith('vbscript:')) {
+        el.setAttribute('src', '#')
+      }
     }
   })
 
