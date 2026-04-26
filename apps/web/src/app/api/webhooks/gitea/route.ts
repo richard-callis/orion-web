@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getGitProvider } from '@/lib/git-provider'
+import { isDuplicateWebhookId, extractWebhookId, isStaleWebhook } from '@/lib/webhook-idempotency'
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
@@ -33,6 +34,17 @@ export async function POST(req: NextRequest) {
 
   if (!provider.verifyWebhookSignature(rawBody, headers, secret)) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
+  }
+
+  // SOC2: [CC7] Replay attack prevention — reject stale webhooks
+  if (isStaleWebhook(headers)) {
+    return NextResponse.json({ error: 'Webhook too old (stale delivery)' }, { status: 410 })
+  }
+
+  // SOC2: [CC7] Idempotency — skip duplicate webhook deliveries
+  const webhookId = extractWebhookId(headers)
+  if (webhookId && isDuplicateWebhookId(webhookId)) {
+    return NextResponse.json({ ok: true, skipped: 'duplicate' })
   }
 
   // Detect event type (provider-agnostic)

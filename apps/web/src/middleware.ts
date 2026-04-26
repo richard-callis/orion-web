@@ -69,6 +69,24 @@ async function applyRateLimit(req: NextRequest): Promise<NextResponse | null> {
   return null
 }
 
+/**
+ * SOC2: [M-003] Rate limit SSO header auth requests.
+ * Prevents brute-force user creation via x-authentik-username / x-forwarded-user headers.
+ * Uses IP-based rate limiting (5 req/min per IP).
+ */
+async function applySsoRateLimit(req: NextRequest): Promise<NextResponse | null> {
+  const ip = getRateLimitKey(req)
+  const key = `sso-rate:${ip}`
+  // 5 requests per minute per IP
+  if (!(await rateLimitRedis(key, 5, 60_000))) {
+    return NextResponse.json(
+      { error: 'Too many requests — SSO authentication rate limited' },
+      { status: 429, headers: { 'Retry-After': '60' } }
+    )
+  }
+  return null
+}
+
 const PUBLIC_PATHS = [
   '/setup',
   '/login',
@@ -90,17 +108,6 @@ const API_KEY_PATHS = ['/api/api-keys']
 const BEARER_PATHS = [
   '/api/environments',
   '/api/internal',     // internal service-to-service routes (e.g. vault-unsealer)
-]
-
-// Prefixes that accept service token auth — any sub-path works
-const SERVICE_TOKEN_PREFIXES = [
-  '/api/notes',
-  '/api/agent-groups',
-  '/api/features',
-  '/api/epics',
-  '/api/tasks',
-  '/api/bugs',
-  '/api/admin',
 ]
 
 // SOC2: [H-002, L-002] Security headers middleware
@@ -149,15 +156,28 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
+  // SOC2: Rate limit SSO header auth — prevents brute-force user creation
+  // via x-forwarded-user / x-authentik-username headers on non-authenticated requests
+  const ssoUser = req.headers.get('x-authentik-username') ?? req.headers.get('x-forwarded-user')
+  if (ssoUser && !req.headers.get('cookie')?.includes('next-auth.session-token')) {
+    const ssoRateLimited = await applySsoRateLimit(req)
+    if (ssoRateLimited) return ssoRateLimited
+  }
+
   // Service token (gateway) calls — accept Bearer token instead of session.
   // Gateway tools need to read/write notes, list agent-groups, etc.
+  // SOC2: /api/admin/* is NEVER accessible via gateway token — always requires session auth
   const gatewayToken = process.env.ORION_GATEWAY_TOKEN
   if (
     gatewayToken &&
     req.headers.get('authorization') === `Bearer ${gatewayToken}`
   ) {
+    // Admin routes always require session auth — never bypassable
+    if (pathname.startsWith('/api/admin')) {
+      // fall through to session auth
+    }
     // Gateway can do anything except DELETE on notes (safety)
-    if (req.method === 'DELETE' && pathname.startsWith('/api/notes')) {
+    else if (req.method === 'DELETE' && pathname.startsWith('/api/notes')) {
       // fall through to session auth for DELETE on notes
     } else {
       return NextResponse.next()

@@ -10,9 +10,25 @@ export default async function AuditLogPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-5xl">
-      <div>
-        <h1 className="text-lg font-semibold text-text-primary">Audit Log</h1>
-        <p className="text-sm text-text-muted mt-0.5">Last 100 recorded events</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-semibold text-text-primary">Audit Log</h1>
+          <p className="text-sm text-text-muted mt-0.5">Last 100 recorded events</p>
+        </div>
+        <div className="flex gap-2">
+          <a
+            href="/api/admin/audit/export?format=json&limit=10000"
+            className="text-xs px-3 py-1.5 rounded border border-border-subtle hover:bg-bg-raised transition-colors text-text-secondary"
+          >
+            Export JSON
+          </a>
+          <a
+            href="/api/admin/audit/export?format=csv&limit=10000"
+            className="text-xs px-3 py-1.5 rounded border border-border-subtle hover:bg-bg-raised transition-colors text-text-secondary"
+          >
+            Export CSV
+          </a>
+        </div>
       </div>
 
       {entries.length === 0 ? (
