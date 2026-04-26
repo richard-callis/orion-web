@@ -277,7 +277,7 @@ export async function commitFiles(opts: {
 
   // 3. Create blobs for each file
   const treeItems = await Promise.all(
-    opts.files.map(async (f) => {
+    opts.files.map(async (f: any) => {
       const blob = await giteaFetch<{ sha: string }>(
         `/repos/${opts.owner}/${opts.repo}/git/blobs`,
         {

@@ -151,12 +151,12 @@ describe('Rate Limiter', () => {
       const results = await Promise.all(promises)
 
       // Count allowed
-      const allowedCount = results.filter((r) => r.allowed).length
+      const allowedCount = results.filter((r: any) => r.allowed).length
       expect(allowedCount).toBe(maxRequests)
 
       // Remaining should be 0 for denied requests
-      const deniedResults = results.filter((r) => !r.allowed)
-      expect(deniedResults.every((r) => r.remaining === 0)).toBe(true)
+      const deniedResults = results.filter((r: any) => !r.allowed)
+      expect(deniedResults.every((r: any) => r.remaining === 0)).toBe(true)
     })
   })
 
@@ -242,11 +242,11 @@ describe('Rate Limiter Integration (with Redis)', () => {
       const elapsedMs = Date.now() - startTime
 
       // Should have exactly maxRequests allowed
-      const allowedCount = results.filter((r) => r.allowed).length
+      const allowedCount = results.filter((r: any) => r.allowed).length
       expect(allowedCount).toBe(maxRequests)
 
       // Remaining should be 0 or negative for denied
-      const lastAllowed = results.findLast((r) => r.allowed)
+      const lastAllowed = results.findLast((r: any) => r.allowed)
       expect(lastAllowed?.remaining).toBe(0)
     })
 

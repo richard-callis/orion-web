@@ -39,7 +39,7 @@ export function fallbackRateLimit(
   const windowStart = now - windowMs
 
   const existing = fallbackStore.get(key) || []
-  const recent = existing.filter((t) => t > windowStart)
+  const recent = existing.filter((t: any) => t > windowStart)
 
   const allowed = recent.length < maxRequests
 
@@ -52,7 +52,7 @@ export function fallbackRateLimit(
   if (recent.length % 100 === 0) {
     const cutoff = now - windowMs * 2
     for (const [k, timestamps] of fallbackStore) {
-      const filtered = timestamps.filter((t) => t > cutoff)
+      const filtered = timestamps.filter((t: any) => t > cutoff)
       if (filtered.length === 0) {
         fallbackStore.delete(k)
       } else {
@@ -112,7 +112,7 @@ async function initRedisClient(): Promise<boolean> {
         password: process.env.REDIS_PASSWORD,
       })
     } else {
-      const url = redisUrls.find((u) => u && u.trim())
+      const url = redisUrls.find((u: any) => u && u.trim())
       if (!url) return false
       redisClient = new Redis(url)
     }
@@ -224,13 +224,13 @@ export async function getRedisStatus(): Promise<{
       available: false,
       sentinel: {
         master: sentinelMaster,
-        nodes: sentinelNodes.split(',').map((n) => n.trim()),
+        nodes: sentinelNodes.split(',').map((n: any) => n.trim()),
       },
     }
   }
 
   return {
     available: false,
-    url: redisUrls.find((u) => u && u.trim()) || undefined,
+    url: redisUrls.find((u: any) => u && u.trim()) || undefined,
   }
 }
