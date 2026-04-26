@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getToken } from 'next-auth/jwt'
+import { getOrCreateCorrelationId } from './lib/correlation-id'
 
 // SOC2: [M-004] Wrap console.log BEFORE any other import to catch all log output
 import { wrapConsoleLog } from './lib/redact'
@@ -170,11 +171,13 @@ function addSecurityHeaders(res: NextResponse, nonce: string): NextResponse {
   return res
 }
 
-/** Create a NextResponse.next() that carries the nonce in request headers so
- *  Next.js SSR can inject it into generated <script>/<style> tags. */
-function nextWithNonce(req: NextRequest, nonce: string): NextResponse {
+/** Create a NextResponse.next() that carries the nonce and correlation ID in request headers.
+ *  Nonce: injected into generated <script>/<style> tags by Next.js SSR
+ *  Correlation ID: used for error tracking and request debugging (SOC2 [H-002]) */
+function nextWithNonce(req: NextRequest, nonce: string, correlationId: string): NextResponse {
   const requestHeaders = new Headers(req.headers)
   requestHeaders.set('x-nonce', nonce)
+  requestHeaders.set('x-correlation-id', correlationId)
   requestHeaders.set('Content-Security-Policy', buildCsp(nonce))
   return NextResponse.next({ request: { headers: requestHeaders } })
 }
@@ -185,6 +188,9 @@ export async function middleware(req: NextRequest) {
   // ── Generate per-request nonce (SOC2: CSP-001) ────────────────────────────
   const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('base64')
 
+  // ── Generate correlation ID for error tracking (SOC2: [H-002]) ──────────────
+  const correlationId = getOrCreateCorrelationId(Object.fromEntries(req.headers))
+
   // SOC2: [M-003] Apply rate limiting before auth check (prevents auth DoS)
   // Public endpoints that are rate-limited still get the check, others skip
   if (!PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
@@ -193,7 +199,7 @@ export async function middleware(req: NextRequest) {
   }
 
   if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
-    return addSecurityHeaders(nextWithNonce(req, nonce), nonce)
+    return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
   }
 
   // Service token (gateway) calls — accept Bearer token instead of session.
@@ -207,7 +213,7 @@ export async function middleware(req: NextRequest) {
     if (req.method === 'DELETE' && pathname.startsWith('/api/notes')) {
       // fall through to session auth for DELETE on notes
     } else {
-      return addSecurityHeaders(nextWithNonce(req, nonce), nonce)
+      return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
     }
   }
 
@@ -218,12 +224,12 @@ export async function middleware(req: NextRequest) {
     BEARER_PATHS.some(p => pathname.startsWith(p)) &&
     req.headers.get('authorization')?.startsWith('Bearer ')
   ) {
-    return addSecurityHeaders(nextWithNonce(req, nonce), nonce)
+    return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
   }
 
   // API key routes — pass through, route handler handles all auth
   if (API_KEY_PATHS.some(p => pathname.startsWith(p))) {
-    return addSecurityHeaders(nextWithNonce(req, nonce), nonce)
+    return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
   }
 
   // Cookie name must match what auth.ts configures (no __Secure- prefix — works over HTTP and HTTPS)
@@ -235,7 +241,7 @@ export async function middleware(req: NextRequest) {
     return addSecurityHeaders(res, nonce)
   }
 
-  return addSecurityHeaders(nextWithNonce(req, nonce), nonce)
+  return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
 }
 
 export const config = {
