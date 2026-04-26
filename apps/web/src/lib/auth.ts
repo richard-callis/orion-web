@@ -73,14 +73,16 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         if (!credentials?.username || !credentials?.password) return null
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- passwordChangedAt added in schema, awaiting migration
         const user = await prisma.user.findUnique({
           where: { username: credentials.username },
           select: {
             id: true, username: true, email: true, name: true,
             role: true, active: true, passwordHash: true,
             totpEnabled: true, totpSecret: true, totpRecoveryCodes: true,
+            passwordChangedAt: true,
           },
-        })
+        }) as any
 
         if (!user || !user.active || !user.passwordHash) return null
 
@@ -118,6 +120,7 @@ export const authOptions: NextAuthOptions = {
             email: user.email,
             username: user.username,
             role: user.role,
+            passwordChangedAt: user.passwordChangedAt,
             mfaVerified: true,
           }
         }
@@ -133,6 +136,7 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           username: user.username,
           role: user.role,
+          passwordChangedAt: user.passwordChangedAt,
           mfaVerified: false,
         }
       },
@@ -148,16 +152,27 @@ export const authOptions: NextAuthOptions = {
         // SOC2: [M-002] Propagate MFA verified state from authorize()
         token.mfaVerified = (user as { mfaVerified?: boolean }).mfaVerified ?? false
         token.mfaVerifiedAt = Date.now()
+        // SOC2: [M-005] Store passwordChangedAt to detect password changes
+        const pcv = (user as { passwordChangedAt?: Date | string | null }).passwordChangedAt
+        token.passwordChangedAt = pcv instanceof Date ? pcv.toISOString() : typeof pcv === 'string' ? pcv : null
       } else if (token.sub) {
         // Subsequent requests — verify the user still exists in the DB.
         // If the DB was wiped the user row is gone, so we invalidate the token
         // by clearing sub. Middleware treats token without sub as unauthenticated.
-        const dbUser = await prisma.user.findUnique({
-          where: { id: token.sub },
-          select: { id: true, active: true },
-        })
-        if (!dbUser || !dbUser.active) {
+        // SOC2: [M-005] Also check passwordChangedAt to detect password changes
+        const dbRow: { id: string; active: boolean; passwordChangedAt: Date | null } | null =
+          await prisma.$queryRaw<{ id: string; active: boolean; passwordChangedAt: Date | null } | null>`
+            SELECT "id", "active", "passwordChangedAt" FROM "User" WHERE "id" = ${token.sub}
+          `
+        if (!dbRow || !dbRow.active) {
           token.sub = undefined
+        } else {
+          // Invalidate session if password was changed after token issued
+          const tokenPc = token.passwordChangedAt ? new Date(token.passwordChangedAt as string) : null
+          const dbPc = dbRow.passwordChangedAt ? new Date(dbRow.passwordChangedAt) : null
+          if (dbPc && (!tokenPc || dbPc > tokenPc)) {
+            token.sub = undefined // password changed — invalidate session
+          }
         }
         // MFA verification expires after 15 minutes
         if (token.mfaVerifiedAt && token.mfaVerified) {
