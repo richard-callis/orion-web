@@ -19,9 +19,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json package-lock.json* ./
 RUN npm install --legacy-peer-deps
 COPY . .
-RUN npx prisma generate
+RUN npx prisma generate --schema=apps/web/prisma/schema.prisma
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+RUN npm run build:web
 
 FROM node:20-alpine AS runner
 ARG TARGETARCH
@@ -58,17 +58,14 @@ RUN ARCH=${TARGETARCH:-amd64} \
 ENV SHELL=/bin/bash
 
 # Standalone output
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-# Full prisma CLI (needed for migrate at startup)
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
-# Claude Code SDK (dynamic import — not picked up by standalone bundler)
-COPY --from=builder /app/node_modules/@anthropic-ai ./node_modules/@anthropic-ai
+COPY --from=builder /app/apps/web/.next/standalone ./
+COPY --from=builder /app/apps/web/.next/static ./.next/static
+COPY --from=builder /app/apps/web/prisma ./prisma
 
-COPY --from=builder /app/worker.js ./worker.js
+# Copy all node_modules from builder (includes all production + transitive dependencies)
+COPY --from=builder /app/node_modules ./node_modules
+
+COPY --from=builder /app/apps/web/worker.js ./worker.js
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x entrypoint.sh
 EXPOSE 3000
