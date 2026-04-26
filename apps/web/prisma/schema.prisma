@@ -349,8 +349,9 @@ model User {
   name          String?
   role          String    @default("user") // "admin" | "user" | "readonly"
   provider      String    @default("local") // "local" | "authentik" | "oidc"
-  passwordHash  String?
-  externalId    String?
+  passwordHash        String?
+  passwordChangedAt   DateTime? // SOC2: [M-005] Invalidate sessions when password changes
+  externalId          String?
   active        Boolean   @default(true)
   lastSeen      DateTime?
   createdAt     DateTime  @default(now())
