@@ -19,7 +19,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json package-lock.json* ./
 RUN npm install --legacy-peer-deps
 COPY . .
-RUN npx prisma generate --schema=apps/web/prisma/schema.prisma
+RUN cd apps/web && npx prisma generate
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build:web
 
