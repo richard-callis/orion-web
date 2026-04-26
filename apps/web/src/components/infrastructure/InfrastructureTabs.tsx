@@ -333,14 +333,27 @@ export function InfrastructureTabs() {
 
   // Load environments
   useEffect(() => {
+    console.log('[InfrastructureTabs] Mounting, fetching environments...')
     fetch('/api/environments')
-      .then(r => r.json())
+      .then(r => {
+        console.log('[InfrastructureTabs] API response status:', r.status, 'ok:', r.ok)
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then((envs: Environment[]) => {
+        console.log('[InfrastructureTabs] Loaded', envs.length, 'environments:', envs.map(e => ({ name: e.name, type: e.type })))
+        if (!Array.isArray(envs)) return
         const clusters = envs.filter(e => e.type === 'cluster' && e.gatewayUrl)
+        console.log('[InfrastructureTabs] Filtered to', clusters.length, 'clusters:', clusters.map(e => e.name))
         setEnvironments(clusters)
         if (clusters.length === 1) setEnvId(clusters[0].id)
+        else if (clusters.length === 0) {
+          console.warn('[InfrastructureTabs] No cluster environments found')
+        }
       })
-      .catch(() => {})
+      .catch((err) => {
+        console.error('[InfrastructureTabs] Failed to load environments:', err)
+      })
   }, [])
 
   const fetchInfrastructure = useCallback(async (id: string) => {
@@ -349,8 +362,10 @@ export function InfrastructureTabs() {
     try {
       const res = await fetch(`/api/environments/${id}/infrastructure`)
       if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { error?: string }
-        throw new Error(body.error ?? `HTTP ${res.status}`)
+        const body = await res.json().catch(() => ({})) as { error?: string; detail?: string }
+        const errMsg = body.error ?? `HTTP ${res.status}`
+        const fullMsg = body.detail ? `${errMsg}\n\n${body.detail}` : errMsg
+        throw new Error(fullMsg)
       }
       const data = await res.json() as { nodes: CachedNode[]; pods: CachedPod[] }
       setNodes(data.nodes)
@@ -394,15 +409,21 @@ export function InfrastructureTabs() {
           <div className="flex items-center gap-2">
             <select
               value={envId}
-              onChange={e => setEnvId(e.target.value)}
+              onChange={e => {
+                setEnvId(e.target.value)
+                console.log('[InfrastructureTabs] Selected env:', e.target.value, 'Options:', environments.map(e => e.name))
+              }}
               className={selectCls}
-              disabled={loading}
+              disabled={loading || environments.length === 0}
             >
               <option value="">Select environment…</option>
               {environments.map(e => (
                 <option key={e.id} value={e.id}>{e.name}</option>
               ))}
             </select>
+            {environments.length === 0 && !loading && (
+              <span className="text-xs text-text-muted">No cluster environments found</span>
+            )}
 
             {envId && (
               <button
@@ -421,13 +442,21 @@ export function InfrastructureTabs() {
           </div>
 
           {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-status-error/30 bg-status-error/10 px-4 py-3 text-sm text-status-error">
-              <ServerCrash size={14} />
-              <span>{error}</span>
+            <div className="flex items-start gap-2 rounded-lg border border-status-error/30 bg-status-error/10 px-4 py-3 text-sm text-status-error">
+              <ServerCrash size={14} className="mt-0.5 flex-shrink-0" />
+              <span className="whitespace-pre-wrap">{error}</span>
             </div>
           )}
 
-          {!envId && !loading && (
+          {environments.length === 0 && !loading && (
+            <div className="flex flex-col items-center justify-center py-8 text-text-muted">
+              <ServerCrash size={24} className="mb-2 opacity-30" />
+              <p className="text-xs">No cluster environments found</p>
+              <p className="text-[10px] mt-1">Check that environments have type="cluster" and a gatewayUrl configured</p>
+            </div>
+          )}
+
+          {!envId && !loading && environments.length > 0 && (
             <div className="flex flex-col items-center justify-center py-8 text-text-muted">
               <ServerCrash size={24} className="mb-2 opacity-30" />
               <p className="text-xs">Select a cluster environment to view infrastructure</p>
