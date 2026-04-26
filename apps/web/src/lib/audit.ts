@@ -10,8 +10,13 @@ import type { NextRequest } from 'next/server'
 
 export type AuditAction =
   | 'user_login'
+  | 'user_login_failure'
   | 'user_logout'
   | 'user_create'
+  | 'mfa_enable'
+  | 'mfa_disable'
+  | 'mfa_verify_success'
+  | 'mfa_verify_failure'
   | 'user_update'
   | 'user_delete'
   | 'user_role_change'
