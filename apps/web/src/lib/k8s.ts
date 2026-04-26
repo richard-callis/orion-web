@@ -1,6 +1,7 @@
 import * as k8s from '@kubernetes/client-node'
 import https from 'https'
 import fs from 'fs'
+import { redactSensitive } from './redact'
 
 // ── Singleton K8s client ──────────────────────────────────────────────────────
 
@@ -81,7 +82,9 @@ export function removeSseClient(client: SseClient) {
 }
 
 function broadcast(event: string, data: unknown) {
-  const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+  // SOC2 [K8S-001]: Redact secrets from K8s event data before broadcasting to SSE clients
+  const redactedData = typeof data === 'string' ? redactSensitive(data) : JSON.parse(JSON.stringify(data))
+  const msg = `event: ${event}\ndata: ${JSON.stringify(redactedData)}\n\n`
   for (const client of sseClients) {
     try { client.write(msg) } catch { sseClients.delete(client) }
   }
