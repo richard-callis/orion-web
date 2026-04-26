@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
-  const { gatewayType, machineId, gatewayUrl: parsedGatewayUrl } = parsed.data
+  const { joinToken, gatewayType, machineId, gatewayUrl: parsedGatewayUrl } = parsed.data
 
   // Ensure gatewayUrl always has a protocol so fetch() works
   const rawUrl: string | undefined = parsed.data.gatewayUrl

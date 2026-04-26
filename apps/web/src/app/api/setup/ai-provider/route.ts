@@ -18,11 +18,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
 
+  // Use provider default baseUrl if not provided
+  const defaultBaseUrls: Record<string, string> = {
+    openai: 'https://api.openai.com/v1',
+    anthropic: 'https://api.anthropic.com',
+    openrouter: 'https://openrouter.ai/api/v1',
+  }
+  const baseUrl = data.baseUrl || defaultBaseUrls[data.provider] || ''
+
   const created = await prisma.externalModel.create({
     data: {
       name: data.name,
       provider: data.provider,
-      baseUrl: data.baseUrl,
+      baseUrl,
       apiKey: data.apiKey || null,
       modelId: data.modelId,
       enabled: true,
