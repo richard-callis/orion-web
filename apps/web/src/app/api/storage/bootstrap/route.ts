@@ -121,7 +121,7 @@ async function autoFetchTalosConfig(
       // Persist back to environment metadata so future runs skip this step
       await prisma.environment.update({
         where: { id: envId },
-        data: { metadata: { ...existingMeta, talosConfig: b64 } },
+        data: { metadata: { ...existingMeta, talosConfig: b64 } as any },
       })
       await log(`  Auto-fetched talosconfig from ${p} ✓`)
       await log('  Saved to environment — will be reused on future bootstraps.')

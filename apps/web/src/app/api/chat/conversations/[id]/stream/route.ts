@@ -107,7 +107,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // Cap individual message size to prevent bloated history (tool output, API dumps, etc.)
   // Increased from 2000 to 5000 to preserve more context from tool outputs
   const MAX_MSG_CHARS = 5000
-  const history = rawHistory.map(m => ({
+  const history = rawHistory.map((m: any) => ({
     role: m.role,
     content: m.content.length > MAX_MSG_CHARS
       ? m.content.slice(0, MAX_MSG_CHARS) + '\n[…truncated]'

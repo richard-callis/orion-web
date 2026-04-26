@@ -32,11 +32,11 @@ export async function GET(
     orderBy: { name: 'asc' },
   })
 
-  const memberUserIds = room.members.map(m => m.userId).filter(Boolean) as string[]
-  const memberAgentIds = room.members.map(m => m.agentId).filter(Boolean) as string[]
+  const memberUserIds = room.members.map((m: any) => m.userId).filter(Boolean) as string[]
+  const memberAgentIds = room.members.map((m: any) => m.agentId).filter(Boolean) as string[]
 
-  const availableUsers = allUsers.filter(u => u.id !== session.user.id && !memberUserIds.includes(u.id))
-  const availableAgents = allAgents.filter(a => !memberAgentIds.includes(a.id))
+  const availableUsers = allUsers.filter((u: any) => u.id !== session.user.id && !memberUserIds.includes(u.id))
+  const availableAgents = allAgents.filter((a: any) => !memberAgentIds.includes(a.id))
 
   return NextResponse.json({ users: availableUsers, agents: availableAgents })
 }

@@ -10,12 +10,12 @@ export default async function AgentsPage() {
     prisma.agent.findMany({ orderBy: { name: 'asc' } }),
   ])
 
-  const messages = messagesRaw.map(msg => ({
+  const messages = messagesRaw.map((msg: any) => ({
     ...msg,
     createdAt: msg.createdAt.toISOString(),
   }))
 
-  const agents = agentsRaw.map(a => ({
+  const agents = agentsRaw.map((a: any) => ({
     ...a,
     lastSeen: a.lastSeen?.toISOString() ?? null,
   }))

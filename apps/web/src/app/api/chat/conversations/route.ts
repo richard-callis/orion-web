@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   const convo = await prisma.conversation.create({
     data: {
       title: parsed.data.title ? parsed.data.title.slice(0, 200) : null,
-      metadata: Object.keys(meta).length ? meta as Prisma.InputJsonObject : undefined,
+      metadata: Object.keys(meta).length ? (meta as any) : undefined,
     },
     include: { _count: { select: { messages: true } } },
   })

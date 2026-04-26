@@ -90,7 +90,7 @@ export async function PATCH(
 
   if (!room) return NextResponse.json({ error: 'Chat room not found' }, { status: 404 })
 
-  const creatorRole = room.members.find(m => m.userId === userId)?.role
+  const creatorRole = room.members.find((m: any) => m.userId === userId)?.role
   if (creatorRole !== 'lead' && room.createdBy !== userId) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }

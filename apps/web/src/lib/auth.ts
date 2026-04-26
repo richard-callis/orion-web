@@ -72,7 +72,7 @@ export const authOptions: NextAuthOptions = {
         totpCode: { label: 'TOTP Code', type: 'text' },
         isRecovery: { label: 'Is Recovery', type: 'hidden' },
       },
-      async authorize(credentials) {
+      async authorize(credentials): Promise<any> {
         if (!credentials?.username || !credentials?.password) return null
 
         const user = await prisma.user.findUnique({

@@ -52,7 +52,7 @@ function sanitizeContextNote(title: string, content: string): string {
       err(`[C-001] Potential prompt injection detected in note "${title}" — stripping suspicious lines`)
       // Strip the matching line
       content = content.split('\n')
-        .filter((line) => !INJECTION_PATTERNS.some((p) => p.test(line)))
+        .filter((line: any) => !INJECTION_PATTERNS.some((p: any) => p.test(line)))
         .join('\n')
     }
   }
@@ -76,7 +76,7 @@ function sanitizeContextNote(title: string, content: string): string {
 function buildWikiContext(notes: Array<{ title: string; content: string }>): string {
   if (notes.length === 0) return ''
 
-  const sanitizedNotes = notes.map((n) => {
+  const sanitizedNotes = notes.map((n: any) => {
     const sanitizedContent = sanitizeContextNote(n.title, n.content)
     return `### ${n.title}\n${sanitizedContent}`
   }).join('\n\n---\n\n')
@@ -143,7 +143,7 @@ async function runTask(taskId: string): Promise<void> {
     const conversation = await prisma.conversation.create({
       data: {
         title: `Task: ${task.title}`,
-        metadata: { taskId, agentId: agent.id, orchestrated: true },
+        metadata: { taskId, agentId: agent.id, orchestrated: true } as any,
       },
     })
 
@@ -184,7 +184,7 @@ async function runTask(taskId: string): Promise<void> {
             data: {
               conversationId: conversation.id, role: 'assistant',
               content: `[tool_call] ${event.tool}`,
-              metadata: { toolCall: { name: event.tool, args: event.args } },
+              metadata: { toolCall: { name: event.tool, args: event.args } } as any,
             },
           }).catch(() => {})
           break
@@ -290,10 +290,10 @@ async function buildSystemSnapshot(): Promise<string> {
     }),
   ])
 
-  const unassigned = tasks.filter(t => !t.assignedAgent && !t.assignedUserId)
-  const running    = tasks.filter(t => t.status === 'running')
-  const failed     = tasks.filter(t => t.status === 'failed')
-  const pending    = tasks.filter(t => t.status === 'pending')
+  const unassigned = tasks.filter((t: any) => !t.assignedAgent && !t.assignedUserId)
+  const running    = tasks.filter((t: any) => t.status === 'running')
+  const failed     = tasks.filter((t: any) => t.status === 'failed')
+  const pending    = tasks.filter((t: any) => t.status === 'pending')
 
   const lines = [
     `## System Snapshot — ${new Date().toISOString()}`,
@@ -306,7 +306,7 @@ async function buildSystemSnapshot(): Promise<string> {
     `#### Unassigned pending tasks`,
     unassigned.length === 0
       ? '  (none)'
-      : unassigned.map(t =>
+      : unassigned.map((t: any) =>
           `  - [${t.id}] **${t.title}** (priority: ${t.priority})` +
           (t.feature ? ` — ${t.feature.epic?.title ?? ''} › ${t.feature.title}` : '') +
           (t.description ? `\n    ${t.description.slice(0, 120)}` : '')
@@ -315,15 +315,15 @@ async function buildSystemSnapshot(): Promise<string> {
     `#### Running tasks`,
     running.length === 0
       ? '  (none)'
-      : running.map(t => `  - [${t.id}] **${t.title}** → ${t.agent?.name ?? t.assignedUser?.name ?? '?'}`).join('\n'),
+      : running.map((t: any) => `  - [${t.id}] **${t.title}** → ${t.agent?.name ?? t.assignedUser?.name ?? '?'}`).join('\n'),
     ``,
     `#### Recently failed tasks`,
     failed.length === 0
       ? '  (none)'
-      : failed.slice(0, 5).map(t => `  - [${t.id}] **${t.title}** → ${t.agent?.name ?? '?'}`).join('\n'),
+      : failed.slice(0, 5).map((t: any) => `  - [${t.id}] **${t.title}** → ${t.agent?.name ?? '?'}`).join('\n'),
     ``,
     `### Agents`,
-    agents.map(a => {
+    agents.map((a: any) => {
       const busy = a.tasks.length > 0
       const meta = (a.metadata ?? {}) as Record<string, unknown>
       const cfg  = (meta.contextConfig ?? {}) as Record<string, unknown>
@@ -336,7 +336,7 @@ async function buildSystemSnapshot(): Promise<string> {
     `### Recent activity`,
     recentEvents.length === 0
       ? '  (none)'
-      : recentEvents.map(e => `  - ${e.eventType}: ${e.task?.title ?? e.taskId}`).join('\n'),
+      : recentEvents.map((e: any) => `  - ${e.eventType}: ${e.task?.title ?? e.taskId}`).join('\n'),
   ]
 
   return lines.join('\n')

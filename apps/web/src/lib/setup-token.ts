@@ -66,7 +66,7 @@ export async function ensureLocalhostGateway(): Promise<void> {
       description:   t.description,
       inputSchema:   t.inputSchema,
       execType:      t.execType,
-      execConfig:    t.execConfig ?? Prisma.JsonNull,
+      execConfig:    t.execConfig ?? null as any,
       enabled:       true,
       builtIn:       t.builtIn,
       status:        'active',

@@ -39,7 +39,7 @@ export async function POST(
 
   // Load all known domains for matching
   const domains = await prisma.domain.findMany({ select: { id: true, name: true, type: true } })
-  const domainByName = new Map(domains.map(d => [d.name.toLowerCase(), d]))
+  const domainByName = new Map(domains.map((d: any) => [d.name.toLowerCase(), d]))
 
   // Build a lookup: suffix (parent domain) -> domain record
   // e.g. "khalisio.com" -> domain record, "khalis.corp" -> domain record
