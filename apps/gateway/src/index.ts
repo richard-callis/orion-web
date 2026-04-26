@@ -22,7 +22,7 @@ wrapConsoleLog()
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
-import { randomUUID } from 'crypto'
+import { randomUUID, timingSafeEqual } from 'crypto'
 import { createRequire } from 'module'
 import express, { type Request, type Response, type NextFunction } from 'express'
 
@@ -332,13 +332,30 @@ const app = express()
 app.use(express.json())
 
 // Simple token auth middleware for REST endpoints
+// SOC2 [timing-attack]: Use timing-safe comparison to prevent token recovery via
+// response-time side channels. The === operator short-circuits on the first mismatched
+// byte, allowing an attacker to recover the token byte-by-byte through timing measurements.
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   const auth = req.headers.authorization
-  if (!auth || auth !== `Bearer ${GATEWAY_TOKEN}`) {
+  const expected = `Bearer ${GATEWAY_TOKEN}`
+  if (!auth || !timingSafeCompare(auth, expected)) {
     res.status(401).json({ error: 'Unauthorized' })
     return
   }
   next()
+}
+
+/** Constant-time string comparison to prevent timing attacks */
+function timingSafeCompare(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  const bufA = Buffer.from(a)
+  const bufB = Buffer.from(b)
+  // timingSafeEqual throws on mismatch, so we catch it
+  try {
+    return crypto.timingSafeEqual(bufA, bufB)
+  } catch {
+    return false
+  }
 }
 
 // Health check (used by ORION, k8s probes — no auth required)
@@ -401,9 +418,10 @@ app.post('/update', requireAuth, async (_req: Request, res: Response) => {
 })
 
 // MCP SSE endpoint — AI agents connect here
+// SOC2 [gateway-auth]: Require authentication to prevent unauthenticated tool execution
 const transports: Map<string, SSEServerTransport> = new Map()
 
-app.get('/mcp', async (req: Request, res: Response) => {
+app.get('/mcp', requireAuth, async (req: Request, res: Response) => {
   const transport = new SSEServerTransport('/mcp/message', res)
   const sessionId = transport.sessionId
   transports.set(sessionId, transport)
@@ -411,7 +429,7 @@ app.get('/mcp', async (req: Request, res: Response) => {
   await server.connect(transport)
 })
 
-app.post('/mcp/message', async (req: Request, res: Response) => {
+app.post('/mcp/message', requireAuth, async (req: Request, res: Response) => {
   const sessionId = req.query.sessionId as string
   const transport = transports.get(sessionId)
   if (!transport) { res.status(404).json({ error: 'Session not found' }); return }
