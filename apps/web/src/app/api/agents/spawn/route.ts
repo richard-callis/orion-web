@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
       type,
       role:        body.role        ?? null,
       description: body.description ?? null,
-      metadata:    body.metadata    ?? undefined,
+      metadata:    (body.metadata ?? undefined) as any,
     },
   })
 
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
         title: `Plan: ${agent.name}`,
         metadata: {
           agentTarget: { id: agent.id, name: agent.name },
-        },
+        } as any,
       },
     })
   }

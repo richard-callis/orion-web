@@ -13,7 +13,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const conversation = await prisma.conversation.create({
     data: {
       title,
-      metadata: { agentChat: { id: agent.id, name: agent.name } },
+      metadata: { agentChat: { id: agent.id, name: agent.name } } as any,
     },
   })
 

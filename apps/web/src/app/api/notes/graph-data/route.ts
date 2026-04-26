@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     orderBy: { updatedAt: 'desc' },
   })
 
-  const nodes = notes.map(n => ({
+  const nodes = notes.map((n: any) => ({
     id: n.id,
     title: n.title,
     type: n.type,
@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
 
   // Wikilink edges (existing)
   const wikilinkEdges = computeOutgoingEdges(
-    notes.map(n => ({ id: n.id, title: n.title, content: n.content ?? '' })),
+    notes.map((n: any) => ({ id: n.id, title: n.title, content: n.content ?? '' })),
   ).map(e => ({
     source: e.source,
     target: e.target,
@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
       where: { score: { gte: threshold } },
       orderBy: { score: 'desc' },
     })
-    semanticLinks = connections.map(c => ({
+    semanticLinks = connections.map((c: any) => ({
       source: c.sourceNoteId,
       target: c.targetNoteId,
       type: 'semantic',

@@ -102,7 +102,7 @@ export async function syncDomainDns(
 
   const zoneContent = buildZoneFile(
     domain.name,
-    records.map(r => ({ ip: r.ip, hostnames: r.hostnames })),
+    records.map((r: any) => ({ ip: r.ip, hostnames: r.hostnames })),
   )
 
   if (envType === 'docker') {

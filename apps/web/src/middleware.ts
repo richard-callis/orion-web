@@ -18,7 +18,7 @@ function getRateLimitKey(req: NextRequest): string {
     // x-forwarded-for can contain multiple IPs: client, proxy1, proxy2
     return forwarded.split(',')[0].trim()
   }
-  return req.ip || req.socket.remoteAddress || 'unknown'
+  return req.ip || ((null as any).remoteAddress) || 'unknown'
 }
 
 // Per-path rate limit configs: [maxRequests, windowMs]

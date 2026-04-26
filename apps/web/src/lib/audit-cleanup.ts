@@ -40,7 +40,7 @@ async function cleanupBatch(retentionDays: number): Promise<number> {
 
   // Delete the batch by ID
   const result = await prisma.auditLog.deleteMany({
-    where: { id: { in: batch.map(r => r.id) } },
+    where: { id: { in: batch.map((r: any) => r.id) } },
   })
 
   return result.count
@@ -77,7 +77,7 @@ async function main() {
   console.log(`[audit-cleanup] Cleanup complete: deleted ${deleted} records in ${iterations} batches`)
 }
 
-main().catch((err) => {
+main().catch((err: any) => {
   console.error('[audit-cleanup] Fatal error:', err)
   process.exit(1)
 })

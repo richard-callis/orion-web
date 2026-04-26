@@ -68,7 +68,7 @@ export async function recoverStalledJobs(): Promise<void> {
   if (!stale.length) return
 
   await prisma.backgroundJob.updateMany({
-    where: { id: { in: stale.map(j => j.id) } },
+    where: { id: { in: stale.map((j: any) => j.id) } },
     data: { status: 'failed', completedAt: new Date(), updatedAt: new Date() },
   })
 

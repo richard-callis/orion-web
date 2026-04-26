@@ -27,7 +27,7 @@ export async function GET() {
   // External models health
   const extModels = await prisma.externalModel.findMany({ where: { enabled: true } })
   const extHealth: Record<string, boolean> = {}
-  await Promise.all(extModels.map(async m => {
+  await Promise.all(extModels.map(async (m: any) => {
     try {
       const url = m.provider === 'openai' || m.provider === 'custom'
         ? `${m.baseUrl}/models`

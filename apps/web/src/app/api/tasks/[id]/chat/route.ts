@@ -31,11 +31,11 @@ export async function GET(
     },
   })
 
-  const formatted = rooms.map(room => ({
+  const formatted = (rooms as any[]).map(room => ({
     id: room.id,
     name: room.name,
     type: room.type,
-    messages: room.messages.map(msg => ({
+    messages: room.messages.map((msg: any) => ({
       id: msg.id,
       senderType: msg.senderType,
       content: msg.content,
@@ -47,7 +47,7 @@ export async function GET(
           : { type: 'system' as const, id: null, name: 'system' },
       createdAt: msg.createdAt.toISOString(),
     })),
-    members: room.members.map(m => ({
+    members: (room.members as any[]).map((m: any) => ({
       agentId: m.agentId,
       userId: m.userId,
       agent: m.agent ? { id: m.agent.id, name: m.agent.name } : null,

@@ -1075,8 +1075,8 @@ async function handleKnowledgeGraph(argsRaw: string): Promise<string> {
     const wikiLines = wikilinkEdges.map((e: any) => `  ${e.from} → ${e.to}`)
     const semLines = semanticEdges
       .map((e: any) => {
-        const src = noteById.get(e.sourceNoteId)?.title ?? e.sourceNoteId
-        const tgt = noteById.get(e.targetNoteId)?.title ?? e.targetNoteId
+        const src = (noteById.get(e.sourceNoteId) as any)?.title ?? e.sourceNoteId
+        const tgt = (noteById.get(e.targetNoteId) as any)?.title ?? e.targetNoteId
         return `  ${src} ↔ ${tgt} (${(e.score * 100).toFixed(0)}%)`
       })
 
@@ -1399,7 +1399,7 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
           conversationId,
           role: 'assistant',
           content: savedContent,
-          metadata: toolCallLog.length ? { toolCalls: toolCallLog } : undefined,
+          metadata: toolCallLog.length ? ({ toolCalls: toolCallLog } as any) : undefined,
         },
       }),
       prisma.claudeInvocation.create({
@@ -1554,7 +1554,7 @@ async function maybeGetSummarizedHistory(
             ...meta,
             contextSummary: summaryText,
             summarizedUpTo: messages.length - recentCount,
-          },
+          } as any,
         },
       })
       return [
@@ -1773,7 +1773,7 @@ ${totalText}`,
     // the consumer breaks out of the for-await loop, calling iterator.return().
     await Promise.all([
       prisma.message.create({ data: { conversationId, role: 'user', content: prompt } }),
-      prisma.message.create({ data: { conversationId, role: 'assistant', content: savedContent, ...(toolCallLog.length > 0 && { metadata: { toolCalls: toolCallLog } }) } }),
+      prisma.message.create({ data: { conversationId, role: 'assistant', content: savedContent, ...(toolCallLog.length > 0 && { metadata: { toolCalls: toolCallLog } } as any) } }),
       prisma.claudeInvocation.create({
         data: { conversationId, prompt, toolsUsed, durationMs: Date.now() - start, success: true },
       }),

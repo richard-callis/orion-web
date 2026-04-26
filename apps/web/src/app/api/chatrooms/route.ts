@@ -41,11 +41,11 @@ export async function GET(req: NextRequest) {
         where: { roomId: room.id },
         select: { userId: true, agentId: true },
       })
-      const isMember = members.some(m => m.userId === userId)
+      const isMember = members.some((m: any) => m.userId === userId)
       if (isMember) {
         filtered.push({
           ...room,
-          members: members.map(m => ({ agentId: m.agentId, userId: m.userId })),
+          members: members.map((m: any) => ({ agentId: m.agentId, userId: m.userId })),
         })
       }
     }

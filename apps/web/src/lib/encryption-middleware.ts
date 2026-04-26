@@ -98,7 +98,7 @@ function preProcess(obj: unknown, model?: string): unknown {
 }
 
 export function registerEncryptionMiddleware(prisma: PrismaClient): void {
-  prisma.$use(async (params, next) => {
+  prisma.$use(async (params: any, next: any) => {
     if (params.model !== 'Environment' && params.model !== 'ExternalModel') {
       return next(params)
     }

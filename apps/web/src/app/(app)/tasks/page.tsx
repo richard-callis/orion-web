@@ -25,17 +25,17 @@ export default async function TasksPageRoute() {
     }),
   ])
 
-  const tasks = tasksRaw.map(t => ({
+  const tasks = tasksRaw.map((t: any) => ({
     ...t,
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
   }))
 
-  const epics = epicsRaw.map(e => ({
+  const epics = epicsRaw.map((e: any) => ({
     ...e,
     createdAt: e.createdAt.toISOString(),
     updatedAt: e.updatedAt.toISOString(),
-    features: e.features.map(f => ({
+    features: e.features.map((f: any) => ({
       ...f,
       createdAt: f.createdAt.toISOString(),
       updatedAt: f.updatedAt.toISOString(),
@@ -44,15 +44,15 @@ export default async function TasksPageRoute() {
 
   // Filter to only planning conversations (those with planTarget in metadata)
   const planningConvos = convosRaw
-    .filter(c => c.metadata && typeof c.metadata === 'object' && 'planTarget' in (c.metadata as object))
-    .map(c => ({
+    .filter((c: any) => c.metadata && typeof c.metadata === 'object' && 'planTarget' in (c.metadata as object))
+    .map((c: any) => ({
       id: c.id,
       title: c.title,
       metadata: c.metadata as { planTarget: { type: string; id: string } },
       updatedAt: c.updatedAt.toISOString(),
     }))
 
-  const bugs = bugsRaw.map(b => ({
+  const bugs = bugsRaw.map((b: any) => ({
     ...b,
     createdAt: b.createdAt.toISOString(),
     updatedAt: b.updatedAt.toISOString(),

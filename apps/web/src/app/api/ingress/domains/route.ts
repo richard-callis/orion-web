@@ -8,7 +8,7 @@ export async function GET() {
     const settings = await prisma.systemSetting.findMany({
       where: { key: { in: ['domain.internal', 'domain.public'] } },
     })
-    const byKey = Object.fromEntries(settings.map(s => [s.key, s.value as string]))
+    const byKey = Object.fromEntries(settings.map((s: any) => [s.key, s.value as string]))
     const seeds = []
     if (byKey['domain.public'])   seeds.push({ name: byKey['domain.public'],   type: 'public' })
     if (byKey['domain.internal']) seeds.push({ name: byKey['domain.internal'], type: 'internal' })
