@@ -1,5 +1,4 @@
 import type { Metadata } from 'next'
-import { headers } from 'next/headers'
 // Bundled woff2 fonts — no CDN dependency at build time
 import '@fontsource-variable/inter'
 import '@fontsource-variable/jetbrains-mono'
@@ -18,10 +17,8 @@ export const viewport = {
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const nonce = headers().get('x-nonce') ?? ''
-
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en">
       <body className="flex flex-col h-[100dvh] overflow-hidden bg-bg-page text-text-primary">
         <Providers>
           {children}

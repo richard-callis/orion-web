@@ -114,46 +114,22 @@ const SERVICE_TOKEN_PREFIXES = [
   '/api/admin',
 ]
 
-// ─── SOC2: [H-002, L-002, CSP-001] Nonce-based Content Security Policy ──────
-//
-// Every request gets a unique cryptographic nonce. Only scripts and styles
-// bearing that nonce are allowed to execute. This eliminates XSS via injected
-// inline scripts while allowing Next.js's own SSR-generated scripts to run.
-//
-// How it works:
-//   1. Middleware generates a 128-bit random nonce (base64-encoded)
-//   2. CSP header is set on BOTH request headers (so Next.js SSR can read
-//      the nonce and inject it into <script>/<style> tags it generates)
-//      AND response headers (so the browser enforces the policy)
-//   3. 'strict-dynamic' allows scripts loaded by a nonce'd script to also
-//      execute — this covers Next.js chunk loading without whitelisting URLs
-//   4. 'self' and 'unsafe-inline' are included as CSP Level 2 fallbacks —
-//      in Level 3 browsers, they are ignored when nonce + strict-dynamic
-//      are present (per spec)
-//
-// References:
-//   - https://nextjs.org/docs/app/building-your-application/configuring/content-security-policy
-//   - https://web.dev/strict-csp/
-//   - CSP Level 3 spec §8.1 (strict-dynamic usage)
-
-function buildCsp(nonce: string): string {
-  return [
-    "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
-    `style-src 'self' 'nonce-${nonce}'`,
-    "img-src 'self' data: https:",
-    "connect-src 'self' https:",
-    "font-src 'self'",
-    "frame-ancestors 'none'",
-    "base-uri 'self'",
-    "form-action 'self'",
-    "object-src 'none'",
-    "upgrade-insecure-requests",
-  ].join('; ')
-}
-
-function addSecurityHeaders(res: NextResponse, nonce: string): NextResponse {
-  res.headers.set('Content-Security-Policy', buildCsp(nonce))
+// SOC2: [H-002, L-002] Security headers middleware
+function addSecurityHeaders(res: NextResponse): NextResponse {
+  // CSP: style-src 'self' only — all styles are now in CSS modules or use CSS variables
+  res.headers.set('Content-Security-Policy',
+    "default-src 'self'; " +
+    "script-src 'self' 'strict-dynamic'; " +
+    "style-src 'self'; " +
+    "img-src 'self' data: https:; " +
+    "connect-src 'self' https:; " +
+    "font-src 'self'; " +
+    "frame-ancestors 'none'; " +
+    "base-uri 'self'; " +
+    "form-action 'self'; " +
+    "object-src 'none'; " +
+    "upgrade-insecure-requests"
+  )
   res.headers.set('X-Frame-Options', 'DENY')
   res.headers.set('X-Content-Type-Options', 'nosniff')
   res.headers.set('X-XSS-Protection', '1; mode=block')
@@ -170,30 +146,18 @@ function addSecurityHeaders(res: NextResponse, nonce: string): NextResponse {
   return res
 }
 
-/** Create a NextResponse.next() that carries the nonce in request headers so
- *  Next.js SSR can inject it into generated <script>/<style> tags. */
-function nextWithNonce(req: NextRequest, nonce: string): NextResponse {
-  const requestHeaders = new Headers(req.headers)
-  requestHeaders.set('x-nonce', nonce)
-  requestHeaders.set('Content-Security-Policy', buildCsp(nonce))
-  return NextResponse.next({ request: { headers: requestHeaders } })
-}
-
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
-
-  // ── Generate per-request nonce (SOC2: CSP-001) ────────────────────────────
-  const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('base64')
 
   // SOC2: [M-003] Apply rate limiting before auth check (prevents auth DoS)
   // Public endpoints that are rate-limited still get the check, others skip
   if (!PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
     const rateLimited = await applyRateLimit(req)
-    if (rateLimited) return addSecurityHeaders(rateLimited, nonce)
+    if (rateLimited) return rateLimited
   }
 
   if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
-    return addSecurityHeaders(nextWithNonce(req, nonce), nonce)
+    return NextResponse.next()
   }
 
   // Service token (gateway) calls — accept Bearer token instead of session.
@@ -207,7 +171,7 @@ export async function middleware(req: NextRequest) {
     if (req.method === 'DELETE' && pathname.startsWith('/api/notes')) {
       // fall through to session auth for DELETE on notes
     } else {
-      return addSecurityHeaders(nextWithNonce(req, nonce), nonce)
+      return NextResponse.next()
     }
   }
 
@@ -218,12 +182,12 @@ export async function middleware(req: NextRequest) {
     BEARER_PATHS.some(p => pathname.startsWith(p)) &&
     req.headers.get('authorization')?.startsWith('Bearer ')
   ) {
-    return addSecurityHeaders(nextWithNonce(req, nonce), nonce)
+    return NextResponse.next()
   }
 
   // API key routes — pass through, route handler handles all auth
   if (API_KEY_PATHS.some(p => pathname.startsWith(p))) {
-    return addSecurityHeaders(nextWithNonce(req, nonce), nonce)
+    return NextResponse.next()
   }
 
   // Cookie name must match what auth.ts configures (no __Secure- prefix — works over HTTP and HTTPS)
@@ -232,10 +196,11 @@ export async function middleware(req: NextRequest) {
     const loginUrl = new URL('/login', req.url)
     loginUrl.searchParams.set('callbackUrl', pathname)
     const res = NextResponse.redirect(loginUrl)
-    return addSecurityHeaders(res, nonce)
+    return addSecurityHeaders(res)
   }
 
-  return addSecurityHeaders(nextWithNonce(req, nonce), nonce)
+  const res = NextResponse.next()
+  return addSecurityHeaders(res)
 }
 
 export const config = {
