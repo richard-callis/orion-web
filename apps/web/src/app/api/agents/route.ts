@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
       name:     data.name,
       type:     data.type ?? 'claude',
       role:     data.role ?? null,
-      metadata: data.metadata ?? undefined,
+      ...(data.metadata && { metadata: data.metadata }),
     },
   })
   return NextResponse.json(agent, { status: 201 })
