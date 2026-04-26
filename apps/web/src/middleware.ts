@@ -116,11 +116,11 @@ const SERVICE_TOKEN_PREFIXES = [
 
 // SOC2: [H-002, L-002] Security headers middleware
 function addSecurityHeaders(res: NextResponse): NextResponse {
-  // CSP: Allow Next.js to load script chunks from same origin
-  // Note: 'strict-dynamic' is incompatible with Next.js dynamic chunk loading (no nonces on chunks)
+  // CSP: Allow Next.js to load script chunks and execute inline scripts
+  // Note: 'unsafe-inline' is needed for Next.js inline scripts; 'strict-dynamic' is incompatible with chunk loading
   res.headers.set('Content-Security-Policy',
     "default-src 'self'; " +
-    "script-src 'self'; " +
+    "script-src 'self' 'unsafe-inline'; " +
     "style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data: https:; " +
     "connect-src 'self' https:; " +
