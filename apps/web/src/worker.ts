@@ -143,7 +143,7 @@ async function runTask(taskId: string): Promise<void> {
     const conversation = await prisma.conversation.create({
       data: {
         title: `Task: ${task.title}`,
-        metadata: { taskId, agentId: agent.id, orchestrated: true },
+        metadata: { taskId, agentId: agent.id, orchestrated: true } as any,
       },
     })
 
@@ -184,7 +184,7 @@ async function runTask(taskId: string): Promise<void> {
             data: {
               conversationId: conversation.id, role: 'assistant',
               content: `[tool_call] ${event.tool}`,
-              metadata: { toolCall: { name: event.tool, args: event.args } },
+              metadata: { toolCall: { name: event.tool, args: event.args } } as any,
             },
           }).catch(() => {})
           break

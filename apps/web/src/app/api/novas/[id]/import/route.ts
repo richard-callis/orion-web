@@ -50,7 +50,7 @@ export async function POST(
         metadata: {
           systemPrompt: body.systemPrompt || config.systemPrompt || '',
           contextConfig: config.contextConfig || {},
-        },
+        } as any,
         novaId: nova.id,
       },
     })
