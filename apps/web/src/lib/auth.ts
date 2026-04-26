@@ -32,9 +32,7 @@ export const authOptions: NextAuthOptions = {
   // so browsers will not send cookies on insecure requests.
   cookies: {
     sessionToken: {
-      name: process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https'
-        ? '__Secure-next-auth.session-token'
-        : 'next-auth.session-token',
+      name: 'next-auth.session-token',
       options: {
         httpOnly: true,
         sameSite: 'strict' as const,
@@ -43,9 +41,7 @@ export const authOptions: NextAuthOptions = {
       },
     },
     callbackUrl: {
-      name: process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https'
-        ? '__Secure-next-auth.callback-url'
-        : 'next-auth.callback-url',
+      name: 'next-auth.callback-url',
       options: {
         sameSite: 'lax' as const,
         path: '/',
@@ -53,9 +49,7 @@ export const authOptions: NextAuthOptions = {
       },
     },
     csrfToken: {
-      name: process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https'
-        ? '__Secure-next-auth.csrf-token'
-        : 'next-auth.csrf-token',
+      name: 'next-auth.csrf-token',
       options: {
         httpOnly: true,
         sameSite: 'lax' as const,
