@@ -19,7 +19,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json package-lock.json* ./
 RUN npm install --legacy-peer-deps
 COPY . .
-RUN cd apps/web && npx prisma generate
+RUN npx prisma generate
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build:web
 
@@ -58,14 +58,14 @@ RUN ARCH=${TARGETARCH:-amd64} \
 ENV SHELL=/bin/bash
 
 # Standalone output
-COPY --from=builder /app/apps/web/.next/standalone ./
-COPY --from=builder /app/apps/web/.next/static ./.next/static
-COPY --from=builder /app/apps/web/prisma ./prisma
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/prisma ./prisma
 
 # Copy all node_modules from builder (includes all production + transitive dependencies)
 COPY --from=builder /app/node_modules ./node_modules
 
-COPY --from=builder /app/apps/web/worker.js ./worker.js
+COPY --from=builder /app/worker.js ./worker.js
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x entrypoint.sh
 EXPOSE 3000
