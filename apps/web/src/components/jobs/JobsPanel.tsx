@@ -155,8 +155,7 @@ function JobModal({ jobId, onClose, onArchive, onDelete }: {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <div className="bg-bg-card border border-border-subtle rounded-xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[80vh]">
@@ -317,18 +316,18 @@ export function JobsPanel() {
         <div
           className="fixed z-50 bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl w-80 overflow-hidden"
           style={{
-            top: (() => {
+            '--top': (() => {
               const btn = panelRef.current?.querySelector('button')
-              if (!btn) return 56
+              if (!btn) return '56px'
               const rect = btn.getBoundingClientRect()
-              return rect.bottom + 8
+              return `${rect.bottom + 8}px`
             })(),
-            right: (() => {
+            '--right': (() => {
               const btn = panelRef.current?.querySelector('button')
-              if (!btn) return 16
-              return window.innerWidth - btn.getBoundingClientRect().right
+              if (!btn) return '16px'
+              return `${window.innerWidth - btn.getBoundingClientRect().right}px`
             })(),
-          }}
+          } as React.CSSProperties}
         >
           <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle">
             <span className="text-xs font-semibold text-text-primary">Background Jobs</span>

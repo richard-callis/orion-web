@@ -12,6 +12,7 @@ import { prisma } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { verifyTOTP } from '@/lib/totp'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
+import { parseBodyOrError, TOTPVerifySchema } from '@/lib/validate'
 
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser()
@@ -19,12 +20,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await req.json().catch(() => ({}))
-  const { code } = body as { code?: string }
-
-  if (!code || typeof code !== 'string' || code.length !== 6) {
-    return NextResponse.json({ error: '6-digit code required' }, { status: 400 })
-  }
+  // SOC2: [INPUT-001] Validate request body
+  const result = await parseBodyOrError(req, TOTPVerifySchema)
+  if ('error' in result) return result.error
+  const { data } = result  // { code: string }
 
   // Get the stored secret from the database
   const dbUser = await prisma.user.findUnique({
@@ -40,7 +39,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Verify the code against the server-stored secret
-  if (!verifyTOTP(dbUser.totpSecret, code)) {
+  if (!verifyTOTP(dbUser.totpSecret, data.code)) {
     return NextResponse.json({ error: 'Invalid verification code' }, { status: 400 })
   }
 

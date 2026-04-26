@@ -16,25 +16,20 @@ import { prisma } from '@/lib/db'
 import { compare } from 'bcryptjs'
 import { verifyTOTP, verifyRecoveryCode } from '@/lib/totp'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
+import { parseBodyOrError, MfaVerifySchema } from '@/lib/validate'
 
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => ({}))
-  const { username, password, code, isRecovery } = body as {
-    username?: string
-    password?: string
-    code?: string
-    isRecovery?: boolean
+  // SOC2 [INPUT-001]: Validate request body with Zod schema
+  const result = await parseBodyOrError(req, MfaVerifySchema)
+  if ('error' in result) return result.error
+
+  const { data } = result  // { username, password, code, isRecovery? }
+
+  if (data.isRecovery) {
+    return handleRecoveryLogin(data.username, data.password, data.code, req)
   }
 
-  if (!username || !password) {
-    return NextResponse.json({ error: 'Username and password required' }, { status: 400 })
-  }
-
-  if (isRecovery) {
-    return handleRecoveryLogin(username, password, code, req)
-  }
-
-  return handleTotpLogin(username, password, code, req)
+  return handleTotpLogin(data.username, data.password, data.code, req)
 }
 
 async function handleTotpLogin(username: string, password: string, code?: string, req?: NextRequest) {

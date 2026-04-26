@@ -233,7 +233,7 @@ export function GraphView() {
                 showWikilinks ? 'text-text-secondary' : 'text-text-muted opacity-40'
               }`}
             >
-              <div className={`w-2 h-0.5 rounded`} style={{ backgroundColor: WIKILINK_COLOR }} />
+              <div className="w-2 h-0.5 rounded bg-slate-600" />
               <span>Wikilink</span>
             </button>
             <button
@@ -242,7 +242,7 @@ export function GraphView() {
                 showSemantic ? 'text-text-secondary' : 'text-text-muted opacity-40'
               }`}
             >
-              <div className="w-2 h-0.5 rounded" style={{ backgroundColor: SEMANTIC_EDGE_COLOR }} />
+              <div className="w-2 h-0.5 rounded bg-cyan-500" />
               <span>Semantic</span>
             </button>
           </div>

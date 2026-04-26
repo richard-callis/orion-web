@@ -32,6 +32,19 @@ const config: Config = {
         sans: ['var(--font-inter)', 'system-ui', 'sans-serif'],
         mono: ['var(--font-jetbrains)', 'ui-monospace', 'monospace'],
       },
+      animation: {
+        bounce0: 'bounce 1s infinite 0ms',
+        bounce150: 'bounce 1s infinite 150ms',
+        bounce300: 'bounce 1s infinite 300ms',
+      },
+      maxHeight: {
+        'modal-lg': 'min(70vh, 700px)',
+        'modal-md': 'min(60vh, 450px)',
+        '100dvh': '100dvh',
+      },
+      padding: {
+        'safe-bottom': 'env(safe-area-inset-bottom)',
+      },
     },
   },
   plugins: [],

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
+import { parseBodyOrError, CreateEnvironmentSchema } from '@/lib/validate'
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
   const env = await prisma.environment.findUnique({
@@ -22,12 +23,11 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = req.headers.get('authorization')
-  const body = await req.json()
-  const data: Record<string, unknown> = {}
 
   if (auth?.startsWith('Bearer ')) {
     // ── Gateway heartbeat / register ──────────────────────────────────
     // Validate the token against the stored gateway token for this environment.
+    const body = await req.json()
     const env = await prisma.environment.findUnique({
       where: { id: params.id },
       select: { gatewayToken: true },
@@ -37,35 +37,52 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     // Gateways may only update heartbeat fields — not name, kubeconfig, policy, etc.
+    const data: Record<string, unknown> = {}
     if (body.status         !== undefined) data.status         = body.status
     if (body.lastSeen       !== undefined) data.lastSeen       = body.lastSeen ? new Date(body.lastSeen) : null
     if (body.gatewayUrl     !== undefined) data.gatewayUrl     = body.gatewayUrl  || null
     if (body.gatewayVersion !== undefined) data.gatewayVersion = body.gatewayVersion || null
+
+    const updated = await prisma.environment.update({
+      where: { id: params.id },
+      data,
+      include: {
+        tools:     { orderBy: { name: 'asc' } },
+        agents:    { include: { agent: true } },
+        gitOpsPRs: { orderBy: { createdAt: 'desc' }, take: 50 },
+      },
+    })
+    return NextResponse.json({
+      ...updated,
+      gatewayToken: updated.gatewayToken ? '••••' : null,
+      kubeconfig:   updated.kubeconfig   ? '••••' : null,
+    })
   } else {
     // ── Browser / admin UI ─────────────────────────────────────────────
+    // SOC2 [INPUT-001]: Validate request body with Zod schema
+    const result = await parseBodyOrError(req, CreateEnvironmentSchema)
+    if ('error' in result) return result.error
+    const { data } = result
+
     const admin = await requireAdmin()
-    if (body.name        !== undefined) data.name        = body.name.trim()
-    if (body.type        !== undefined) data.type        = body.type
-    if (body.description !== undefined) data.description = body.description || null
-    if (body.gatewayUrl  !== undefined) data.gatewayUrl  = body.gatewayUrl  || null
-    if (body.gatewayToken !== undefined && body.gatewayToken !== '••••') {
-      data.gatewayToken = body.gatewayToken || null
+    const updateData: Record<string, unknown> = {}
+    if (data.name !== undefined) updateData.name = data.name.trim()
+    if (data.type !== undefined) updateData.type = data.type
+    if (data.description !== undefined) updateData.description = data.description || null
+    if (data.gatewayUrl !== undefined) updateData.gatewayUrl = data.gatewayUrl || null
+    if (data.gatewayToken !== undefined && data.gatewayToken !== '••••') {
+      updateData.gatewayToken = data.gatewayToken || null
     }
-    if (body.status         !== undefined) data.status         = body.status
-    if (body.lastSeen       !== undefined) data.lastSeen       = body.lastSeen ? new Date(body.lastSeen) : null
-    if (body.gatewayVersion !== undefined) data.gatewayVersion = body.gatewayVersion || null
-    if (body.metadata     !== undefined) data.metadata     = body.metadata
-    if (body.gitOwner     !== undefined) data.gitOwner     = body.gitOwner     || null
-    if (body.gitRepo      !== undefined) data.gitRepo      = body.gitRepo      || null
-    if (body.argoCdUrl    !== undefined) data.argoCdUrl    = body.argoCdUrl    || null
-    if (body.policyConfig !== undefined) data.policyConfig = body.policyConfig
-    if (body.kubeconfig   !== undefined && body.kubeconfig !== '••••') {
-      data.kubeconfig = body.kubeconfig || null
+    if (data.gitOwner !== undefined) updateData.gitOwner = data.gitOwner || null
+    if (data.gitRepo !== undefined) updateData.gitRepo = data.gitRepo || null
+    if (data.policyConfig !== undefined) updateData.policyConfig = data.policyConfig
+    if (data.kubeconfig !== undefined && data.kubeconfig !== '••••') {
+      updateData.kubeconfig = data.kubeconfig || null
     }
 
     const env = await prisma.environment.update({
       where: { id: params.id },
-      data,
+      data: updateData,
       include: {
         tools:     { orderBy: { name: 'asc' } },
         agents:    { include: { agent: true } },
@@ -78,7 +95,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       userId: admin.id,
       action: 'environment_update',
       target: `environment:${params.id}`,
-      detail: { name: body.name ?? env.name, changes: Object.keys(data) },
+      detail: { name: data.name ?? env.name, changes: Object.keys(updateData) },
       ipAddress: getClientIp(req),
       userAgent: getUserAgent(req.headers),
     }).catch(() => {})
@@ -89,22 +106,6 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       kubeconfig:   env.kubeconfig   ? '••••' : null,
     })
   }
-
-  // Gateway heartbeat path — return updated env without audit log
-  const env = await prisma.environment.update({
-    where: { id: params.id },
-    data,
-    include: {
-      tools:     { orderBy: { name: 'asc' } },
-      agents:    { include: { agent: true } },
-      gitOpsPRs: { orderBy: { createdAt: 'desc' }, take: 50 },
-    },
-  })
-  return NextResponse.json({
-    ...env,
-    gatewayToken: env.gatewayToken ? '••••' : null,
-    kubeconfig:   env.kubeconfig   ? '••••' : null,
-  })
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
