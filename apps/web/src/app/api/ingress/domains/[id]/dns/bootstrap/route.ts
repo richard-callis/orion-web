@@ -184,7 +184,7 @@ export async function POST(
   const isDocker = env.type === 'docker'
   const zoneContent = buildZoneFile(
     domain.name,
-    domain.dnsRecords.map(r => ({ ip: r.ip, hostnames: r.hostnames })),
+    domain.dnsRecords.map((r: any) => ({ ip: r.ip, hostnames: r.hostnames })),
   )
 
   const stream = new ReadableStream({

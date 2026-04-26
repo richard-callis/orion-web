@@ -75,7 +75,7 @@ export async function createApiKey(
     userId, prefix, hashValue, name, expiresAt,
   )
 
-  const rows = await prisma.$queryRawUnsafe<ApiKeyRow[]>(sql.findByHash, prefix, hashValue)
+  const rows = await prisma.$queryRawUnsafe(sql.findByHash, prefix, hashValue) as ApiKeyRow[]
   return { key: raw, info: mapRow(rows[0]) }
 }
 
@@ -83,7 +83,7 @@ export async function createApiKey(
  * List all API keys for a user.
  */
 export async function listUserKeys(userId: string): Promise<ApiKeyInfo[]> {
-  const rows = await prisma.$queryRawUnsafe<ApiKeyRow[]>(sql.listByUser, userId)
+  const rows = await prisma.$queryRawUnsafe(sql.listByUser, userId) as ApiKeyRow[]
   return rows.map(mapRow)
 }
 
@@ -98,7 +98,7 @@ export async function verifyApiKey(key: string): Promise<string | null> {
   const hashValue = await hash(key, 14)
   const prefix = hashValue.slice(0, 6)
 
-  const rows = await prisma.$queryRawUnsafe<ApiKeyRow[]>(sql.verifyByHash, prefix, hashValue)
+  const rows = await prisma.$queryRawUnsafe(sql.verifyByHash, prefix, hashValue) as ApiKeyRow[]
 
   if (!rows || rows.length === 0) return null
 

@@ -28,7 +28,7 @@ async function getEmbeddingProvider(): Promise<{
 
   // OpenAI text-embedding models first
   const openai = models.find(
-    m => m.provider === 'openai' && m.modelId.includes('text-embedding'),
+    (m: any) => m.provider === 'openai' && m.modelId.includes('text-embedding'),
   )
   if (openai) {
     return {
@@ -40,7 +40,7 @@ async function getEmbeddingProvider(): Promise<{
   }
 
   // Fallback: Ollama (typically nomic-embed-text or bge-m3)
-  const ollama = models.find(m => m.provider === 'ollama')
+  const ollama = models.find((m: any) => m.provider === 'ollama')
   if (ollama && ollama.baseUrl) {
     return {
       baseUrl: ollama.baseUrl,

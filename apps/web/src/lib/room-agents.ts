@@ -24,7 +24,7 @@ import { ORION_TOOL_DEFINITIONS, TOOLS_SYSTEM_ADDENDUM, executeTool } from './ag
 
 /** Extract @Name tokens from a message. */
 export function parseMentions(content: string): string[] {
-  return (content.match(/@([\w-]+)/g) ?? []).map(m => m.slice(1))
+  return (content.match(/@([\w-]+)/g) ?? []).map((m: any) => m.slice(1))
 }
 
 // ── Credential helpers (mirrors claude.ts) ────────────────────────────────────
@@ -289,12 +289,12 @@ export async function triggerRoomAgentReplies(
     },
   })
 
-  const agentMembers = (room?.members ?? []).map(m => m.agent!).filter(Boolean)
+  const agentMembers = (room?.members ?? []).map((m: any) => m.agent!).filter(Boolean)
   if (agentMembers.length === 0) return
 
   const mentionedNames  = parseMentions(triggerContent)
   const triggeredAgents = mentionedNames.length > 0
-    ? agentMembers.filter(a => mentionedNames.some(n => a.name.toLowerCase() === n.toLowerCase()))
+    ? agentMembers.filter((a: any) => mentionedNames.some(n => a.name.toLowerCase() === n.toLowerCase()))
     : agentMembers
 
   if (triggeredAgents.length === 0) return
@@ -317,13 +317,13 @@ export async function triggerRoomAgentReplies(
 
       // All messages except the very last are history context.
       // The very last message is what this agent is directly responding to.
-      const historyMsgs = recentMessages.slice(0, -1).filter(m => m.senderType !== 'system')
+      const historyMsgs = recentMessages.slice(0, -1).filter((m: any) => m.senderType !== 'system')
       const lastMsg     = recentMessages[recentMessages.length - 1]
       const lastSender  = lastMsg?.agent?.name ?? lastMsg?.user?.name ?? lastMsg?.user?.username ?? 'User'
       const latestTurn  = lastMsg ? `${lastSender}: ${lastMsg.content}` : triggerContent
 
       // Build structured history with isSelf flag so LLMs can use proper role assignments
-      const history: HistoryEntry[] = historyMsgs.map(m => ({
+      const history: HistoryEntry[] = historyMsgs.map((m: any) => ({
         name:   m.agent?.name ?? m.user?.name ?? m.user?.username ?? 'User',
         content: m.content,
         isSelf: m.agentId === agent.id,
@@ -342,8 +342,8 @@ export async function triggerRoomAgentReplies(
 
       // Names of other agents/users in the room so the model can @mention them
       const otherParticipants = agentMembers
-        .filter(a => a.id !== agent.id)
-        .map(a => a.name)
+        .filter((a: any) => a.id !== agent.id)
+        .map((a: any) => a.name)
 
       // Tool context passed to OpenAI-compatible calls when tools are enabled
       const toolContext = toolsEnabled
@@ -406,14 +406,14 @@ export async function triggerRoomAgentReplies(
   // Chain: if the last reply names another agent (with or without @), trigger them.
   // Models often write "Hey Orion" instead of "@Orion", so we check bare names too.
   if (lastSavedReply) {
-    const addressed = agentMembers.filter(a => {
+    const addressed = agentMembers.filter((a: any) => {
       const pattern = new RegExp(`(?:^|\\s|@)${a.name}\\b`, 'i')
       return pattern.test(lastSavedReply!)
     })
     if (addressed.length > 0) {
       // Build a synthetic trigger with @mentions so the next round routes correctly
-      const syntheticTrigger = addressed.map(a => `@${a.name}`).join(' ')
-      console.log(`[room-agents] chaining to: ${addressed.map(a => a.name).join(', ')}`)
+      const syntheticTrigger = addressed.map((a: any) => `@${a.name}`).join(' ')
+      console.log(`[room-agents] chaining to: ${addressed.map((a: any) => a.name).join(', ')}`)
       await triggerRoomAgentReplies(roomId, syntheticTrigger)
     }
   }

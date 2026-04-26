@@ -1075,8 +1075,8 @@ async function handleKnowledgeGraph(argsRaw: string): Promise<string> {
     const wikiLines = wikilinkEdges.map((e: any) => `  ${e.from} → ${e.to}`)
     const semLines = semanticEdges
       .map((e: any) => {
-        const src = noteById.get(e.sourceNoteId)?.title ?? e.sourceNoteId
-        const tgt = noteById.get(e.targetNoteId)?.title ?? e.targetNoteId
+        const src = (noteById.get(e.sourceNoteId) as any)?.title ?? e.sourceNoteId
+        const tgt = (noteById.get(e.targetNoteId) as any)?.title ?? e.targetNoteId
         return `  ${src} ↔ ${tgt} (${(e.score * 100).toFixed(0)}%)`
       })
 

@@ -5,7 +5,8 @@
  * Compatible with Google Authenticator, Authy, 1Password, and other TOTP apps.
  */
 
-import { authenticator } from 'otplib'
+const otplib = require("otplib") as any
+const { authenticator } = otplib
 import crypto from 'crypto'
 
 // Configure TOTP settings

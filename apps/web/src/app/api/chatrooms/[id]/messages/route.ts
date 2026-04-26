@@ -40,7 +40,7 @@ export async function GET(
     },
   })
 
-  const formatted = messages.reverse().map(msg => ({
+  const formatted = messages.reverse().map((msg: any) => ({
     id: msg.id,
     senderType: msg.senderType,
     content: msg.content,

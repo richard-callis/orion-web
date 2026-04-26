@@ -19,7 +19,7 @@ export async function GET() {
     },
   })
   // Mask sensitive fields
-  return NextResponse.json(environments.map(e => ({ ...e, gatewayToken: e.gatewayToken ? '••••' : null, kubeconfig: e.kubeconfig ? '••••' : null })))
+  return NextResponse.json(environments.map((e: any) => ({ ...e, gatewayToken: e.gatewayToken ? '••••' : null, kubeconfig: e.kubeconfig ? '••••' : null })))
 }
 
 export async function POST(req: NextRequest) {
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   const parsed = CreateEnvironmentSchema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json(
-      { error: 'Invalid input', details: parsed.error.errors.map(e => ({ field: e.path.join('.'), message: e.message })) },
+      { error: 'Invalid input', details: parsed.error.errors.map((e: any) => ({ field: e.path.join('.'), message: e.message })) },
       { status: 400 },
     )
   }
@@ -58,13 +58,13 @@ export async function POST(req: NextRequest) {
   const defaultTools = getDefaultTools(parsed.data.type)
   if (defaultTools.length > 0) {
     await prisma.mcpTool.createMany({
-      data: defaultTools.map(t => ({
+      data: defaultTools.map((t: any) => ({
         environmentId: env.id,
         name:          t.name,
         description:   t.description,
         inputSchema:   t.inputSchema,
         execType:      t.execType,
-        execConfig:    t.execConfig ?? Prisma.JsonNull,
+        execConfig:    t.execConfig ?? null as any,
         enabled:       true,
         builtIn:       t.builtIn,
         status:        'active',

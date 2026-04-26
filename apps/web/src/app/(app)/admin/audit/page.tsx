@@ -30,7 +30,7 @@ export default async function AuditLogPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border-subtle">
-              {entries.map(e => (
+              {entries.map((e: any) => (
                 <tr key={e.id} className="hover:bg-bg-raised transition-colors">
                   <td className="px-4 py-2.5 text-text-muted font-mono text-xs whitespace-nowrap">
                     {new Date(e.createdAt).toLocaleString()}

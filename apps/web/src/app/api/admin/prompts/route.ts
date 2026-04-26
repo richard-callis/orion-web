@@ -9,11 +9,11 @@ import { requireAdmin } from '@/lib/auth'
 export async function GET() {
   await requireAdmin()
   const dbRecords = await prisma.systemPrompt.findMany({ orderBy: { key: 'asc' } })
-  const dbMap = new Map(dbRecords.map(r => [r.key, r]))
+  const dbMap = new Map(dbRecords.map((r: any) => [r.key, r]))
 
   // Merge: DB record if it exists, otherwise the default (not yet saved)
   const prompts = PROMPT_DEFAULTS.map(def => {
-    const db = dbMap.get(def.key)
+    const db = dbMap.get(def.key) as any
     return {
       key:         def.key,
       name:        db?.name        ?? def.name,

@@ -53,7 +53,7 @@ export default async function AdminOverviewPage() {
           <p className="px-4 py-6 text-sm text-text-muted text-center">No audit events yet.</p>
         ) : (
           <div className="divide-y divide-border-subtle">
-            {recentAudit.map((entry) => (
+            {recentAudit.map((entry: any) => (
               <div key={entry.id} className="px-4 py-2.5 flex items-center gap-3 text-sm">
                 <span className="text-text-muted font-mono text-xs w-40 flex-shrink-0">
                   {new Date(entry.createdAt).toLocaleString()}

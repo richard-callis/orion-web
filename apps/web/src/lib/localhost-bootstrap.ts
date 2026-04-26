@@ -255,8 +255,8 @@ export async function bootstrapLocalEnvironment(
   const provider = await getGitProvider()
   const providerHealthy = await provider.isHealthy()
 
-  let gitOwner: string | null = null
-  let gitRepo:  string | null = null
+  let gitOwner: string = ''
+  let gitRepo:  string = ''
 
   if (!providerHealthy) {
     emit({ type: 'log', message: 'Git provider not reachable — skipping repo setup. Re-deploy after Gitea is running.' })
