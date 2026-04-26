@@ -110,17 +110,6 @@ const BEARER_PATHS = [
   '/api/internal',     // internal service-to-service routes (e.g. vault-unsealer)
 ]
 
-// Prefixes that accept service token auth — any sub-path works
-const SERVICE_TOKEN_PREFIXES = [
-  '/api/notes',
-  '/api/agent-groups',
-  '/api/features',
-  '/api/epics',
-  '/api/tasks',
-  '/api/bugs',
-  '/api/admin',
-]
-
 // SOC2: [H-002, L-002] Security headers middleware
 function addSecurityHeaders(res: NextResponse): NextResponse {
   // CSP: style-src 'unsafe-inline' required because React/Next.js uses inline styles
@@ -177,13 +166,18 @@ export async function middleware(req: NextRequest) {
 
   // Service token (gateway) calls — accept Bearer token instead of session.
   // Gateway tools need to read/write notes, list agent-groups, etc.
+  // SOC2: /api/admin/* is NEVER accessible via gateway token — always requires session auth
   const gatewayToken = process.env.ORION_GATEWAY_TOKEN
   if (
     gatewayToken &&
     req.headers.get('authorization') === `Bearer ${gatewayToken}`
   ) {
+    // Admin routes always require session auth — never bypassable
+    if (pathname.startsWith('/api/admin')) {
+      // fall through to session auth
+    }
     // Gateway can do anything except DELETE on notes (safety)
-    if (req.method === 'DELETE' && pathname.startsWith('/api/notes')) {
+    else if (req.method === 'DELETE' && pathname.startsWith('/api/notes')) {
       // fall through to session auth for DELETE on notes
     } else {
       return NextResponse.next()
