@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     data: {
       title: data.title,
       description: data.description ?? null,
-      epicId: data.epicId,
+      ...(data.epicId && { epicId: data.epicId }),
       status: data.status,
       createdBy: caller?.id ?? 'gateway',
     },
