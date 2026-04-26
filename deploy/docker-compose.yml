@@ -73,6 +73,11 @@ services:
       traefik.http.routers.orion.rule: "Host(`${ORION_DOMAIN:-orion.khalis.corp}`)"
       traefik.http.routers.orion.entrypoints: "websecure"
       traefik.http.services.orion.loadbalancer.server.port: "3000"
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
 
   # ── Local Gateway ─────────────────────────────────────────────────────────────
   gateway:
@@ -92,6 +97,11 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - gateway-creds:/gateway-creds
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
 
   # ── Gitea (optional — activate with: docker compose --profile gitea up) ────
   # Only needed when using the bundled Gitea git provider.
@@ -121,6 +131,11 @@ services:
       - "3002:3000"
     labels:
       traefik.enable: "false"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
 
   # ── PostgreSQL ─────────────────────────────────────────────────────────────
   postgres:
@@ -137,6 +152,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
 
   # ── Vault init — fixes data dir ownership for vault user (uid=100) ────────────
   vault-init:
@@ -187,6 +207,11 @@ services:
       traefik.http.routers.vault.rule: "Host(`${VAULT_DOMAIN:-vault.khalis.corp}`)"
       traefik.http.routers.vault.entrypoints: "websecure"
       traefik.http.services.vault.loadbalancer.server.port: "8200"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
 
   # ── Vault proxy (Envoy) ───────────────────────────────────────────────────
   # Sole external entry point for Vault. Vault itself exposes no host port.
@@ -214,11 +239,16 @@ services:
         echo "vault-proxy: certs ready, starting Envoy"
         exec /usr/local/bin/envoy -c /etc/envoy/envoy.yaml
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9901/ready 2>/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -qo- http://localhost:9901/ready 2>/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
 
   # ── Vault Unsealer Sidecar ─────────────────────────────────────────────────
   # Fetches unseal keys from ORION's internal API on startup.
@@ -243,6 +273,11 @@ services:
       VAULT_UNSEAL_KEY_1: ${VAULT_UNSEAL_KEY_1:-}
       VAULT_UNSEAL_KEY_2: ${VAULT_UNSEAL_KEY_2:-}
       VAULT_UNSEAL_KEY_3: ${VAULT_UNSEAL_KEY_3:-}
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
 
   # ── Claude Creds Refresh ───────────────────────────────────────────────────
   claude-refresh:
@@ -254,6 +289,11 @@ services:
       - orion-claude-creds:/claude-creds
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
 
   # ── CoreDNS ────────────────────────────────────────────────────────────────
   coredns:
@@ -265,6 +305,11 @@ services:
     ports:
       - "53:53/udp"
       - "53:53/tcp"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
 
   # ── MinIO (S3-compatible object storage for audit log archival — SOC2 [L-001]) ──
   minio:
@@ -287,6 +332,11 @@ services:
       start_period: 10s
     labels:
       traefik.enable: "false"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
 
   # ── MinIO init container — creates orion-audit-logs bucket on startup ────────
   minio-init:
@@ -321,6 +371,11 @@ services:
       start_period: 5s
     labels:
       traefik.enable: "false"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
 
   # ── Redis Sentinel 1 (port 26379) ──────────────────────────────────────────
   redis-sentinel-1:
@@ -343,6 +398,11 @@ services:
       start_period: 5s
     labels:
       traefik.enable: "false"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
 
   # ── Redis Sentinel 2 (port 26380) ──────────────────────────────────────────
   redis-sentinel-2:
@@ -365,6 +425,11 @@ services:
       start_period: 5s
     labels:
       traefik.enable: "false"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
 
   # ── Redis Sentinel 3 (port 26381) ──────────────────────────────────────────
   redis-sentinel-3:
@@ -387,6 +452,11 @@ services:
       start_period: 5s
     labels:
       traefik.enable: "false"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
 
 volumes:
   gitea-data:
