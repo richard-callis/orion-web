@@ -13,28 +13,23 @@ import { prisma } from '@/lib/db'
 import { compare } from 'bcryptjs'
 import { verifyTOTP, verifyRecoveryCode } from '@/lib/totp'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
+import { parseBodyOrError, TOTPLoginSchema } from '@/lib/validate'
 
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => ({}))
-  const { username, password, code, isRecovery } = body as {
-    username?: string
-    password?: string
-    code?: string
-    isRecovery?: boolean
-  }
+  // SOC2 [INPUT-001]: Validate request body with Zod schema
+  const result = await parseBodyOrError(req, TOTPLoginSchema)
+  if ('error' in result) return result.error
 
-  if (!username || !password) {
-    return NextResponse.json({ error: 'Username and password required' }, { status: 400 })
-  }
+  const { data } = result  // { username, password, code?, isRecovery? }
 
-  if (isRecovery) {
+  if (data.isRecovery) {
     // Recovery code login
-    if (!code || typeof code !== 'string') {
+    if (!data.code || typeof data.code !== 'string') {
       return NextResponse.json({ error: 'Recovery code required' }, { status: 400 })
     }
 
     const user = await prisma.user.findUnique({
-      where: { username },
+      where: { username: data.username },
       select: {
         id: true,
         username: true,
@@ -56,14 +51,14 @@ export async function POST(req: NextRequest) {
     if (!user.passwordHash) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
     }
-    const valid = await compare(password, user.passwordHash)
+    const valid = await compare(data.password, user.passwordHash)
     if (!valid) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
     }
 
     // Verify recovery code
     const hashedCodes: string[] = user.totpRecoveryCodes ? JSON.parse(user.totpRecoveryCodes) : []
-    if (!hashedCodes.length || !(await verifyRecoveryCode(code, hashedCodes))) {
+    if (!hashedCodes.length || !(await verifyRecoveryCode(data.code, hashedCodes))) {
       // SOC2: [M-005] Log MFA verification failure (non-blocking)
       logAudit({
         userId: user.id, action: 'mfa_verify_failure', target: 'mfa:recovery',
@@ -100,7 +95,7 @@ export async function POST(req: NextRequest) {
   }
 
   // TOTP code login
-  if (!code || typeof code !== 'string') {
+  if (!data.code || typeof data.code !== 'string') {
     return NextResponse.json({ error: 'TOTP code required' }, { status: 400 })
   }
 
@@ -133,7 +128,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Verify TOTP code
-  if (!verifyTOTP(user.totpSecret, code)) {
+  if (!verifyTOTP(user.totpSecret, data.code)) {
     // SOC2: [M-005] Log MFA verification failure (non-blocking)
     logAudit({
       userId: user.id, action: 'mfa_verify_failure', target: 'mfa:totp',

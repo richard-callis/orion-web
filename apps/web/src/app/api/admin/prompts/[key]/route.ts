@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { PROMPT_DEFAULTS, invalidatePromptCache } from '@/lib/system-prompts'
 import { requireAdmin } from '@/lib/auth'
+import { parseBodyOrError, UpdateSystemPromptSchema } from '@/lib/validate'
 
 /** GET /api/admin/prompts/:key — get a single prompt's current content */
 export async function GET(
@@ -30,10 +31,9 @@ export async function PUT(
   { params }: { params: { key: string } },
 ) {
   await requireAdmin()
-  const { content } = await req.json() as { content?: string }
-  if (typeof content !== 'string') {
-    return NextResponse.json({ error: 'content is required' }, { status: 400 })
-  }
+  const result = await parseBodyOrError(req, UpdateSystemPromptSchema)
+  if ('error' in result) return result.error
+  const { data } = result
 
   const key = decodeURIComponent(params.key)
   const def = PROMPT_DEFAULTS.find(p => p.key === key)
@@ -43,13 +43,13 @@ export async function PUT(
 
   const record = await prisma.systemPrompt.upsert({
     where: { key },
-    update: { content },
+    update: { content: data.content },
     create: {
       key,
       name:        def.name,
       description: def.description,
       category:    def.category,
-      content,
+      content:     data.content,
       variables:   (def.variables ?? null) as unknown as object,
     },
   })
