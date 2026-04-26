@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
   }
 
   const user = await prisma.user.findUnique({
-    where: { username },
+    where: { username: data.username },
     select: {
       id: true,
       username: true,
@@ -122,7 +122,7 @@ export async function POST(req: NextRequest) {
   if (!user.passwordHash) {
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
-  const valid = await compare(password, user.passwordHash)
+  const valid = await compare(data.password, user.passwordHash)
   if (!valid) {
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
