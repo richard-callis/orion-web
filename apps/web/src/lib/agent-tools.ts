@@ -131,7 +131,7 @@ export async function executeTool(
             metadata: {
               systemPrompt: String(args.systemPrompt ?? ''),
               contextConfig: { llm },
-            },
+            } as any,
           },
         })
 

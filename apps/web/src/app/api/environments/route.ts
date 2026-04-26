@@ -47,9 +47,9 @@ export async function POST(req: NextRequest) {
       gatewayToken: parsed.data.gatewayToken ?? null,
       gitOwner:     parsed.data.gitOwner ?? null,
       gitRepo:      parsed.data.gitRepo ?? null,
-      policyConfig: parsed.data.policyConfig,
+      policyConfig: (parsed.data.policyConfig ?? undefined) as any,
       kubeconfig:   parsed.data.kubeconfig ?? null,
-      metadata:     parsed.data.metadata,
+      metadata:     (parsed.data.metadata ?? undefined) as any,
     },
     include: { tools: true, agents: { include: { agent: true } } },
   })
