@@ -89,6 +89,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   const [typingAgents, setTypingAgents] = useState<string[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const eventSourceRef = useRef<EventSource | null>(null)
 
   // Derive all mentionable members from loaded room data
   const mentionableMembers = (room?.members ?? []).map(m => ({
@@ -144,24 +145,80 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [room?.messages?.length])
 
-  // Poll typing state and reload messages while agents are active
+  // Subscribe to real-time messages via SSE and poll typing state
   useEffect(() => {
     let active = true
-    const poll = async () => {
+
+    // SSE subscription for real-time messages
+    const connectSSE = () => {
+      if (!active || !roomId) return
+
+      const es = new EventSource(`/api/chatrooms/${roomId}/stream`)
+
+      es.addEventListener('message', (event) => {
+        if (!active) return
+        try {
+          const message = JSON.parse(event.data)
+
+          // Skip the initial "connected" message
+          if (message.type === 'connected') {
+            console.log('[RoomChat] SSE connected for room', roomId)
+            return
+          }
+
+          // Update room with new message
+          setRoom((prev) => {
+            if (!prev) return prev
+            return {
+              ...prev,
+              messages: [...(prev.messages || []), message],
+              totalMessages: (prev.totalMessages || 0) + 1,
+            }
+          })
+        } catch (e) {
+          console.error('[RoomChat] Error parsing SSE message:', e)
+        }
+      })
+
+      es.addEventListener('error', () => {
+        console.warn('[RoomChat] SSE connection error, falling back to polling')
+        es.close()
+        if (active) {
+          // Reconnect after delay if still active
+          setTimeout(connectSSE, 5000)
+        }
+      })
+
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+      }
+      eventSourceRef.current = es
+    }
+
+    // Typing state polling (every 2s)
+    const pollTyping = async () => {
       if (!active) return
       try {
         const res = await fetch(`/api/chatrooms/${roomId}/typing`)
         if (res.ok) {
           const data = await res.json() as { typing: string[] }
           setTypingAgents(data.typing)
-          // Reload messages while any agent is typing so replies appear promptly
-          if (data.typing.length > 0) loadRoom()
         }
       } catch { /* ignore */ }
     }
-    const id = setInterval(poll, 2000)
-    return () => { active = false; clearInterval(id) }
-  }, [roomId, loadRoom])
+
+    connectSSE()
+    const typingInterval = setInterval(pollTyping, 2000)
+
+    return () => {
+      active = false
+      clearInterval(typingInterval)
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+    }
+  }, [roomId])
 
   const handleSendMessage = async () => {
     if (!message.trim() || !room || sending) return
@@ -174,10 +231,9 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setMessage('')
+      // Messages will arrive via SSE in real-time, no need to poll
+      // Just reload room once for metadata/counts
       await loadRoom()
-      // Poll for agent replies (they're async — typically arrive within 2–5s)
-      setTimeout(() => loadRoom(), 3000)
-      setTimeout(() => loadRoom(), 7000)
     } catch { /* ignore */ }
     setSending(false)
   }
