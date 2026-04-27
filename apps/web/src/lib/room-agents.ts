@@ -19,6 +19,7 @@ import path from 'path'
 import { prisma } from './db'
 import { setTyping, clearTyping } from './typing-state'
 import { ORION_TOOL_DEFINITIONS, TOOLS_SYSTEM_ADDENDUM, executeTool } from './agent-tools'
+import { publishChatMessage } from './chat-redis'
 
 // ── Mention parsing ───────────────────────────────────────────────────────────
 
@@ -392,10 +393,31 @@ export async function triggerRoomAgentReplies(
         continue
       }
 
-      await prisma.chatMessage.create({
+      const message = await prisma.chatMessage.create({
         data: { roomId, agentId: agent.id, senderType: 'agent', content: reply },
+        include: {
+          agent: { select: { id: true, name: true } },
+          user: { select: { id: true, username: true, name: true } },
+        },
       })
       await prisma.chatRoom.update({ where: { id: roomId }, data: { updatedAt: new Date() } })
+
+      // Publish to Redis for real-time SSE delivery
+      const sender = message.agent
+        ? { type: 'agent' as const, id: message.agent.id, name: message.agent.name }
+        : message.user
+        ? { type: 'user' as const, id: message.user.id, name: message.user.name || message.user.username }
+        : { type: 'system' as const, id: null, name: 'System' }
+
+      await publishChatMessage(roomId, {
+        id: message.id,
+        senderType: message.senderType,
+        content: message.content,
+        attachments: message.attachments,
+        sender,
+        createdAt: message.createdAt instanceof Date ? message.createdAt.toISOString() : message.createdAt,
+      })
+
       console.log(`[room-agents] ${agent.name} replied (${reply.length} chars)`)
       lastSavedReply = reply
     } catch (e) {
