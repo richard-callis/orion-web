@@ -7,16 +7,13 @@
  * SOC2 [H-002]: Error handling without information disclosure
  */
 
-import { randomUUID } from 'crypto'
-
 /**
  * Generate a unique correlation ID for a request.
  * Returns a short format suitable for including in error responses.
+ * Uses globalThis.crypto (Web Crypto API) so it works in both Node.js and edge runtime.
  */
 export function generateCorrelationId(): string {
-  // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-  // Short format: first 8 chars of UUID (sufficient for disambiguation)
-  return randomUUID().split('-')[0]
+  return crypto.randomUUID().split('-')[0]
 }
 
 /**
