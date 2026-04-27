@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getToken } from 'next-auth/jwt'
-import { timingSafeEqual } from 'crypto'
 import { getOrCreateCorrelationId } from './lib/correlation-id'
 
 // SOC2: [M-004] Wrap console.log BEFORE any other import to catch all log output
@@ -186,13 +185,11 @@ function nextWithNonce(req: NextRequest, nonce: string, correlationId: string): 
 /** Constant-time string comparison to prevent timing attacks on token auth (SOC2 #166) */
 function timingSafeCompare(a: string, b: string): boolean {
   if (a.length !== b.length) return false
-  const bufA = Buffer.from(a)
-  const bufB = Buffer.from(b)
-  try {
-    return timingSafeEqual(bufA, bufB)
-  } catch {
-    return false
+  let result = 0
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i)
   }
+  return result === 0
 }
 
 export async function middleware(req: NextRequest) {
