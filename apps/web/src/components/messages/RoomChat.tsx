@@ -294,7 +294,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     !inviteSearch || (u.name || u.username || '').toLowerCase().includes(inviteSearch.toLowerCase())
   )
   const filteredAgents = inviteAgents.filter(a =>
-    !inviteSearch || a.name.toLowerCase().includes(inviteSearch.toLowerCase())
+    !inviteSearch || (a.name || '').toLowerCase().includes(inviteSearch.toLowerCase())
   )
 
   return (
