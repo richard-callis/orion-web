@@ -384,8 +384,9 @@ services:
     depends_on:
       redis-master:
         condition: service_healthy
-    command: redis-sentinel /etc/redis-sentinel.conf
+    entrypoint: /entrypoint.sh
     volumes:
+      - ./sentinel-entrypoint.sh:/entrypoint.sh:ro
       - ./redis-sentinel-1.conf:/etc/redis-sentinel.conf:ro
       - redis-sentinel-1-data:/data
     ports:
@@ -411,8 +412,9 @@ services:
     depends_on:
       redis-master:
         condition: service_healthy
-    command: redis-sentinel /etc/redis-sentinel.conf
+    entrypoint: /entrypoint.sh
     volumes:
+      - ./sentinel-entrypoint.sh:/entrypoint.sh:ro
       - ./redis-sentinel-2.conf:/etc/redis-sentinel.conf:ro
       - redis-sentinel-2-data:/data
     ports:
@@ -438,8 +440,9 @@ services:
     depends_on:
       redis-master:
         condition: service_healthy
-    command: redis-sentinel /etc/redis-sentinel.conf
+    entrypoint: /entrypoint.sh
     volumes:
+      - ./sentinel-entrypoint.sh:/entrypoint.sh:ro
       - ./redis-sentinel-3.conf:/etc/redis-sentinel.conf:ro
       - redis-sentinel-3-data:/data
     ports:
