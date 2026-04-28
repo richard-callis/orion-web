@@ -141,8 +141,12 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
 
   useEffect(() => { loadRoom() }, [loadRoom])
 
+  // Debounce scroll to avoid performance issues with rapid message arrivals
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const timer = setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }, 100)
+    return () => clearTimeout(timer)
   }, [room?.messages?.length])
 
   // Subscribe to real-time messages via SSE and poll typing state
@@ -169,9 +173,12 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
           // Update room with new message
           setRoom((prev) => {
             if (!prev) return prev
+            const newMessages = [...(prev.messages || []), message]
+            // Keep only the last 200 messages in DOM to avoid performance issues
+            const trimmedMessages = newMessages.length > 200 ? newMessages.slice(-200) : newMessages
             return {
               ...prev,
-              messages: [...(prev.messages || []), message],
+              messages: trimmedMessages,
               totalMessages: (prev.totalMessages || 0) + 1,
             }
           })
