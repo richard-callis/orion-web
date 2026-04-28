@@ -103,14 +103,14 @@ export function MessageList({
     return acc
   }, {})
 
-  const epicsWithConvos = epics.filter(e => {
+  const epicsWithConvos = (epics ?? []).filter(e => {
     const hasEpicConvos = (convosByTarget[e.id]?.length ?? 0) > 0
     const hasFeatureConvos = e.features.some(f => (convosByTarget[f.id]?.length ?? 0) > 0)
     return hasEpicConvos || hasFeatureConvos
   })
 
-  const organizedIds = new Set([...epics.map(e => e.id), ...epics.flatMap(e => e.features.map(f => f.id))])
-  const orphanConvos = planningConvos.filter(c => !organizedIds.has(c.metadata.planTarget.id))
+  const organizedIds = new Set([...(epics ?? []).map(e => e.id), ...(epics ?? []).flatMap(e => e.features.map(f => f.id))])
+  const orphanConvos = (planningConvos ?? []).filter(c => !organizedIds.has(c.metadata.planTarget.id))
 
   const removeConvo = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
@@ -146,7 +146,7 @@ export function MessageList({
   const activeRow = 'bg-accent/10 border-l-2 border-l-accent text-text-primary'
   const idleRow = 'text-text-muted hover:bg-bg-raised hover:text-text-primary'
 
-  const filteredRooms = effectiveRoomFilter ? rooms.filter(r => r.type === effectiveRoomFilter) : rooms
+  const filteredRooms = effectiveRoomFilter ? (rooms ?? []).filter(r => r.type === effectiveRoomFilter) : (rooms ?? [])
 
   // ── Render helpers ────────────────────────────────────────────
   const renderConversation = (c: Conversation) => (
@@ -200,7 +200,7 @@ export function MessageList({
 
   // ── AI-only sections ─────────────────────────────────────────
   const renderAISections = () => {
-    const regularConvos = convos.filter(c => !c.metadata?.planTarget && !c.metadata?.agentTarget && !c.metadata?.agentChat && !c.metadata?.agentDraft && !c.metadata?.debugChat)
+    const regularConvos = (convos ?? []).filter(c => !c.metadata?.planTarget && !c.metadata?.agentTarget && !c.metadata?.agentChat && !c.metadata?.agentDraft && !c.metadata?.debugChat)
 
     return (
       <>
@@ -289,18 +289,18 @@ export function MessageList({
               {agentChatsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
               <Bot size={12} className="flex-shrink-0 text-accent" />
               <span className="flex-1">Agent Chats</span>
-              <span className="text-[10px] text-text-muted">{agentConvos.length}</span>
+              <span className="text-[10px] text-text-muted">{(agentConvos ?? []).length}</span>
             </div>
             {agentChatsOpen && (() => {
-              const draftConvos = agentConvos.filter(c => c.metadata.agentDraft && !c.metadata.agentTarget && !c.metadata.agentChat)
-              const linkedConvos = agentConvos.filter(c => !!c.metadata.agentTarget || !!c.metadata.agentChat)
+              const draftConvos = (agentConvos ?? []).filter(c => c.metadata.agentDraft && !c.metadata.agentTarget && !c.metadata.agentChat)
+              const linkedConvos = (agentConvos ?? []).filter(c => !!c.metadata.agentTarget || !!c.metadata.agentChat)
               const convosByAgent = linkedConvos.reduce<Record<string, AgentConvo[]>>((acc, c) => {
                 const id = (c.metadata.agentTarget ?? c.metadata.agentChat)!.id
                 ;(acc[id] ??= []).push(c)
                 return acc
               }, {})
-              const agentsWithConvos = agents.filter(a => (convosByAgent[a.id]?.length ?? 0) > 0)
-              const knownAgentIds = new Set(agents.map(a => a.id))
+              const agentsWithConvos = (agents ?? []).filter(a => (convosByAgent[a.id]?.length ?? 0) > 0)
+              const knownAgentIds = new Set((agents ?? []).map(a => a.id))
               const orphans = linkedConvos.filter(c => !knownAgentIds.has((c.metadata.agentTarget ?? c.metadata.agentChat)!.id))
 
               return (
