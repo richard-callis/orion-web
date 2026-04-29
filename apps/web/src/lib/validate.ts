@@ -74,11 +74,11 @@ export function validateBody<T extends z.ZodType>(
 export const CreateConversationSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   initialContext: z.string().max(10000).optional(),
-  planTarget: z.string().max(200).optional(),
+  planTarget: z.object({ type: z.string().max(50), id: z.string().max(100) }).optional(),
   planModel: z.string().max(100).optional(),
-  agentTarget: z.string().max(100).optional(),
-  agentDraft: z.string().max(100).optional(),
-  agentChat: z.string().max(100).optional(),
+  agentTarget: z.object({ id: z.string().max(100), name: z.string().max(200) }).optional(),
+  agentDraft: z.boolean().optional(),
+  agentChat: z.object({ id: z.string().max(100), name: z.string().max(200) }).optional(),
   metadata: z.record(z.unknown()).optional(),
 })
 
@@ -313,11 +313,11 @@ export const ChatroomMessageSchema = z.object({
 
 export const CreateConversationSchema2 = z.object({
   initialContext: z.string().max(10000).optional(),
-  planTarget: z.string().max(200).optional(),
+  planTarget: z.object({ type: z.string().max(50), id: z.string().max(100) }).optional(),
   planModel: z.string().max(100).optional(),
-  agentTarget: z.string().max(100).optional(),
-  agentDraft: z.string().max(100).optional(),
-  agentChat: z.string().max(100).optional(),
+  agentTarget: z.object({ id: z.string().max(100), name: z.string().max(200) }).optional(),
+  agentDraft: z.boolean().optional(),
+  agentChat: z.object({ id: z.string().max(100), name: z.string().max(200) }).optional(),
 })
 
 export const ImportNovaSchema = z.object({
