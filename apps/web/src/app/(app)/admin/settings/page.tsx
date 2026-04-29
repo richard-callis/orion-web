@@ -2,10 +2,18 @@
 import { useState, useEffect } from 'react'
 import { Save, RefreshCw } from 'lucide-react'
 
+interface ExternalModel {
+  id: string
+  name: string
+  modelId: string
+  provider: string
+  enabled: boolean
+}
+
 interface Settings {
   'app.name': string
   'app.description': string
-  'model.default': string
+  'ai.default-model': string
   'chat.historyLimit': number
   'features.notes': boolean
   'features.backups': boolean
@@ -14,7 +22,7 @@ interface Settings {
 const DEFAULTS: Settings = {
   'app.name': 'ORION',
   'app.description': '',
-  'model.default': 'claude',
+  'ai.default-model': 'claude',
   'chat.historyLimit': 10,
   'features.notes': true,
   'features.backups': true,
@@ -22,31 +30,46 @@ const DEFAULTS: Settings = {
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings>(DEFAULTS)
+  const [externalModels, setExternalModels] = useState<ExternalModel[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/admin/settings')
-      .then(r => r.json())
-      .then((data: Partial<Settings>) => {
-        setSettings(s => ({ ...s, ...data }))
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
+    Promise.all([
+      fetch('/api/admin/settings').then(r => r.json()).catch(() => ({})),
+      fetch('/api/admin/models').then(r => r.json()).catch(() => []),
+    ]).then(([data, modelsData]) => {
+      setSettings(s => ({
+        ...s,
+        ...data,
+        // API stores all values as strings — coerce back to their correct types
+        'chat.historyLimit': parseInt(data['chat.historyLimit']) || s['chat.historyLimit'],
+        'features.notes': data['features.notes'] === undefined ? s['features.notes'] : data['features.notes'] === 'true',
+        'features.backups': data['features.backups'] === undefined ? s['features.backups'] : data['features.backups'] === 'true',
+      }))
+      setExternalModels((Array.isArray(modelsData) ? modelsData : []).filter((m: ExternalModel) => m.enabled))
+      setLoading(false)
+    })
   }, [])
 
   const handleSave = async () => {
     setSaving(true)
     setError(null)
     try {
-      const res = await fetch('/api/admin/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings),
-      })
-      if (!res.ok) throw new Error('Failed to save')
+      // API takes one key-value pair at a time — save all in parallel
+      const entries = Object.entries(settings) as [string, unknown][]
+      const results = await Promise.all(
+        entries.map(([key, value]) =>
+          fetch('/api/admin/settings', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key, value: String(value) }),
+          })
+        )
+      )
+      if (results.some(r => !r.ok)) throw new Error('Failed to save one or more settings')
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch (e) {
@@ -102,15 +125,22 @@ export default function SettingsPage() {
           />
         </SettingRow>
 
-        {/* Default model */}
-        <SettingRow label="Default Model" description="Model used by default in Claude Chat">
+        {/* Default AI model */}
+        <SettingRow
+          label="Default AI Model"
+          description="Model used for all AI features (generate features, generate tasks, planning). Falls back to the first enabled external model if not set."
+        >
           <select
-            value={settings['model.default']}
-            onChange={e => set('model.default', e.target.value)}
+            value={settings['ai.default-model']}
+            onChange={e => set('ai.default-model', e.target.value)}
             className="w-full px-3 py-1.5 text-sm bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none focus:border-accent transition-colors"
           >
-            <option value="claude">Claude (default)</option>
-            <option value="ollama">Ollama</option>
+            <option value="claude">Claude (built-in)</option>
+            {externalModels.map(m => (
+              <option key={m.id} value={m.id}>
+                {m.name} ({m.modelId})
+              </option>
+            ))}
           </select>
         </SettingRow>
 
