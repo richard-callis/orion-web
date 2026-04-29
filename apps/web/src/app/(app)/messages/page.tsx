@@ -49,7 +49,7 @@ export default function MessagesPage() {
     setLoading(true)
     try {
       const [convosRes, epicsRes, agentsRes, roomsRes] = await Promise.all([
-        fetch('/api/chat/conversations').then(r => r.json().catch(() => [])),
+        fetch('/api/chat/conversations').then(r => r.json().catch(() => [])).then((d: any) => Array.isArray(d) ? d : []),
         fetch('/api/epics').then(r => r.json().catch(() => [])).then((d: any) => Array.isArray(d) ? d : []),
         fetch('/api/agents').then(r => r.json().catch(() => [])).then((d: any) => Array.isArray(d) ? d : []),
         fetch('/api/chatrooms').then(r => r.json().catch(() => ({ rooms: [] }))).then((d: any) => d.rooms || []),
