@@ -1,6 +1,7 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Suspense } from 'react'
 import { MessageSquare } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
 import { MessageList } from '@/components/messages/MessageList'
 import { ChatContainer } from '@/components/messages/ChatContainer'
 
@@ -34,16 +35,30 @@ interface Room {
   task?: { id: string; title: string } | null
 }
 
-export default function MessagesPage() {
-  const [view, setView] = useState<'ai' | 'rooms'>('ai')
-  const [activeId, setActiveId] = useState<string | null>(null)
-  const [mobileShowList, setMobileShowList] = useState(true)
+function MessagesContent() {
+  const searchParams = useSearchParams()
+  const incomingRoomId = searchParams.get('r')
+
+  const [view, setView] = useState<'ai' | 'rooms'>('rooms')
+  const [activeId, setActiveId] = useState<string | null>(
+    incomingRoomId ? `r_${incomingRoomId}` : null
+  )
+  const [mobileShowList, setMobileShowList] = useState(!incomingRoomId)
   const [convos, setConvos] = useState<Conversation[]>([])
   const [epics, setEpics] = useState<EpicsFeature[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
   const [rooms, setRooms] = useState<Room[]>([])
   const [roomFilter, setRoomFilter] = useState('')
   const [loading, setLoading] = useState(true)
+
+  // When navigated to with ?r=<roomId>, activate that room
+  useEffect(() => {
+    if (incomingRoomId) {
+      setView('rooms')
+      setActiveId(`r_${incomingRoomId}`)
+      setMobileShowList(false)
+    }
+  }, [incomingRoomId])
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -181,5 +196,13 @@ export default function MessagesPage() {
         />
       </div>
     </div>
+  )
+}
+
+export default function MessagesPage() {
+  return (
+    <Suspense fallback={<div className="absolute inset-0 flex items-center justify-center text-text-muted text-sm">Loading messages…</div>}>
+      <MessagesContent />
+    </Suspense>
   )
 }

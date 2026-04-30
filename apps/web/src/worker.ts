@@ -106,6 +106,7 @@ async function runTask(taskId: string): Promise<void> {
         agent: {
           include: { environments: { include: { environment: true }, take: 1 } },
         },
+        feature: { select: { id: true } },
       },
     })
 
@@ -148,9 +149,20 @@ async function runTask(taskId: string): Promise<void> {
       },
     })
 
+    // Find or create the feature coordination room (if task has a featureId)
+    const featureId = task.feature?.id ?? null
+    const featureRoomId: string | null = featureId
+      ? await findOrCreateFeatureRoom(featureId, agent.id)
+      : null
+
     // Log start event
     await logTaskEvent(taskId, 'started', `Agent "${agent.name}" [${modelId}] starting task`, agent.id)
+    // SOC2: always keep postToFeed as the audit trail
     await postToFeed(agent.id, `▶ Starting task: **${task.title}**`, taskId)
+    // Additionally post to feature room if one exists
+    if (featureRoomId) {
+      await postToRoom(featureRoomId, agent.id, `▶ Starting task: **${task.title}**`)
+    }
 
     const ctx: TaskRunContext = {
       taskId,
@@ -188,9 +200,13 @@ async function runTask(taskId: string): Promise<void> {
               metadata: { toolCall: { name: event.tool, args: event.args } } as any,
             },
           }).catch(() => {})
+          if (featureRoomId) {
+            const argsSummary = String(event.args ?? '').slice(0, 200)
+            await postToRoom(featureRoomId, agent.id, `🔧 \`${event.tool}\`(${argsSummary})`)
+          }
           break
 
-        case 'tool_result':
+        case 'tool_result': {
           await logTaskEvent(taskId, 'tool_result', event.result.slice(0, 2000), agent.id)
           await prisma.message.create({
             data: {
@@ -198,7 +214,13 @@ async function runTask(taskId: string): Promise<void> {
               content: `[tool_result] ${event.tool}: ${event.result.slice(0, 2000)}`,
             },
           }).catch(() => {})
+          if (featureRoomId) {
+            // SOC2: redact secrets, truncate to 300 chars before posting to room
+            const safeResult = redactSecrets(event.result).slice(0, 300)
+            await postToRoom(featureRoomId, agent.id, `↩ \`${event.tool}\`: ${safeResult}`)
+          }
           break
+        }
 
         case 'done':
           break
@@ -211,10 +233,14 @@ async function runTask(taskId: string): Promise<void> {
     const durationSec = Math.round((Date.now() - startedAt) / 1000)
     const summary = outputText.slice(-500) || 'Task completed.'
 
+    const completionMsg = `✅ Completed: **${task.title}** (${durationSec}s · ${toolsUsed.length} tools)\n\n${summary}`
     await Promise.all([
       prisma.task.update({ where: { id: taskId }, data: { status: 'pending_validation' } }),
       logTaskEvent(taskId, 'completed', summary, agent.id),
-      postToFeed(agent.id, `✅ Completed: **${task.title}** (${durationSec}s · ${toolsUsed.length} tools)\n\n${summary}`, taskId),
+      // SOC2: always keep postToFeed for audit trail
+      postToFeed(agent.id, completionMsg, taskId),
+      // Also post to feature room if one exists
+      ...(featureRoomId ? [postToRoom(featureRoomId, agent.id, completionMsg)] : []),
       prisma.claudeInvocation.create({
         data: {
           conversationId: conversation.id,
@@ -259,6 +285,58 @@ async function postToFeed(agentId: string, content: string, taskId?: string) {
       messageType: 'task_update',
       threadId:    taskId,
     },
+  }).catch(() => {})
+}
+
+// ── Chat room helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Find or create the coordination ChatRoom for a Feature.
+ * SOC2: room creation is logged to the agent-feed audit trail.
+ */
+async function findOrCreateFeatureRoom(featureId: string, agentId: string): Promise<string | null> {
+  // Find existing room for this feature
+  let room = await prisma.chatRoom.findFirst({
+    where: { featureId, type: 'feature' },
+    select: { id: true },
+  })
+  if (!room) {
+    room = await prisma.chatRoom.create({
+      data: { name: '', featureId, type: 'feature', createdBy: agentId },
+      select: { id: true },
+    })
+    // Set name from feature title
+    const feature = await prisma.feature.findUnique({ where: { id: featureId }, select: { title: true } })
+    if (feature) {
+      await prisma.chatRoom.update({ where: { id: room.id }, data: { name: feature.title } })
+    }
+    // SOC2: log room creation to audit feed
+    await postToFeed(agentId, `Room created for feature ${featureId} (room ${room.id})`)
+  }
+  // Ensure agent is a member
+  await prisma.chatRoomMember.upsert({
+    where: { roomId_agentId: { roomId: room.id, agentId } },
+    create: { roomId: room.id, agentId, role: 'member' },
+    update: {},
+  })
+  return room.id
+}
+
+// SOC2: redact secret-like values from tool result content before posting to rooms
+const SECRET_PATTERNS = /\b(token|password|secret|apikey|api_key|bearer|credential|private_key)\s*[=:]\s*\S+/gi
+function redactSecrets(content: string): string {
+  return content.replace(SECRET_PATTERNS, (match) => {
+    const eqIdx = match.search(/[=:]/)
+    return match.slice(0, eqIdx + 1) + ' [REDACTED]'
+  })
+}
+
+/**
+ * Post a message to a ChatRoom. agentId provides SOC2 attribution.
+ */
+async function postToRoom(roomId: string, agentId: string, content: string) {
+  await prisma.chatMessage.create({
+    data: { roomId, agentId, senderType: 'agent', content },
   }).catch(() => {})
 }
 
