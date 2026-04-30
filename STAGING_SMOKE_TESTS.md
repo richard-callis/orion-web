@@ -1,9 +1,9 @@
 # SOC II Compliance Smoke Test Suite — ORION
 
-**Date**: 2026-04-26  
 **Target Environment**: Staging (Docker Compose)  
 **Coverage**: 7 SOC II Remediation Fixes  
 **Execution Time**: ~30-45 minutes total  
+**Results template**: `docs/soc2/STAGING_SMOKE_TEST_RESULTS.md`
 
 ---
 
