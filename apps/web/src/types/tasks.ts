@@ -75,7 +75,19 @@ export interface Bug {
   updatedAt: string
 }
 
+export interface EpicContext {
+  epicTitle: string
+  epicDescription: string | null
+  epicPlan: string | null
+}
+
+export interface FeatureContext extends EpicContext {
+  featureTitle: string
+  featureDescription: string | null
+  featurePlan: string | null
+}
+
 export type PlanTarget =
-  | { type: 'task';    id: string; title: string; description: string | null }
-  | { type: 'feature'; id: string; title: string; description: string | null }
+  | { type: 'task';    id: string; title: string; description: string | null; parentContext?: FeatureContext }
+  | { type: 'feature'; id: string; title: string; description: string | null; parentContext?: EpicContext }
   | { type: 'epic';    id: string; title: string; description: string | null }
