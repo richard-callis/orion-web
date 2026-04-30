@@ -534,7 +534,13 @@ export async function* streamAgentChat(
   )
 
   // ── Helper: load gateway tools from this agent's connected environments ────────
-  // Priority: explicit @mention target > agent-linked env > any connected env.
+  // Priority: explicit @mention target > agent-linked env > STOP.
+  //
+  // SOC2 [A-002]: The previous "fall back to any connected environment" behaviour
+  // allowed agents with no explicit gateway assignment to inherit a gateway from
+  // any connected environment — exposing the gatewayToken to the LLM context and
+  // enabling unauthenticated API access via the gateway's sh tool.
+  // Agents must be explicitly linked to an environment to receive gateway tools.
   const loadAgentGateway = async () => {
     const { GatewayClient } = await import('./agent-runner/gateway-client')
     type GatewayTool = import('./agent-runner/types').GatewayTool
@@ -546,7 +552,7 @@ export async function* streamAgentChat(
         })
       : null
 
-    // Try environments linked to this specific agent
+    // Try environments explicitly linked to this agent
     if (!connectedEnv && agentId) {
       connectedEnv = await prisma.environment.findFirst({
         where: {
@@ -558,12 +564,7 @@ export async function* streamAgentChat(
       })
     }
 
-    // Fall back to any connected environment
-    if (!connectedEnv) {
-      connectedEnv = await prisma.environment.findFirst({
-        where: { status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
-      })
-    }
+    // No implicit fallback — an agent without an explicit environment link gets no gateway tools.
 
     if (!connectedEnv?.gatewayUrl || !connectedEnv.gatewayToken) return null
 
