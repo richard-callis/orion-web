@@ -465,6 +465,44 @@ async function runWatchers() {
 
     const wikiContext = buildWikiContext(contextNotes)
 
+    // Appended to every watcher's system prompt so directive capabilities are always
+    // authoritative, regardless of what the agent's stored systemPrompt says.
+    // This is in the system prompt (not task description) so it takes precedence.
+    const WATCHER_CAPABILITIES = `
+
+---
+## How to take actions as a watcher
+
+You do NOT have an authenticated HTTP client. Do NOT call /api/agents, /api/tasks,
+or any other ORION API endpoint — those calls will fail with auth errors.
+
+Instead, output a directives block at the END of your response:
+
+\`\`\`
+---DIRECTIVES---
+{
+  "assign": [{"taskId":"<id>","agentId":"<id>"}],
+  "create_agent": {
+    "name": "<name>",
+    "role": "<one-line role>",
+    "type": "claude",
+    "description": "<optional>",
+    "metadata": {
+      "systemPrompt": "<full system prompt>",
+      "contextConfig": {"persistent": false}
+    }
+  },
+  "message": "<reason>"
+}
+---END---
+\`\`\`
+
+- "assign" — route a pending task to an agent. Use the IDs from the snapshot.
+- "create_agent" — create a new agent when no existing agent fits the work.
+- Omit keys you don't need. Omit the block entirely if no action is required.
+- The orchestrator executes these server-side on your behalf.
+---`
+
     // The agent receives all data it needs as context — no outbound calls required.
     // Writes go through the ---DIRECTIVES--- block; the orchestrator executes them
     // server-side with full attribution (SOC2 [A-001]).
@@ -513,7 +551,7 @@ async function runWatchers() {
       taskPlan:        null,
       agentId:         agent.id,
       agentName:       agent.name,
-      systemPrompt:    systemPrompt + wikiContext,
+      systemPrompt:    systemPrompt + wikiContext + WATCHER_CAPABILITIES,
       modelId,
       gateway,
     }
