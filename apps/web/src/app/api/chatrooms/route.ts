@@ -18,12 +18,14 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const type = searchParams.get('type') ?? undefined
   const featureId = searchParams.get('featureId') ?? undefined
+  const epicId = searchParams.get('epicId') ?? undefined
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '50') || 50, 200)
   const cursor = searchParams.get('cursor')
 
   const where: Record<string, unknown> = {}
   if (type) where.type = type
   if (featureId) where.featureId = featureId
+  if (epicId) where.epicId = epicId
 
   const rooms = await prisma.chatRoom.findMany({
     where,
@@ -34,6 +36,7 @@ export async function GET(req: NextRequest) {
       _count: { select: { messages: true, members: true } },
       task: { select: { id: true, title: true } },
       feature: { select: { id: true, title: true } },
+      epic: { select: { id: true, title: true } },
     },
   })
 
@@ -72,6 +75,7 @@ export async function POST(req: NextRequest) {
   // Stored as metadata so existing chat stream code can route planning conversations
   const planTarget = body.planTarget as { type: string; id: string } | undefined
   const featureId  = body.featureId ? String(body.featureId) : null
+  const epicId     = body.epicId ? String(body.epicId) : null
 
   const room = await prisma.chatRoom.create({
     data: {
@@ -80,6 +84,7 @@ export async function POST(req: NextRequest) {
       type:        body.type ? String(body.type) : 'task',
       taskId:      body.taskId ? String(body.taskId) : null,
       featureId,
+      epicId,
       createdBy:   String(createdBy),
       // metadata is not a Prisma field on ChatRoom — store planTarget via description
       // or leave for caller to track. Feature/task relation covers structural linkage.
@@ -88,6 +93,7 @@ export async function POST(req: NextRequest) {
       _count: { select: { messages: true, members: true } },
       task:    { select: { id: true, title: true } },
       feature: { select: { id: true, title: true } },
+      epic:    { select: { id: true, title: true } },
     },
   })
 
