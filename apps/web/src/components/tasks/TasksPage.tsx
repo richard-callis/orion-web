@@ -415,18 +415,24 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
         : `I want to plan this task:\n\n**${target.title}**\n\n${target.description ?? 'No description yet.'}\n\nHelp me break this down into a clear implementation plan.`
     }
 
-    // Append parent context so Claude understands how this item fits into the bigger picture
+    // Prepend parent context as background framing so Claude understands lineage without
+    // treating the parent plan as the thing to produce — the specific item stays the ask.
     if (target.type === 'feature' && target.parentContext) {
       const { epicTitle, epicDescription, epicPlan } = target.parentContext
-      initialContext += `\n\n---\n\n**Parent Epic:** ${epicTitle}`
-      if (epicDescription) initialContext += `\n${epicDescription}`
-      if (epicPlan) initialContext += `\n\n**Epic Plan:**\n${epicPlan}`
+      let parentSection = `## Context\n\nThis feature belongs to the epic **"${epicTitle}"**.`
+      if (epicDescription) parentSection += `\n\n*Epic description:* ${epicDescription}`
+      if (epicPlan) parentSection += `\n\n*Epic plan (for reference — do not re-plan this):*\n${epicPlan}`
+      parentSection += `\n\n---\n\n`
+      initialContext = parentSection + initialContext
     } else if (target.type === 'task' && target.parentContext) {
       const { featureTitle, featureDescription, featurePlan, epicTitle } = target.parentContext
-      initialContext += `\n\n---\n\n**Parent Feature:** ${featureTitle}`
-      if (featureDescription) initialContext += `\n${featureDescription}`
-      if (featurePlan) initialContext += `\n\n**Feature Plan:**\n${featurePlan}`
-      if (epicTitle) initialContext += `\n\n**Epic:** ${epicTitle}`
+      let parentSection = `## Context\n\nThis task belongs to the feature **"${featureTitle}"**`
+      if (epicTitle) parentSection += ` (part of epic **"${epicTitle}"**)`
+      parentSection += `.`
+      if (featureDescription) parentSection += `\n\n*Feature description:* ${featureDescription}`
+      if (featurePlan) parentSection += `\n\n*Feature plan (for reference — do not re-plan this):*\n${featurePlan}`
+      parentSection += `\n\n---\n\n`
+      initialContext = parentSection + initialContext
     }
 
     const r = await fetch('/api/chat/conversations', {
