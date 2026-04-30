@@ -130,6 +130,28 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
       required: ['task_id', 'reason'],
     },
   },
+  {
+    name: 'orion_list_rooms',
+    description: 'List chat rooms. Optionally filter by feature_id to find the coordination room for a feature.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        feature_id: { type: 'string', description: 'Filter by feature ID to find the feature coordination room' },
+      },
+    },
+  },
+  {
+    name: 'orion_send_message',
+    description: 'Post a message to a chat room. Use this to communicate with other agents or report status in a feature coordination room.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        room_id: { type: 'string', description: 'Chat room ID to post the message to' },
+        content: { type: 'string', description: 'Message content to post' },
+      },
+      required: ['room_id', 'content'],
+    },
+  },
 ]
 
 // ── Audit helper ──────────────────────────────────────────────────────────────
@@ -371,6 +393,59 @@ async function handleReopenTask(argsRaw: string, actorId?: string): Promise<stri
   return `Reopened task "${task?.title}" — ${reason ?? 'validation failed'}`
 }
 
+async function handleListRooms(argsRaw: string): Promise<string> {
+  const { feature_id } = JSON.parse(argsRaw || '{}') as { feature_id?: string }
+
+  const where: Record<string, unknown> = {}
+  if (feature_id) where.featureId = feature_id
+
+  const rooms = await prisma.chatRoom.findMany({
+    where,
+    orderBy: { updatedAt: 'desc' },
+    take: 50,
+    include: {
+      _count: { select: { members: true } },
+    },
+  })
+
+  return JSON.stringify(
+    rooms.map((r: any) => ({
+      id:          r.id,
+      name:        r.name,
+      type:        r.type,
+      featureId:   r.featureId ?? null,
+      taskId:      r.taskId ?? null,
+      memberCount: r._count.members,
+      createdAt:   r.createdAt,
+    })),
+    null, 2
+  )
+}
+
+async function handleSendMessage(argsRaw: string, actorId?: string): Promise<string> {
+  const { room_id, content } = JSON.parse(argsRaw || '{}') as { room_id?: string; content?: string }
+  if (!room_id)  return 'Error: room_id is required'
+  if (!content?.trim()) return 'Error: content is required'
+
+  const room = await prisma.chatRoom.findUnique({ where: { id: room_id }, select: { name: true } })
+  if (!room) return `Error: room ${room_id} not found`
+  if (!actorId) return 'Error: actorId is required to send messages (SOC2 attribution)'
+
+  await prisma.chatMessage.create({
+    data: {
+      roomId:     room_id,
+      agentId:    actorId,
+      senderType: 'agent',
+      content:    content.trim(),
+    },
+  })
+
+  // SOC2: audit log the send action
+  await auditLog(actorId, `💬 Sent message to room **${room.name}** (${room_id})`)
+
+  return `Message posted to room "${room.name}" (${room_id})`
+}
+
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
 /**
@@ -392,6 +467,8 @@ export async function executeManagedTool(name: string, argsRaw: string, actorId?
       case 'orion_get_task_events': return await handleGetTaskEvents(argsRaw)
       case 'orion_close_task':      return await handleCloseTask(argsRaw, actorId)
       case 'orion_reopen_task':     return await handleReopenTask(argsRaw, actorId)
+      case 'orion_list_rooms':      return await handleListRooms(argsRaw)
+      case 'orion_send_message':    return await handleSendMessage(argsRaw, actorId)
       default:
         return `Error: unknown management tool "${name}"`
     }

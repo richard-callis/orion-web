@@ -217,6 +217,7 @@ model Feature {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   tasks       Task[]
+  chatRooms   ChatRoom[] @relation("FeatureChatRooms")
 }
 
 model Task {
@@ -715,9 +716,12 @@ model ChatRoom {
   id            String      @id @default(cuid())
   name          String
   description   String?            @db.Text
-  type          String             @default("task")  // "task" | "feature" | "general" | "ops"
+  // "task" | "feature" | "general" | "ops" | "planning" | "direct"
+  type          String             @default("task")
   taskId        String?
   task          Task?              @relation("ChatRoomTask", fields: [taskId], references: [id], onDelete: SetNull)
+  featureId     String?
+  feature       Feature?           @relation("FeatureChatRooms", fields: [featureId], references: [id], onDelete: SetNull)
   createdBy     String
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt

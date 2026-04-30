@@ -118,24 +118,30 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
 
   const chatWithAgent = async () => {
     if (!modalAgent) return
-    const r = await fetch('/api/chat/conversations', {
+    // Use the unified ChatRoom model — find or create a direct room for this agent
+    const r = await fetch(`/api/agents/${modalAgent.id}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: `Chat: ${modalAgent.name}`, agentChat: { id: modalAgent.id, name: modalAgent.name } }),
+      body: JSON.stringify({}),
     })
-    const convo = await r.json()
-    router.push(`/chat?conversation=${convo.id}`)
+    const { roomId } = await r.json()
+    router.push(`/messages?r=${roomId}`)
   }
 
   const planWithClaude = async () => {
     if (!modalAgent) return
-    const r = await fetch('/api/chat/conversations', {
+    // Create a "planning" ChatRoom for this agent
+    const r = await fetch('/api/chatrooms', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: `Agent: ${modalAgent.name}`, agentTarget: { id: modalAgent.id, name: modalAgent.name } }),
+      body: JSON.stringify({
+        name:    `Agent: ${modalAgent.name}`,
+        type:    'planning',
+        agentId: modalAgent.id,
+      }),
     })
-    const convo = await r.json()
-    router.push(`/chat?conversation=${convo.id}`)
+    const room = await r.json()
+    router.push(`/messages?r=${room.id}`)
   }
 
    const startPlanning = async () => {
@@ -149,10 +155,10 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
         ? ((await tmplRes.json() as { content: string }).content)
         : "I want to create a new agent for my homelab team. Help me define what this agent should do. Ask me what kind of agent I need, its responsibilities, and if it's an AI agent, help me write a good system prompt for it."
       initialContextRef.current = ctx
-      const r = await fetch('/api/chat/conversations', {
+      const r = await fetch('/api/chatrooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: `Plan: ${form.name || 'New Agent'}`, agentDraft: true, initialContext: ctx }),
+        body: JSON.stringify({ name: `Plan: ${form.name || 'New Agent'}`, type: 'planning' }),
       })
       const convo = await r.json()
       setPlanningConvId(convo.id)
