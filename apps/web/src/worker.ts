@@ -330,7 +330,8 @@ async function buildSystemSnapshot(): Promise<string> {
       const isPersistent = !!cfg.persistent
       return `  - [${a.id}] **${a.name}** (${a.type}) — ${a.role ?? 'no role'}` +
         (isPersistent ? ' [persistent]' : '') +
-        (busy ? ' [BUSY]' : ' [available]')
+        (busy ? ' [BUSY]' : ' [available]') +
+        (a.description ? `\n    ${a.description}` : '')
     }).join('\n'),
     ``,
     `### Recent activity`,
@@ -342,16 +343,31 @@ async function buildSystemSnapshot(): Promise<string> {
   return lines.join('\n')
 }
 
+// Mirrors the reserved-name check in POST /api/agents (kept in sync for SOC2 [INPUT-001])
+const RESERVED_AGENT_NAMES = ['human', 'user', 'system', 'admin']
+
 /**
  * Parse an agent's output for structured directives and execute them.
- * Format the agent outputs between ---DIRECTIVES--- and ---END--- as JSON:
- * { "assign": [{"taskId":"...","agentId":"..."}], "message": "..." }
+ *
+ * Supported directives:
+ *   assign       — assign pending tasks to agents (existing behaviour)
+ *   create_agent — create a new agent (server-side, attributed to the watcher)
+ *
+ * Format: JSON block between ---DIRECTIVES--- and ---END---
+ * { "assign": [{"taskId":"...","agentId":"..."}], "create_agent": {...}, "message": "..." }
+ *
+ * SOC2 [A-001]: all mutations go through the orchestrator, never via unauthenticated HTTP.
+ * Every action is attributed to the watcher agent ID and written to AgentMessage (agent-feed).
  */
 async function executeDirectives(agentId: string, output: string): Promise<void> {
   const match = output.match(/---DIRECTIVES---\s*([\s\S]*?)\s*---END---/)
   if (!match) return
 
-  let directives: { assign?: Array<{ taskId: string; agentId: string }>; message?: string }
+  let directives: {
+    assign?:       Array<{ taskId: string; agentId: string }>
+    create_agent?: { name: string; type?: string; role?: string; description?: string; metadata?: Record<string, unknown> }
+    message?:      string
+  }
   try {
     directives = JSON.parse(match[1])
   } catch {
@@ -359,6 +375,7 @@ async function executeDirectives(agentId: string, output: string): Promise<void>
     return
   }
 
+  // ── assign ──────────────────────────────────────────────────────────────────
   if (directives.assign?.length) {
     for (const { taskId, agentId: targetAgentId } of directives.assign) {
       try {
@@ -374,6 +391,37 @@ async function executeDirectives(agentId: string, output: string): Promise<void>
         await postToFeed(agentId, `📋 Assigned **${task?.title}** → **${agent?.name}**`)
       } catch (e) {
         err(`Failed to execute assignment ${taskId} → ${targetAgentId}: ${e}`)
+      }
+    }
+  }
+
+  // ── create_agent ─────────────────────────────────────────────────────────────
+  // Equivalent to POST /api/agents but executed server-side with watcher attribution.
+  // Applies the same reserved-name guard as the HTTP route (SOC2 [INPUT-001]).
+  if (directives.create_agent) {
+    const spec = directives.create_agent
+    if (!spec.name?.trim()) {
+      err(`create_agent directive from "${agentId}" is missing required "name"`)
+    } else if (RESERVED_AGENT_NAMES.includes(spec.name.toLowerCase())) {
+      err(`create_agent directive from "${agentId}": "${spec.name}" is a reserved name`)
+      await postToFeed(agentId, `⚠️ Cannot create agent: **${spec.name}** is a reserved name`)
+    } else {
+      try {
+        const created = await prisma.agent.create({
+          data: {
+            name:        spec.name.trim(),
+            type:        spec.type ?? 'claude',
+            role:        spec.role ?? null,
+            description: spec.description ?? null,
+            ...(spec.metadata && { metadata: spec.metadata as any }),
+          },
+        })
+        log(`Orchestrator created agent "${created.name}" (${created.id}) directed by watcher "${agentId}"`)
+        // SOC2 [A-001]: action attributed to the directing watcher in the agent-feed audit trail
+        await postToFeed(agentId, `🤖 Created agent **${created.name}** (\`${created.id}\`) — ${created.role ?? 'no role'}`)
+      } catch (e) {
+        err(`Failed to execute create_agent directive from "${agentId}": ${e}`)
+        await postToFeed(agentId, `❌ Failed to create agent **${spec.name}**: ${e}`)
       }
     }
   }
@@ -418,20 +466,44 @@ async function runWatchers() {
     const wikiContext = buildWikiContext(contextNotes)
 
     // The agent receives all data it needs as context — no outbound calls required.
-    // If it wants to assign tasks, it outputs a ---DIRECTIVES--- JSON block.
+    // Writes go through the ---DIRECTIVES--- block; the orchestrator executes them
+    // server-side with full attribution (SOC2 [A-001]).
     const enrichedPrompt = [
       watchPrompt,
       ``,
       snapshot,
       ``,
       `---`,
-      `To assign tasks, include a directives block at the end of your response:`,
+      `## Actions`,
+      ``,
+      `All data you need is in the snapshot above. Do NOT call the ORION API directly — there is no`,
+      `authenticated HTTP client available to you. Use directives instead.`,
+      ``,
+      `To assign tasks or create agents, include ONE directives block at the end of your response:`,
       `\`\`\``,
       `---DIRECTIVES---`,
-      `{"assign":[{"taskId":"<id>","agentId":"<id>"}],"message":"reason"}`,
+      `{`,
+      `  "assign": [{"taskId":"<id>","agentId":"<id>"}],`,
+      `  "create_agent": {`,
+      `    "name": "<name>",`,
+      `    "role": "<one-line role description>",`,
+      `    "type": "claude",`,
+      `    "description": "<optional longer description>",`,
+      `    "metadata": {`,
+      `      "systemPrompt": "<full system prompt for this agent>",`,
+      `      "contextConfig": {"persistent": false}`,
+      `    }`,
+      `  },`,
+      `  "message": "<brief reason for these actions>"`,
+      `}`,
       `---END---`,
       `\`\`\``,
-      `Only include the directives block if you are making assignments. Task and agent IDs are shown in the snapshot above.`,
+      ``,
+      `Rules:`,
+      `- Use "assign" to route pending tasks to available agents (IDs in snapshot).`,
+      `- Use "create_agent" only when no existing agent is suitable for a task.`,
+      `- Include only the keys you need — omit "assign" if making no assignments, omit "create_agent" if not creating an agent.`,
+      `- Omit the directives block entirely if no action is needed.`,
     ].join('\n')
 
     const ctx: TaskRunContext = {
