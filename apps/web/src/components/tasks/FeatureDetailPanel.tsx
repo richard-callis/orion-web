@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { X, Trash2, Sparkles, Loader2 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { X, Trash2, Sparkles, Loader2, MessageSquare } from 'lucide-react'
 import type { Feature } from '@/types/tasks'
 import { PlanWithAIButton } from './PlanWithAIButton'
 
@@ -15,12 +16,14 @@ interface Props {
 }
 
 export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onPlanWithClaude, onGenerateTasks, onClose }: Props) {
+  const router = useRouter()
   const [title, setTitle]           = useState(feature.title)
   const [desc, setDesc]             = useState(feature.description ?? '')
   const [plan, setPlan]             = useState(feature.plan ?? '')
   const [status, setStatus]         = useState(feature.status)
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError]     = useState<string | null>(null)
+  const [creatingRoom, setCreatingRoom] = useState(false)
 
   useEffect(() => {
     setTitle(feature.title)
@@ -40,6 +43,25 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
       })
       .catch(() => {})
   }, [feature.id])
+
+  const handlePlanFeature = async () => {
+    setCreatingRoom(true)
+    try {
+      const r = await fetch('/api/chatrooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: `\u25b8 FEAT \u00b7 ${feature.title}`,
+          type: 'planning',
+          featureId: feature.id,
+          planTarget: { type: 'feature', id: feature.id },
+        }),
+      })
+      const room = await r.json()
+      router.push(`/messages?r=${room.id}`)
+    } catch { /* ignore */ }
+    setCreatingRoom(false)
+  }
 
   const save = () => onUpdate({ title, description: desc || null, plan: plan || null, status })
 
@@ -122,6 +144,14 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
 
       <div className="p-3 border-t border-border-subtle space-y-2">
         <PlanWithAIButton onSelect={onPlanWithClaude} />
+        <button
+          onClick={handlePlanFeature}
+          disabled={creatingRoom}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-accent/40 text-accent text-sm hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {creatingRoom ? <Loader2 size={14} className="animate-spin" /> : <MessageSquare size={14} />}
+          Plan Feature
+        </button>
         {plan && (
           <button
             onClick={handleGenerate}

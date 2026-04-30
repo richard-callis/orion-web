@@ -441,8 +441,9 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
       body: JSON.stringify({
         name:        `${prefix}${target.title}`,
         type:        'planning',
-        // Structural link for feature-type planning
-        featureId:   target.type === 'feature' ? target.id : undefined,
+        // Structural links for epic/feature-type planning
+        epicId:      target.type === 'epic'     ? target.id : undefined,
+        featureId:   target.type === 'feature'  ? target.id : undefined,
         // planTarget stored for caller routing / display
         planTarget:  { type: target.type, id: target.id },
       }),
