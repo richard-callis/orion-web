@@ -11,6 +11,7 @@
 import { prisma } from './lib/db'
 import { createRunner } from './lib/agent-runner'
 import type { TaskRunContext } from './lib/agent-runner'
+import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './lib/management-tools'
 
 const POLL_INTERVAL_MS = 15_000
 const MAX_CONCURRENT   = 3
@@ -343,139 +344,6 @@ async function buildSystemSnapshot(): Promise<string> {
   return lines.join('\n')
 }
 
-// Mirrors the reserved-name check in POST /api/agents (kept in sync for SOC2 [INPUT-001])
-const RESERVED_AGENT_NAMES = ['human', 'user', 'system', 'admin']
-
-/**
- * Parse an agent's output for structured directives and execute them.
- *
- * Supported directives:
- *   assign       — assign pending tasks to agents (existing behaviour)
- *   create_agent — create a new agent (server-side, attributed to the watcher)
- *
- * Format: JSON block between ---DIRECTIVES--- and ---END---
- * { "assign": [{"taskId":"...","agentId":"..."}], "create_agent": {...}, "message": "..." }
- *
- * SOC2 [A-001]: all mutations go through the orchestrator, never via unauthenticated HTTP.
- * Every action is attributed to the watcher agent ID and written to AgentMessage (agent-feed).
- */
-async function executeDirectives(agentId: string, output: string): Promise<void> {
-  const match = output.match(/---DIRECTIVES---\s*([\s\S]*?)\s*---END---/)
-  if (!match) return
-
-  let directives: {
-    assign?:        Array<{ taskId: string; agentId: string }>
-    assign_user?:   Array<{ taskId: string; userId: string }>
-    archive_agent?: { agentId: string; reason?: string }
-    create_agent?:  { name: string; type?: string; role?: string; description?: string; metadata?: Record<string, unknown> }
-    message?:       string
-  }
-  try {
-    directives = JSON.parse(match[1])
-  } catch {
-    err(`Failed to parse directives from agent output: ${match[1].slice(0, 200)}`)
-    return
-  }
-
-  // ── assign ──────────────────────────────────────────────────────────────────
-  if (directives.assign?.length) {
-    for (const { taskId, agentId: targetAgentId } of directives.assign) {
-      try {
-        await prisma.task.update({
-          where: { id: taskId },
-          data:  { assignedAgent: targetAgentId, status: 'pending' },
-        })
-        const [task, agent] = await Promise.all([
-          prisma.task.findUnique({ where: { id: taskId }, select: { title: true } }),
-          prisma.agent.findUnique({ where: { id: targetAgentId }, select: { name: true } }),
-        ])
-        log(`Orchestrator assigned "${task?.title}" → "${agent?.name}"`)
-        await postToFeed(agentId, `📋 Assigned **${task?.title}** → **${agent?.name}**`)
-      } catch (e) {
-        err(`Failed to execute assignment ${taskId} → ${targetAgentId}: ${e}`)
-      }
-    }
-  }
-
-  // ── assign_user ──────────────────────────────────────────────────────────────
-  // Escalate a task to a human user — equivalent to PUT /api/tasks/:id { assignedUserId }
-  if (directives.assign_user?.length) {
-    for (const { taskId, userId } of directives.assign_user) {
-      try {
-        await prisma.task.update({ where: { id: taskId }, data: { assignedUserId: userId, status: 'pending' } })
-        const [task, user] = await Promise.all([
-          prisma.task.findUnique({ where: { id: taskId }, select: { title: true } }),
-          prisma.user.findUnique({ where: { id: userId }, select: { name: true, username: true } }),
-        ])
-        const who = user?.name ?? user?.username ?? userId
-        log(`Orchestrator escalated "${task?.title}" → user "${who}"`)
-        await postToFeed(agentId, `👤 Escalated **${task?.title}** → **${who}**`)
-      } catch (e) {
-        err(`Failed to escalate task ${taskId} → user ${userId}: ${e}`)
-      }
-    }
-  }
-
-  // ── archive_agent ─────────────────────────────────────────────────────────────
-  // Archive a transient agent after its work is done — equivalent to PUT /api/agents/:id { metadata.archived }
-  // Never deletes — soft-archive only (SOC2 [A-001]: preserves audit trail).
-  if (directives.archive_agent) {
-    const spec = directives.archive_agent as { agentId: string; reason?: string }
-    if (spec.agentId) {
-      try {
-        const existing = await prisma.agent.findUnique({ where: { id: spec.agentId }, select: { name: true, metadata: true } })
-        const existingMeta = (existing?.metadata ?? {}) as Record<string, unknown>
-        await prisma.agent.update({
-          where: { id: spec.agentId },
-          data: {
-            metadata: {
-              ...existingMeta,
-              archived: true,
-              archivedAt: new Date().toISOString(),
-              archivedReason: spec.reason ?? 'Task completed',
-            } as any,
-          },
-        })
-        log(`Orchestrator archived agent "${existing?.name}" (${spec.agentId}) directed by watcher "${agentId}"`)
-        await postToFeed(agentId, `📦 Archived agent **${existing?.name}** — ${spec.reason ?? 'task completed'}`)
-      } catch (e) {
-        err(`Failed to archive agent ${spec.agentId}: ${e}`)
-      }
-    }
-  }
-
-  // ── create_agent ─────────────────────────────────────────────────────────────
-  // Equivalent to POST /api/agents but executed server-side with watcher attribution.
-  // Applies the same reserved-name guard as the HTTP route (SOC2 [INPUT-001]).
-  if (directives.create_agent) {
-    const spec = directives.create_agent
-    if (!spec.name?.trim()) {
-      err(`create_agent directive from "${agentId}" is missing required "name"`)
-    } else if (RESERVED_AGENT_NAMES.includes(spec.name.toLowerCase())) {
-      err(`create_agent directive from "${agentId}": "${spec.name}" is a reserved name`)
-      await postToFeed(agentId, `⚠️ Cannot create agent: **${spec.name}** is a reserved name`)
-    } else {
-      try {
-        const created = await prisma.agent.create({
-          data: {
-            name:        spec.name.trim(),
-            type:        spec.type ?? 'claude',
-            role:        spec.role ?? null,
-            description: spec.description ?? null,
-            ...(spec.metadata && { metadata: spec.metadata as any }),
-          },
-        })
-        log(`Orchestrator created agent "${created.name}" (${created.id}) directed by watcher "${agentId}"`)
-        // SOC2 [A-001]: action attributed to the directing watcher in the agent-feed audit trail
-        await postToFeed(agentId, `🤖 Created agent **${created.name}** (\`${created.id}\`) — ${created.role ?? 'no role'}`)
-      } catch (e) {
-        err(`Failed to execute create_agent directive from "${agentId}": ${e}`)
-        await postToFeed(agentId, `❌ Failed to create agent **${spec.name}**: ${e}`)
-      }
-    }
-  }
-}
-
 async function runWatchers() {
   const watchers = await prisma.agent.findMany({
     where:   { type: { not: 'human' } },
@@ -514,87 +382,10 @@ async function runWatchers() {
 
     const wikiContext = buildWikiContext(contextNotes)
 
-    // Appended to every watcher's system prompt so directive capabilities are always
-    // authoritative, regardless of what the agent's stored systemPrompt says.
-    // This is in the system prompt (not task description) so it takes precedence.
-    const WATCHER_CAPABILITIES = `
-
----
-## WATCHER RUNTIME — READ THIS BEFORE ACTING
-
-You do NOT have an authenticated HTTP client. Every call to /api/agents, /api/tasks,
-or any other ORION endpoint will fail. Do not attempt them.
-
-The orchestrator executes all mutations on your behalf via a directives block.
-Output it at the END of your response (omit keys you don't need):
-
-\`\`\`
----DIRECTIVES---
-{
-  "assign":        [{"taskId":"<id>","agentId":"<id>"}],
-  "assign_user":   [{"taskId":"<id>","userId":"<id>"}],
-  "archive_agent": {"agentId":"<id>","reason":"<why>"},
-  "create_agent":  {
-    "name": "<name>", "role": "<one-line role>", "type": "claude",
-    "description": "<optional>",
-    "metadata": {
-      "systemPrompt": "<full prompt>",
-      "contextConfig": {"persistent": false}
-    }
-  },
-  "message": "<brief reason>"
-}
----END---
-\`\`\`
-
-Directive reference:
-- assign        — route a pending task to an agent (IDs from snapshot)
-- assign_user   — escalate a task to a human user (IDs from snapshot)
-- archive_agent — soft-archive a transient agent after its work completes (never DELETE)
-- create_agent  — create a new agent; orchestrator posts the feed announcement
-- Omit the block entirely if no action is needed this cycle.
----`
-
     // The agent receives all data it needs as context — no outbound calls required.
-    // Writes go through the ---DIRECTIVES--- block; the orchestrator executes them
-    // server-side with full attribution (SOC2 [A-001]).
-    const enrichedPrompt = [
-      watchPrompt,
-      ``,
-      snapshot,
-      ``,
-      `---`,
-      `## Actions`,
-      ``,
-      `All data you need is in the snapshot above. Do NOT call the ORION API directly — there is no`,
-      `authenticated HTTP client available to you. Use directives instead.`,
-      ``,
-      `To assign tasks or create agents, include ONE directives block at the end of your response:`,
-      `\`\`\``,
-      `---DIRECTIVES---`,
-      `{`,
-      `  "assign": [{"taskId":"<id>","agentId":"<id>"}],`,
-      `  "create_agent": {`,
-      `    "name": "<name>",`,
-      `    "role": "<one-line role description>",`,
-      `    "type": "claude",`,
-      `    "description": "<optional longer description>",`,
-      `    "metadata": {`,
-      `      "systemPrompt": "<full system prompt for this agent>",`,
-      `      "contextConfig": {"persistent": false}`,
-      `    }`,
-      `  },`,
-      `  "message": "<brief reason for these actions>"`,
-      `}`,
-      `---END---`,
-      `\`\`\``,
-      ``,
-      `Rules:`,
-      `- Use "assign" to route pending tasks to available agents (IDs in snapshot).`,
-      `- Use "create_agent" only when no existing agent is suitable for a task.`,
-      `- Include only the keys you need — omit "assign" if making no assignments, omit "create_agent" if not creating an agent.`,
-      `- Omit the directives block entirely if no action is needed.`,
-    ].join('\n')
+    // Mutations go through tool calls (orion_assign_task, orion_create_agent, etc.)
+    // executed server-side with full attribution (SOC2 [A-001]).
+    const enrichedPrompt = [watchPrompt, ``, snapshot].join('\n')
 
     const ctx: TaskRunContext = {
       taskId:          `watch:${agent.id}`,
@@ -603,9 +394,13 @@ Directive reference:
       taskPlan:        null,
       agentId:         agent.id,
       agentName:       agent.name,
-      systemPrompt:    systemPrompt + wikiContext + WATCHER_CAPABILITIES,
+      systemPrompt:    systemPrompt + wikiContext,
       modelId,
       gateway,
+      managementTools: {
+        definitions: MANAGEMENT_TOOL_DEFS,
+        execute: (name, argsRaw) => executeManagedTool(name, argsRaw, agent.id),
+      },
     }
 
     try {
@@ -616,13 +411,8 @@ Directive reference:
         if (event.type === 'error') throw new Error(event.error)
       }
 
-      // Execute any directives (task assignments, etc.)
-      await executeDirectives(agent.id, output)
-
-      // Strip directives block before posting to feed
-      const feedOutput = output.replace(/---DIRECTIVES---[\s\S]*?---END---/g, '').trim()
-      if (feedOutput) {
-        await postToFeed(agent.id, `👁 **${agent.name}**:\n\n${feedOutput.slice(0, 1500)}`)
+      if (output.trim()) {
+        await postToFeed(agent.id, `👁 **${agent.name}**:\n\n${output.trim().slice(0, 1500)}`)
       }
     } catch (e) {
       err(`Watcher "${agent.name}" failed: ${e}`)

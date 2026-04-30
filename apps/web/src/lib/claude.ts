@@ -4,6 +4,7 @@ import { prisma } from './db'
 import { getPrompt, interpolate } from './system-prompts'
 import { generateEmbedding, vectorSearch } from './embeddings'
 import type { SDKAssistantMessage, SDKResultMessage } from '@anthropic-ai/claude-code'
+import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './management-tools'
 
 async function getActiveTasksSection(): Promise<string> {
   const tasks = await prisma.task.findMany({
@@ -945,73 +946,6 @@ async function handleOrionBootstrapEnvironment(argsRaw: string): Promise<string>
   }
 }
 
-async function handleOrionListAgents(argsRaw: string): Promise<string> {
-  try {
-    const { include_archived } = JSON.parse(argsRaw || '{}') as { include_archived?: boolean }
-    const agents = await prisma.agent.findMany({
-      orderBy: { name: 'asc' },
-      include: { tasks: { where: { status: 'running' }, select: { id: true }, take: 1 } },
-    })
-    const filtered = include_archived
-      ? agents
-      : agents.filter((a: any) => !(a.metadata as any)?.archived)
-    return JSON.stringify(
-      filtered.map((a: any) => {
-        const meta = (a.metadata ?? {}) as Record<string, unknown>
-        const cfg  = (meta.contextConfig ?? {}) as Record<string, unknown>
-        return {
-          id:          a.id,
-          name:        a.name,
-          type:        a.type,
-          role:        a.role ?? null,
-          description: a.description ?? null,
-          persistent:  !!cfg.persistent,
-          busy:        a.tasks.length > 0,
-          archived:    !!(meta.archived),
-        }
-      }),
-      null, 2
-    )
-  } catch (e) {
-    return `Error: ${e instanceof Error ? e.message : String(e)}`
-  }
-}
-
-async function handleOrionListTasks(argsRaw: string): Promise<string> {
-  try {
-    const { status, unassigned_only } = JSON.parse(argsRaw || '{}') as {
-      status?: string | string[]
-      unassigned_only?: boolean
-    }
-    const statuses = status
-      ? (Array.isArray(status) ? status : [status])
-      : ['pending', 'running', 'failed']
-    const tasks = await prisma.task.findMany({
-      where: {
-        status: { in: statuses as any },
-        ...(unassigned_only ? { assignedAgent: null, assignedUserId: null } : {}),
-      },
-      include: { agent: { select: { id: true, name: true } } },
-      orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
-      take: 50,
-    })
-    return JSON.stringify(
-      tasks.map((t: any) => ({
-        id:            t.id,
-        title:         t.title,
-        status:        t.status,
-        priority:      t.priority,
-        assignedAgent: t.agent ? { id: t.agent.id, name: t.agent.name } : null,
-        assignedUser:  t.assignedUserId ?? null,
-        description:   t.description ? t.description.slice(0, 200) : null,
-      })),
-      null, 2
-    )
-  } catch (e) {
-    return `Error: ${e instanceof Error ? e.message : String(e)}`
-  }
-}
-
 async function handleGitopsPropose(argsRaw: string, conversationId: string): Promise<string> {
   try {
     const args = JSON.parse(argsRaw || '{}') as {
@@ -1241,33 +1175,11 @@ async function* streamOpenAIChatCore(
         },
       },
     },
-    {
+    // Agent/task coordination tools — shared with watcher mode via management-tools.ts
+    ...MANAGEMENT_TOOL_DEFS.map(t => ({
       type: 'function' as const,
-      function: {
-        name: 'orion_list_agents',
-        description: 'List all agents on the team — their IDs, names, roles, and current busy/available status. Use this to see who is available before assigning work or creating new agents.',
-        parameters: {
-          type: 'object',
-          properties: {
-            include_archived: { type: 'boolean', description: 'Include archived agents (default false)' },
-          },
-        },
-      },
-    },
-    {
-      type: 'function' as const,
-      function: {
-        name: 'orion_list_tasks',
-        description: 'List tasks filtered by status and assignment. Use this to find unassigned work, check what is running, or review failed tasks.',
-        parameters: {
-          type: 'object',
-          properties: {
-            status:          { type: 'string', description: 'Filter by status: pending, running, done, failed. Defaults to pending+running+failed.' },
-            unassigned_only: { type: 'boolean', description: 'Only return tasks with no agent or user assigned (default false)' },
-          },
-        },
-      },
-    },
+      function: { name: t.name, description: t.description, parameters: t.inputSchema },
+    })),
     {
       type: 'function' as const,
       function: {
@@ -1455,10 +1367,8 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
           result = await handleOrionBootstrapEnvironment(tc.argsRaw)
         } else if (tc.name === 'gitops_propose') {
           result = await handleGitopsPropose(tc.argsRaw, conversationId)
-        } else if (tc.name === 'orion_list_agents') {
-          result = await handleOrionListAgents(tc.argsRaw)
-        } else if (tc.name === 'orion_list_tasks') {
-          result = await handleOrionListTasks(tc.argsRaw)
+        } else if (MANAGEMENT_TOOL_DEFS.some(d => d.name === tc.name)) {
+          result = await executeManagedTool(tc.name, tc.argsRaw, userId)
         } else if (tc.name === 'knowledge_search') {
           result = await handleKnowledgeSearch(tc.argsRaw)
         } else if (tc.name === 'knowledge_graph') {

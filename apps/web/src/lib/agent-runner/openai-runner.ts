@@ -39,7 +39,7 @@ export const openaiRunner: AgentRunner = {
       }
     }
 
-    const openaiToolDefs = gatewayTools.map(t => ({
+    const mgmtToolDefs = (ctx.managementTools?.definitions ?? []).map(t => ({
       type: 'function',
       function: {
         name: t.name,
@@ -47,6 +47,18 @@ export const openaiRunner: AgentRunner = {
         parameters: t.inputSchema,
       },
     }))
+
+    const openaiToolDefs = [
+      ...mgmtToolDefs,
+      ...gatewayTools.map(t => ({
+        type: 'function',
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: t.inputSchema,
+        },
+      })),
+    ]
 
     const taskTemplate = await getPrompt('system.task-execution')
     const taskPrompt = interpolate(taskTemplate, {
@@ -94,9 +106,12 @@ export const openaiRunner: AgentRunner = {
             yield { type: 'tool_call', tool: fn.name, args: fn.arguments }
 
             let result: string
-            if (gateway) {
+            const argsRaw = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments)
+            if (ctx.managementTools && ctx.managementTools.definitions.some(d => d.name === fn.name)) {
+              result = await ctx.managementTools.execute(fn.name, argsRaw)
+            } else if (gateway) {
               try {
-                const args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : fn.arguments
+                const args = JSON.parse(argsRaw)
                 result = await gateway.executeTool(fn.name, args)
               } catch (err) {
                 result = `Error: ${err instanceof Error ? err.message : String(err)}`
