@@ -152,6 +152,33 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
       required: ['room_id', 'content'],
     },
   },
+  {
+    name: 'orion_create_feature',
+    description: 'Create a new feature under an epic. GUARD: will fail if epic.plan is null — the epic must have a saved plan before features can be created.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        epicId:      { type: 'string', description: 'ID of the parent epic' },
+        title:       { type: 'string', description: 'Feature title' },
+        description: { type: 'string', description: 'Feature description (optional)' },
+      },
+      required: ['epicId', 'title'],
+    },
+  },
+  {
+    name: 'orion_create_task',
+    description: 'Create a new task under a feature with a step-by-step implementation plan. The plan should be numbered steps specific enough for a smaller LLM to execute without additional context. GUARD: will fail if feature.plan is null.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        featureId:   { type: 'string', description: 'ID of the parent feature' },
+        title:       { type: 'string', description: 'Task title' },
+        description: { type: 'string', description: 'Task description (optional)' },
+        plan:        { type: 'string', description: 'Numbered step-by-step implementation plan. Each step should be specific enough for a smaller LLM to execute. E.g.:\n1. Read /path/to/file and understand X\n2. Edit Y to add Z\n3. Run the test suite\n4. Verify output matches expected' },
+      },
+      required: ['featureId', 'title', 'plan'],
+    },
+  },
 ]
 
 // ── Audit helper ──────────────────────────────────────────────────────────────
@@ -422,6 +449,65 @@ async function handleListRooms(argsRaw: string): Promise<string> {
   )
 }
 
+async function handleCreateFeature(argsRaw: string, actorId?: string): Promise<string> {
+  const { epicId, title, description } = JSON.parse(argsRaw || '{}') as {
+    epicId?: string
+    title?: string
+    description?: string
+  }
+  if (!epicId) return 'Error: epicId is required'
+  if (!title?.trim()) return 'Error: title is required'
+
+  const epic = await prisma.epic.findUnique({ where: { id: epicId } })
+  if (!epic) return `Error: epic ${epicId} not found`
+  if (!epic.plan) {
+    return 'Error: Epic must have a saved plan before features can be created. Use the Save as Plan button or ask the user to save the plan first.'
+  }
+
+  const feature = await prisma.feature.create({
+    data: {
+      epicId,
+      title: title.trim(),
+      description: description || null,
+      createdBy: actorId ?? 'agent',
+    },
+  })
+  await auditLog(actorId, `✨ Created feature **${feature.title}** (\`${feature.id}\`) under epic \`${epicId}\``)
+  return JSON.stringify({ id: feature.id, title: feature.title, epicId: feature.epicId }, null, 2)
+}
+
+async function handleCreateTask(argsRaw: string, actorId?: string): Promise<string> {
+  const { featureId, title, description, plan } = JSON.parse(argsRaw || '{}') as {
+    featureId?: string
+    title?: string
+    description?: string
+    plan?: string
+  }
+  if (!featureId) return 'Error: featureId is required'
+  if (!title?.trim()) return 'Error: title is required'
+  if (!plan?.trim()) return 'Error: plan is required'
+
+  const feature = await prisma.feature.findUnique({ where: { id: featureId } })
+  if (!feature) return `Error: feature ${featureId} not found`
+  if (!feature.plan) {
+    return 'Error: Feature must have a saved plan before tasks can be created.'
+  }
+
+  const task = await prisma.task.create({
+    data: {
+      featureId,
+      title: title.trim(),
+      description: description || null,
+      plan: plan.trim(),
+      status: 'pending',
+      priority: 'medium',
+      createdBy: actorId ?? 'agent',
+    },
+  })
+  await auditLog(actorId, `📋 Created task **${task.title}** (\`${task.id}\`) under feature \`${featureId}\``)
+  return JSON.stringify({ id: task.id, title: task.title, featureId: task.featureId, plan: task.plan }, null, 2)
+}
+
 async function handleSendMessage(argsRaw: string, actorId?: string): Promise<string> {
   const { room_id, content } = JSON.parse(argsRaw || '{}') as { room_id?: string; content?: string }
   if (!room_id)  return 'Error: room_id is required'
@@ -467,8 +553,10 @@ export async function executeManagedTool(name: string, argsRaw: string, actorId?
       case 'orion_get_task_events': return await handleGetTaskEvents(argsRaw)
       case 'orion_close_task':      return await handleCloseTask(argsRaw, actorId)
       case 'orion_reopen_task':     return await handleReopenTask(argsRaw, actorId)
-      case 'orion_list_rooms':      return await handleListRooms(argsRaw)
-      case 'orion_send_message':    return await handleSendMessage(argsRaw, actorId)
+      case 'orion_list_rooms':       return await handleListRooms(argsRaw)
+      case 'orion_send_message':     return await handleSendMessage(argsRaw, actorId)
+      case 'orion_create_feature':   return await handleCreateFeature(argsRaw, actorId)
+      case 'orion_create_task':      return await handleCreateTask(argsRaw, actorId)
       default:
         return `Error: unknown management tool "${name}"`
     }

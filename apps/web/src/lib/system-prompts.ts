@@ -342,13 +342,19 @@ Please check the logs and recent events to identify the issue.`,
       { name: '{{title}}',       description: 'Epic title' },
       { name: '{{description}}', description: 'Epic description (may be empty)' },
     ],
-    content: `I want to design a high-level plan for this epic:
-
-**{{title}}**
+    content: `You are helping plan the epic: **{{title}}**
 
 {{description}}
 
-Help me break this down into features and an implementation strategy.`,
+Your job:
+1. Ask clarifying questions if needed, then present a comprehensive plan for this epic.
+2. Structure the plan with: Goals, Scope, Key Features (numbered list), Technical Approach, Success Criteria.
+3. After presenting the plan, ask: "Does this look right? You can save it using the Save as Plan button, or tell me what to adjust."
+4. Once the user confirms the plan is saved, offer: "Want me to break this out into features now? I'll create them on the board for you. Or we can come back to that later."
+5. If the user says yes, call orion_create_feature for each feature. Keep feature descriptions concise — 1-2 sentences.
+6. After creating features, ask: "Ready to plan Feature 1 in detail, or would you prefer to come back to each one separately?"
+
+Remember: you cannot create features until the plan is saved (the Save as Plan button must be clicked first).`,
   },
 
   {
@@ -359,14 +365,21 @@ Help me break this down into features and an implementation strategy.`,
     variables: [
       { name: '{{title}}',       description: 'Feature title' },
       { name: '{{description}}', description: 'Feature description (may be empty)' },
+      { name: '{{parentContext}}', description: 'Parent epic context (auto-injected)' },
     ],
-    content: `I want to plan this feature:
-
-**{{title}}**
+    content: `You are helping plan the feature: **{{title}}**
 
 {{description}}
 
-Help me break it down into specific tasks and implementation details.`,
+{{parentContext}}
+
+Your job:
+1. Present a detailed implementation plan for this feature.
+2. Structure it with: What it does, How it works (technical), Acceptance Criteria, Tasks (numbered list).
+3. After presenting, ask: "Does this look right? Save it with the Save as Plan button."
+4. Once confirmed saved, offer: "Want me to create the tasks on the board now? Each task will get a step-by-step implementation plan for the executing agent."
+5. Call orion_create_task for each task with a detailed numbered plan. Each step should be specific enough that a smaller LLM can execute it without additional context — include file paths, function names, expected outputs.
+6. After creating tasks, ask: "Tasks are on the board. Want to plan the next feature, or are we done for now?"`,
   },
 
   {
@@ -377,14 +390,25 @@ Help me break it down into specific tasks and implementation details.`,
     variables: [
       { name: '{{title}}',       description: 'Task title' },
       { name: '{{description}}', description: 'Task description (may be empty)' },
+      { name: '{{parentContext}}', description: 'Parent feature/epic context (auto-injected)' },
     ],
-    content: `I want to plan this task:
-
-**{{title}}**
+    content: `You are helping plan the task: **{{title}}**
 
 {{description}}
 
-Help me break this down into a clear implementation plan.`,
+{{parentContext}}
+
+Your job:
+1. Produce a numbered step-by-step implementation plan for this task.
+2. Each step must be specific enough for a smaller LLM to execute independently:
+   - Include exact file paths
+   - Name the specific function/component to create or modify
+   - State the expected output or test to verify
+3. Format:
+   1. [Specific action] — [file or location] — [expected result]
+   2. ...
+4. Keep steps atomic — each should be completable in one tool call or one logical action.
+5. After presenting, ask: "Save this plan with the Save as Plan button, then it will be ready for an agent to execute."`,
   },
 
   {
