@@ -35,7 +35,7 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        status:          { type: 'string',  description: 'Filter by status: pending, running, done, failed. Defaults to pending+running+failed.' },
+        status:          { type: 'string',  description: 'Filter by status: pending, running, pending_validation, done, failed. Defaults to pending+running+failed. Use "pending_validation" to find tasks awaiting Validator review.' },
         unassigned_only: { type: 'boolean', description: 'Only return tasks with no agent or user assigned (default false)' },
       },
     },
@@ -94,6 +94,42 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
       required: ['task_id', 'user_id'],
     },
   },
+  {
+    name: 'orion_get_task_events',
+    description: 'Fetch the execution event log for a task. Returns timestamped events including tool calls, tool results, and agent output. Use this to verify whether a task was actually executed before closing it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: 'Task ID to fetch events for' },
+        limit:   { type: 'number', description: 'Maximum number of events to return (default 50)' },
+      },
+      required: ['task_id'],
+    },
+  },
+  {
+    name: 'orion_close_task',
+    description: 'Mark a task as done after confirming the work was actually completed. Only works on tasks in pending_validation status. ONLY call this after verifying via orion_get_task_events that real tool calls were made and the outcome matches the task description.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: 'Task ID to close' },
+        summary: { type: 'string', description: 'Brief validation summary — what was confirmed and how' },
+      },
+      required: ['task_id', 'summary'],
+    },
+  },
+  {
+    name: 'orion_reopen_task',
+    description: 'Reopen a pending_validation, done, or failed task back to pending. Use when validation reveals the task was not actually completed — e.g. agent self-reported done with zero tool calls.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: 'Task ID to reopen' },
+        reason:  { type: 'string', description: 'Why the task is being reopened' },
+      },
+      required: ['task_id', 'reason'],
+    },
+  },
 ]
 
 // ── Audit helper ──────────────────────────────────────────────────────────────
@@ -116,7 +152,7 @@ async function handleListAgents(argsRaw: string): Promise<string> {
   const { include_archived } = JSON.parse(argsRaw || '{}') as { include_archived?: boolean }
   const agents = await prisma.agent.findMany({
     orderBy: { name: 'asc' },
-    include: { tasks: { where: { status: 'running' }, select: { id: true }, take: 1 } },
+    include: { tasks: { where: { status: { in: ['running', 'pending_validation'] } }, select: { id: true }, take: 1 } },
   })
   const filtered = include_archived
     ? agents
@@ -274,6 +310,67 @@ async function handleEscalateTask(argsRaw: string, actorId?: string): Promise<st
   return `Escalated task "${task?.title}" to user "${who}"`
 }
 
+async function handleGetTaskEvents(argsRaw: string): Promise<string> {
+  const { task_id, limit } = JSON.parse(argsRaw || '{}') as { task_id?: string; limit?: number }
+  if (!task_id) return 'Error: task_id is required'
+
+  const [task, events] = await Promise.all([
+    prisma.task.findUnique({
+      where: { id: task_id },
+      select: { title: true, status: true, assignedAgent: true, description: true },
+    }),
+    prisma.taskEvent.findMany({
+      where: { taskId: task_id },
+      orderBy: { createdAt: 'asc' },
+      take: limit ?? 50,
+    }),
+  ])
+
+  if (!task) return `Error: task ${task_id} not found`
+
+  return JSON.stringify({
+    task: { id: task_id, title: task.title, status: task.status, assignedAgent: task.assignedAgent, description: task.description },
+    events: events.map((e: any) => ({
+      eventType: e.eventType,
+      content:   e.content ? e.content.slice(0, 500) : null,
+      agentId:   e.agentId,
+      createdAt: e.createdAt,
+    })),
+    toolCallCount: events.filter((e: any) => e.eventType === 'tool_call').length,
+  }, null, 2)
+}
+
+async function handleCloseTask(argsRaw: string, actorId?: string): Promise<string> {
+  const { task_id, summary } = JSON.parse(argsRaw || '{}') as { task_id?: string; summary?: string }
+  if (!task_id) return 'Error: task_id is required'
+  if (!summary?.trim()) return 'Error: summary is required'
+
+  const task = await prisma.task.findUnique({ where: { id: task_id }, select: { title: true, status: true } })
+  if (!task) return `Error: task ${task_id} not found`
+  if (task.status !== 'pending_validation') {
+    return `Error: task is "${task.status}" — orion_close_task only operates on pending_validation tasks`
+  }
+
+  await prisma.task.update({ where: { id: task_id }, data: { status: 'done' } })
+  const msg = `✅ Validated & closed **${task.title}** — ${summary}`
+  await auditLog(actorId, msg)
+  return `Closed task "${task.title}"`
+}
+
+async function handleReopenTask(argsRaw: string, actorId?: string): Promise<string> {
+  const { task_id, reason } = JSON.parse(argsRaw || '{}') as { task_id?: string; reason?: string }
+  if (!task_id) return 'Error: task_id is required'
+
+  await prisma.task.update({
+    where: { id: task_id },
+    data:  { status: 'pending', assignedAgent: null },
+  })
+  const task = await prisma.task.findUnique({ where: { id: task_id }, select: { title: true } })
+  const msg = `🔄 Reopened **${task?.title}** — ${reason ?? 'validation failed'}`
+  await auditLog(actorId, msg)
+  return `Reopened task "${task?.title}" — ${reason ?? 'validation failed'}`
+}
+
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
 /**
@@ -291,7 +388,10 @@ export async function executeManagedTool(name: string, argsRaw: string, actorId?
       case 'orion_assign_task':   return await handleAssignTask(argsRaw, actorId)
       case 'orion_create_agent':  return await handleCreateAgent(argsRaw, actorId)
       case 'orion_archive_agent': return await handleArchiveAgent(argsRaw, actorId)
-      case 'orion_escalate_task': return await handleEscalateTask(argsRaw, actorId)
+      case 'orion_escalate_task':   return await handleEscalateTask(argsRaw, actorId)
+      case 'orion_get_task_events': return await handleGetTaskEvents(argsRaw)
+      case 'orion_close_task':      return await handleCloseTask(argsRaw, actorId)
+      case 'orion_reopen_task':     return await handleReopenTask(argsRaw, actorId)
       default:
         return `Error: unknown management tool "${name}"`
     }
