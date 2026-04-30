@@ -11,6 +11,7 @@
 
 import type { ManagementToolDef } from '@/lib/agent-runner/types'
 import { prisma } from '@/lib/db'
+import { getDefaultModelId } from '@/lib/default-model'
 
 // SOC2 [INPUT-001]: mirrors the reserved-name check in POST /api/agents
 export const RESERVED_AGENT_NAMES = ['human', 'user', 'system', 'admin']
@@ -59,7 +60,7 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
       properties: {
         name:        { type: 'string', description: 'Unique agent name (cannot be a reserved name: human, user, system, admin)' },
         role:        { type: 'string', description: 'One-line role description' },
-        type:        { type: 'string', description: 'Agent type: claude, custom, human (default: claude)' },
+        type:        { type: 'string', description: 'Agent type for AI agents (default: claude). Do NOT use "human" — that is reserved for human users.' },
         description: { type: 'string', description: 'Optional longer description' },
         metadata: {
           type: 'object',
@@ -206,13 +207,20 @@ async function handleCreateAgent(argsRaw: string, actorId?: string): Promise<str
     return `Error: "${spec.name}" is a reserved agent name`
   }
 
+  // Resolve default LLM so created agents don't fall back to Claude Code SDK
+  const defaultLlm = await getDefaultModelId()
+  const incomingMeta   = (spec.metadata ?? {}) as Record<string, unknown>
+  const incomingCfg    = (incomingMeta.contextConfig ?? {}) as Record<string, unknown>
+  const contextConfig  = { ...incomingCfg, llm: incomingCfg.llm ?? defaultLlm }
+  const mergedMetadata = { ...incomingMeta, contextConfig }
+
   const created = await prisma.agent.create({
     data: {
       name:        spec.name.trim(),
-      type:        spec.type ?? 'claude',
+      type:        (spec.type && spec.type !== 'human') ? spec.type : 'claude',
       role:        spec.role ?? null,
       description: spec.description ?? null,
-      ...(spec.metadata && { metadata: spec.metadata as any }),
+      metadata:    mergedMetadata as any,
     },
   })
   const msg = `🤖 Created agent **${created.name}** (\`${created.id}\`) — ${created.role ?? 'no role'}`
