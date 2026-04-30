@@ -1,3 +1,13 @@
+export interface ManagementToolDef {
+  name: string
+  description: string
+  inputSchema: {
+    type: string
+    properties?: Record<string, { type: string; description?: string; enum?: string[] }>
+    required?: string[]
+  }
+}
+
 export interface TaskRunContext {
   taskId: string
   taskTitle: string
@@ -8,6 +18,10 @@ export interface TaskRunContext {
   systemPrompt: string
   modelId: string   // e.g. "claude:claude-sonnet-4-6" | "ext:<cuid>" | "ollama:<model>"
   gateway: { url: string; token: string } | null
+  managementTools?: {
+    definitions: ManagementToolDef[]
+    execute: (name: string, argsRaw: string) => Promise<string>
+  }
 }
 
 export type AgentEvent =
