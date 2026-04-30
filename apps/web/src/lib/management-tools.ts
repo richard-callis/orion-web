@@ -152,7 +152,7 @@ async function handleListAgents(argsRaw: string): Promise<string> {
   const { include_archived } = JSON.parse(argsRaw || '{}') as { include_archived?: boolean }
   const agents = await prisma.agent.findMany({
     orderBy: { name: 'asc' },
-    include: { tasks: { where: { status: 'running' }, select: { id: true }, take: 1 } },
+    include: { tasks: { where: { status: { in: ['running', 'pending_validation'] } }, select: { id: true }, take: 1 } },
   })
   const filtered = include_archived
     ? agents
