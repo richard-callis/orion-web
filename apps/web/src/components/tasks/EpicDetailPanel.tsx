@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { X, Trash2, GitBranch, Plus, Sparkles, Loader2 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { X, Trash2, GitBranch, Plus, Sparkles, Loader2, MessageSquare } from 'lucide-react'
 import type { Epic, Feature } from '@/types/tasks'
 import { PlanWithAIButton } from './PlanWithAIButton'
 
@@ -16,12 +17,14 @@ interface Props {
 }
 
 export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, onGenerateFeatures, onNewFeature, onSelectFeature, onClose }: Props) {
+  const router = useRouter()
   const [title, setTitle]         = useState(epic.title)
   const [desc, setDesc]           = useState(epic.description ?? '')
   const [plan, setPlan]           = useState(epic.plan ?? '')
   const [status, setStatus]       = useState(epic.status)
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError]   = useState<string | null>(null)
+  const [epicPlanningRoom, setEpicPlanningRoom] = useState<{ id: string } | null>(null)
 
   useEffect(() => {
     setTitle(epic.title)
@@ -29,6 +32,8 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
     setPlan(epic.plan ?? '')
     setStatus(epic.status)
     setGenError(null)
+    setEpicPlanningRoom(null)
+
     // Fetch fresh data — plan may have been saved from the chat screen
     fetch(`/api/epics/${epic.id}`)
       .then(r => r.ok ? r.json() : null)
@@ -37,6 +42,16 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
         if (fresh.plan !== epic.plan) {
           setPlan(fresh.plan ?? '')
           onUpdate({ plan: fresh.plan ?? null }).catch(() => {})
+        }
+      })
+      .catch(() => {})
+
+    // Check if there is an existing planning room for this epic
+    fetch(`/api/chatrooms?epicId=${epic.id}&type=planning`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.rooms?.length) {
+          setEpicPlanningRoom({ id: data.rooms[0].id })
         }
       })
       .catch(() => {})
@@ -142,6 +157,14 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
 
       <div className="p-3 border-t border-border-subtle space-y-2">
         <PlanWithAIButton onSelect={onPlanWithClaude} />
+        {epicPlanningRoom && (
+          <button
+            onClick={() => router.push(`/messages?r=${epicPlanningRoom.id}`)}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-accent/40 text-accent text-sm hover:bg-accent/10 transition-colors"
+          >
+            <MessageSquare size={14} /> Continue Planning
+          </button>
+        )}
         {plan && (
           <button
             onClick={handleGenerate}

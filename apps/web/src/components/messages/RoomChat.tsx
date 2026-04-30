@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Users, Bot, User as UserIcon,
-  Hash, Send, X, Loader2, Plus, LogOut, AtSign,
+  Hash, Send, X, Loader2, Plus, LogOut, AtSign, BookmarkCheck,
 } from 'lucide-react'
 
 /** Render message content with @mention highlighting */
@@ -44,6 +44,9 @@ interface RoomDetail {
   createdBy: string
   createdAt: string
   updatedAt: string
+  taskId?: string | null
+  featureId?: string | null
+  epicId?: string | null
   _count?: { messages: number; members: number }
   totalMessages?: number
   members?: RoomMember[]
@@ -87,6 +90,9 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   const [mentionSearch, setMentionSearch] = useState<string | null>(null)
   const [messageLimit, setMessageLimit] = useState(100)
   const [typingAgents, setTypingAgents] = useState<string[]>([])
+  const [savedPlanMsgId, setSavedPlanMsgId] = useState<string | null>(null)
+  const [planToast, setPlanToast] = useState<{ msgId: string; prevPlan: string | null } | null>(null)
+  const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -227,6 +233,52 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     }
   }, [roomId])
 
+  const saveAsPlan = useCallback(async (msgId: string, content: string) => {
+    if (!room) return
+    const { epicId, featureId, taskId } = room
+    const url = epicId    ? `/api/epics/${epicId}`
+              : featureId ? `/api/features/${featureId}`
+              : taskId    ? `/api/tasks/${taskId}`
+              : null
+    if (!url) return
+    // Store previous plan for undo
+    let prevPlan: string | null = null
+    try {
+      const getRes = await fetch(url)
+      if (getRes.ok) {
+        const entity = await getRes.json()
+        prevPlan = entity.plan ?? null
+      }
+    } catch { /* ignore */ }
+
+    await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: content }),
+    })
+    setSavedPlanMsgId(msgId)
+    setPlanToast({ msgId, prevPlan })
+    setTimeout(() => setSavedPlanMsgId(null), 3000)
+    setTimeout(() => setPlanToast(null), 5000)
+  }, [room])
+
+  const undoPlan = useCallback(async () => {
+    if (!room || !planToast) return
+    const { epicId, featureId, taskId } = room
+    const url = epicId    ? `/api/epics/${epicId}`
+              : featureId ? `/api/features/${featureId}`
+              : taskId    ? `/api/tasks/${taskId}`
+              : null
+    if (!url) return
+    await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: planToast.prevPlan }),
+    })
+    setPlanToast(null)
+    setSavedPlanMsgId(null)
+  }, [room, planToast])
+
   const handleSendMessage = async () => {
     if (!message.trim() || !room || sending) return
     setSending(true)
@@ -362,8 +414,20 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
             {(!room?.messages || room.messages.length === 0) && (
               <div className="text-center text-text-muted text-xs py-8">No messages yet. Start the conversation!</div>
             )}
-            {room?.messages?.map(msg => (
-              <div key={msg.id} className={`max-w-[80%] ${msg.senderType === 'system' ? 'mx-auto text-center' : msg.sender?.type === 'human' || msg.sender?.type === 'user' ? 'ml-auto' : 'mr-auto'}`}>
+            {room?.messages?.map(msg => {
+              const isPlanningRoom = room.type === 'planning' && (room.epicId || room.featureId || room.taskId)
+              const planLineCount = isPlanningRoom
+                ? (msg.content.match(/^\d+[.)]/gm) ?? []).length
+                : 0
+              const autoPlan = planLineCount >= 3
+              const isSaved = savedPlanMsgId === msg.id
+              return (
+              <div
+                key={msg.id}
+                className={`max-w-[80%] relative group ${msg.senderType === 'system' ? 'mx-auto text-center' : msg.sender?.type === 'human' || msg.sender?.type === 'user' ? 'ml-auto' : 'mr-auto'}`}
+                onMouseEnter={() => setHoveredMsgId(msg.id)}
+                onMouseLeave={() => setHoveredMsgId(null)}
+              >
                 {msg.senderType === 'system' ? (
                   <div className="text-[10px] text-text-muted py-1">{msg.content}</div>
                 ) : (
@@ -372,12 +436,26 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
                       {msg.sender?.type === 'agent' ? <Bot size={11} className="text-accent" /> : <UserIcon size={11} />}
                       <span className="text-[10px] font-medium text-text-secondary">{msg.sender?.name}</span>
                       <span className="text-[9px] text-text-muted">{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      {isSaved && (
+                        <span className="ml-auto text-[9px] text-status-healthy font-medium flex items-center gap-0.5">
+                          <BookmarkCheck size={10} /> Saved
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs leading-relaxed whitespace-pre-wrap"><MessageContent content={msg.content} /></p>
+                    {isPlanningRoom && (autoPlan || hoveredMsgId === msg.id) && !isSaved && (
+                      <button
+                        onClick={() => saveAsPlan(msg.id, msg.content)}
+                        className="mt-1.5 flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition-colors"
+                      >
+                        <BookmarkCheck size={11} /> Save as Plan
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
-            ))}
+              )
+            })}
             <div ref={messagesEndRef} />
           </>
         )}
@@ -512,6 +590,20 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Plan saved toast */}
+      {planToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-lg bg-bg-sidebar border border-border-visible shadow-xl text-xs text-text-primary">
+          <BookmarkCheck size={14} className="text-status-healthy flex-shrink-0" />
+          <span>Plan saved</span>
+          <button
+            onClick={undoPlan}
+            className="text-accent hover:text-accent/80 font-medium transition-colors"
+          >
+            Undo
+          </button>
         </div>
       )}
 

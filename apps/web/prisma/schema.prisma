@@ -194,51 +194,59 @@ model AgentMessage {
 }
 
 model Epic {
-  id          String    @id @default(cuid())
-  title       String
-  description String?   @db.Text
-  plan        String?   @db.Text
-  status      String    @default("active")
-  createdBy   String    @default("admin")
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  features    Feature[]
+  id              String    @id @default(cuid())
+  title           String
+  description     String?   @db.Text
+  plan            String?   @db.Text
+  status          String    @default("active")
+  createdBy       String    @default("admin")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  planApprovedBy  String?
+  planApprovedAt  DateTime?
+  features        Feature[]
+  chatRooms       ChatRoom[] @relation("EpicChatRooms")
 }
 
 model Feature {
-  id          String   @id @default(cuid())
-  epicId      String
-  epic        Epic     @relation(fields: [epicId], references: [id], onDelete: Cascade)
-  title       String
-  description String?  @db.Text
-  plan        String?  @db.Text
-  status      String   @default("active")
-  createdBy   String   @default("admin")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  tasks       Task[]
-  chatRooms   ChatRoom[] @relation("FeatureChatRooms")
+  id              String   @id @default(cuid())
+  epicId          String
+  epic            Epic     @relation(fields: [epicId], references: [id], onDelete: Cascade)
+  title           String
+  description     String?  @db.Text
+  plan            String?  @db.Text
+  status          String   @default("active")
+  createdBy       String   @default("admin")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  planApprovedBy  String?
+  planApprovedAt  DateTime?
+  tasks           Task[]
+  chatRooms       ChatRoom[] @relation("FeatureChatRooms")
 }
 
 model Task {
-  id             String      @id @default(cuid())
-  title          String
-  description    String?     @db.Text
-  plan           String?     @db.Text
-  status         String      @default("pending")
-  priority       String      @default("medium")
-  featureId      String?
-  feature        Feature?    @relation(fields: [featureId], references: [id], onDelete: Cascade)
-  assignedAgent  String?
-  agent          Agent?      @relation("AssignedTasks", fields: [assignedAgent], references: [id])
-  assignedUserId String?
-  assignedUser   User?       @relation("AssignedUserTasks", fields: [assignedUserId], references: [id], onDelete: SetNull)
-  createdBy      String
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
-  events         TaskEvent[]
-  metadata       Json?
-  chatRooms      ChatRoom[]  @relation("ChatRoomTask")
+  id              String      @id @default(cuid())
+  title           String
+  description     String?     @db.Text
+  plan            String?     @db.Text
+  status          String      @default("pending")
+  priority        String      @default("medium")
+  featureId       String?
+  feature         Feature?    @relation(fields: [featureId], references: [id], onDelete: Cascade)
+  assignedAgent   String?
+  agent           Agent?      @relation("AssignedTasks", fields: [assignedAgent], references: [id])
+  assignedUserId  String?
+  assignedUser    User?       @relation("AssignedUserTasks", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  createdBy       String
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  planProgress    Int?
+  planApprovedBy  String?
+  planApprovedAt  DateTime?
+  events          TaskEvent[]
+  metadata        Json?
+  chatRooms       ChatRoom[]  @relation("ChatRoomTask")
 }
 
 model TaskEvent {
@@ -722,6 +730,8 @@ model ChatRoom {
   task          Task?              @relation("ChatRoomTask", fields: [taskId], references: [id], onDelete: SetNull)
   featureId     String?
   feature       Feature?           @relation("FeatureChatRooms", fields: [featureId], references: [id], onDelete: SetNull)
+  epicId        String?
+  epic          Epic?              @relation("EpicChatRooms", fields: [epicId], references: [id], onDelete: SetNull)
   createdBy     String
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt

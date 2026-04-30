@@ -6,5 +6,8 @@ export async function register() {
 
     const { recoverStalledJobs } = await import('./lib/job-runner')
     await recoverStalledJobs()
+
+    const { ensureSystemAgents } = await import('./lib/seed-system-agents')
+    await ensureSystemAgents()
   }
 }

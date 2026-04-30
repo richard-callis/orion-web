@@ -208,11 +208,14 @@ export const CreateTaskSchema = z.object({
 export const UpdateTaskSchema = z.object({
   title: z.string().min(1).max(500).optional(),
   description: z.string().max(5000).optional(),
-  plan: z.string().max(10000).optional(),
+  plan: z.string().max(10000).nullable().optional(),
   priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
   status: z.enum(['pending', 'running', 'done', 'failed']).optional(),
   assignedAgentId: z.string().optional(),
   assignedUserId: z.string().optional(),
+  planProgress: z.number().int().nullable().optional(),
+  planApprovedBy: z.string().max(200).nullable().optional(),
+  planApprovedAt: z.string().datetime().nullable().optional(),
 })
 
 // ── Feature & Epic Schemas ─────────────────────────────────────────────────────
@@ -228,9 +231,11 @@ export const CreateFeatureSchema = z.object({
 export const UpdateFeatureSchema = z.object({
   title: z.string().min(1).max(500).optional(),
   description: z.string().max(5000).optional(),
-  plan: z.string().max(10000).optional(),
+  plan: z.string().max(10000).nullable().optional(),
   status: z.enum(['pending', 'in_progress', 'done', 'blocked']).optional(),
   epicId: z.string().optional(),
+  planApprovedBy: z.string().max(200).nullable().optional(),
+  planApprovedAt: z.string().datetime().nullable().optional(),
 })
 
 export const CreateEpicSchema = z.object({
@@ -243,8 +248,10 @@ export const CreateEpicSchema = z.object({
 export const UpdateEpicSchema = z.object({
   title: z.string().min(1).max(500).optional(),
   description: z.string().max(5000).optional(),
-  plan: z.string().max(10000).optional(),
+  plan: z.string().max(10000).nullable().optional(),
   status: z.enum(['pending', 'in_progress', 'done', 'blocked']).optional(),
+  planApprovedBy: z.string().max(200).nullable().optional(),
+  planApprovedAt: z.string().datetime().nullable().optional(),
 })
 
 // ── Tool Approval Schemas ──────────────────────────────────────────────────────

@@ -37,6 +37,33 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json(feature)
 }
 
+export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  const body = await req.json().catch(() => ({})) as Record<string, unknown>
+  const id = params.id
+
+  const existing = await prisma.feature.findUnique({ where: { id } })
+  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  const data: Record<string, unknown> = {}
+  if (body.plan            !== undefined) data.plan            = body.plan
+  if (body.planApprovedBy  !== undefined) data.planApprovedBy  = body.planApprovedBy
+  if (body.planApprovedAt  !== undefined) data.planApprovedAt  = body.planApprovedAt ? new Date(body.planApprovedAt as string) : null
+
+  if (body.plan !== undefined) {
+    await prisma.auditLog.create({
+      data: {
+        userId: req.headers.get('x-user-id') ?? 'system',
+        action: 'plan.updated',
+        target: `feature:${id}`,
+        detail: { field: 'plan', entityType: 'feature', entityId: id },
+      },
+    }).catch(() => {})
+  }
+
+  const feature = await prisma.feature.update({ where: { id }, data })
+  return NextResponse.json(feature)
+}
+
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
