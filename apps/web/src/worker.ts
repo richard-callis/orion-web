@@ -212,7 +212,7 @@ async function runTask(taskId: string): Promise<void> {
     const summary = outputText.slice(-500) || 'Task completed.'
 
     await Promise.all([
-      prisma.task.update({ where: { id: taskId }, data: { status: 'done' } }),
+      prisma.task.update({ where: { id: taskId }, data: { status: 'pending_validation' } }),
       logTaskEvent(taskId, 'completed', summary, agent.id),
       postToFeed(agent.id, `✅ Completed: **${task.title}** (${durationSec}s · ${toolsUsed.length} tools)\n\n${summary}`, taskId),
       prisma.claudeInvocation.create({

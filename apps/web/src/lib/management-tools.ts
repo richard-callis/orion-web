@@ -35,7 +35,7 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        status:          { type: 'string',  description: 'Filter by status: pending, running, done, failed. Defaults to pending+running+failed.' },
+        status:          { type: 'string',  description: 'Filter by status: pending, running, pending_validation, done, failed. Defaults to pending+running+failed. Use "pending_validation" to find tasks awaiting Validator review.' },
         unassigned_only: { type: 'boolean', description: 'Only return tasks with no agent or user assigned (default false)' },
       },
     },
@@ -108,7 +108,7 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
   },
   {
     name: 'orion_close_task',
-    description: 'Mark a task as done after confirming the work was actually completed. ONLY call this after verifying via orion_get_task_events that real tool calls were made and the outcome matches the task description.',
+    description: 'Mark a task as done after confirming the work was actually completed. Only works on tasks in pending_validation status. ONLY call this after verifying via orion_get_task_events that real tool calls were made and the outcome matches the task description.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -120,7 +120,7 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
   },
   {
     name: 'orion_reopen_task',
-    description: 'Reopen a done or failed task back to pending. Use when validation reveals the task was not actually completed — e.g. agent self-reported done with zero tool calls.',
+    description: 'Reopen a pending_validation, done, or failed task back to pending. Use when validation reveals the task was not actually completed — e.g. agent self-reported done with zero tool calls.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -345,14 +345,16 @@ async function handleCloseTask(argsRaw: string, actorId?: string): Promise<strin
   if (!task_id) return 'Error: task_id is required'
   if (!summary?.trim()) return 'Error: summary is required'
 
-  await prisma.task.update({
-    where: { id: task_id },
-    data:  { status: 'done' },
-  })
-  const task = await prisma.task.findUnique({ where: { id: task_id }, select: { title: true } })
-  const msg = `✅ Validated & closed **${task?.title}** — ${summary}`
+  const task = await prisma.task.findUnique({ where: { id: task_id }, select: { title: true, status: true } })
+  if (!task) return `Error: task ${task_id} not found`
+  if (task.status !== 'pending_validation') {
+    return `Error: task is "${task.status}" — orion_close_task only operates on pending_validation tasks`
+  }
+
+  await prisma.task.update({ where: { id: task_id }, data: { status: 'done' } })
+  const msg = `✅ Validated & closed **${task.title}** — ${summary}`
   await auditLog(actorId, msg)
-  return `Closed task "${task?.title}"`
+  return `Closed task "${task.title}"`
 }
 
 async function handleReopenTask(argsRaw: string, actorId?: string): Promise<string> {
