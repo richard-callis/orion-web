@@ -364,9 +364,11 @@ async function executeDirectives(agentId: string, output: string): Promise<void>
   if (!match) return
 
   let directives: {
-    assign?:       Array<{ taskId: string; agentId: string }>
-    create_agent?: { name: string; type?: string; role?: string; description?: string; metadata?: Record<string, unknown> }
-    message?:      string
+    assign?:        Array<{ taskId: string; agentId: string }>
+    assign_user?:   Array<{ taskId: string; userId: string }>
+    archive_agent?: { agentId: string; reason?: string }
+    create_agent?:  { name: string; type?: string; role?: string; description?: string; metadata?: Record<string, unknown> }
+    message?:       string
   }
   try {
     directives = JSON.parse(match[1])
@@ -391,6 +393,53 @@ async function executeDirectives(agentId: string, output: string): Promise<void>
         await postToFeed(agentId, `📋 Assigned **${task?.title}** → **${agent?.name}**`)
       } catch (e) {
         err(`Failed to execute assignment ${taskId} → ${targetAgentId}: ${e}`)
+      }
+    }
+  }
+
+  // ── assign_user ──────────────────────────────────────────────────────────────
+  // Escalate a task to a human user — equivalent to PUT /api/tasks/:id { assignedUserId }
+  if (directives.assign_user?.length) {
+    for (const { taskId, userId } of directives.assign_user) {
+      try {
+        await prisma.task.update({ where: { id: taskId }, data: { assignedUserId: userId, status: 'pending' } })
+        const [task, user] = await Promise.all([
+          prisma.task.findUnique({ where: { id: taskId }, select: { title: true } }),
+          prisma.user.findUnique({ where: { id: userId }, select: { name: true, username: true } }),
+        ])
+        const who = user?.name ?? user?.username ?? userId
+        log(`Orchestrator escalated "${task?.title}" → user "${who}"`)
+        await postToFeed(agentId, `👤 Escalated **${task?.title}** → **${who}**`)
+      } catch (e) {
+        err(`Failed to escalate task ${taskId} → user ${userId}: ${e}`)
+      }
+    }
+  }
+
+  // ── archive_agent ─────────────────────────────────────────────────────────────
+  // Archive a transient agent after its work is done — equivalent to PUT /api/agents/:id { metadata.archived }
+  // Never deletes — soft-archive only (SOC2 [A-001]: preserves audit trail).
+  if (directives.archive_agent) {
+    const spec = directives.archive_agent as { agentId: string; reason?: string }
+    if (spec.agentId) {
+      try {
+        const existing = await prisma.agent.findUnique({ where: { id: spec.agentId }, select: { name: true, metadata: true } })
+        const existingMeta = (existing?.metadata ?? {}) as Record<string, unknown>
+        await prisma.agent.update({
+          where: { id: spec.agentId },
+          data: {
+            metadata: {
+              ...existingMeta,
+              archived: true,
+              archivedAt: new Date().toISOString(),
+              archivedReason: spec.reason ?? 'Task completed',
+            } as any,
+          },
+        })
+        log(`Orchestrator archived agent "${existing?.name}" (${spec.agentId}) directed by watcher "${agentId}"`)
+        await postToFeed(agentId, `📦 Archived agent **${existing?.name}** — ${spec.reason ?? 'task completed'}`)
+      } catch (e) {
+        err(`Failed to archive agent ${spec.agentId}: ${e}`)
       }
     }
   }
@@ -471,36 +520,39 @@ async function runWatchers() {
     const WATCHER_CAPABILITIES = `
 
 ---
-## How to take actions as a watcher
+## WATCHER RUNTIME — READ THIS BEFORE ACTING
 
-You do NOT have an authenticated HTTP client. Do NOT call /api/agents, /api/tasks,
-or any other ORION API endpoint — those calls will fail with auth errors.
+You do NOT have an authenticated HTTP client. Every call to /api/agents, /api/tasks,
+or any other ORION endpoint will fail. Do not attempt them.
 
-Instead, output a directives block at the END of your response:
+The orchestrator executes all mutations on your behalf via a directives block.
+Output it at the END of your response (omit keys you don't need):
 
 \`\`\`
 ---DIRECTIVES---
 {
-  "assign": [{"taskId":"<id>","agentId":"<id>"}],
-  "create_agent": {
-    "name": "<name>",
-    "role": "<one-line role>",
-    "type": "claude",
+  "assign":        [{"taskId":"<id>","agentId":"<id>"}],
+  "assign_user":   [{"taskId":"<id>","userId":"<id>"}],
+  "archive_agent": {"agentId":"<id>","reason":"<why>"},
+  "create_agent":  {
+    "name": "<name>", "role": "<one-line role>", "type": "claude",
     "description": "<optional>",
     "metadata": {
-      "systemPrompt": "<full system prompt>",
+      "systemPrompt": "<full prompt>",
       "contextConfig": {"persistent": false}
     }
   },
-  "message": "<reason>"
+  "message": "<brief reason>"
 }
 ---END---
 \`\`\`
 
-- "assign" — route a pending task to an agent. Use the IDs from the snapshot.
-- "create_agent" — create a new agent when no existing agent fits the work.
-- Omit keys you don't need. Omit the block entirely if no action is required.
-- The orchestrator executes these server-side on your behalf.
+Directive reference:
+- assign        — route a pending task to an agent (IDs from snapshot)
+- assign_user   — escalate a task to a human user (IDs from snapshot)
+- archive_agent — soft-archive a transient agent after its work completes (never DELETE)
+- create_agent  — create a new agent; orchestrator posts the feed announcement
+- Omit the block entirely if no action is needed this cycle.
 ---`
 
     // The agent receives all data it needs as context — no outbound calls required.
