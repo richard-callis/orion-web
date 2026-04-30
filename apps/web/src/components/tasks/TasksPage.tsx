@@ -415,6 +415,20 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
         : `I want to plan this task:\n\n**${target.title}**\n\n${target.description ?? 'No description yet.'}\n\nHelp me break this down into a clear implementation plan.`
     }
 
+    // Append parent context so Claude understands how this item fits into the bigger picture
+    if (target.type === 'feature' && target.parentContext) {
+      const { epicTitle, epicDescription, epicPlan } = target.parentContext
+      initialContext += `\n\n---\n\n**Parent Epic:** ${epicTitle}`
+      if (epicDescription) initialContext += `\n${epicDescription}`
+      if (epicPlan) initialContext += `\n\n**Epic Plan:**\n${epicPlan}`
+    } else if (target.type === 'task' && target.parentContext) {
+      const { featureTitle, featureDescription, featurePlan, epicTitle } = target.parentContext
+      initialContext += `\n\n---\n\n**Parent Feature:** ${featureTitle}`
+      if (featureDescription) initialContext += `\n${featureDescription}`
+      if (featurePlan) initialContext += `\n\n**Feature Plan:**\n${featurePlan}`
+      if (epicTitle) initialContext += `\n\n**Epic:** ${epicTitle}`
+    }
+
     const r = await fetch('/api/chat/conversations', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -661,7 +675,7 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
                 epicTitle={panel.epic.title}
                 onUpdate={patch => updateFeature(panel.feature.id, panel.epic.id, patch as Partial<Feature>)}
                 onDelete={() => deleteFeature(panel.feature.id, panel.epic.id)}
-                onPlanWithClaude={(modelId) => planWithClaude({ type: 'feature', id: panel.feature.id, title: panel.feature.title, description: panel.feature.description }, modelId)}
+                onPlanWithClaude={(modelId) => planWithClaude({ type: 'feature', id: panel.feature.id, title: panel.feature.title, description: panel.feature.description, parentContext: { epicTitle: panel.epic.title, epicDescription: panel.epic.description, epicPlan: panel.epic.plan } }, modelId)}
                 onGenerateTasks={async () => {
                   const r = await fetch(`/api/features/${panel.feature.id}/generate-tasks`, { method: 'POST' })
                   if (!r.ok) {
@@ -799,7 +813,24 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
           </div>
           {taskTab === 'details' && (
           <div className="p-3 border-t border-border-subtle space-y-2">
-            <PlanWithAIButton onSelect={modelId => planWithClaude({ type: 'task', id: panel.task.id, title: panel.task.title, description: panel.task.description }, modelId)} />
+            <PlanWithAIButton onSelect={modelId => {
+              const parentFeature = panel.task.featureId ? epics.flatMap(e => e.features).find(f => f.id === panel.task.featureId) : undefined
+              const parentEpic = parentFeature ? epics.find(e => e.id === parentFeature.epicId) : undefined
+              planWithClaude({
+                type: 'task',
+                id: panel.task.id,
+                title: panel.task.title,
+                description: panel.task.description,
+                parentContext: parentFeature ? {
+                  featureTitle: parentFeature.title,
+                  featureDescription: parentFeature.description,
+                  featurePlan: parentFeature.plan,
+                  epicTitle: parentEpic?.title ?? '',
+                  epicDescription: parentEpic?.description ?? null,
+                  epicPlan: parentEpic?.plan ?? null,
+                } : undefined,
+              }, modelId)
+            }} />
             <button onClick={() => deleteTask(panel.task.id)}
               className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-border-subtle text-text-muted text-sm hover:border-status-error hover:text-status-error transition-colors">
               <Trash2 size={14} /> Delete Task
