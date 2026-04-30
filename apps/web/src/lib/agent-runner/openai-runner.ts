@@ -154,7 +154,7 @@ async function resolveOpenAIConfig(modelId: string): Promise<{ baseUrl: string; 
     model = await prisma.externalModel.findUnique({ where: { id: extId } })
   }
 
-  if (!model || model.provider !== 'openai') {
+  if (!model || (model.provider !== 'openai' && model.provider !== 'custom')) {
     throw new Error(`No OpenAI-compatible model configured for ID: ${modelId}`)
   }
 
