@@ -435,17 +435,20 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
       initialContext = parentSection + initialContext
     }
 
-    const r = await fetch('/api/chat/conversations', {
+    // Use the unified ChatRoom model for planning conversations
+    const r = await fetch('/api/chatrooms', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        title: `${prefix}${target.title}`,
-        initialContext,
-        planTarget: { type: target.type, id: target.id },
-        planModel: modelId,
+        name:        `${prefix}${target.title}`,
+        type:        'planning',
+        // Structural link for feature-type planning
+        featureId:   target.type === 'feature' ? target.id : undefined,
+        // planTarget stored for caller routing / display
+        planTarget:  { type: target.type, id: target.id },
       }),
     })
-    const convo = await r.json()
-    router.push(`/chat?conversation=${convo.id}`)
+    const room = await r.json()
+    router.push(`/messages?r=${room.id}`)
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
