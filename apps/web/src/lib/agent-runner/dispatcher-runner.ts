@@ -9,10 +9,11 @@ import { openaiRunner } from './openai-runner'
  * - claude:* or 'claude' -> claudeRunner
  * - ollama:* -> ollamaRunner
  * - ext:<id> -> lookup provider in DB and route to:
- *    - openai -> openaiRunner
- *    - ollama -> ollamaRunner
- *    - anthropic -> claudeRunner (if modelId starts with claude:)
- *    - default -> claudeRunner
+ *    - openai   -> openaiRunner
+ *    - custom   -> openaiRunner (OpenAI-compatible: LM Studio, llama.cpp, vLLM)
+ *    - ollama   -> ollamaRunner
+ *    - anthropic -> claudeRunner
+ *    - default  -> claudeRunner
  */
 export const dispatcherRunner: AgentRunner = {
   async *run(ctx: TaskRunContext): AsyncGenerator<AgentEvent> {
@@ -34,6 +35,9 @@ export const dispatcherRunner: AgentRunner = {
         // If it's an external anthropic model, it might need a custom runner,
         // but for now we'll try the claudeRunner with its modelId.
         yield* claudeRunner.run(ctx)
+      } else if (model.provider === 'custom') {
+        // OpenAI-compatible endpoint (LM Studio, llama.cpp, vLLM, etc.)
+        yield* openaiRunner.run(ctx)
       } else {
         yield { type: 'error', error: `Provider ${model.provider} not supported for external models.` }
       }
