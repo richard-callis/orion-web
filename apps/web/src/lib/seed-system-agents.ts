@@ -229,7 +229,32 @@ Rules for task plans:
  * 2. Create the Agent (create-only — skip if already exists to preserve customisations).
  * 3. Create a NovaDeployment linking the two.
  */
+
+/**
+ * Resolve the LLM to use for system agents.
+ * Prefers the system-wide default model setting, falls back to the first
+ * enabled ExternalModel, then to 'claude' as a last resort.
+ */
+async function resolveDefaultLlm(): Promise<string> {
+  const setting = await prisma.systemSetting.findUnique({ where: { key: 'ai.default-model' } })
+  if (setting?.value && typeof setting.value === 'string') return setting.value
+
+  const first = await prisma.externalModel.findFirst({
+    where: { enabled: true },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  })
+  if (first) return `ext:${first.id}`
+
+  return 'claude'
+}
+
 export async function ensureSystemAgents(): Promise<void> {
+  // Resolve the system default LLM once — used for all system agents so they
+  // work out of the box without requiring manual LLM configuration.
+  // Falls back to 'claude' only if no external model is configured at all.
+  const defaultLlm = await resolveDefaultLlm()
+
   for (const def of SYSTEM_AGENT_DEFS) {
     try {
       // 1. Upsert Nova record
@@ -292,7 +317,7 @@ export async function ensureSystemAgents(): Promise<void> {
           novaId:      nova.id,
           metadata: {
             systemPrompt:  def.agent.systemPrompt,
-            contextConfig: def.agent.contextConfig,
+            contextConfig: { ...def.agent.contextConfig, llm: defaultLlm },
           } as object,
         },
       })
