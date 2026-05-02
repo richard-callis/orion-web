@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Trash2, ChevronRight, User } from 'lucide-react'
+import { Plus, Trash2, ChevronRight, User, X } from 'lucide-react'
 import type { Bug, TaskUser } from '@/types/tasks'
 import { KanbanBoard } from '../ui/KanbanBoard'
 import { CreateEntityModal } from '../ui/CreateEntityModal'
