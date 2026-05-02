@@ -595,10 +595,16 @@ async function handleSendMessage(argsRaw: string, actorId?: string): Promise<str
   const { room_id, content } = parseArgs(argsRaw) as { room_id?: string; content?: string }
   if (!room_id)  return 'Error: room_id is required'
   if (!content?.trim()) return 'Error: content is required'
+  if (!actorId) return 'Error: actorId is required to send messages (SOC2 attribution)'
 
   const room = await prisma.chatRoom.findUnique({ where: { id: room_id }, select: { name: true } })
   if (!room) return `Error: room ${room_id} not found`
-  if (!actorId) return 'Error: actorId is required to send messages (SOC2 attribution)'
+
+  // Hard rule: agents can only post to rooms they are members of
+  const membership = await prisma.chatRoomMember.findUnique({
+    where: { roomId_agentId: { roomId: room_id, agentId: actorId } },
+  })
+  if (!membership) return `Error: you are not a member of room "${room.name}" — agents may only send messages to rooms they belong to`
 
   await prisma.chatMessage.create({
     data: {

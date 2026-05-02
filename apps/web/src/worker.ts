@@ -199,10 +199,14 @@ async function runTask(taskId: string): Promise<void> {
       await postToRoom(featureRoomId, agent.id, `▶ Starting task: **${task.title}**`)
     }
 
+    const roomNote = featureRoomId
+      ? `\n\n[Chat room for this task: ${featureRoomId} — use this room_id when calling orion_send_message]`
+      : ''
+
     const ctx: TaskRunContext = {
       taskId,
       taskTitle:       task.title,
-      taskDescription: task.description ?? null,
+      taskDescription: (task.description ?? '') + roomNote,
       taskPlan:        task.plan ?? null,
       agentId:         agent.id,
       agentName:       agent.name,
