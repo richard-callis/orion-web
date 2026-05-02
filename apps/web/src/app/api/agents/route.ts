@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { parseBodyOrError, CreateAgentSchema } from '@/lib/validate'
-import { z } from 'zod'
-
-const RESERVED_NAMES = ['human', 'user', 'system', 'admin']
+import { RESERVED_AGENT_NAMES } from '@/lib/management-tools'
 
 // SOC2 [INPUT-001]: Extended validation with reserved name check
 const CreateAgentWithReservedCheck = CreateAgentSchema.refine(
-  (data) => !RESERVED_NAMES.includes(data.name.toLowerCase()),
+  (data) => !RESERVED_AGENT_NAMES.includes(data.name.toLowerCase()),
   { message: 'Agent name is reserved', path: ['name'] }
 )
 
