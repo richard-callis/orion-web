@@ -127,6 +127,10 @@ function MessagesContent() {
     setConvos(prev => prev.map(c => c.id === id ? { ...c, title: title || null } : c))
   }
 
+  const handleRoomUpdate = (id: string, patch: { name?: string; type?: string }) => {
+    setRooms(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r))
+  }
+
   const handleNewRoom = async () => {
     try {
       const res = await fetch('/api/chatrooms', {
@@ -177,6 +181,7 @@ function MessagesContent() {
           onCreateNew={view === 'rooms' ? handleNewRoom : handleCreateNew}
           onDelete={handleDelete}
           onRename={handleRename}
+          onRoomUpdate={handleRoomUpdate}
           convos={regularConvos}
           planningConvos={planningConvos}
           agentConvos={agentConvos}
