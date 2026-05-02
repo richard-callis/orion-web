@@ -434,6 +434,7 @@ model ExternalModel {
   modelId     String
   enabled     Boolean  @default(true)
   timeoutSecs Int      @default(120)
+  maxTokens   Int?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
