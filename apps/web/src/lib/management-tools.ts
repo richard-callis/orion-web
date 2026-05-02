@@ -251,10 +251,17 @@ async function auditLog(actorId: string | undefined, content: string): Promise<v
   }).catch(() => {})
 }
 
+// ── Shared arg parser ─────────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseArgs(argsRaw: string): any {
+  try { return JSON.parse(argsRaw || '{}') } catch { return {} }
+}
+
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
 async function handleListAgents(argsRaw: string): Promise<string> {
-  const { include_archived } = JSON.parse(argsRaw || '{}') as { include_archived?: boolean }
+  const { include_archived } = parseArgs(argsRaw) as { include_archived?: boolean }
   const agents = await prisma.agent.findMany({
     orderBy: { name: 'asc' },
     include: { tasks: { where: { status: { in: ['running', 'pending_validation'] } }, select: { id: true }, take: 1 } },
@@ -282,7 +289,7 @@ async function handleListAgents(argsRaw: string): Promise<string> {
 }
 
 async function handleListTasks(argsRaw: string): Promise<string> {
-  const { status, unassigned_only } = JSON.parse(argsRaw || '{}') as {
+  const { status, unassigned_only } = parseArgs(argsRaw) as {
     status?: string | string[]
     unassigned_only?: boolean
   }
@@ -313,7 +320,7 @@ async function handleListTasks(argsRaw: string): Promise<string> {
 }
 
 async function handleAssignTask(argsRaw: string, actorId?: string): Promise<string> {
-  const { task_id, agent_id } = JSON.parse(argsRaw || '{}') as { task_id?: string; agent_id?: string }
+  const { task_id, agent_id } = parseArgs(argsRaw) as { task_id?: string; agent_id?: string }
   if (!task_id) return 'Error: task_id is required'
   if (!agent_id) return 'Error: agent_id is required'
 
@@ -331,7 +338,7 @@ async function handleAssignTask(argsRaw: string, actorId?: string): Promise<stri
 }
 
 async function handleCreateAgent(argsRaw: string, actorId?: string): Promise<string> {
-  const spec = JSON.parse(argsRaw || '{}') as {
+  const spec = parseArgs(argsRaw) as {
     name?: string
     role?: string
     systemPrompt?: string
@@ -388,7 +395,7 @@ async function handleCreateAgent(argsRaw: string, actorId?: string): Promise<str
 }
 
 async function handleArchiveAgent(argsRaw: string, actorId?: string): Promise<string> {
-  const { agent_id, reason } = JSON.parse(argsRaw || '{}') as { agent_id?: string; reason?: string }
+  const { agent_id, reason } = parseArgs(argsRaw) as { agent_id?: string; reason?: string }
   if (!agent_id) return 'Error: agent_id is required'
 
   const existing = await prisma.agent.findUnique({
@@ -415,7 +422,7 @@ async function handleArchiveAgent(argsRaw: string, actorId?: string): Promise<st
 }
 
 async function handleEscalateTask(argsRaw: string, actorId?: string): Promise<string> {
-  const { task_id, user_id } = JSON.parse(argsRaw || '{}') as { task_id?: string; user_id?: string }
+  const { task_id, user_id } = parseArgs(argsRaw) as { task_id?: string; user_id?: string }
   if (!task_id) return 'Error: task_id is required'
   if (!user_id) return 'Error: user_id is required'
 
@@ -434,7 +441,7 @@ async function handleEscalateTask(argsRaw: string, actorId?: string): Promise<st
 }
 
 async function handleGetTaskEvents(argsRaw: string): Promise<string> {
-  const { task_id, limit } = JSON.parse(argsRaw || '{}') as { task_id?: string; limit?: number }
+  const { task_id, limit } = parseArgs(argsRaw) as { task_id?: string; limit?: number }
   if (!task_id) return 'Error: task_id is required'
 
   const [task, events] = await Promise.all([
@@ -464,7 +471,7 @@ async function handleGetTaskEvents(argsRaw: string): Promise<string> {
 }
 
 async function handleCloseTask(argsRaw: string, actorId?: string): Promise<string> {
-  const { task_id, summary } = JSON.parse(argsRaw || '{}') as { task_id?: string; summary?: string }
+  const { task_id, summary } = parseArgs(argsRaw) as { task_id?: string; summary?: string }
   if (!task_id) return 'Error: task_id is required'
   if (!summary?.trim()) return 'Error: summary is required'
 
@@ -481,7 +488,7 @@ async function handleCloseTask(argsRaw: string, actorId?: string): Promise<strin
 }
 
 async function handleReopenTask(argsRaw: string, actorId?: string): Promise<string> {
-  const { task_id, reason } = JSON.parse(argsRaw || '{}') as { task_id?: string; reason?: string }
+  const { task_id, reason } = parseArgs(argsRaw) as { task_id?: string; reason?: string }
   if (!task_id) return 'Error: task_id is required'
 
   await prisma.task.update({
@@ -495,7 +502,7 @@ async function handleReopenTask(argsRaw: string, actorId?: string): Promise<stri
 }
 
 async function handleListRooms(argsRaw: string): Promise<string> {
-  const { feature_id } = JSON.parse(argsRaw || '{}') as { feature_id?: string }
+  const { feature_id } = parseArgs(argsRaw) as { feature_id?: string }
 
   const where: Record<string, unknown> = {}
   if (feature_id) where.featureId = feature_id
@@ -524,7 +531,7 @@ async function handleListRooms(argsRaw: string): Promise<string> {
 }
 
 async function handleCreateFeature(argsRaw: string, actorId?: string): Promise<string> {
-  const { epicId, title, description } = JSON.parse(argsRaw || '{}') as {
+  const { epicId, title, description } = parseArgs(argsRaw) as {
     epicId?: string
     title?: string
     description?: string
@@ -551,7 +558,7 @@ async function handleCreateFeature(argsRaw: string, actorId?: string): Promise<s
 }
 
 async function handleCreateTask(argsRaw: string, actorId?: string): Promise<string> {
-  const { featureId, title, description, plan, targetEnvironment } = JSON.parse(argsRaw || '{}') as {
+  const { featureId, title, description, plan, targetEnvironment } = parseArgs(argsRaw) as {
     featureId?: string
     title?: string
     description?: string
@@ -585,7 +592,7 @@ async function handleCreateTask(argsRaw: string, actorId?: string): Promise<stri
 }
 
 async function handleSendMessage(argsRaw: string, actorId?: string): Promise<string> {
-  const { room_id, content } = JSON.parse(argsRaw || '{}') as { room_id?: string; content?: string }
+  const { room_id, content } = parseArgs(argsRaw) as { room_id?: string; content?: string }
   if (!room_id)  return 'Error: room_id is required'
   if (!content?.trim()) return 'Error: content is required'
 
@@ -609,7 +616,7 @@ async function handleSendMessage(argsRaw: string, actorId?: string): Promise<str
 }
 
 async function handleUpdateAgent(argsRaw: string, actorId?: string): Promise<string> {
-  const spec = JSON.parse(argsRaw || '{}') as {
+  const spec = parseArgs(argsRaw) as {
     agent_id?: string
     role?: string
     description?: string
@@ -643,7 +650,7 @@ async function handleUpdateAgent(argsRaw: string, actorId?: string): Promise<str
 // ── GitOps handler ────────────────────────────────────────────────────────────
 
 async function handleProposeGitops(argsRaw: string, actorId?: string): Promise<string> {
-  const { environment_id, title, reasoning, operation_description, changes } = JSON.parse(argsRaw || '{}') as {
+  const { environment_id, title, reasoning, operation_description, changes } = parseArgs(argsRaw) as {
     environment_id?: string
     title?: string
     reasoning?: string
@@ -692,7 +699,7 @@ async function handleProposeGitops(argsRaw: string, actorId?: string): Promise<s
 // ── Tool request handler ──────────────────────────────────────────────────────
 
 async function handleRequestTool(argsRaw: string, actorId?: string): Promise<string> {
-  const { tool_description, tool_name } = JSON.parse(argsRaw || '{}') as {
+  const { tool_description, tool_name } = parseArgs(argsRaw) as {
     tool_description?: string
     tool_name?: string
   }
@@ -708,6 +715,29 @@ async function handleRequestTool(argsRaw: string, actorId?: string): Promise<str
 
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
+// ── Tool registry ─────────────────────────────────────────────────────────────
+
+type Handler = (argsRaw: string, actorId?: string) => Promise<string>
+
+const TOOL_REGISTRY: Record<string, Handler> = {
+  orion_list_agents:    handleListAgents,
+  orion_list_tasks:     handleListTasks,
+  orion_assign_task:    handleAssignTask,
+  orion_create_agent:   handleCreateAgent,
+  orion_update_agent:   handleUpdateAgent,
+  orion_archive_agent:  handleArchiveAgent,
+  orion_escalate_task:  handleEscalateTask,
+  orion_get_task_events: handleGetTaskEvents,
+  orion_close_task:     handleCloseTask,
+  orion_reopen_task:    handleReopenTask,
+  orion_list_rooms:     handleListRooms,
+  orion_send_message:   handleSendMessage,
+  orion_create_feature: handleCreateFeature,
+  orion_create_task:    handleCreateTask,
+  orion_propose_gitops: handleProposeGitops,
+  orion_request_tool:   handleRequestTool,
+}
+
 /**
  * Execute a management tool by name.
  *
@@ -717,26 +747,9 @@ async function handleRequestTool(argsRaw: string, actorId?: string): Promise<str
  */
 export async function executeManagedTool(name: string, argsRaw: string, actorId?: string): Promise<string> {
   try {
-    switch (name) {
-      case 'orion_list_agents':   return await handleListAgents(argsRaw)
-      case 'orion_list_tasks':    return await handleListTasks(argsRaw)
-      case 'orion_assign_task':   return await handleAssignTask(argsRaw, actorId)
-      case 'orion_create_agent':  return await handleCreateAgent(argsRaw, actorId)
-      case 'orion_update_agent':  return await handleUpdateAgent(argsRaw, actorId)
-      case 'orion_archive_agent': return await handleArchiveAgent(argsRaw, actorId)
-      case 'orion_escalate_task':   return await handleEscalateTask(argsRaw, actorId)
-      case 'orion_get_task_events': return await handleGetTaskEvents(argsRaw)
-      case 'orion_close_task':      return await handleCloseTask(argsRaw, actorId)
-      case 'orion_reopen_task':     return await handleReopenTask(argsRaw, actorId)
-      case 'orion_list_rooms':       return await handleListRooms(argsRaw)
-      case 'orion_send_message':     return await handleSendMessage(argsRaw, actorId)
-      case 'orion_create_feature':   return await handleCreateFeature(argsRaw, actorId)
-      case 'orion_create_task':      return await handleCreateTask(argsRaw, actorId)
-      case 'orion_propose_gitops':   return await handleProposeGitops(argsRaw, actorId)
-      case 'orion_request_tool':     return await handleRequestTool(argsRaw, actorId)
-      default:
-        return `Error: unknown management tool "${name}"`
-    }
+    const handler = TOOL_REGISTRY[name]
+    if (!handler) return `Error: unknown management tool "${name}"`
+    return await handler(argsRaw, actorId)
   } catch (e) {
     return `Error: ${e instanceof Error ? e.message : String(e)}`
   }
