@@ -112,7 +112,9 @@ async function resolveModelId(llm: unknown): Promise<string> {
   if (useDefault || typeof llm !== 'string') {
     if (!cachedDefaultModel) {
       const setting = await prisma.systemSetting.findUnique({ where: { key: 'model.default' } })
-      cachedDefaultModel = (setting?.value as string | undefined) ?? 'claude:claude-sonnet-4-6'
+      const value = setting?.value as string | undefined
+      if (!value) throw new Error('No default LLM configured — set model.default in System Settings')
+      cachedDefaultModel = value
     }
     return cachedDefaultModel
   }
