@@ -701,7 +701,11 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
         </div>
       </div>
 
-      {/* Right: Detail panel (modal) */}
+
+      </div>}
+      {/* end tasks view */}
+
+      {/* ── Task detail panel — rendered outside view blocks so it works from My Tasks too ── */}
       {panel && (
         <>
           <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setPanel(null)} />
@@ -749,7 +753,6 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
                   }
                   const { tasks: newTasks } = await r.json()
                   setTasks(prev => [...newTasks, ...prev])
-                  // Bump task count on the feature
                   setEpics(prev => prev.map(e =>
                     e.id === panel.epic.id
                       ? { ...e, features: e.features.map(f =>
@@ -766,156 +769,151 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
             )}
 
             {panel.kind === 'task' && (
-        <aside className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-xl border border-border-subtle bg-bg-sidebar shadow-2xl overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
-            <span className="text-xs font-semibold text-text-secondary">Task Detail</span>
-            <button onClick={() => setPanel(null)} className="text-text-muted hover:text-text-primary"><X size={14} /></button>
-          </div>
-          {/* Tabs */}
-          <div className="flex border-b border-border-subtle px-4">
-            <button onClick={() => setTaskTab('details')}
-              className={`px-3 py-2 text-[11px] font-medium border-b-2 transition-colors ${taskTab === 'details' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
-              Details
-            </button>
-            <button onClick={() => { setTaskTab('log'); loadEvents(panel.task.id) }}
-              className={`px-3 py-2 text-[11px] font-medium border-b-2 transition-colors ${taskTab === 'log' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
-              Run Log
-            </button>
-            <button onClick={() => { setTaskTab('chat'); loadChat(panel.task.id) }}
-              className={`px-3 py-2 text-[11px] font-medium border-b-2 transition-colors ${taskTab === 'chat' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
-              Chat
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {taskTab === 'details' && (<>
-            <div>
-              <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title</label>
-              <input ref={titleRef} value={editTitle} onChange={e => setEditTitle(e.target.value)} onBlur={saveTaskDetail}
-                className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent" />
-            </div>
-            <div>
-              <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Priority</label>
-              <select value={editPriority} onChange={e => { setEditPriority(e.target.value); updateTask(panel.task.id, { priority: e.target.value }) }}
-                className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent">
-                {Object.entries(priorityConfig).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Assigned To (Agent)</label>
-              <select
-                value={panel.task.assignedAgent ?? ''}
-                onChange={e => {
-                  const agentId = e.target.value || null
-                  const agent = agents.find(a => a.id === agentId) ?? null
-                  updateTask(panel.task.id, { assignedAgent: agentId, agent })
-                }}
-                className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
-              >
-                <option value="">— No agent —</option>
-                {agents.map(a => <option key={a.id} value={a.id}>{a.name}{a.role ? ` (${a.role})` : ''}</option>)}
-              </select>
-            </div>
-            {users.length > 0 && (
-              <div>
-                <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Assigned To (User)</label>
-                <select
-                  value={panel.task.assignedUserId ?? ''}
-                  onChange={e => {
-                    const userId = e.target.value || null
-                    const assignedUser = users.find(u => u.id === userId) ?? null
-                    updateTask(panel.task.id, { assignedUserId: userId, assignedUser })
-                  }}
-                  className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
-                >
-                  <option value="">— No user —</option>
-                  {users.map(u => <option key={u.id} value={u.id}>{u.name ?? u.username}</option>)}
-                </select>
-              </div>
-            )}
-            <div>
-              <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Status</label>
-              <div className="grid grid-cols-2 gap-1.5">
-                {columns.map(col => {
-                  const cfg = STATUS_CONFIG[col] ?? { label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), border: 'border-t-border-visible' }
-                  return (
-                  <button key={col} onClick={() => updateTask(panel.task.id, { status: col })}
-                    className={`px-2 py-1.5 rounded text-[10px] font-medium transition-colors ${
-                      panel.task.status === col ? 'bg-accent text-white' : 'bg-bg-raised text-text-muted hover:text-text-primary hover:bg-bg-card border border-border-subtle'
-                    }`}>
-                    {cfg.label}
+              <aside className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-xl border border-border-subtle bg-bg-sidebar shadow-2xl overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
+                  <span className="text-xs font-semibold text-text-secondary">Task Detail</span>
+                  <button onClick={() => setPanel(null)} className="text-text-muted hover:text-text-primary"><X size={14} /></button>
+                </div>
+                {/* Tabs */}
+                <div className="flex border-b border-border-subtle px-4">
+                  <button onClick={() => setTaskTab('details')}
+                    className={`px-3 py-2 text-[11px] font-medium border-b-2 transition-colors ${taskTab === 'details' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
+                    Details
                   </button>
-                  )
-                })}
-              </div>
-            </div>
-            <div>
-              <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
-              <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} onBlur={saveTaskDetail} rows={4}
-                placeholder="What needs to be done, context, requirements..."
-                className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed" />
-            </div>
-            <div>
-              <label className="text-[10px] text-accent uppercase tracking-wide mb-1 block">Claude&apos;s Plan</label>
-              <textarea value={editPlan} onChange={e => setEditPlan(e.target.value)} onBlur={saveTaskPlan} rows={6}
-                placeholder="No plan yet — use 'Plan with AI' to generate one..."
-                className="w-full px-2.5 py-1.5 text-sm rounded border border-accent/30 bg-accent/5 text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed" />
-            </div>
-            <p className="text-[10px] text-text-muted">Created {new Date(panel.task.createdAt).toLocaleDateString()}</p>
-            </>)}
+                  <button onClick={() => { setTaskTab('log'); loadEvents(panel.task.id) }}
+                    className={`px-3 py-2 text-[11px] font-medium border-b-2 transition-colors ${taskTab === 'log' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
+                    Run Log
+                  </button>
+                  <button onClick={() => { setTaskTab('chat'); loadChat(panel.task.id) }}
+                    className={`px-3 py-2 text-[11px] font-medium border-b-2 transition-colors ${taskTab === 'chat' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
+                    Chat
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {taskTab === 'details' && (<>
+                  <div>
+                    <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title</label>
+                    <input ref={titleRef} value={editTitle} onChange={e => setEditTitle(e.target.value)} onBlur={saveTaskDetail}
+                      className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Priority</label>
+                    <select value={editPriority} onChange={e => { setEditPriority(e.target.value); updateTask(panel.task.id, { priority: e.target.value }) }}
+                      className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent">
+                      {Object.entries(priorityConfig).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Assigned To (Agent)</label>
+                    <select
+                      value={panel.task.assignedAgent ?? ''}
+                      onChange={e => {
+                        const agentId = e.target.value || null
+                        const agent = agents.find(a => a.id === agentId) ?? null
+                        updateTask(panel.task.id, { assignedAgent: agentId, agent })
+                      }}
+                      className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+                    >
+                      <option value="">— No agent —</option>
+                      {agents.map(a => <option key={a.id} value={a.id}>{a.name}{a.role ? ` (${a.role})` : ''}</option>)}
+                    </select>
+                  </div>
+                  {users.length > 0 && (
+                    <div>
+                      <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Assigned To (User)</label>
+                      <select
+                        value={panel.task.assignedUserId ?? ''}
+                        onChange={e => {
+                          const userId = e.target.value || null
+                          const assignedUser = users.find(u => u.id === userId) ?? null
+                          updateTask(panel.task.id, { assignedUserId: userId, assignedUser })
+                        }}
+                        className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+                      >
+                        <option value="">— No user —</option>
+                        {users.map(u => <option key={u.id} value={u.id}>{u.name ?? u.username}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <div>
+                    <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Status</label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {columns.map(col => {
+                        const cfg = STATUS_CONFIG[col] ?? { label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), border: 'border-t-border-visible' }
+                        return (
+                        <button key={col} onClick={() => updateTask(panel.task.id, { status: col })}
+                          className={`px-2 py-1.5 rounded text-[10px] font-medium transition-colors ${
+                            panel.task.status === col ? 'bg-accent text-white' : 'bg-bg-raised text-text-muted hover:text-text-primary hover:bg-bg-card border border-border-subtle'
+                          }`}>
+                          {cfg.label}
+                        </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
+                    <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} onBlur={saveTaskDetail} rows={4}
+                      placeholder="What needs to be done, context, requirements..."
+                      className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-accent uppercase tracking-wide mb-1 block">Claude&apos;s Plan</label>
+                    <textarea value={editPlan} onChange={e => setEditPlan(e.target.value)} onBlur={saveTaskPlan} rows={6}
+                      placeholder="No plan yet — use 'Plan with AI' to generate one..."
+                      className="w-full px-2.5 py-1.5 text-sm rounded border border-accent/30 bg-accent/5 text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed" />
+                  </div>
+                  <p className="text-[10px] text-text-muted">Created {new Date(panel.task.createdAt).toLocaleDateString()}</p>
+                  </>)}
 
-            {taskTab === 'log' && (
-              <TaskRunLog events={taskEvents} loading={eventsLoading} agents={agents}
-                expanded={expandedEvents} onToggle={id => setExpandedEvents(prev => {
-                  const next = new Set(prev)
-                  next.has(id) ? next.delete(id) : next.add(id)
-                  return next
-                })}
-                onRefresh={() => loadEvents(panel.task.id)} />
-            )}
+                  {taskTab === 'log' && (
+                    <TaskRunLog events={taskEvents} loading={eventsLoading} agents={agents}
+                      expanded={expandedEvents} onToggle={id => setExpandedEvents(prev => {
+                        const next = new Set(prev)
+                        next.has(id) ? next.delete(id) : next.add(id)
+                        return next
+                      })}
+                      onRefresh={() => loadEvents(panel.task.id)} />
+                  )}
 
-            {taskTab === 'chat' && (
-              <TaskChat rooms={taskChatRooms} loading={chatLoading} activeRoom={activeChatRoom}
-                onRoomChange={setActiveChatRoom} onSend={sendChatMessage} sending={chatSending}
-                inputRef={chatInputRef} onInput={setChatInput} input={chatInput} />
-            )}
-          </div>
-          {taskTab === 'details' && (
-          <div className="p-3 border-t border-border-subtle space-y-2">
-            <PlanWithAIButton onSelect={modelId => {
-              const parentFeature = panel.task.featureId ? epics.flatMap(e => e.features).find(f => f.id === panel.task.featureId) : undefined
-              const parentEpic = parentFeature ? epics.find(e => e.id === parentFeature.epicId) : undefined
-              planWithClaude({
-                type: 'task',
-                id: panel.task.id,
-                title: panel.task.title,
-                description: panel.task.description,
-                parentContext: parentFeature ? {
-                  featureTitle: parentFeature.title,
-                  featureDescription: parentFeature.description,
-                  featurePlan: parentFeature.plan,
-                  epicTitle: parentEpic?.title ?? '',
-                  epicDescription: parentEpic?.description ?? null,
-                  epicPlan: parentEpic?.plan ?? null,
-                } : undefined,
-              }, modelId)
-            }} />
-            <button onClick={() => deleteTask(panel.task.id)}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-border-subtle text-text-muted text-sm hover:border-status-error hover:text-status-error transition-colors">
-              <Trash2 size={14} /> Delete Task
-            </button>
-          </div>
-          )}
-        </aside>
+                  {taskTab === 'chat' && (
+                    <TaskChat rooms={taskChatRooms} loading={chatLoading} activeRoom={activeChatRoom}
+                      onRoomChange={setActiveChatRoom} onSend={sendChatMessage} sending={chatSending}
+                      inputRef={chatInputRef} onInput={setChatInput} input={chatInput} />
+                  )}
+                </div>
+                {taskTab === 'details' && (
+                <div className="p-3 border-t border-border-subtle space-y-2">
+                  <PlanWithAIButton onSelect={modelId => {
+                    const parentFeature = panel.task.featureId ? epics.flatMap(e => e.features).find(f => f.id === panel.task.featureId) : undefined
+                    const parentEpic = parentFeature ? epics.find(e => e.id === parentFeature.epicId) : undefined
+                    planWithClaude({
+                      type: 'task',
+                      id: panel.task.id,
+                      title: panel.task.title,
+                      description: panel.task.description,
+                      parentContext: parentFeature ? {
+                        featureTitle: parentFeature.title,
+                        featureDescription: parentFeature.description,
+                        featurePlan: parentFeature.plan,
+                        epicTitle: parentEpic?.title ?? '',
+                        epicDescription: parentEpic?.description ?? null,
+                        epicPlan: parentEpic?.plan ?? null,
+                      } : undefined,
+                    }, modelId)
+                  }} />
+                  <button onClick={() => deleteTask(panel.task.id)}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-border-subtle text-text-muted text-sm hover:border-status-error hover:text-status-error transition-colors">
+                    <Trash2 size={14} /> Delete Task
+                  </button>
+                </div>
+                )}
+              </aside>
             )}
           </div>
           </div>
         </>
       )}
-
-      </div>}
-      {/* end tasks view */}
-
-      {/* ── Modals ────────────────────────────────────────────────────────── */}
 
       {/* Create Task */}
       {taskModal && (
