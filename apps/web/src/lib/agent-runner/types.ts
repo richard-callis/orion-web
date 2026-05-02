@@ -1,9 +1,18 @@
+interface SchemaProperty {
+  type: string
+  description?: string
+  enum?: string[]
+  items?: SchemaProperty | { type: string; properties?: Record<string, SchemaProperty>; required?: string[] }
+  properties?: Record<string, SchemaProperty>
+  required?: string[]
+}
+
 export interface ManagementToolDef {
   name: string
   description: string
   inputSchema: {
     type: string
-    properties?: Record<string, { type: string; description?: string; enum?: string[] }>
+    properties?: Record<string, SchemaProperty>
     required?: string[]
   }
 }
@@ -40,7 +49,7 @@ export interface GatewayTool {
   description: string
   inputSchema: {
     type: string
-    properties?: Record<string, { type: string; description?: string; enum?: string[] }>
+    properties?: Record<string, SchemaProperty>
     required?: string[]
   }
 }
