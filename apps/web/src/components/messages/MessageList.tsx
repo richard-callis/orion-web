@@ -33,6 +33,10 @@ interface Room {
   id: string
   name: string
   type: string
+  epicId?: string | null
+  featureId?: string | null
+  epic?: { id: string; title: string } | null
+  feature?: { id: string; title: string } | null
   created_at: string
   _count: { messages: number; members: number }
   task?: { id: string; title: string } | null
@@ -179,23 +183,67 @@ export function MessageList({
     </div>
   )
 
-  const renderRoom = (room: Room) => (
-    <button
+  const [editingRoomId, setEditingRoomId] = useState<string | null>(null)
+  const [editRoomValue, setEditRoomValue] = useState('')
+  const roomInputRef = useRef<HTMLInputElement>(null)
+
+  const startRoomEdit = (e: React.MouseEvent, room: Room) => {
+    e.stopPropagation()
+    setEditingRoomId(room.id)
+    setEditRoomValue(room.name)
+    setTimeout(() => roomInputRef.current?.focus(), 0)
+  }
+
+  const commitRoomEdit = async (id: string) => {
+    if (editRoomValue.trim()) {
+      await fetch(`/api/chatrooms/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: editRoomValue.trim() }) })
+      onRename?.(id, editRoomValue.trim())
+    }
+    setEditingRoomId(null)
+  }
+
+  const deleteRoom = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    if (!confirm('Delete this chat room and all its messages?')) return
+    await fetch(`/api/chatrooms/${id}`, { method: 'DELETE' })
+    onDelete?.(`r_${id}`)
+  }
+
+  const renderRoom = (room: Room, indent = false) => (
+    <div
       key={room.id}
-      className={`w-full text-left px-4 py-3 border-b border-border-subtle transition-colors ${activeId === `r_${room.id}` ? 'bg-accent/10 border-l-2 border-l-accent' : 'hover:bg-bg-raised'}`}
-      onClick={() => { onSelect(`r_${room.id}`); onMobileSelect?.() }}
+      className={`group w-full text-left border-b border-border-subtle transition-colors ${indent ? 'pl-5' : ''} ${activeId === `r_${room.id}` ? 'bg-accent/10 border-l-2 border-l-accent' : 'hover:bg-bg-raised'}`}
+      onClick={() => { if (editingRoomId !== room.id) { onSelect(`r_${room.id}`); onMobileSelect?.() } }}
     >
-      <div className="flex items-center gap-2 mb-1">
-        <Hash size={12} className="text-text-muted" />
-        <span className="text-xs font-medium text-text-primary truncate">{room.name}</span>
-        <span className={`ml-auto px-1.5 py-0.5 rounded text-[9px] flex-shrink-0 ${TYPE_COLORS[room.type] || TYPE_COLORS.general}`}>{room.type}</span>
+      <div className="flex items-center gap-1.5 px-3 py-2">
+        <Hash size={11} className="text-text-muted flex-shrink-0" />
+        {editingRoomId === room.id ? (
+          <div className="flex items-center gap-1 flex-1 min-w-0" onClick={e => e.stopPropagation()}>
+            <input ref={roomInputRef} value={editRoomValue} onChange={e => setEditRoomValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') commitRoomEdit(room.id); if (e.key === 'Escape') setEditingRoomId(null) }}
+              onBlur={() => commitRoomEdit(room.id)}
+              className="flex-1 min-w-0 text-xs bg-bg-raised border border-accent rounded px-1 py-0.5 text-text-primary focus:outline-none" />
+            <button onClick={() => commitRoomEdit(room.id)} className="text-green-400 hover:text-green-300"><Check size={11} /></button>
+            <button onClick={() => setEditingRoomId(null)} className="text-text-muted hover:text-red-400"><X size={11} /></button>
+          </div>
+        ) : (
+          <>
+            <span className="text-xs text-text-primary truncate flex-1">{room.name}</span>
+            <span className={`px-1.5 py-0.5 rounded text-[9px] flex-shrink-0 ${TYPE_COLORS[room.type] || TYPE_COLORS.general}`}>{room.type}</span>
+            <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0">
+              <button onClick={e => startRoomEdit(e, room)} className="p-0.5 rounded text-text-muted hover:text-accent hover:bg-accent/10"><Pencil size={10} /></button>
+              <button onClick={e => deleteRoom(e, room.id)} className="p-0.5 rounded text-text-muted hover:text-red-400 hover:bg-red-400/10"><Trash2 size={10} /></button>
+            </div>
+          </>
+        )}
       </div>
-      <div className="flex items-center gap-2 ml-4">
-        <span className="text-[10px] text-text-muted">{room._count.messages} msgs</span>
-        <span className="text-[10px] text-text-muted flex items-center gap-0.5"><Users size={10} /> {room._count.members}</span>
-      </div>
-      {room.task && <div className="ml-4 text-[10px] text-accent mt-0.5 truncate">linked: {room.task.title}</div>}
-    </button>
+      {!editingRoomId && (
+        <div className="flex items-center gap-2 px-3 pb-1.5 ml-4">
+          <span className="text-[10px] text-text-muted">{room._count.messages} msgs</span>
+          <span className="text-[10px] text-text-muted flex items-center gap-0.5"><Users size={9} /> {room._count.members}</span>
+        </div>
+      )}
+    </div>
   )
 
   // ── AI-only sections ─────────────────────────────────────────
@@ -371,34 +419,115 @@ export function MessageList({
     )
   }
 
-  const renderRoomSections = () => (
-    <>
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-3 border-b border-border-subtle flex-shrink-0">
-        <span className="text-xs font-semibold text-text-secondary">Chat Rooms</span>
-        <button onClick={onCreateNew} className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New room">
-          <Plus size={14} />
-        </button>
-      </div>
+  const renderRoomSections = () => {
+    // Group rooms by epic hierarchy
+    const epicIds = new Set((epics ?? []).map(e => e.id))
+    const roomsByEpicId = new Map<string, Room[]>()
+    const roomsByFeatureId = new Map<string, Room[]>()
+    const unattachedRooms: Room[] = []
 
-      {/* Filter chips */}
-      <div className="px-3 py-2 border-b border-border-subtle">
-        <div className="flex items-center gap-1 flex-wrap">
-          <button onClick={() => setRoomFilter('')} className={`px-2 py-0.5 rounded text-[10px] ${!effectiveRoomFilter ? 'bg-accent/20 text-accent' : 'text-text-muted hover:text-text-primary'}`}>All</button>
-          {['task', 'feature', 'general', 'ops'].map(t => (
-            <button key={t} onClick={() => setRoomFilter(effectiveRoomFilter === t ? '' : t)} className={`px-2 py-0.5 rounded text-[10px] capitalize ${effectiveRoomFilter === t ? 'bg-accent/20 text-accent' : 'text-text-muted hover:text-text-primary'}`}>{t}</button>
-          ))}
+    for (const room of rooms ?? []) {
+      if (room.epicId && !room.featureId) {
+        const list = roomsByEpicId.get(room.epicId) ?? []
+        list.push(room)
+        roomsByEpicId.set(room.epicId, list)
+      } else if (room.featureId) {
+        const list = roomsByFeatureId.get(room.featureId) ?? []
+        list.push(room)
+        roomsByFeatureId.set(room.featureId, list)
+      } else {
+        unattachedRooms.push(room)
+      }
+    }
+
+    // Epics that have at least one room (directly or via features)
+    const epicsWithRooms = (epics ?? []).filter(epic =>
+      (roomsByEpicId.get(epic.id)?.length ?? 0) > 0 ||
+      epic.features.some(f => (roomsByFeatureId.get(f.id)?.length ?? 0) > 0)
+    )
+
+    // Rooms attached to features whose epic isn't in our epics list (orphaned)
+    const allKnownFeatureIds = new Set((epics ?? []).flatMap(e => e.features.map(f => f.id)))
+    const featureRoomsWithoutEpic = [...roomsByFeatureId.entries()]
+      .filter(([fId]) => !allKnownFeatureIds.has(fId))
+      .flatMap(([, rs]) => rs)
+
+    return (
+      <>
+        {/* Header */}
+        <div className="flex items-center justify-between px-3 py-3 border-b border-border-subtle flex-shrink-0">
+          <span className="text-xs font-semibold text-text-secondary">Chat Rooms</span>
+          <button onClick={onCreateNew} className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New room">
+            <Plus size={14} />
+          </button>
         </div>
-      </div>
 
-      {/* Room list */}
-      {filteredRooms.length === 0 ? (
-        <div className="p-4 text-center text-text-muted text-xs">No chat rooms yet.</div>
-      ) : (
-        filteredRooms.map(renderRoom)
-      )}
-    </>
-  )
+        {rooms.length === 0 ? (
+          <div className="p-4 text-center text-text-muted text-xs">No chat rooms yet.</div>
+        ) : (
+          <>
+            {/* Epic hierarchy */}
+            {epicsWithRooms.map(epic => {
+              const isOpen = expandedEpics.has(epic.id)
+              const epicRooms = roomsByEpicId.get(epic.id) ?? []
+              const featureCount = epic.features.filter(f => (roomsByFeatureId.get(f.id)?.length ?? 0) > 0).length
+              const totalRooms = epicRooms.length + featureCount
+
+              return (
+                <div key={epic.id}>
+                  {/* Epic heading */}
+                  <div
+                    onClick={() => toggleEpic(epic.id)}
+                    className={`${rowBase} font-medium text-text-secondary hover:text-text-primary px-3 py-2 border-b border-border-subtle`}
+                  >
+                    {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    <Layers size={12} className="flex-shrink-0 text-accent" />
+                    <span className="flex-1 truncate text-[11px]">{epic.title}</span>
+                    <span className="text-[10px] text-text-muted">{totalRooms}</span>
+                  </div>
+
+                  {isOpen && (
+                    <div className="border-l border-border-subtle ml-3">
+                      {/* Epic-level rooms (planning etc.) */}
+                      {epicRooms.map(r => renderRoom(r, true))}
+
+                      {/* Feature rooms */}
+                      {epic.features.map(feature => {
+                        const fRooms = roomsByFeatureId.get(feature.id) ?? []
+                        if (fRooms.length === 0) return null
+                        return (
+                          <div key={feature.id}>
+                            <div className="flex items-center gap-1.5 px-3 py-1 text-[10px] text-text-muted border-b border-border-subtle bg-bg-base/30">
+                              <GitBranch size={9} className="flex-shrink-0" />
+                              <span className="truncate">{feature.title}</span>
+                            </div>
+                            {fRooms.map(r => renderRoom(r, true))}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+
+            {/* Feature rooms whose epic isn't loaded */}
+            {featureRoomsWithoutEpic.map(r => renderRoom(r))}
+
+            {/* Unattached rooms */}
+            {unattachedRooms.length > 0 && (
+              <>
+                {(epicsWithRooms.length > 0 || featureRoomsWithoutEpic.length > 0) && (
+                  <div className="px-3 py-1 text-[10px] text-text-muted uppercase tracking-wide border-b border-border-subtle bg-bg-base/30">Other</div>
+                )}
+                {unattachedRooms.map(r => renderRoom(r))}
+              </>
+            )}
+          </>
+        )}
+      </>
+    )
+  }
 
   // ── Main render ───────────────────────────────────────────────
   return (

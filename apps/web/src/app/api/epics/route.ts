@@ -32,5 +32,17 @@ export async function POST(req: NextRequest) {
     },
     include: { features: { include: { _count: { select: { tasks: true } } } } },
   })
+
+  // Auto-create a planning chat room for this epic
+  await prisma.chatRoom.create({
+    data: {
+      name: `${epic.title} — Planning`,
+      type: 'planning',
+      epicId: epic.id,
+      createdBy: caller?.id ?? 'system',
+      ...(caller ? { members: { create: [{ userId: caller.id, role: 'lead' }] } } : {}),
+    },
+  })
+
   return NextResponse.json(epic, { status: 201 })
 }

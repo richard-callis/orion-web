@@ -45,6 +45,22 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     data: dbData,
     include: { agent: true, assignedUser: true },
   })
+
+  // When an agent is assigned, add them to the feature's chat room (if one exists)
+  if (data.assignedAgentId && existing.featureId) {
+    const featureRoom = await prisma.chatRoom.findFirst({
+      where: { featureId: existing.featureId, type: 'feature' },
+      select: { id: true },
+    })
+    if (featureRoom) {
+      await prisma.chatRoomMember.upsert({
+        where: { roomId_agentId: { roomId: featureRoom.id, agentId: data.assignedAgentId as string } },
+        create: { roomId: featureRoom.id, agentId: data.assignedAgentId as string, role: 'member' },
+        update: {},
+      })
+    }
+  }
+
   return NextResponse.json(task)
 }
 
