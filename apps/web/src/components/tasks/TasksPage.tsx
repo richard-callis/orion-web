@@ -1267,5 +1267,3 @@ function TaskChat({
     </div>
   )
 }
-
-}
