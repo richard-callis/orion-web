@@ -21,6 +21,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (body.modelId     !== undefined) updateData.modelId     = body.modelId
   if (body.enabled     !== undefined) updateData.enabled     = body.enabled
   if (body.timeoutSecs !== undefined) updateData.timeoutSecs = body.timeoutSecs
+  if ('maxTokens' in body)            updateData.maxTokens   = body.maxTokens  // null clears the cap
   if (body.apiKey)                    updateData.apiKey      = body.apiKey
 
   const model = await prisma.externalModel.update({
