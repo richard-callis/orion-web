@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { X, Plus, Trash2, Bot, User, Cpu, MessageSquarePlus, MessageSquare, Rocket, Loader2, Check, Send, Square } from 'lucide-react'
+import { X, Plus, Trash2, Bot, User, Cpu, MessageSquarePlus, MessageSquare, Rocket, Loader2, Check, Send, Square, Archive } from 'lucide-react'
 import type { Agent } from '@/types/tasks'
 import { NovaBrowser } from '@/components/nova/NovaBrowser'
 
@@ -79,6 +79,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
   const [showNovaBrowser, setShowNovaBrowser] = useState(false)
   const [saving, setSaving]             = useState(false)
   const [availableModels, setAvailableModels] = useState<Array<{id: string; name: string; provider: string; builtIn: boolean}>>([])
+  const [showArchived, setShowArchived] = useState(false)
 
   // Planning mode state
   const [planningMode, setPlanningMode] = useState(false)
@@ -367,16 +368,30 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
   const inputCls = 'w-full px-2.5 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent'
   const modalInputCls = 'w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent'
 
+  const isArchived = (a: Agent) => !!(a.metadata as Record<string,unknown> | null)?.archived
+  const displayAgents = agents.filter(a => showArchived ? isArchived(a) : !isArchived(a))
+
   return (
     <>
       <aside className="h-44 flex-shrink-0 md:flex-none md:h-full md:w-80 flex flex-col border-r border-b md:border-b-0 border-border-subtle bg-bg-sidebar overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
-          <span className="text-xs font-semibold text-text-secondary">Team ({agents.length})</span>
-          {onClose && <button onClick={onClose} className="text-text-muted hover:text-text-primary"><X size={14} /></button>}
+          <span className="text-xs font-semibold text-text-secondary">
+            {showArchived ? 'Archived' : 'Active'} ({displayAgents.length})
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setShowArchived(v => !v)}
+              title={showArchived ? 'Show active agents' : 'Show archived agents'}
+              className={`p-1 rounded transition-colors ${showArchived ? 'text-accent' : 'text-text-muted hover:text-text-primary'}`}
+            >
+              <Archive size={13} />
+            </button>
+            {onClose && <button onClick={onClose} className="p-1 text-text-muted hover:text-text-primary"><X size={14} /></button>}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          {agents.map((agent, i) => (
+          {displayAgents.map((agent, i) => (
             <button
               key={agent.id}
               onClick={() => openModal(agent)}
@@ -408,8 +423,10 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
             </button>
           ))}
 
-          {agents.length === 0 && (
-            <p className="text-[10px] text-text-muted text-center py-6">No agents yet — add your first team member</p>
+          {displayAgents.length === 0 && (
+            <p className="text-[10px] text-text-muted text-center py-6">
+              {showArchived ? 'No archived agents' : 'No active agents — add your first team member'}
+            </p>
           )}
         </div>
 
