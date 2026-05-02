@@ -25,7 +25,7 @@ interface OpenAIResponse {
 export const openaiRunner: AgentRunner = {
   async *run(ctx: TaskRunContext): AsyncGenerator<AgentEvent> {
     // Resolve OpenAI config
-    const { baseUrl, apiKey, modelId, timeoutSecs } = await resolveOpenAIConfig(ctx.modelId)
+    const { baseUrl, apiKey, modelId, timeoutSecs, maxTokens } = await resolveOpenAIConfig(ctx.modelId)
 
     // Fetch tools from gateway (if connected)
     let gatewayTools: GatewayTool[] = []
@@ -88,6 +88,7 @@ export const openaiRunner: AgentRunner = {
             model: modelId,
             messages,
             stream: false,
+            ...(maxTokens !== null && { max_tokens: maxTokens }),
             ...(openaiToolDefs.length > 0 && { tools: openaiToolDefs }),
           }),
           signal: AbortSignal.timeout(timeoutSecs * 1000),
@@ -145,7 +146,7 @@ export const openaiRunner: AgentRunner = {
   },
 }
 
-async function resolveOpenAIConfig(modelId: string): Promise<{ baseUrl: string; apiKey: string | undefined; modelId: string; timeoutSecs: number }> {
+async function resolveOpenAIConfig(modelId: string): Promise<{ baseUrl: string; apiKey: string | undefined; modelId: string; timeoutSecs: number; maxTokens: number | null }> {
   const { prisma } = await import('../db')
   let model = null
 
@@ -162,6 +163,7 @@ async function resolveOpenAIConfig(modelId: string): Promise<{ baseUrl: string; 
     baseUrl: model.baseUrl,
     apiKey: model.apiKey || undefined,
     modelId: model.modelId,
-    timeoutSecs: model.timeoutSecs ?? 120
+    timeoutSecs: model.timeoutSecs ?? 120,
+    maxTokens: (model as any).maxTokens ?? null,
   }
 }
