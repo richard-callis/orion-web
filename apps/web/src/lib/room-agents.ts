@@ -296,7 +296,13 @@ export async function triggerRoomAgentReplies(
   const mentionedNames  = parseMentions(triggerContent)
   const triggeredAgents = mentionedNames.length > 0
     ? agentMembers.filter((a: any) => mentionedNames.some(n => a.name.toLowerCase() === n.toLowerCase()))
-    : agentMembers
+    : agentMembers.filter((a: any) => {
+        // Watcher agents (e.g. Alpha, Validator) have watchPrompt set — they coordinate
+        // on a schedule and must not auto-reply to every message. They only speak when
+        // explicitly @mentioned.
+        const cc = ((a.metadata ?? {}) as Record<string, unknown>).contextConfig as Record<string, unknown> | undefined
+        return !cc?.watchPrompt
+      })
 
   if (triggeredAgents.length === 0) return
 

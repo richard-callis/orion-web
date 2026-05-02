@@ -292,6 +292,16 @@ async function handleCreateAgent(argsRaw: string, actorId?: string): Promise<str
     return `Error: "${spec.name}" is a reserved agent name`
   }
 
+  // Idempotency guard — return existing agent rather than creating a duplicate.
+  // Prevents Alpha's watcher from stacking Debugger agents on each cycle.
+  const existingByName = await prisma.agent.findUnique({
+    where:  { name: spec.name.trim() },
+    select: { id: true, name: true, role: true },
+  })
+  if (existingByName) {
+    return JSON.stringify({ id: existingByName.id, name: existingByName.name, role: existingByName.role, note: 'Agent already exists — returning existing record' }, null, 2)
+  }
+
   // Resolve default LLM so created agents don't fall back to Claude Code SDK
   const defaultLlm = await getDefaultModelId()
   const incomingMeta   = (spec.metadata ?? {}) as Record<string, unknown>

@@ -28,14 +28,21 @@ const AGENT_COLORS = [
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const COLUMNS = ['pending', 'in_progress', 'done', 'failed'] as const
-type Status = typeof COLUMNS[number]
-
-const colLabel: Record<Status, string> = { pending: 'Backlog', in_progress: 'In Progress', done: 'Done', failed: 'Failed' }
-const colTopBorder: Record<Status, string> = {
-  pending: 'border-t-border-visible', in_progress: 'border-t-accent',
-  done: 'border-t-status-healthy', failed: 'border-t-status-error',
+// Known status config — label + top-border colour. Any status not listed here
+// gets a sensible default so new statuses appear automatically without code changes.
+const STATUS_CONFIG: Record<string, { label: string; border: string }> = {
+  pending:            { label: 'Backlog',        border: 'border-t-border-visible' },
+  in_progress:        { label: 'In Progress',    border: 'border-t-accent' },
+  pending_validation: { label: 'Waiting for QA', border: 'border-t-status-warning' },
+  done:               { label: 'Done',           border: 'border-t-status-healthy' },
+  failed:             { label: 'Failed',         border: 'border-t-status-error' },
+  critical:           { label: 'Critical',       border: 'border-t-status-error' },
 }
+
+// Preferred display order — known statuses first, unknowns appended after.
+const STATUS_ORDER = ['pending', 'in_progress', 'pending_validation', 'done', 'failed', 'critical']
+
+type Status = string
 const priorityConfig: Record<string, { label: string; color: string; dot: string }> = {
   critical: { label: 'Critical', color: 'text-status-error',   dot: 'bg-status-error'   },
   high:     { label: 'High',     color: 'text-status-warning', dot: 'bg-status-warning' },
@@ -236,6 +243,17 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   }, [tasks, epics, selection])
 
   const byStatus = (s: Status) => visibleTasks.filter(t => t.status === s)
+
+  // Derive columns dynamically: all statuses present in the data, ordered by
+  // STATUS_ORDER, with any unknowns appended alphabetically at the end.
+  const columns = useMemo(() => {
+    const present = new Set(visibleTasks.map(t => t.status))
+    // Always show core workflow columns even when empty
+    STATUS_ORDER.slice(0, 4).forEach(s => present.add(s))
+    const ordered = STATUS_ORDER.filter(s => present.has(s))
+    const extras = [...present].filter(s => !STATUS_ORDER.includes(s)).sort()
+    return [...ordered, ...extras]
+  }, [visibleTasks])
 
   // ── Feature id when creating a task ───────────────────────────────────────
 
@@ -591,10 +609,12 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
 
         {/* Board */}
         <div className="flex gap-3 flex-1 overflow-x-auto overflow-y-hidden">
-          {COLUMNS.map(col => (
-            <div key={col} className={`flex-shrink-0 w-60 flex flex-col rounded-lg border border-border-subtle bg-bg-card border-t-2 ${colTopBorder[col]}`}>
+          {columns.map(col => {
+            const cfg = STATUS_CONFIG[col] ?? { label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), border: 'border-t-border-visible' }
+            return (
+            <div key={col} className={`flex-shrink-0 w-60 flex flex-col rounded-lg border border-border-subtle bg-bg-card border-t-2 ${cfg.border}`}>
               <div className="flex items-center justify-between px-3 py-2.5 border-b border-border-subtle">
-                <span className="text-xs font-semibold text-text-secondary">{colLabel[col]}</span>
+                <span className="text-xs font-semibold text-text-secondary">{cfg.label}</span>
                 <span className="text-xs text-text-muted bg-bg-raised px-1.5 py-0.5 rounded">{byStatus(col).length}</span>
               </div>
               <div className="flex-1 overflow-y-auto p-2 space-y-2">
@@ -642,7 +662,8 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
                 )}
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 
@@ -780,14 +801,17 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
             <div>
               <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Status</label>
               <div className="grid grid-cols-2 gap-1.5">
-                {COLUMNS.map(col => (
+                {columns.map(col => {
+                  const cfg = STATUS_CONFIG[col] ?? { label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), border: 'border-t-border-visible' }
+                  return (
                   <button key={col} onClick={() => updateTask(panel.task.id, { status: col })}
                     className={`px-2 py-1.5 rounded text-[10px] font-medium transition-colors ${
                       panel.task.status === col ? 'bg-accent text-white' : 'bg-bg-raised text-text-muted hover:text-text-primary hover:bg-bg-card border border-border-subtle'
                     }`}>
-                    {colLabel[col]}
+                    {cfg.label}
                   </button>
-                ))}
+                  )
+                })}
               </div>
             </div>
             <div>
