@@ -70,6 +70,21 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
     },
   },
   {
+    name: 'orion_update_agent',
+    description: 'Update an existing agent\'s role, description, system prompt, or LLM. Use this to improve agents based on observed performance — sharpen their prompts, fix their role description, or reassign their LLM.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id:     { type: 'string', description: 'Agent ID to update' },
+        role:         { type: 'string', description: 'Updated one-line role description' },
+        description:  { type: 'string', description: 'Updated longer description' },
+        systemPrompt: { type: 'string', description: 'Updated full system prompt' },
+        llm:          { type: 'string', description: 'Updated LLM (e.g. ext:<id>)' },
+      },
+      required: ['agent_id'],
+    },
+  },
+  {
     name: 'orion_archive_agent',
     description: 'Soft-archive a transient agent after its work is done. Never deletes — preserves audit trail (SOC2 [A-001]).',
     inputSchema: {
@@ -549,6 +564,38 @@ async function handleSendMessage(argsRaw: string, actorId?: string): Promise<str
   return `Message posted to room "${room.name}" (${room_id})`
 }
 
+async function handleUpdateAgent(argsRaw: string, actorId?: string): Promise<string> {
+  const spec = JSON.parse(argsRaw || '{}') as {
+    agent_id?: string
+    role?: string
+    description?: string
+    systemPrompt?: string
+    llm?: string
+  }
+  if (!spec.agent_id) return 'Error: agent_id is required'
+
+  const existing = await prisma.agent.findUnique({
+    where:  { id: spec.agent_id },
+    select: { id: true, name: true, metadata: true },
+  })
+  if (!existing) return `Error: agent ${spec.agent_id} not found`
+
+  const existingMeta = (existing.metadata ?? {}) as Record<string, unknown>
+  const existingCfg  = (existingMeta.contextConfig ?? {}) as Record<string, unknown>
+
+  const updatedMeta: Record<string, unknown> = { ...existingMeta }
+  if (spec.systemPrompt !== undefined) updatedMeta.systemPrompt = spec.systemPrompt
+  if (spec.llm !== undefined) updatedMeta.contextConfig = { ...existingCfg, llm: spec.llm }
+
+  const data: Record<string, unknown> = { metadata: updatedMeta }
+  if (spec.role        !== undefined) data.role        = spec.role
+  if (spec.description !== undefined) data.description = spec.description
+
+  await prisma.agent.update({ where: { id: spec.agent_id }, data })
+  await auditLog(actorId, `✏️ Updated agent **${existing.name}** (${spec.agent_id})`)
+  return `Updated agent "${existing.name}" (${spec.agent_id})`
+}
+
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
 /**
@@ -565,6 +612,7 @@ export async function executeManagedTool(name: string, argsRaw: string, actorId?
       case 'orion_list_tasks':    return await handleListTasks(argsRaw)
       case 'orion_assign_task':   return await handleAssignTask(argsRaw, actorId)
       case 'orion_create_agent':  return await handleCreateAgent(argsRaw, actorId)
+      case 'orion_update_agent':  return await handleUpdateAgent(argsRaw, actorId)
       case 'orion_archive_agent': return await handleArchiveAgent(argsRaw, actorId)
       case 'orion_escalate_task':   return await handleEscalateTask(argsRaw, actorId)
       case 'orion_get_task_events': return await handleGetTaskEvents(argsRaw)

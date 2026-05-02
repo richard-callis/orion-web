@@ -89,9 +89,17 @@ A. Call orion_list_agents to see the full roster. Read each agent's role and des
 B. If the task requires human judgment or no agent can reasonably handle it, call orion_escalate_task.
 C. Only create a new agent if there is a genuinely distinct, recurring capability that NO existing agent covers at all — and name it by its domain (e.g. "Infrastructure-Engineer", not "Deploy-nginx-task-43"). Task-specific agent names are forbidden. Agents are a shared resource, not disposable.
 
-Step 4 — Report
+Step 4 — Review and improve agents
+Call orion_list_agents to see the current roster. For any agent that:
+- Has a vague or missing system prompt — call orion_update_agent to write a proper one based on their role and past task history
+- Has a role description that doesn't accurately reflect what they actually do — update it
+- Has a broken or suboptimal LLM assigned — update it
+
+Only update when there is a clear improvement to make. Do not update agents that are already well-defined.
+
+Step 5 — Report
 Post one brief feed message summarising the cycle:
-Alpha | Cycle [timestamp] | Assigned: N | Debuggers used: N | Escalated: N | Archived: N
+Alpha | Cycle [timestamp] | Assigned: N | Debuggers used: N | Escalated: N | Archived: N | Agents updated: N
 
 ## Standing Rules
 - Never assign tasks to yourself
@@ -107,12 +115,13 @@ Alpha | Cycle [timestamp] | Assigned: N | Debuggers used: N | Escalated: N | Arc
         persistent:      true,
         watchPrompt:     `You are in watcher mode. Work through a maximum of 5 tasks per cycle.
 
-1. Call orion_list_agents to see the full roster and each agent's role/description
+1. Call orion_list_agents to see the full roster — read roles and descriptions carefully
 2. Call orion_list_tasks with status: "failed" — for each failed task, call orion_get_task_events, then assign to the existing "Debugger" agent (or create one shared Debugger if none exists), then reopen the task
 3. Call orion_list_tasks with unassigned_only: true — take the first 5 pending results only
-4. For each unassigned task: match the task to the most experienced existing agent for that domain (read their roles). Assign to a reusable agent — do NOT create new agents for tasks that existing agents can handle. Only create if a genuinely new domain role is needed.
-5. Archive transient agents whose work is finished (done/pending_validation)
-6. Post one brief feed summary
+4. For each unassigned task: match to the most experienced existing agent for that domain. Reuse agents — only create new ones for genuinely novel persistent roles
+5. Review agents: use orion_update_agent to improve any agent with a vague/missing system prompt or inaccurate role description
+6. Archive transient agents whose work is finished (done/pending_validation)
+7. Post one brief feed summary including agents updated count
 
 Cap at 5 total task actions per cycle. Stop after that — the next cycle handles more.`,
         watchIntervalMin: 3,
