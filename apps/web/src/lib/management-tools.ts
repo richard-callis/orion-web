@@ -58,16 +58,15 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        name:        { type: 'string', description: 'Unique agent name (cannot be a reserved name: human, user, system, admin)' },
-        role:        { type: 'string', description: 'One-line role description' },
-        type:        { type: 'string', description: 'Agent type for AI agents (default: claude). Do NOT use "human" — that is reserved for human users.' },
-        description: { type: 'string', description: 'Optional longer description' },
-        metadata: {
-          type: 'object',
-          description: 'Optional metadata including systemPrompt and contextConfig. E.g. {"systemPrompt":"...","contextConfig":{"persistent":false}}',
-        },
+        name:         { type: 'string', description: 'Unique agent name (cannot be a reserved name: human, user, system, admin)' },
+        role:         { type: 'string', description: 'One-line role description' },
+        systemPrompt: { type: 'string', description: 'REQUIRED — full system prompt defining the agent\'s personality, responsibilities, and operating rules. Must be specific and actionable.' },
+        type:         { type: 'string', description: 'Agent type for AI agents (default: claude). Do NOT use "human" — that is reserved for human users.' },
+        description:  { type: 'string', description: 'Optional longer description' },
+        persistent:   { type: 'boolean', description: 'true = persistent agent that stays in the roster; false = transient, will be archived when its work is done (default: false)' },
+        llm:          { type: 'string', description: 'LLM to use (e.g. ext:<id>). Omit to use the system default.' },
       },
-      required: ['name', 'role'],
+      required: ['name', 'role', 'systemPrompt'],
     },
   },
   {
@@ -278,13 +277,18 @@ async function handleCreateAgent(argsRaw: string, actorId?: string): Promise<str
   const spec = JSON.parse(argsRaw || '{}') as {
     name?: string
     role?: string
+    systemPrompt?: string
     type?: string
     description?: string
+    persistent?: boolean
+    llm?: string
+    // legacy support — metadata.systemPrompt and metadata.contextConfig still accepted
     metadata?: Record<string, unknown>
   }
 
-  if (!spec.name?.trim()) return 'Error: name is required'
-  if (!spec.role?.trim()) return 'Error: role is required'
+  if (!spec.name?.trim())         return 'Error: name is required'
+  if (!spec.role?.trim())         return 'Error: role is required'
+  if (!spec.systemPrompt?.trim()) return 'Error: systemPrompt is required — agents without a system prompt will not behave correctly'
 
   // SOC2 [INPUT-001]: reserved name guard
   if (RESERVED_AGENT_NAMES.includes(spec.name.toLowerCase())) {
@@ -302,12 +306,15 @@ async function handleCreateAgent(argsRaw: string, actorId?: string): Promise<str
     return JSON.stringify({ id: existingByName.id, name: existingByName.name, role: existingByName.role, note: 'Agent already exists — returning existing record' }, null, 2)
   }
 
-  // Resolve default LLM so created agents don't fall back to Claude Code SDK
-  const defaultLlm = await getDefaultModelId()
-  const incomingMeta   = (spec.metadata ?? {}) as Record<string, unknown>
-  const incomingCfg    = (incomingMeta.contextConfig ?? {}) as Record<string, unknown>
-  const contextConfig  = { ...incomingCfg, llm: incomingCfg.llm ?? defaultLlm }
-  const mergedMetadata = { ...incomingMeta, contextConfig }
+  // Resolve default LLM — top-level llm field takes precedence, then metadata.contextConfig.llm, then system default
+  const defaultLlm     = await getDefaultModelId()
+  const legacyMeta     = (spec.metadata ?? {}) as Record<string, unknown>
+  const legacyCfg      = (legacyMeta.contextConfig ?? {}) as Record<string, unknown>
+  const resolvedLlm    = spec.llm ?? (legacyCfg.llm as string | undefined) ?? defaultLlm
+  // Top-level systemPrompt takes precedence over legacy metadata.systemPrompt
+  const resolvedPrompt = spec.systemPrompt ?? (legacyMeta.systemPrompt as string | undefined) ?? ''
+  const contextConfig  = { ...legacyCfg, llm: resolvedLlm, persistent: spec.persistent ?? legacyCfg.persistent ?? false }
+  const metadata       = { ...legacyMeta, systemPrompt: resolvedPrompt, contextConfig }
 
   const created = await prisma.agent.create({
     data: {
@@ -315,7 +322,7 @@ async function handleCreateAgent(argsRaw: string, actorId?: string): Promise<str
       type:        (spec.type && spec.type !== 'human') ? spec.type : 'claude',
       role:        spec.role ?? null,
       description: spec.description ?? null,
-      metadata:    mergedMetadata as any,
+      metadata:    metadata as any,
     },
   })
   const msg = `🤖 Created agent **${created.name}** (\`${created.id}\`) — ${created.role ?? 'no role'}`
