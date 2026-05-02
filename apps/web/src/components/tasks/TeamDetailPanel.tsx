@@ -39,7 +39,8 @@ interface AgentForm {
 const DEFAULT_MODEL = 'claude:claude-sonnet-4-6'
 const emptyForm: AgentForm = { name: '', modelId: DEFAULT_MODEL, role: '', description: '', systemPrompt: '', persistent: false, watchPrompt: '', watchIntervalMin: 60, tools: false }
 
-function modelIdToType(modelId: string): string {
+function modelIdToType(modelId: unknown): string {
+  if (typeof modelId !== 'string') return 'custom'
   if (modelId === 'human')             return 'human'
   if (modelId.startsWith('claude:'))   return 'claude'
   if (modelId.startsWith('gemini:'))   return 'custom'
@@ -47,8 +48,8 @@ function modelIdToType(modelId: string): string {
   return 'custom'
 }
 
-function modelDisplayLabel(llm: string | undefined, models: Array<{id: string; name: string}>): string {
-  if (!llm) return 'AI agent'
+function modelDisplayLabel(llm: unknown, models: Array<{id: string; name: string}>): string {
+  if (!llm || typeof llm !== 'string') return 'AI agent'
   const found = models.find(m => m.id === llm)
   if (found) return found.name
   if (llm.startsWith('claude:')) return `Claude · ${llm.slice('claude:'.length).replace('claude-', '').replace(/-\d{8}/, '')}`
@@ -98,7 +99,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
   const openModal = (agent: Agent) => {
     const meta = agent.metadata as Record<string, unknown> | null
     const contextConfig = meta?.contextConfig as Record<string, string | boolean | number> | undefined
-    const llm = (contextConfig?.llm as string | undefined) ?? (agent.type !== 'human' ? DEFAULT_MODEL : 'human')
+    const llm = (typeof contextConfig?.llm === 'string' ? contextConfig.llm : undefined) ?? (agent.type !== 'human' ? DEFAULT_MODEL : 'human')
     setEditForm({
       name:             agent.name,
       modelId:          llm,
