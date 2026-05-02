@@ -100,17 +100,26 @@ export async function PATCH(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
+  const VALID_TYPES = ['general', 'ops', 'planning', 'feature', 'task']
   const updated = await prisma.chatRoom.update({
     where: { id },
     data: {
-      name: body.name ? String(body.name) : undefined,
+      name:        body.name ? String(body.name) : undefined,
       description: body.description !== undefined ? String(body.description) : undefined,
+      type:        body.type && VALID_TYPES.includes(String(body.type)) ? String(body.type) : undefined,
     },
   })
 
-  await prisma.chatMessage.create({
-    data: { roomId: room.id, senderType: 'system', content: `Room renamed to "${updated.name}"` },
-  })
+  const systemMsg = body.name && body.name !== room.name
+    ? `Room renamed to "${updated.name}"`
+    : body.type && body.type !== room.type
+    ? `Room type changed to "${updated.type}"`
+    : null
+  if (systemMsg) {
+    await prisma.chatMessage.create({
+      data: { roomId: room.id, senderType: 'system', content: systemMsg },
+    })
+  }
 
   return NextResponse.json({ id: updated.id, name: updated.name, description: updated.description, updatedAt: updated.updatedAt.toISOString() })
 }

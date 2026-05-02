@@ -51,6 +51,7 @@ interface Props {
   onCreateNew?: () => void
   onDelete?: (prefixedId: string) => void
   onRename?: (id: string, title: string) => void
+  onRoomUpdate?: (id: string, patch: { name?: string; type?: string }) => void
   // AI data
   convos?: Conversation[]
   planningConvos?: PlanningConvo[]
@@ -65,14 +66,17 @@ interface Props {
 }
 
 const TYPE_COLORS: Record<string, string> = {
-  task: 'bg-blue-500/20 text-blue-400',
-  feature: 'bg-purple-500/20 text-purple-400',
-  general: 'bg-gray-500/20 text-gray-400',
-  ops: 'bg-orange-500/20 text-orange-400',
+  task:     'bg-blue-500/20 text-blue-400',
+  feature:  'bg-purple-500/20 text-purple-400',
+  general:  'bg-gray-500/20 text-gray-400',
+  ops:      'bg-orange-500/20 text-orange-400',
+  planning: 'bg-teal-500/20 text-teal-400',
 }
 
+const ROOM_TYPES = ['general', 'ops', 'planning', 'feature', 'task'] as const
+
 export function MessageList({
-  view, onSelect, activeId, onMobileSelect, onCreateNew, onDelete, onRename,
+  view, onSelect, activeId, onMobileSelect, onCreateNew, onDelete, onRename, onRoomUpdate,
   convos = [], planningConvos = [], agentConvos = [], debugConvos = [],
   epics = [], agents = [],
   rooms = [], roomFilter, onRoomFilterChange,
@@ -185,19 +189,26 @@ export function MessageList({
 
   const [editingRoomId, setEditingRoomId] = useState<string | null>(null)
   const [editRoomValue, setEditRoomValue] = useState('')
+  const [editRoomType, setEditRoomType] = useState('')
   const roomInputRef = useRef<HTMLInputElement>(null)
 
   const startRoomEdit = (e: React.MouseEvent, room: Room) => {
     e.stopPropagation()
     setEditingRoomId(room.id)
     setEditRoomValue(room.name)
+    setEditRoomType(room.type)
     setTimeout(() => roomInputRef.current?.focus(), 0)
   }
 
-  const commitRoomEdit = async (id: string) => {
-    if (editRoomValue.trim()) {
-      await fetch(`/api/chatrooms/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: editRoomValue.trim() }) })
-      onRename?.(id, editRoomValue.trim())
+  const commitRoomEdit = async (id: string, currentRoom?: Room) => {
+    const name = editRoomValue.trim()
+    const payload: Record<string, string> = {}
+    if (name && name !== currentRoom?.name) payload.name = name
+    if (currentRoom && editRoomType !== currentRoom.type) payload.type = editRoomType
+    if (Object.keys(payload).length > 0) {
+      await fetch(`/api/chatrooms/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      onRoomUpdate?.(id, payload)
+      if (payload.name) onRename?.(id, payload.name)
     }
     setEditingRoomId(null)
   }
@@ -218,13 +229,23 @@ export function MessageList({
       <div className="flex items-center gap-1.5 px-3 py-2">
         <Hash size={11} className="text-text-muted flex-shrink-0" />
         {editingRoomId === room.id ? (
-          <div className="flex items-center gap-1 flex-1 min-w-0" onClick={e => e.stopPropagation()}>
-            <input ref={roomInputRef} value={editRoomValue} onChange={e => setEditRoomValue(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') commitRoomEdit(room.id); if (e.key === 'Escape') setEditingRoomId(null) }}
-              onBlur={() => commitRoomEdit(room.id)}
-              className="flex-1 min-w-0 text-xs bg-bg-raised border border-accent rounded px-1 py-0.5 text-text-primary focus:outline-none" />
-            <button onClick={() => commitRoomEdit(room.id)} className="text-green-400 hover:text-green-300"><Check size={11} /></button>
-            <button onClick={() => setEditingRoomId(null)} className="text-text-muted hover:text-red-400"><X size={11} /></button>
+          <div className="flex flex-col gap-1 flex-1 min-w-0" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-1">
+              <input ref={roomInputRef} value={editRoomValue} onChange={e => setEditRoomValue(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') commitRoomEdit(room.id, room); if (e.key === 'Escape') setEditingRoomId(null) }}
+                className="flex-1 min-w-0 text-xs bg-bg-raised border border-accent rounded px-1 py-0.5 text-text-primary focus:outline-none" />
+              <button onClick={() => commitRoomEdit(room.id, room)} className="text-green-400 hover:text-green-300 flex-shrink-0"><Check size={11} /></button>
+              <button onClick={() => setEditingRoomId(null)} className="text-text-muted hover:text-red-400 flex-shrink-0"><X size={11} /></button>
+            </div>
+            <select
+              value={editRoomType}
+              onChange={e => setEditRoomType(e.target.value)}
+              className="text-[10px] bg-bg-raised border border-border-subtle rounded px-1 py-0.5 text-text-primary focus:outline-none focus:border-accent"
+            >
+              {ROOM_TYPES.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
           </div>
         ) : (
           <>
@@ -237,7 +258,7 @@ export function MessageList({
           </>
         )}
       </div>
-      {!editingRoomId && (
+      {editingRoomId !== room.id && (
         <div className="flex items-center gap-2 px-3 pb-1.5 ml-4">
           <span className="text-[10px] text-text-muted">{room._count.messages} msgs</span>
           <span className="text-[10px] text-text-muted flex items-center gap-0.5"><Users size={9} /> {room._count.members}</span>
@@ -452,6 +473,8 @@ export function MessageList({
       .filter(([fId]) => !allKnownFeatureIds.has(fId))
       .flatMap(([, rs]) => rs)
 
+    const activeFilter = effectiveRoomFilter
+
     return (
       <>
         {/* Header */}
@@ -462,8 +485,30 @@ export function MessageList({
           </button>
         </div>
 
+        {/* Type filter chips */}
+        <div className="flex flex-wrap gap-1 px-3 py-2 border-b border-border-subtle">
+          <button
+            onClick={() => setRoomFilter('')}
+            className={`px-2 py-0.5 rounded-full text-[10px] transition-colors ${!activeFilter ? 'bg-accent/20 text-accent' : 'text-text-muted hover:text-text-primary hover:bg-bg-raised'}`}
+          >all</button>
+          {ROOM_TYPES.map(t => (
+            <button
+              key={t}
+              onClick={() => setRoomFilter(activeFilter === t ? '' : t)}
+              className={`px-2 py-0.5 rounded-full text-[10px] transition-colors ${activeFilter === t ? `${TYPE_COLORS[t]} ring-1 ring-current` : 'text-text-muted hover:text-text-primary hover:bg-bg-raised'}`}
+            >{t}</button>
+          ))}
+        </div>
+
         {rooms.length === 0 ? (
           <div className="p-4 text-center text-text-muted text-xs">No chat rooms yet.</div>
+        ) : activeFilter ? (
+          /* Flat filtered list */
+          <>
+            {filteredRooms.length === 0 ? (
+              <div className="p-4 text-center text-text-muted text-xs">No {activeFilter} rooms.</div>
+            ) : filteredRooms.map(r => renderRoom(r))}
+          </>
         ) : (
           <>
             {/* Epic hierarchy */}
@@ -528,6 +573,7 @@ export function MessageList({
       </>
     )
   }
+
 
   // ── Main render ───────────────────────────────────────────────
   return (
