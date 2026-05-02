@@ -345,6 +345,15 @@ export const CreateBugSchema = z.object({
   assignedUserId: z.string().max(100).optional(),
 })
 
+export const UpdateBugSchema = z.object({
+  title:          z.string().min(1).max(500).optional(),
+  description:    z.string().max(10000).optional(),
+  severity:       z.enum(['low', 'medium', 'high', 'critical']).optional(),
+  status:         z.enum(['open', 'in_progress', 'resolved', 'wont_fix']).optional(),
+  area:           z.string().max(100).nullable().optional(),
+  assignedUserId: z.string().nullable().optional(),
+})
+
 // ── API Key Schemas ─────────────────────────────────────────────────────────────
 
 export const CreateApiKeySchema = z.object({
