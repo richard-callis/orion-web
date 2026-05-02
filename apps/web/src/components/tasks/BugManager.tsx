@@ -1,7 +1,9 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import { Plus, X, Trash2, ChevronRight, User } from 'lucide-react'
+import { Plus, Trash2, ChevronRight, User } from 'lucide-react'
 import type { Bug, TaskUser } from '@/types/tasks'
+import { KanbanBoard } from '../ui/KanbanBoard'
+import { CreateEntityModal } from '../ui/CreateEntityModal'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -163,62 +165,54 @@ export function BugManager({ initialBugs, users }: Props) {
           </button>
         </div>
 
-        {/* Columns */}
-        <div className="flex gap-3 overflow-x-auto overflow-y-hidden flex-1">
-          {STATUS_COLUMNS.map(col => {
-            const colBugs = byStatus(col)
-            return (
-              <div key={col} className={`flex-shrink-0 w-52 flex flex-col rounded-lg border border-border-subtle border-t-2 ${statusTopBorder[col]} bg-bg-sidebar overflow-hidden`}>
-                <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle">
-                  <span className="text-xs font-medium text-text-secondary">{statusLabel[col]}</span>
-                  <span className="text-[10px] text-text-muted">{colBugs.length}</span>
+        <KanbanBoard
+          columns={STATUS_COLUMNS.map(col => ({
+            key: col,
+            label: statusLabel[col],
+            topBorderClass: statusTopBorder[col],
+            items: byStatus(col),
+            emptyText: 'No bugs',
+            renderItem: (bug: Bug) => {
+              const sev = severityConfig[bug.severity] ?? severityConfig.medium
+              const isSelected = selectedBug?.id === bug.id
+              return (
+                <div
+                  onClick={() => {
+                    if (isSelected) {
+                      setSelectedBug(null)
+                      setIsDetailModalOpen(false)
+                    } else {
+                      setSelectedBug(bug)
+                      setIsDetailModalOpen(true)
+                    }
+                  }}
+                  className={`p-2.5 rounded-lg border cursor-pointer transition-colors ${
+                    isSelected
+                      ? 'border-accent bg-accent/10'
+                      : 'border-border-subtle bg-bg-raised hover:border-border-visible'
+                  }`}
+                >
+                  <p className="text-xs text-text-primary leading-snug line-clamp-2 mb-1.5">{bug.title}</p>
+                  <div className="flex items-center justify-between">
+                    <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border ${sev.bg} ${sev.color}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${sev.dot}`} />
+                      {sev.label}
+                    </span>
+                    {bug.area && (
+                      <span className="text-[10px] text-text-muted truncate max-w-[70px]">{bug.area}</span>
+                    )}
+                  </div>
+                  {bug.assignedUser && (
+                    <div className="flex items-center gap-1 mt-1.5">
+                      <User size={9} className="text-text-muted" />
+                      <span className="text-[10px] text-text-muted truncate">{bug.assignedUser.name ?? bug.assignedUser.username}</span>
+                    </div>
+                  )}
                 </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                  {colBugs.map(bug => {
-                    const sev = severityConfig[bug.severity] ?? severityConfig.medium
-                    const isSelected = selectedBug?.id === bug.id
-                    return (
-                      <div
-                        key={bug.id}
-                        onClick={() => {
-                          if (isSelected) {
-                            setSelectedBug(null)
-                            setIsDetailModalOpen(false)
-                          } else {
-                            setSelectedBug(bug)
-                            setIsDetailModalOpen(true)
-                          }
-                        }}
-                        className={`p-2.5 rounded-lg border cursor-pointer transition-colors ${
-                          isSelected
-                            ? 'border-accent bg-accent/10'
-                            : 'border-border-subtle bg-bg-raised hover:border-border-visible'
-                        }`}
-                      >
-                        <p className="text-xs text-text-primary leading-snug line-clamp-2 mb-1.5">{bug.title}</p>
-                        <div className="flex items-center justify-between">
-                          <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border ${sev.bg} ${sev.color}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${sev.dot}`} />
-                            {sev.label}
-                          </span>
-                          {bug.area && (
-                            <span className="text-[10px] text-text-muted truncate max-w-[70px]">{bug.area}</span>
-                          )}
-                        </div>
-                        {bug.assignedUser && (
-                          <div className="flex items-center gap-1 mt-1.5">
-                            <User size={9} className="text-text-muted" />
-                            <span className="text-[10px] text-text-muted truncate">{bug.assignedUser.name ?? bug.assignedUser.username}</span>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )
-          })}
-        </div>
+              )
+            },
+          }))}
+        />
       </div>
 
       {/* ── Detail panel ────────────────────────────────────────────────────── */}
@@ -340,81 +334,60 @@ export function BugManager({ initialBugs, users }: Props) {
 
       {/* ── Create modal ─────────────────────────────────────────────────────── */}
       {modal && (
-        <>
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" onClick={() => setModal(false)} />
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl w-full max-w-md">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
-                <h2 className="text-sm font-semibold text-text-primary">Report a Bug</h2>
-                <button onClick={() => setModal(false)} className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors">
-                  <X size={16} />
-                </button>
-              </div>
-              <div className="p-5 space-y-4">
-                <div className="space-y-1">
-                  <label className="text-xs text-text-secondary">Title *</label>
-                  <input
-                    value={form.title}
-                    onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
-                    onKeyDown={e => e.key === 'Enter' && createBug()}
-                    placeholder="Short description of the bug"
-                    className="w-full text-sm bg-bg-raised border border-border-visible rounded px-3 py-2 text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
-                    autoFocus
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-xs text-text-secondary">Severity</label>
-                    <select
-                      value={form.severity}
-                      onChange={e => setForm(f => ({ ...f, severity: e.target.value }))}
-                      className="w-full text-sm bg-bg-raised border border-border-visible rounded px-3 py-2 text-text-primary focus:outline-none focus:border-accent"
-                    >
-                      <option value="critical">Critical</option>
-                      <option value="high">High</option>
-                      <option value="medium">Medium</option>
-                      <option value="low">Low</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs text-text-secondary">Area</label>
-                    <input
-                      value={form.area}
-                      onChange={e => setForm(f => ({ ...f, area: e.target.value }))}
-                      placeholder="e.g. Auth, Traefik"
-                      className="w-full text-sm bg-bg-raised border border-border-visible rounded px-3 py-2 text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-text-secondary">Description</label>
-                  <textarea
-                    value={form.description}
-                    onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-                    rows={4}
-                    placeholder="Steps to reproduce, expected vs actual behaviour…"
-                    className="w-full text-sm bg-bg-raised border border-border-visible rounded px-3 py-2 text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none"
-                  />
-                </div>
-              </div>
-              <div className="flex justify-end gap-2 px-5 py-4 border-t border-border-subtle">
-                <button
-                  onClick={() => setModal(false)}
-                  className="px-4 py-2 rounded text-sm text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={createBug}
-                  disabled={!form.title.trim() || saving}
-                  className="px-4 py-2 rounded bg-accent text-white text-sm font-medium hover:bg-accent/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  {saving ? 'Reporting…' : 'Report Bug'}
-                </button>
-              </div>
+        <CreateEntityModal
+          title="Report a Bug"
+          onClose={() => setModal(false)}
+          onSubmit={createBug}
+          submitLabel="Report Bug"
+          submitting={saving}
+          submitDisabled={!form.title.trim()}
+        >
+          <div className="space-y-1">
+            <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title *</label>
+            <input
+              value={form.title}
+              onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+              onKeyDown={e => e.key === 'Enter' && createBug()}
+              placeholder="Short description of the bug"
+              className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+              autoFocus
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Severity</label>
+              <select
+                value={form.severity}
+                onChange={e => setForm(f => ({ ...f, severity: e.target.value }))}
+                className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+              >
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Area</label>
+              <input
+                value={form.area}
+                onChange={e => setForm(f => ({ ...f, area: e.target.value }))}
+                placeholder="e.g. Auth, Traefik"
+                className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+              />
             </div>
           </div>
-        </>
+          <div>
+            <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Description</label>
+            <textarea
+              value={form.description}
+              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              rows={4}
+              placeholder="Steps to reproduce, expected vs actual behaviour…"
+              className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none"
+            />
+          </div>
+        </CreateEntityModal>
       )}
     </div>
   )
