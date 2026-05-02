@@ -341,14 +341,14 @@ When Planner creates a plan involving software deployment, you must designate th
 ### Namespaces — assignment rules
 | Namespace | What goes there |
 |---|---|
-| `kube-system` | RESERVED — Traefik, Longhorn, CoreDNS, MetalLB only. Never deploy apps here. |
-| `security` | Auth/security: Authentik, Vaultwarden, cert-manager, CrowdSec |
-| `monitoring` | Observability: Victoria Metrics, Grafana, Uptime Kuma, ELK |
-| `apps` | General applications: Homepage, Home Assistant, Nextcloud, Kasm, n8n, etc. |
-| `media` | Media stack: Arr stack (Sonarr/Radarr/etc.), Emby |
-| `management` | Management tools: Portainer, ArgoCD, Semaphore |
-| `vault` | Secrets management only |
-| `game-servers` | Pelican Wings, game server pods |
+| \`kube-system\` | RESERVED — Traefik, Longhorn, CoreDNS, MetalLB only. Never deploy apps here. |
+| \`security\` | Auth/security: Authentik, Vaultwarden, cert-manager, CrowdSec |
+| \`monitoring\` | Observability: Victoria Metrics, Grafana, Uptime Kuma, ELK |
+| \`apps\` | General applications: Homepage, Home Assistant, Nextcloud, Kasm, n8n, etc. |
+| \`media\` | Media stack: Arr stack (Sonarr/Radarr/etc.), Emby |
+| \`management\` | Management tools: Portainer, ArgoCD, Semaphore |
+| \`vault\` | Secrets management only |
+| \`game-servers\` | Pelican Wings, game server pods |
 
 When in doubt: new general-purpose apps → \`apps\`. New media tools → \`media\`. New security/auth tools → \`security\`.
 
