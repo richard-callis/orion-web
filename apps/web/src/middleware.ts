@@ -39,6 +39,10 @@ const RATE_LIMITS: Record<string, [number, number]> = {
   // Tool generation — moderate limit (cost control)
   '/api/tools/generate': [20, 15 * 60 * 1000],
 
+  // UI polling endpoints — high limit (browser polls every few seconds)
+  '/api/jobs': [2000, 15 * 60 * 1000],
+  '/api/agents': [2000, 15 * 60 * 1000],
+
   // Default — global limit
   'default': [100, 15 * 60 * 1000],
 }

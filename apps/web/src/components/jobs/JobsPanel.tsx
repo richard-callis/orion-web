@@ -260,8 +260,10 @@ export function JobsPanel() {
 
   const fetchJobs = useCallback(async () => {
     try {
-      const data: BackgroundJob[] = await fetch('/api/jobs').then(r => r.json())
-      setJobs(data)
+      const res  = await fetch('/api/jobs')
+      if (!res.ok) return
+      const data: unknown = await res.json()
+      if (Array.isArray(data)) setJobs(data as BackgroundJob[])
     } catch { /* silent */ }
   }, [])
 
