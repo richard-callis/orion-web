@@ -232,18 +232,25 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   // ── Filtered tasks ─────────────────────────────────────────────────────────
 
   const visibleTasks = useMemo(() => {
-    switch (selection.kind) {
-      case 'all': return tasks
-      case 'unassigned': return tasks.filter(t => !t.featureId)
-      case 'epic': {
-        const featureIds = new Set(
-          epics.find(e => e.id === selection.epicId)?.features.map(f => f.id) ?? []
-        )
-        return tasks.filter(t => t.featureId && featureIds.has(t.featureId))
+    let base: Task[]
+    if (view === 'my-tasks') {
+      base = currentUserId ? tasks.filter(t => t.assignedUserId === currentUserId) : []
+    } else {
+      switch (selection.kind) {
+        case 'all': base = tasks; break
+        case 'unassigned': base = tasks.filter(t => !t.featureId); break
+        case 'epic': {
+          const featureIds = new Set(
+            epics.find(e => e.id === selection.epicId)?.features.map(f => f.id) ?? []
+          )
+          base = tasks.filter(t => t.featureId && featureIds.has(t.featureId)); break
+        }
+        case 'feature': base = tasks.filter(t => t.featureId === selection.featureId); break
+        default: base = tasks
       }
-      case 'feature': return tasks.filter(t => t.featureId === selection.featureId)
     }
-  }, [tasks, epics, selection])
+    return base
+  }, [tasks, epics, selection, view, currentUserId])
 
   const byStatus = (s: Status) => visibleTasks.filter(t => t.status === s)
 
@@ -530,23 +537,8 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
         </div>
       )}
 
-      {/* My Tasks view */}
-      {view === 'my-tasks' && (
-        <MyTasksView
-          tasks={tasks}
-          currentUserId={currentUserId}
-          agents={agents}
-          users={users}
-          onTaskClick={task => setPanel({ kind: 'task', task })}
-          onStatusChange={async (taskId, status) => {
-            await fetch(`/api/tasks/${taskId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
-            setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status } : t))
-          }}
-        />
-      )}
-
-      {/* Tasks view */}
-      {view === 'tasks' && <div className="flex-1 flex overflow-hidden">
+      {/* Tasks / My Tasks view — same Kanban layout, My Tasks filters to current user */}
+      {(view === 'tasks' || view === 'my-tasks') && <div className="flex-1 flex overflow-hidden">
 
       {/* Left: Epic tree — desktop only */}
       <div className="hidden md:flex">
@@ -598,17 +590,18 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
               <Menu size={16} />
             </button>
             <h1 className="text-sm font-semibold text-text-secondary">
-              {selection.kind === 'all'        && `All Tasks (${tasks.length})`}
-              {selection.kind === 'unassigned' && `Unassigned Tasks (${visibleTasks.length})`}
-              {selection.kind === 'epic'       && `${epics.find(e => e.id === selection.epicId)?.title ?? 'Epic'} (${visibleTasks.length})`}
-              {selection.kind === 'feature'    && (() => {
+              {view === 'my-tasks' && `My Tasks (${visibleTasks.length})`}
+              {view === 'tasks' && selection.kind === 'all'        && `All Tasks (${tasks.length})`}
+              {view === 'tasks' && selection.kind === 'unassigned' && `Unassigned Tasks (${visibleTasks.length})`}
+              {view === 'tasks' && selection.kind === 'epic'       && `${epics.find(e => e.id === selection.epicId)?.title ?? 'Epic'} (${visibleTasks.length})`}
+              {view === 'tasks' && selection.kind === 'feature'    && (() => {
                 const epic = epics.find(e => e.id === (selection as { epicId: string }).epicId)
                 const feat = epic?.features.find(f => f.id === (selection as { featureId: string }).featureId)
                 return `${feat?.title ?? 'Feature'} (${visibleTasks.length})`
               })()}
             </h1>
-            {/* Show epic/feature detail button */}
-            {selection.kind === 'epic' && (
+            {/* Show epic/feature detail button — tasks view only */}
+            {view === 'tasks' && selection.kind === 'epic' && (
               <button
                 onClick={() => {
                   const epic = epics.find(e => e.id === (selection as { epicId: string }).epicId)
@@ -619,7 +612,7 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
                 View Epic →
               </button>
             )}
-            {selection.kind === 'feature' && (
+            {view === 'tasks' && selection.kind === 'feature' && (
               <button
                 onClick={() => {
                   const sel = selection as { epicId: string; featureId: string }
@@ -633,12 +626,14 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
               </button>
             )}
           </div>
-          <button
-            onClick={() => setTaskModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-sm hover:bg-accent/80 transition-colors"
-          >
-            <Plus size={14} /> New Task
-          </button>
+          {view === 'tasks' && (
+            <button
+              onClick={() => setTaskModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-sm hover:bg-accent/80 transition-colors"
+            >
+              <Plus size={14} /> New Task
+            </button>
+          )}
         </div>
 
         {/* Board */}
@@ -1270,169 +1265,6 @@ function TaskChat({
         >
           {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
         </button>
-      </div>
-    </div>
-  )
-}
-
-// ── My Tasks View ─────────────────────────────────────────────────────────────
-
-const MY_TASKS_STATUS_ORDER = ['in_progress', 'pending', 'pending_validation', 'failed', 'done']
-const MY_TASKS_STATUS_LABELS: Record<string, { label: string; color: string }> = {
-  in_progress:        { label: 'In Progress',    color: 'text-accent' },
-  pending:            { label: 'Needs Action',   color: 'text-text-muted' },
-  pending_validation: { label: 'Awaiting QA',    color: 'text-status-warning' },
-  failed:             { label: 'Failed',         color: 'text-status-error' },
-  done:               { label: 'Done',           color: 'text-status-healthy' },
-}
-
-function MyTasksView({
-  tasks,
-  currentUserId,
-  agents,
-  users,
-  onTaskClick,
-  onStatusChange,
-}: {
-  tasks: Task[]
-  currentUserId?: string
-  agents: Agent[]
-  users: Array<{ id: string; name: string | null; username: string; email: string; role: string }>
-  onTaskClick: (task: Task) => void
-  onStatusChange: (taskId: string, status: string) => Promise<void>
-}) {
-  const myTasks = tasks.filter(t => t.assignedUserId === currentUserId)
-
-  if (!currentUserId) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-text-muted text-sm">
-        Not signed in
-      </div>
-    )
-  }
-
-  if (myTasks.length === 0) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-2 text-text-muted">
-        <User size={32} className="opacity-30" />
-        <p className="text-sm">No tasks assigned to you</p>
-      </div>
-    )
-  }
-
-  // Group by status in preferred order
-  const grouped = MY_TASKS_STATUS_ORDER.reduce<Record<string, Task[]>>((acc, s) => {
-    const group = myTasks.filter(t => t.status === s)
-    if (group.length > 0) acc[s] = group
-    return acc
-  }, {})
-  // Append any unknown statuses
-  for (const t of myTasks) {
-    if (!MY_TASKS_STATUS_ORDER.includes(t.status) && !(t.status in grouped)) {
-      grouped[t.status] = myTasks.filter(x => x.status === t.status)
-    }
-  }
-
-  const activeCount = myTasks.filter(t => t.status !== 'done' && t.status !== 'failed').length
-
-  return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-sm font-semibold text-text-primary">My Tasks</h2>
-          <p className="text-xs text-text-muted mt-0.5">
-            {activeCount} active · {myTasks.length} total
-          </p>
-        </div>
-      </div>
-
-      {Object.entries(grouped).map(([status, statusTasks]) => {
-        const cfg = MY_TASKS_STATUS_LABELS[status] ?? { label: status, color: 'text-text-muted' }
-        return (
-          <div key={status}>
-            <div className="flex items-center gap-2 mb-2">
-              <span className={`text-[11px] font-semibold uppercase tracking-wide ${cfg.color}`}>{cfg.label}</span>
-              <span className="text-[10px] text-text-muted">{statusTasks.length}</span>
-            </div>
-            <div className="space-y-2">
-              {statusTasks.map(task => (
-                <MyTaskCard
-                  key={task.id}
-                  task={task}
-                  agents={agents}
-                  onClick={() => onTaskClick(task)}
-                  onStatusChange={onStatusChange}
-                />
-              ))}
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function MyTaskCard({
-  task,
-  agents,
-  onClick,
-  onStatusChange,
-}: {
-  task: Task
-  agents: Agent[]
-  onClick: () => void
-  onStatusChange: (taskId: string, status: string) => Promise<void>
-}) {
-  const [updating, setUpdating] = useState(false)
-  const assignedAgent = task.assignedAgent ? agents.find(a => a.id === task.assignedAgent) : null
-
-  const handleStatusChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    e.stopPropagation()
-    setUpdating(true)
-    try { await onStatusChange(task.id, e.target.value) } finally { setUpdating(false) }
-  }
-
-  const priorityDot: Record<string, string> = {
-    critical: 'bg-status-error', high: 'bg-status-warning', medium: 'bg-accent', low: 'bg-border-visible',
-  }
-
-  return (
-    <div
-      onClick={onClick}
-      className="group bg-bg-raised border border-border-subtle rounded-lg p-3 cursor-pointer hover:border-accent/40 transition-colors"
-    >
-      <div className="flex items-start gap-2">
-        <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${priorityDot[task.priority] ?? 'bg-border-visible'}`} />
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-medium text-text-primary leading-snug">{task.title}</p>
-          {task.description && (
-            <p className="text-[11px] text-text-muted mt-0.5 line-clamp-2">{task.description}</p>
-          )}
-          <div className="flex items-center gap-3 mt-2 flex-wrap">
-            {assignedAgent && (
-              <span className="text-[10px] text-text-muted flex items-center gap-1">
-                <span className="w-3 h-3 rounded-full bg-accent/20 text-accent flex items-center justify-center text-[8px] font-bold">
-                  {assignedAgent.name.slice(0, 1).toUpperCase()}
-                </span>
-                {assignedAgent.name}
-              </span>
-            )}
-            <div onClick={e => e.stopPropagation()} className="ml-auto">
-              <select
-                value={task.status}
-                onChange={handleStatusChange}
-                disabled={updating}
-                className="text-[10px] bg-bg-base border border-border-subtle rounded px-1.5 py-0.5 text-text-muted focus:outline-none focus:border-accent disabled:opacity-50 cursor-pointer"
-              >
-                <option value="pending">Backlog</option>
-                <option value="in_progress">In Progress</option>
-                <option value="pending_validation">Awaiting QA</option>
-                <option value="done">Done</option>
-                <option value="failed">Failed</option>
-              </select>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   )
