@@ -1,7 +1,8 @@
 'use client'
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Plus, X, Trash2, ChevronRight, Flag, Menu, Terminal, CheckCircle2, XCircle, Play, MessageSquare, ChevronDown, ChevronUp, Send, Loader2 } from 'lucide-react'
+import { useSession } from 'next-auth/react'
+import { Plus, X, Trash2, ChevronRight, Flag, Menu, Terminal, CheckCircle2, XCircle, Play, MessageSquare, ChevronDown, ChevronUp, Send, Loader2, User } from 'lucide-react'
 import type { Agent, Task, Feature, Epic, SelectionState, PlanTarget, Bug } from '@/types/tasks'
 import { BugManager } from './BugManager'
 
@@ -85,11 +86,13 @@ interface Props {
 export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUsers = [], initialPlanningConvos = [], initialBugs = [] }: Props) {
   const router = useRouter()
   const params = useSearchParams()
+  const { data: session } = useSession()
+  const currentUserId = (session?.user as any)?.id as string | undefined
   const [tasks, setTasks]       = useState<Task[]>(initialTasks)
   const [epics, setEpics]       = useState<Epic[]>(initialEpics)
   const [agents, setAgents]     = useState<Agent[]>(initialAgents)
   const [users]                 = useState<SimpleUser[]>(initialUsers)
-  const [view, setView]         = useState<'tasks' | 'bugs'>('tasks')
+  const [view, setView]         = useState<'tasks' | 'bugs' | 'my-tasks'>('tasks')
   const [selection, setSelection] = useState<SelectionState>({ kind: 'all' })
   const [panel, setPanel]       = useState<RightPanel>(null)
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false)
@@ -475,7 +478,7 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   return (
     <div className="absolute inset-0 flex flex-col overflow-hidden">
 
-      {/* Top: Tasks / Bugs tab bar */}
+      {/* Top: Tasks / Bugs / My Tasks tab bar */}
       <div className="flex items-center gap-1 px-4 pt-3 pb-0 border-b border-border-subtle bg-bg-sidebar flex-shrink-0">
         <button
           onClick={() => setView('tasks')}
@@ -502,6 +505,22 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
             </span>
           )}
         </button>
+        <button
+          onClick={() => setView('my-tasks')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
+            view === 'my-tasks'
+              ? 'bg-bg-raised border border-b-0 border-border-subtle text-text-primary'
+              : 'text-text-muted hover:text-text-primary'
+          }`}
+        >
+          <User size={11} />
+          My Tasks
+          {currentUserId && tasks.filter(t => t.assignedUserId === currentUserId && t.status !== 'done' && t.status !== 'failed').length > 0 && (
+            <span className="px-1 py-0.5 text-[9px] rounded bg-accent/20 text-accent">
+              {tasks.filter(t => t.assignedUserId === currentUserId && t.status !== 'done' && t.status !== 'failed').length}
+            </span>
+          )}
+        </button>
       </div>
 
       {/* Bug view */}
@@ -509,6 +528,21 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
         <div className="flex-1 flex overflow-hidden">
           <BugManager initialBugs={initialBugs} users={users} />
         </div>
+      )}
+
+      {/* My Tasks view */}
+      {view === 'my-tasks' && (
+        <MyTasksView
+          tasks={tasks}
+          currentUserId={currentUserId}
+          agents={agents}
+          users={users}
+          onTaskClick={task => setPanel({ kind: 'task', task })}
+          onStatusChange={async (taskId, status) => {
+            await fetch(`/api/tasks/${taskId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
+            setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status } : t))
+          }}
+        />
       )}
 
       {/* Tasks view */}
@@ -1236,6 +1270,169 @@ function TaskChat({
         >
           {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
         </button>
+      </div>
+    </div>
+  )
+}
+
+// ── My Tasks View ─────────────────────────────────────────────────────────────
+
+const MY_TASKS_STATUS_ORDER = ['in_progress', 'pending', 'pending_validation', 'failed', 'done']
+const MY_TASKS_STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  in_progress:        { label: 'In Progress',    color: 'text-accent' },
+  pending:            { label: 'Needs Action',   color: 'text-text-muted' },
+  pending_validation: { label: 'Awaiting QA',    color: 'text-status-warning' },
+  failed:             { label: 'Failed',         color: 'text-status-error' },
+  done:               { label: 'Done',           color: 'text-status-healthy' },
+}
+
+function MyTasksView({
+  tasks,
+  currentUserId,
+  agents,
+  users,
+  onTaskClick,
+  onStatusChange,
+}: {
+  tasks: Task[]
+  currentUserId?: string
+  agents: Agent[]
+  users: Array<{ id: string; name: string | null; username: string; email: string; role: string }>
+  onTaskClick: (task: Task) => void
+  onStatusChange: (taskId: string, status: string) => Promise<void>
+}) {
+  const myTasks = tasks.filter(t => t.assignedUserId === currentUserId)
+
+  if (!currentUserId) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-text-muted text-sm">
+        Not signed in
+      </div>
+    )
+  }
+
+  if (myTasks.length === 0) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-2 text-text-muted">
+        <User size={32} className="opacity-30" />
+        <p className="text-sm">No tasks assigned to you</p>
+      </div>
+    )
+  }
+
+  // Group by status in preferred order
+  const grouped = MY_TASKS_STATUS_ORDER.reduce<Record<string, Task[]>>((acc, s) => {
+    const group = myTasks.filter(t => t.status === s)
+    if (group.length > 0) acc[s] = group
+    return acc
+  }, {})
+  // Append any unknown statuses
+  for (const t of myTasks) {
+    if (!MY_TASKS_STATUS_ORDER.includes(t.status) && !(t.status in grouped)) {
+      grouped[t.status] = myTasks.filter(x => x.status === t.status)
+    }
+  }
+
+  const activeCount = myTasks.filter(t => t.status !== 'done' && t.status !== 'failed').length
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-text-primary">My Tasks</h2>
+          <p className="text-xs text-text-muted mt-0.5">
+            {activeCount} active · {myTasks.length} total
+          </p>
+        </div>
+      </div>
+
+      {Object.entries(grouped).map(([status, statusTasks]) => {
+        const cfg = MY_TASKS_STATUS_LABELS[status] ?? { label: status, color: 'text-text-muted' }
+        return (
+          <div key={status}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className={`text-[11px] font-semibold uppercase tracking-wide ${cfg.color}`}>{cfg.label}</span>
+              <span className="text-[10px] text-text-muted">{statusTasks.length}</span>
+            </div>
+            <div className="space-y-2">
+              {statusTasks.map(task => (
+                <MyTaskCard
+                  key={task.id}
+                  task={task}
+                  agents={agents}
+                  onClick={() => onTaskClick(task)}
+                  onStatusChange={onStatusChange}
+                />
+              ))}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function MyTaskCard({
+  task,
+  agents,
+  onClick,
+  onStatusChange,
+}: {
+  task: Task
+  agents: Agent[]
+  onClick: () => void
+  onStatusChange: (taskId: string, status: string) => Promise<void>
+}) {
+  const [updating, setUpdating] = useState(false)
+  const assignedAgent = task.assignedAgent ? agents.find(a => a.id === task.assignedAgent) : null
+
+  const handleStatusChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    e.stopPropagation()
+    setUpdating(true)
+    try { await onStatusChange(task.id, e.target.value) } finally { setUpdating(false) }
+  }
+
+  const priorityDot: Record<string, string> = {
+    critical: 'bg-status-error', high: 'bg-status-warning', medium: 'bg-accent', low: 'bg-border-visible',
+  }
+
+  return (
+    <div
+      onClick={onClick}
+      className="group bg-bg-raised border border-border-subtle rounded-lg p-3 cursor-pointer hover:border-accent/40 transition-colors"
+    >
+      <div className="flex items-start gap-2">
+        <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${priorityDot[task.priority] ?? 'bg-border-visible'}`} />
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-medium text-text-primary leading-snug">{task.title}</p>
+          {task.description && (
+            <p className="text-[11px] text-text-muted mt-0.5 line-clamp-2">{task.description}</p>
+          )}
+          <div className="flex items-center gap-3 mt-2 flex-wrap">
+            {assignedAgent && (
+              <span className="text-[10px] text-text-muted flex items-center gap-1">
+                <span className="w-3 h-3 rounded-full bg-accent/20 text-accent flex items-center justify-center text-[8px] font-bold">
+                  {assignedAgent.name.slice(0, 1).toUpperCase()}
+                </span>
+                {assignedAgent.name}
+              </span>
+            )}
+            <div onClick={e => e.stopPropagation()} className="ml-auto">
+              <select
+                value={task.status}
+                onChange={handleStatusChange}
+                disabled={updating}
+                className="text-[10px] bg-bg-base border border-border-subtle rounded px-1.5 py-0.5 text-text-muted focus:outline-none focus:border-accent disabled:opacity-50 cursor-pointer"
+              >
+                <option value="pending">Backlog</option>
+                <option value="in_progress">In Progress</option>
+                <option value="pending_validation">Awaiting QA</option>
+                <option value="done">Done</option>
+                <option value="failed">Failed</option>
+              </select>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )
