@@ -35,5 +35,33 @@ export async function POST(req: NextRequest) {
     } as any,
     include: { _count: { select: { tasks: true } } },
   })
+
+  // Auto-create a feature chat room and add any already-assigned agents
+  const room = await prisma.chatRoom.create({
+    data: {
+      name: feature.title,
+      type: 'feature',
+      featureId: feature.id,
+      ...(data.epicId ? { epicId: data.epicId } : {}),
+      createdBy: caller?.id ?? 'system',
+      ...(caller ? { members: { create: [{ userId: caller.id, role: 'lead' }] } } : {}),
+    },
+  })
+
+  // Add any agents already assigned to tasks in this feature
+  const assignedAgents = await prisma.task.findMany({
+    where: { featureId: feature.id, assignedAgent: { not: null } },
+    select: { assignedAgent: true },
+    distinct: ['assignedAgent'],
+  })
+  for (const { assignedAgent } of assignedAgents) {
+    if (!assignedAgent) continue
+    await prisma.chatRoomMember.upsert({
+      where: { roomId_agentId: { roomId: room.id, agentId: assignedAgent } },
+      create: { roomId: room.id, agentId: assignedAgent, role: 'member' },
+      update: {},
+    })
+  }
+
   return NextResponse.json(feature, { status: 201 })
 }
