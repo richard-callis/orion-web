@@ -543,6 +543,36 @@ export async function ensureSystemAgents(): Promise<void> {
       console.error(`[seed] Failed to seed agent ${def.nova.displayName}:`, err instanceof Error ? err.message : err)
     }
   }
+
+  // Seed agent system prompts into SystemPrompt table for Settings UI visibility.
+  // Uses update: {} so existing admin edits are preserved on restart.
+  for (const def of SYSTEM_AGENT_DEFS) {
+    await prisma.systemPrompt.upsert({
+      where:  { key: `agent.${def.nova.name}.system` },
+      update: {},
+      create: {
+        key:         `agent.${def.nova.name}.system`,
+        name:        `${def.nova.displayName} — System Prompt`,
+        category:    'system',
+        description: def.nova.description,
+        content:     def.agent.systemPrompt,
+      },
+    }).catch(() => {})
+
+    if ((def.agent.contextConfig as any)?.watchPrompt) {
+      await prisma.systemPrompt.upsert({
+        where:  { key: `agent.${def.nova.name}.watch` },
+        update: {},
+        create: {
+          key:         `agent.${def.nova.name}.watch`,
+          name:        `${def.nova.displayName} — Watch Prompt`,
+          category:    'system',
+          description: `Watch cycle prompt for ${def.nova.displayName}`,
+          content:     (def.agent.contextConfig as any).watchPrompt,
+        },
+      }).catch(() => {})
+    }
+  }
 }
 
 // ── Planner lookup helper ──────────────────────────────────────────────────────
