@@ -5,6 +5,8 @@ import { useSession } from 'next-auth/react'
 import { Plus, X, Trash2, ChevronRight, Flag, Menu, Terminal, CheckCircle2, XCircle, Play, MessageSquare, ChevronDown, ChevronUp, Send, Loader2, User } from 'lucide-react'
 import type { Agent, Task, Feature, Epic, SelectionState, PlanTarget, Bug } from '@/types/tasks'
 import { BugManager } from './BugManager'
+import { KanbanBoard } from '../ui/KanbanBoard'
+import { CreateEntityModal } from '../ui/CreateEntityModal'
 
 interface TaskEvent {
   id: string
@@ -637,63 +639,58 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
         </div>
 
         {/* Board */}
-        <div className="flex gap-3 flex-1 overflow-x-auto overflow-y-hidden">
-          {columns.map(col => {
+        <KanbanBoard
+          columnWidth="w-60"
+          columnBg="bg-bg-card"
+          columns={columns.map(col => {
             const cfg = STATUS_CONFIG[col] ?? { label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), border: 'border-t-border-visible' }
-            return (
-            <div key={col} className={`flex-shrink-0 w-60 flex flex-col rounded-lg border border-border-subtle bg-bg-card border-t-2 ${cfg.border}`}>
-              <div className="flex items-center justify-between px-3 py-2.5 border-b border-border-subtle">
-                <span className="text-xs font-semibold text-text-secondary">{cfg.label}</span>
-                <span className="text-xs text-text-muted bg-bg-raised px-1.5 py-0.5 rounded">{byStatus(col).length}</span>
-              </div>
-              <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                {byStatus(col).map(task => {
-                  const p = priorityConfig[task.priority] ?? priorityConfig.medium
-                  const isSelected = panel?.kind === 'task' && panel.task.id === task.id
-                  return (
-                    <div
-                      key={task.id}
-                      onClick={() => setPanel(isSelected ? null : { kind: 'task', task })}
-                      className={`rounded-lg border p-3 cursor-pointer transition-all ${
-                        isSelected ? 'border-accent bg-accent/10' : 'border-border-subtle bg-bg-raised hover:border-border-visible'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs text-text-primary leading-snug flex-1">{task.title}</p>
-                        <ChevronRight size={12} className={`flex-shrink-0 mt-0.5 text-text-muted transition-transform ${isSelected ? 'rotate-90' : ''}`} />
-                      </div>
-                      {task.description && (
-                        <p className="text-[10px] text-text-muted mt-1.5 line-clamp-2 leading-relaxed">{task.description}</p>
-                      )}
-                      <div className="flex items-center gap-2 mt-2">
-                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${p.dot}`} />
-                        <span className={`text-[10px] ${p.color}`}>{p.label}</span>
-                        <div className="ml-auto flex items-center gap-1">
-                          {task.plan && <span className="text-[10px] text-accent">has plan</span>}
-                          {task.agent && (() => {
-                            const idx = agents.findIndex(a => a.id === task.agent!.id)
-                            return (
-                              <div
-                                title={task.agent.name}
-                                className={`w-4 h-4 rounded-full ${AGENT_COLORS[idx >= 0 ? idx % AGENT_COLORS.length : 0]} flex items-center justify-center`}
-                              >
-                                <span className="text-[7px] font-bold text-white">{agentInitials(task.agent.name)}</span>
-                              </div>
-                            )
-                          })()}
-                        </div>
+            return {
+              key: col,
+              label: cfg.label,
+              topBorderClass: cfg.border,
+              items: byStatus(col),
+              emptyText: 'No tasks',
+              renderItem: (task: Task) => {
+                const p = priorityConfig[task.priority] ?? priorityConfig.medium
+                const isSelected = panel?.kind === 'task' && panel.task.id === task.id
+                return (
+                  <div
+                    onClick={() => setPanel(isSelected ? null : { kind: 'task', task })}
+                    className={`rounded-lg border p-3 cursor-pointer transition-all ${
+                      isSelected ? 'border-accent bg-accent/10' : 'border-border-subtle bg-bg-raised hover:border-border-visible'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-xs text-text-primary leading-snug flex-1">{task.title}</p>
+                      <ChevronRight size={12} className={`flex-shrink-0 mt-0.5 text-text-muted transition-transform ${isSelected ? 'rotate-90' : ''}`} />
+                    </div>
+                    {task.description && (
+                      <p className="text-[10px] text-text-muted mt-1.5 line-clamp-2 leading-relaxed">{task.description}</p>
+                    )}
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${p.dot}`} />
+                      <span className={`text-[10px] ${p.color}`}>{p.label}</span>
+                      <div className="ml-auto flex items-center gap-1">
+                        {task.plan && <span className="text-[10px] text-accent">has plan</span>}
+                        {task.agent && (() => {
+                          const idx = agents.findIndex(a => a.id === task.agent!.id)
+                          return (
+                            <div
+                              title={task.agent.name}
+                              className={`w-4 h-4 rounded-full ${AGENT_COLORS[idx >= 0 ? idx % AGENT_COLORS.length : 0]} flex items-center justify-center`}
+                            >
+                              <span className="text-[7px] font-bold text-white">{agentInitials(task.agent.name)}</span>
+                            </div>
+                          )
+                        })()}
                       </div>
                     </div>
-                  )
-                })}
-                {byStatus(col).length === 0 && (
-                  <p className="text-[10px] text-text-muted text-center py-4">No tasks</p>
-                )}
-              </div>
-            </div>
-            )
+                  </div>
+                )
+              },
+            }
           })}
-        </div>
+        />
       </div>
 
 
@@ -912,127 +909,95 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
 
       {/* Create Task */}
       {taskModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setTaskModal(false)}>
-          <div className="bg-bg-card border border-border-visible rounded-xl p-6 w-[480px] max-w-[90vw] shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-sm font-semibold text-text-primary">New Task</h2>
-                {activeFeatureId && (
-                  <p className="text-[10px] text-accent mt-0.5">
-                    Adding to: {epics.flatMap(e => e.features).find(f => f.id === activeFeatureId)?.title}
-                  </p>
-                )}
-              </div>
-              <button onClick={() => setTaskModal(false)} className="text-text-muted hover:text-text-primary"><X size={16} /></button>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title *</label>
-                <input autoFocus value={taskForm.title} onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))}
-                  onKeyDown={e => e.key === 'Enter' && !e.shiftKey && createTask()}
-                  placeholder="What needs to be done?"
-                  className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent" />
-              </div>
-              <div>
-                <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
-                <textarea value={taskForm.description} onChange={e => setTaskForm(f => ({ ...f, description: e.target.value }))} rows={3}
-                  placeholder="Context, goals, requirements..."
-                  className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed" />
-              </div>
-              <div>
-                <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Priority</label>
-                <div className="flex gap-2">
-                  {Object.entries(priorityConfig).map(([k, v]) => (
-                    <button key={k} onClick={() => setTaskForm(f => ({ ...f, priority: k }))}
-                      className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs border transition-colors ${
-                        taskForm.priority === k ? 'border-accent bg-accent/15 text-accent' : 'border-border-subtle text-text-muted hover:border-border-visible'
-                      }`}>
-                      <Flag size={10} />{v.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-5">
-              <button onClick={() => setTaskModal(false)} className="px-4 py-2 text-sm text-text-muted hover:text-text-primary">Cancel</button>
-              <button onClick={createTask} disabled={!taskForm.title.trim() || saving}
-                className="px-4 py-2 text-sm rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
-                {saving ? 'Creating…' : 'Create Task'}
-              </button>
+        <CreateEntityModal
+          title="New Task"
+          subtitle={activeFeatureId ? `Adding to: ${epics.flatMap(e => e.features).find(f => f.id === activeFeatureId)?.title}` : undefined}
+          onClose={() => setTaskModal(false)}
+          onSubmit={createTask}
+          submitLabel="Create Task"
+          submitting={saving}
+          submitDisabled={!taskForm.title.trim()}
+        >
+          <div>
+            <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title *</label>
+            <input autoFocus value={taskForm.title} onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && createTask()}
+              placeholder="What needs to be done?"
+              className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent" />
+          </div>
+          <div>
+            <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
+            <textarea value={taskForm.description} onChange={e => setTaskForm(f => ({ ...f, description: e.target.value }))} rows={3}
+              placeholder="Context, goals, requirements..."
+              className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed" />
+          </div>
+          <div>
+            <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Priority</label>
+            <div className="flex gap-2">
+              {Object.entries(priorityConfig).map(([k, v]) => (
+                <button key={k} onClick={() => setTaskForm(f => ({ ...f, priority: k }))}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs border transition-colors ${
+                    taskForm.priority === k ? 'border-accent bg-accent/15 text-accent' : 'border-border-subtle text-text-muted hover:border-border-visible'
+                  }`}>
+                  <Flag size={10} />{v.label}
+                </button>
+              ))}
             </div>
           </div>
-        </div>
+        </CreateEntityModal>
       )}
 
       {/* Create Epic */}
       {epicModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setEpicModal(false)}>
-          <div className="bg-bg-card border border-border-visible rounded-xl p-6 w-[480px] max-w-[90vw] shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-text-primary">New Epic</h2>
-              <button onClick={() => setEpicModal(false)} className="text-text-muted hover:text-text-primary"><X size={16} /></button>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title *</label>
-                <input autoFocus value={epicForm.title} onChange={e => setEpicForm(f => ({ ...f, title: e.target.value }))}
-                  onKeyDown={e => e.key === 'Enter' && !e.shiftKey && createEpic()}
-                  placeholder="What is this initiative about?"
-                  className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent" />
-              </div>
-              <div>
-                <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Description</label>
-                <textarea value={epicForm.description} onChange={e => setEpicForm(f => ({ ...f, description: e.target.value }))} rows={3}
-                  placeholder="High-level goals and scope..."
-                  className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed" />
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-5">
-              <button onClick={() => setEpicModal(false)} className="px-4 py-2 text-sm text-text-muted hover:text-text-primary">Cancel</button>
-              <button onClick={createEpic} disabled={!epicForm.title.trim() || saving}
-                className="px-4 py-2 text-sm rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
-                {saving ? 'Creating…' : 'Create Epic'}
-              </button>
-            </div>
+        <CreateEntityModal
+          title="New Epic"
+          onClose={() => setEpicModal(false)}
+          onSubmit={createEpic}
+          submitLabel="Create Epic"
+          submitting={saving}
+          submitDisabled={!epicForm.title.trim()}
+        >
+          <div>
+            <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title *</label>
+            <input autoFocus value={epicForm.title} onChange={e => setEpicForm(f => ({ ...f, title: e.target.value }))}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && createEpic()}
+              placeholder="What is this initiative about?"
+              className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent" />
           </div>
-        </div>
+          <div>
+            <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Description</label>
+            <textarea value={epicForm.description} onChange={e => setEpicForm(f => ({ ...f, description: e.target.value }))} rows={3}
+              placeholder="High-level goals and scope..."
+              className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed" />
+          </div>
+        </CreateEntityModal>
       )}
 
       {/* Create Feature */}
       {featureModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setFeatureModal(null)}>
-          <div className="bg-bg-card border border-border-visible rounded-xl p-6 w-[480px] max-w-[90vw] shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-sm font-semibold text-text-primary">New Feature</h2>
-                <p className="text-[10px] text-text-muted mt-0.5">Under: {featureModal.epicTitle}</p>
-              </div>
-              <button onClick={() => setFeatureModal(null)} className="text-text-muted hover:text-text-primary"><X size={16} /></button>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title *</label>
-                <input autoFocus value={featureForm.title} onChange={e => setFeatureForm(f => ({ ...f, title: e.target.value }))}
-                  onKeyDown={e => e.key === 'Enter' && !e.shiftKey && createFeature()}
-                  placeholder="What does this feature deliver?"
-                  className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent" />
-              </div>
-              <div>
-                <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Description</label>
-                <textarea value={featureForm.description} onChange={e => setFeatureForm(f => ({ ...f, description: e.target.value }))} rows={3}
-                  placeholder="Scope, acceptance criteria..."
-                  className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed" />
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-5">
-              <button onClick={() => setFeatureModal(null)} className="px-4 py-2 text-sm text-text-muted hover:text-text-primary">Cancel</button>
-              <button onClick={createFeature} disabled={!featureForm.title.trim() || saving}
-                className="px-4 py-2 text-sm rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
-                {saving ? 'Creating…' : 'Create Feature'}
-              </button>
-            </div>
+        <CreateEntityModal
+          title="New Feature"
+          subtitle={`Under: ${featureModal.epicTitle}`}
+          onClose={() => setFeatureModal(null)}
+          onSubmit={createFeature}
+          submitLabel="Create Feature"
+          submitting={saving}
+          submitDisabled={!featureForm.title.trim()}
+        >
+          <div>
+            <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title *</label>
+            <input autoFocus value={featureForm.title} onChange={e => setFeatureForm(f => ({ ...f, title: e.target.value }))}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && createFeature()}
+              placeholder="What does this feature deliver?"
+              className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent" />
           </div>
-        </div>
+          <div>
+            <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Description</label>
+            <textarea value={featureForm.description} onChange={e => setFeatureForm(f => ({ ...f, description: e.target.value }))} rows={3}
+              placeholder="Scope, acceptance criteria..."
+              className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed" />
+          </div>
+        </CreateEntityModal>
       )}
     </div>
   )
