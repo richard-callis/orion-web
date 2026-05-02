@@ -92,6 +92,41 @@ const runningTasks = new Set<string>()
 function log(msg: string) { process.stdout.write(`[orchestrator] ${msg}\n`) }
 function err(msg: string) { process.stderr.write(`[orchestrator] ERROR: ${msg}\n`) }
 
+// ── Model resolution ──────────────────────────────────────────────────────────
+
+let cachedDefaultModel: string | null = null
+
+/**
+ * Resolve an agent's LLM setting to a concrete model ID.
+ *
+ * Rules:
+ * - falsy / boolean true → use system default (SystemSetting['model.default'])
+ * - bare agent ID (no prefix) → treat as ext:<id>
+ * - already prefixed (claude:*, ollama:*, ext:*) → use as-is
+ *
+ * Falls back to 'claude:claude-sonnet-4-6' only if no system default is set.
+ */
+async function resolveModelId(llm: unknown): Promise<string> {
+  const useDefault = !llm || llm === true
+
+  if (useDefault || typeof llm !== 'string') {
+    if (!cachedDefaultModel) {
+      const setting = await prisma.systemSetting.findUnique({ where: { key: 'model.default' } })
+      const value = setting?.value as string | undefined
+      if (!value) throw new Error('No default LLM configured — set model.default in System Settings')
+      cachedDefaultModel = value
+    }
+    return cachedDefaultModel
+  }
+
+  // Bare agent/model ID with no routing prefix → treat as external gateway agent
+  if (!llm.startsWith('claude:') && !llm.startsWith('ollama:') && !llm.startsWith('ext:')) {
+    return `ext:${llm}`
+  }
+
+  return llm
+}
+
 // ── Core task runner ───────────────────────────────────────────────────────────
 
 async function runTask(taskId: string): Promise<void> {
@@ -117,9 +152,9 @@ async function runTask(taskId: string): Promise<void> {
 
     const agent = task.agent
     const meta = (agent.metadata ?? {}) as Record<string, unknown>
-    const contextConfig = (meta.contextConfig ?? {}) as Record<string, string>
+    const contextConfig = (meta.contextConfig ?? {}) as Record<string, unknown>
     const agentSystemPrompt = (meta.systemPrompt as string | undefined) ?? 'You are a helpful AI agent.'
-    const modelId = contextConfig.llm ?? 'claude:claude-sonnet-4-6'
+    const modelId = await resolveModelId(contextConfig.llm)
 
     // Inject llm-context wiki notes into every agent's system prompt (SOC2: [C-001])
     const contextNotes = await prisma.note.findMany({
@@ -446,7 +481,7 @@ async function runWatchers() {
     log(`Running watcher: "${agent.name}"`)
 
     const systemPrompt = (meta.systemPrompt as string | undefined) ?? 'You are a monitoring agent.'
-    const modelId = (cfg.llm as string | undefined) ?? 'claude:claude-sonnet-4-6'
+    const modelId = await resolveModelId(cfg.llm)
     const envLink = agent.environments?.[0]
     const gateway = envLink?.environment?.gatewayUrl && envLink?.environment?.gatewayToken
       ? { url: envLink.environment.gatewayUrl, token: envLink.environment.gatewayToken }
