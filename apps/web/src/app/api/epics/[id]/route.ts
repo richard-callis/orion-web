@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 import { parseBodyOrError, UpdateEpicSchema } from '@/lib/validate'
+import { handlePlanPatch } from '@/lib/plan-patch'
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   await requireServiceAuth(req)
@@ -37,30 +38,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const body = await req.json().catch(() => ({})) as Record<string, unknown>
-  const id = params.id
-
-  const existing = await prisma.epic.findUnique({ where: { id } })
-  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-
-  const data: Record<string, unknown> = {}
-  if (body.plan            !== undefined) data.plan            = body.plan
-  if (body.planApprovedBy  !== undefined) data.planApprovedBy  = body.planApprovedBy
-  if (body.planApprovedAt  !== undefined) data.planApprovedAt  = body.planApprovedAt ? new Date(body.planApprovedAt as string) : null
-
-  if (body.plan !== undefined) {
-    await prisma.auditLog.create({
-      data: {
-        userId: req.headers.get('x-user-id') ?? 'system',
-        action: 'plan.updated',
-        target: `epic:${id}`,
-        detail: { field: 'plan', entityType: 'epic', entityId: id },
-      },
-    }).catch(() => {})
-  }
-
-  const epic = await prisma.epic.update({ where: { id }, data })
-  return NextResponse.json(epic)
+  return handlePlanPatch('epic', params.id, req)
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
