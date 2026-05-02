@@ -209,6 +209,10 @@ async function runTask(taskId: string): Promise<void> {
       systemPrompt,
       modelId,
       gateway,
+      managementTools: {
+        definitions: MANAGEMENT_TOOL_DEFS,
+        execute: (name, argsRaw) => executeManagedTool(name, argsRaw, agent.id),
+      },
     }
 
     const runner = createRunner(modelId)
