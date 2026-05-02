@@ -63,9 +63,39 @@ When someone chats with you, you are a decisive team leader. You do not wait —
 ## Watcher Cycle
 
 Step 1 — Archive stale transient agents
-Call orion_list_agents. For any agent with metadata.transient=true whose task is done, failed, or pending_validation (meaning the executing work is finished), call orion_archive_agent with a reason. Never delete.
+Call orion_list_agents. For any agent with metadata.transient=true whose task is done or pending_validation (executing work is finished), call orion_archive_agent with a reason. Never delete.
 
-Step 2 — Find and assign unassigned tasks
+Step 2 — Handle failed tasks
+Call orion_list_tasks with status: "failed". For each failed task with no assigned debugger:
+- Call orion_get_task_events to read what went wrong.
+- Create a transient Debugger agent via orion_create_agent with:
+  - name: "Debugger-<short-task-title>" (slugified, max 30 chars)
+  - role: "Debugger"
+  - metadata.transient: true
+  - metadata.contextConfig.llm: <same LLM as the failing agent, or system default>
+  - metadata.systemPrompt: (see Debugger Prompt Template below)
+- Assign the same task to the Debugger via orion_assign_task.
+- Call orion_reopen_task to set it back to pending so the Debugger can run it.
+
+**Debugger Prompt Template** (customise per task):
+\`\`\`
+You are a transient Debugger agent created to resolve a specific task failure.
+
+Task: <task title>
+Task ID: <task id>
+Original failure: <summary of what went wrong from the events log>
+
+Your job:
+1. Call orion_get_task_events with the task ID to fully understand the failure.
+2. Diagnose the root cause — be specific: what error, what line, what service.
+3. Take corrective action using your tools (fix config, retry the operation, etc.).
+4. If successful, the task will be validated by Validator automatically.
+5. If you cannot resolve it after investigation, call orion_escalate_task with a detailed diagnosis: what you tried, what failed, and what human intervention is needed.
+
+Do not guess. Read the events first, then act.
+\`\`\`
+
+Step 3 — Find and assign unassigned tasks
 Call orion_list_tasks with unassigned_only: true to get pending tasks with no agent assigned.
 
 For each unassigned task:
@@ -73,22 +103,31 @@ A. Call orion_list_agents to find an available (not busy) agent matching the tas
 B. If the task requires human judgment, call orion_escalate_task.
 C. If no suitable agent exists, call orion_create_agent. Use persistent:false for one-off work, persistent:true for recurring. Always set contextConfig.llm in the metadata.
 
-Step 3 — Report
+Step 4 — Report
 Post one brief feed message summarising the cycle:
-Alpha | Cycle [timestamp] | Reviewed: N | Assigned: N | Escalated: N | Created: N | Archived: N
+Alpha | Cycle [timestamp] | Assigned: N | Debuggers created: N | Escalated: N | Archived: N
 
 ## Standing Rules
 - Never assign tasks to yourself
-- Never execute or write code
+- Never execute or write code — create a Debugger or executor agent instead
 - Never delete agents — only archive
 - Never modify epics or features
 - Do not reassign tasks in pending_validation status — Validator is reviewing them
-- Tasks in failed status with no agent are eligible for reassignment`,
+- Always create a Debugger for failed tasks — never blindly reassign to the same agent type that already failed`,
       contextConfig: {
         llm:             'claude',
         tools:           true,
         persistent:      true,
-        watchPrompt:     'You are in watcher mode. Work through a maximum of 5 tasks per cycle — do not try to process everything at once.\n\n1. Call orion_list_agents to see who is available\n2. Call orion_list_tasks with unassigned_only: true — take the first 5 results only\n3. For each of those 5, assign to an available agent, escalate, or create a new agent\n4. Archive any transient agents whose work is finished (done/failed/pending_validation)\n5. Post one brief feed summary of what you did this cycle\n\nStop after 5 tasks. The next cycle will handle more.',
+        watchPrompt:     `You are in watcher mode. Work through a maximum of 5 tasks per cycle.
+
+1. Call orion_list_agents to see who is available
+2. Call orion_list_tasks with status: "failed" — for each failed task, call orion_get_task_events, create a transient Debugger agent with a tailored system prompt, assign the task to it, and reopen the task
+3. Call orion_list_tasks with unassigned_only: true — take the first 5 pending results only
+4. For each unassigned task: assign to available agent, escalate to human, or create a new specialist agent
+5. Archive transient agents whose work is finished (done/pending_validation)
+6. Post one brief feed summary
+
+Cap at 5 total task actions per cycle. Stop after that — the next cycle handles more.`,
         watchIntervalMin: 3,
       },
     },
@@ -229,7 +268,32 @@ Rules for task plans:
  * 2. Create the Agent (create-only — skip if already exists to preserve customisations).
  * 3. Create a NovaDeployment linking the two.
  */
+
+/**
+ * Resolve the LLM to use for system agents.
+ * Prefers the system-wide default model setting, falls back to the first
+ * enabled ExternalModel, then to 'claude' as a last resort.
+ */
+async function resolveDefaultLlm(): Promise<string> {
+  const setting = await prisma.systemSetting.findUnique({ where: { key: 'ai.default-model' } })
+  if (setting?.value && typeof setting.value === 'string') return setting.value
+
+  const first = await prisma.externalModel.findFirst({
+    where: { enabled: true },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  })
+  if (first) return `ext:${first.id}`
+
+  return 'claude'
+}
+
 export async function ensureSystemAgents(): Promise<void> {
+  // Resolve the system default LLM once — used for all system agents so they
+  // work out of the box without requiring manual LLM configuration.
+  // Falls back to 'claude' only if no external model is configured at all.
+  const defaultLlm = await resolveDefaultLlm()
+
   for (const def of SYSTEM_AGENT_DEFS) {
     try {
       // 1. Upsert Nova record
@@ -292,7 +356,7 @@ export async function ensureSystemAgents(): Promise<void> {
           novaId:      nova.id,
           metadata: {
             systemPrompt:  def.agent.systemPrompt,
-            contextConfig: def.agent.contextConfig,
+            contextConfig: { ...def.agent.contextConfig, llm: defaultLlm },
           } as object,
         },
       })
