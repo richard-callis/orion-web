@@ -21,7 +21,8 @@ export async function GET(req: NextRequest) {
   const type = searchParams.get('type') ?? undefined
   const featureId = searchParams.get('featureId') ?? undefined
   const epicId = searchParams.get('epicId') ?? undefined
-  const limit = Math.min(parseInt(searchParams.get('limit') ?? '50') || 50, 200)
+  const all = searchParams.get('all') === 'true'  // skip member filter — for hierarchy view
+  const limit = Math.min(parseInt(searchParams.get('limit') ?? '100') || 100, 200)
   const cursor = searchParams.get('cursor')
 
   const where: Record<string, unknown> = {}
@@ -36,11 +37,15 @@ export async function GET(req: NextRequest) {
     orderBy: { updatedAt: 'desc' },
     include: {
       _count: { select: { messages: true, members: true } },
-      task: { select: { id: true, title: true } },
+      task:    { select: { id: true, title: true } },
       feature: { select: { id: true, title: true } },
-      epic: { select: { id: true, title: true } },
+      epic:    { select: { id: true, title: true } },
     },
   })
+
+  if (all) {
+    return NextResponse.json({ rooms })
+  }
 
   const session = await getServerSession(authOptions)
   const userId = session?.user?.id

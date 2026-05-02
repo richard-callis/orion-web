@@ -30,6 +30,10 @@ interface Room {
   id: string
   name: string
   type: string
+  epicId?: string | null
+  featureId?: string | null
+  epic?: { id: string; title: string } | null
+  feature?: { id: string; title: string } | null
   created_at: string
   _count: { messages: number; members: number }
   task?: { id: string; title: string } | null
@@ -67,7 +71,7 @@ function MessagesContent() {
         fetch('/api/chat/conversations').then(r => r.json().catch(() => [])).then((d: any) => Array.isArray(d) ? d : []),
         fetch('/api/epics').then(r => r.json().catch(() => [])).then((d: any) => Array.isArray(d) ? d : []),
         fetch('/api/agents').then(r => r.json().catch(() => [])).then((d: any) => Array.isArray(d) ? d : []),
-        fetch('/api/chatrooms').then(r => r.json().catch(() => ({ rooms: [] }))).then((d: any) => d.rooms || []),
+        fetch('/api/chatrooms?all=true').then(r => r.json().catch(() => ({ rooms: [] }))).then((d: any) => d.rooms || []),
       ])
       setConvos(convosRes)
       setEpics(epicsRes)
