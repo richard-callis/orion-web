@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/db'
-import { getPlannerAgentId } from '@/lib/seed-system-agents'
+import { getPlannerAgentId, getEnvironmentSMEAgentId } from '@/lib/seed-system-agents'
 import { triggerRoomAgentReplies } from '@/lib/room-agents'
 
 // GET /api/chatrooms — list rooms
@@ -124,9 +124,12 @@ export async function POST(req: NextRequest) {
     }).catch(() => {})
   }
 
-  // ── Planning rooms: auto-add Planner + seed initial context ──────────────────
+  // ── Planning rooms: auto-add Planner + Environment SME + seed initial context ─
   if (room.type === 'planning') {
-    const plannerId = await getPlannerAgentId()
+    const [plannerId, envSMEId] = await Promise.all([
+      getPlannerAgentId(),
+      getEnvironmentSMEAgentId(),
+    ])
 
     if (plannerId) {
       // Add Planner as a member (idempotent)
@@ -135,6 +138,15 @@ export async function POST(req: NextRequest) {
         update: {},
         create: { roomId: room.id, agentId: plannerId, role: 'lead' },
       })
+
+      // Add Environment SME as a member (idempotent)
+      if (envSMEId) {
+        await prisma.chatRoomMember.upsert({
+          where:  { roomId_agentId: { roomId: room.id, agentId: envSMEId } },
+          update: {},
+          create: { roomId: room.id, agentId: envSMEId, role: 'member' },
+        })
+      }
 
       // Build context message so Planner knows what is being planned
       const context = await buildPlanningContext(room.epicId, room.featureId, room.taskId)

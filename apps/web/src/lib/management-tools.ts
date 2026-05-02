@@ -185,10 +185,20 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        featureId:   { type: 'string', description: 'ID of the parent feature' },
-        title:       { type: 'string', description: 'Task title' },
-        description: { type: 'string', description: 'Task description (optional)' },
-        plan:        { type: 'string', description: 'Numbered step-by-step implementation plan. Each step should be specific enough for a smaller LLM to execute. E.g.:\n1. Read /path/to/file and understand X\n2. Edit Y to add Z\n3. Run the test suite\n4. Verify output matches expected' },
+        featureId:         { type: 'string', description: 'ID of the parent feature' },
+        title:             { type: 'string', description: 'Task title' },
+        description:       { type: 'string', description: 'Task description (optional)' },
+        plan:              { type: 'string', description: 'Numbered step-by-step implementation plan. Each step should be specific enough for a smaller LLM to execute. E.g.:\n1. Read /path/to/file and understand X\n2. Edit Y to add Z\n3. Run the test suite\n4. Verify output matches expected' },
+        targetEnvironment: {
+          type: 'object',
+          description: 'For deployment tasks — the target environment as designated by the Environment SME. Include namespace, hostname, storageClass (if storage needed), and vaultPath (if secrets needed).',
+          properties: {
+            namespace:    { type: 'string', description: 'Kubernetes namespace (e.g. apps, media, security)' },
+            hostname:     { type: 'string', description: 'Ingress hostname (e.g. myapp.khalisio.com)' },
+            storageClass: { type: 'string', description: 'StorageClass for PVC (e.g. longhorn)' },
+            vaultPath:    { type: 'string', description: 'Vault secret path (e.g. secret/data/myapp)' },
+          },
+        },
       },
       required: ['featureId', 'title', 'plan'],
     },
@@ -509,11 +519,12 @@ async function handleCreateFeature(argsRaw: string, actorId?: string): Promise<s
 }
 
 async function handleCreateTask(argsRaw: string, actorId?: string): Promise<string> {
-  const { featureId, title, description, plan } = JSON.parse(argsRaw || '{}') as {
+  const { featureId, title, description, plan, targetEnvironment } = JSON.parse(argsRaw || '{}') as {
     featureId?: string
     title?: string
     description?: string
     plan?: string
+    targetEnvironment?: { namespace?: string; hostname?: string; storageClass?: string; vaultPath?: string }
   }
   if (!featureId) return 'Error: featureId is required'
   if (!title?.trim()) return 'Error: title is required'
@@ -528,16 +539,17 @@ async function handleCreateTask(argsRaw: string, actorId?: string): Promise<stri
   const task = await prisma.task.create({
     data: {
       featureId,
-      title: title.trim(),
+      title:       title.trim(),
       description: description || null,
-      plan: plan.trim(),
-      status: 'pending',
-      priority: 'medium',
-      createdBy: actorId ?? 'agent',
+      plan:        plan.trim(),
+      status:      'pending',
+      priority:    'medium',
+      createdBy:   actorId ?? 'agent',
+      ...(targetEnvironment ? { metadata: { targetEnvironment } as object } : {}),
     },
   })
-  await auditLog(actorId, `📋 Created task **${task.title}** (\`${task.id}\`) under feature \`${featureId}\``)
-  return JSON.stringify({ id: task.id, title: task.title, featureId: task.featureId, plan: task.plan }, null, 2)
+  await auditLog(actorId, `📋 Created task **${task.title}** (\`${task.id}\`) under feature \`${featureId}\`${targetEnvironment?.namespace ? ` → namespace: ${targetEnvironment.namespace}` : ''}`)
+  return JSON.stringify({ id: task.id, title: task.title, featureId: task.featureId, plan: task.plan, targetEnvironment: targetEnvironment ?? null }, null, 2)
 }
 
 async function handleSendMessage(argsRaw: string, actorId?: string): Promise<string> {
