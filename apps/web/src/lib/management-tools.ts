@@ -197,6 +197,44 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
       required: ['featureId', 'title', 'plan'],
     },
   },
+  {
+    name: 'orion_propose_gitops',
+    description: 'Propose a GitOps change for a cluster environment. Creates a branch, commits manifests, opens a PR, and auto-merges if the change matches policy (e.g. scaling, patch image tags). Use this for ALL infrastructure work — deploying services, creating configmaps/secrets, updating ingresses, etc.\n\nREQUIRED: you must know the target environment. Ask the Environment SME in the feature room, or check orion_list_agents for the Environment SME. If you have no way to get the environment designation, use environment_id: "localhost" as a fallback.\n\nRules:\n- Always include a clear reasoning field explaining why the change is needed\n- Provide operation_description for policy classification (e.g. "deploy new service", "update image tag")\n- Write manifests with namespace, proper labels, and correct resource types\n- For deployments: include namespace selector, resource limits if appropriate\n- For services: use ClusterIP unless ingress is explicitly needed',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        environment_id:      { type: 'string', description: 'Environment ID or name (e.g. "localhost", "production", or the CUID of the environment)' },
+        title:               { type: 'string', description: 'Short PR title, e.g. "feat: add nginx reverse proxy"' },
+        reasoning:           { type: 'string', description: 'Why this change is needed' },
+        operation_description: { type: 'string', description: 'One-line description for policy classification, e.g. "add new service"' },
+        changes: {
+          type: 'array',
+          description: 'Manifest files to create or update.',
+          items: {
+            type: 'object',
+            properties: {
+              path:    { type: 'string', description: 'Repo-relative file path, e.g. deployments/nginx/deployment.yaml' },
+              content: { type: 'string', description: 'Full file content as YAML/JSON' },
+            },
+            required: ['path', 'content'],
+          },
+        },
+      },
+      required: ['environment_id', 'title', 'reasoning', 'operation_description', 'changes'],
+    },
+  },
+  {
+    name: 'orion_request_tool',
+    description: 'Request a new tool type or capability. Use this when the task requires a capability that is not currently available (e.g. file writing, docker commands, curl). This creates a tool request that Alpha will review and either grant or explain why it cannot be provided.\n\nOnly request tools that are genuinely needed — do not request alternatives that already exist. If you only need read-only kubectl access, you already have it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tool_description: { type: 'string', description: 'Description of the tool/capability needed and why it is needed for the current task' },
+        tool_name:        { type: 'string', description: 'Suggested tool name (e.g. "file_write", "docker_run")' },
+      },
+      required: ['tool_description'],
+    },
+  },
 ]
 
 // ── Audit helper ──────────────────────────────────────────────────────────────
@@ -602,6 +640,72 @@ async function handleUpdateAgent(argsRaw: string, actorId?: string): Promise<str
   return `Updated agent "${existing.name}" (${spec.agent_id})`
 }
 
+// ── GitOps handler ────────────────────────────────────────────────────────────
+
+async function handleProposeGitops(argsRaw: string, actorId?: string): Promise<string> {
+  const { environment_id, title, reasoning, operation_description, changes } = JSON.parse(argsRaw || '{}') as {
+    environment_id?: string
+    title?: string
+    reasoning?: string
+    operation_description?: string
+    changes?: Array<{ path: string; content: string }>
+  }
+
+  if (!environment_id || !title || !reasoning || !operation_description || !changes?.length) {
+    return 'Error: environment_id, title, reasoning, operation_description, and changes are all required'
+  }
+
+  try {
+    const { prisma } = await import('./db')
+    const { proposeChange } = await import('./gitops')
+
+    const env = await prisma.environment.findFirst({
+      where: { OR: [{ id: environment_id }, { name: { equals: environment_id, mode: 'insensitive' } }] },
+    })
+    if (!env) return `Error: environment "${environment_id}" not found`
+    if (!env.gitOwner || !env.gitRepo) {
+      return 'Error: environment has no git repo — run bootstrap first'
+    }
+
+    const policy = (env.policyConfig ?? {}) as { overrides?: Record<string, string>; reviewAll?: boolean }
+    const result = await proposeChange({
+      owner: env.gitOwner,
+      repo: env.gitRepo,
+      title,
+      reasoning,
+      operationDescription: operation_description,
+      changes,
+      policy,
+    })
+
+    const action = result.merged
+      ? `auto-merged (${result.classification.reason})`
+      : `opened for review — ${result.classification.reason}`
+
+    await auditLog(actorId, `🔀 GitOps PR #${result.prNumber} ${action} — **${title}**`)
+    return `PR #${result.prNumber} ${action}. URL: ${result.prUrl}`
+  } catch (e) {
+    return `Error proposing GitOps change: ${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+// ── Tool request handler ──────────────────────────────────────────────────────
+
+async function handleRequestTool(argsRaw: string, actorId?: string): Promise<string> {
+  const { tool_description, tool_name } = JSON.parse(argsRaw || '{}') as {
+    tool_description?: string
+    tool_name?: string
+  }
+
+  if (!tool_description) return 'Error: tool_description is required'
+
+  const name = tool_name || tool_description.slice(0, 50)
+  const msg = `🔧 Tool request **${name}** — ${tool_description.slice(0, 300)}`
+  await auditLog(actorId, msg)
+
+  return `Tool request submitted: "${name}"\n\nAlpha will review this request during the next watcher cycle. Description: ${tool_description}`
+}
+
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
 /**
@@ -628,6 +732,8 @@ export async function executeManagedTool(name: string, argsRaw: string, actorId?
       case 'orion_send_message':     return await handleSendMessage(argsRaw, actorId)
       case 'orion_create_feature':   return await handleCreateFeature(argsRaw, actorId)
       case 'orion_create_task':      return await handleCreateTask(argsRaw, actorId)
+      case 'orion_propose_gitops':   return await handleProposeGitops(argsRaw, actorId)
+      case 'orion_request_tool':     return await handleRequestTool(argsRaw, actorId)
       default:
         return `Error: unknown management tool "${name}"`
     }

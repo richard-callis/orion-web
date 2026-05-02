@@ -122,7 +122,7 @@ export const openaiRunner: AgentRunner = {
             }
 
             yield { type: 'tool_result', tool: fn.name, result }
-            messages.push({ role: 'tool', content: result })
+            messages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
           }
           // Continue loop to get next assistant response
           continue
@@ -155,15 +155,51 @@ async function resolveOpenAIConfig(modelId: string): Promise<{ baseUrl: string; 
     model = await prisma.externalModel.findUnique({ where: { id: extId } })
   }
 
-  if (!model || (model.provider !== 'openai' && model.provider !== 'custom')) {
-    throw new Error(`No OpenAI-compatible model configured for ID: ${modelId}`)
+  // ext:openai or ext:custom -> use configured endpoint
+  if (model && (model.provider === 'openai' || model.provider === 'custom')) {
+    return {
+      baseUrl: model.baseUrl,
+      apiKey: model.apiKey || undefined,
+      modelId: model.modelId,
+      timeoutSecs: model.timeoutSecs ?? 120,
+      maxTokens: (model as any).maxTokens ?? null,
+    }
   }
 
-  return {
-    baseUrl: model.baseUrl,
-    apiKey: model.apiKey || undefined,
-    modelId: model.modelId,
-    timeoutSecs: model.timeoutSecs ?? 120,
-    maxTokens: (model as any).maxTokens ?? null,
+  // ext:anthropic -> use Anthropic's OpenAI-compatible endpoint
+  if (model && model.provider === 'anthropic') {
+    return {
+      baseUrl: model.baseUrl,
+      apiKey: model.apiKey || process.env.ANTHROPIC_API_KEY || undefined,
+      modelId: model.modelId,
+      timeoutSecs: model.timeoutSecs ?? 120,
+      maxTokens: (model as any).maxTokens ?? null,
+    }
   }
+
+  // ollama:* -> use local Ollama endpoint
+  if (modelId.startsWith('ollama:')) {
+    const modelName = modelId.slice('ollama:'.length)
+    return {
+      baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+      apiKey: undefined,
+      modelId: modelName,
+      timeoutSecs: 120,
+      maxTokens: 8192,
+    }
+  }
+
+  // claude:* -> use Anthropic's OpenAI-compatible endpoint
+  if (modelId.startsWith('claude:')) {
+    const modelName = modelId.slice('claude:'.length)
+    return {
+      baseUrl: 'https://api.anthropic.com',
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      modelId: modelName,
+      timeoutSecs: 120,
+      maxTokens: 8192,
+    }
+  }
+
+  throw new Error(`No OpenAI-compatible model configured for ID: ${modelId}`)
 }
