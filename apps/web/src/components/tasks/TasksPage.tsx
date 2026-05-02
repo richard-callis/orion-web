@@ -93,6 +93,7 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   const [tasks, setTasks]       = useState<Task[]>(initialTasks)
   const [epics, setEpics]       = useState<Epic[]>(initialEpics)
   const [agents, setAgents]     = useState<Agent[]>(initialAgents)
+  const activeAgents = agents.filter(a => !(a.metadata as Record<string,unknown> | null)?.archived)
   const [users]                 = useState<SimpleUser[]>(initialUsers)
   const [view, setView]         = useState<'tasks' | 'bugs' | 'my-tasks'>('tasks')
   const [selection, setSelection] = useState<SelectionState>({ kind: 'all' })
@@ -807,7 +808,7 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
                       className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
                     >
                       <option value="">— No agent —</option>
-                      {agents.map(a => <option key={a.id} value={a.id}>{a.name}{a.role ? ` (${a.role})` : ''}</option>)}
+                      {activeAgents.map(a => <option key={a.id} value={a.id}>{a.name}{a.role ? ` (${a.role})` : ''}</option>)}
                     </select>
                   </div>
                   {users.length > 0 && (
