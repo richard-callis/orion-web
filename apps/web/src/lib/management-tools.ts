@@ -191,13 +191,7 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
         plan:              { type: 'string', description: 'Numbered step-by-step implementation plan. Each step should be specific enough for a smaller LLM to execute. E.g.:\n1. Read /path/to/file and understand X\n2. Edit Y to add Z\n3. Run the test suite\n4. Verify output matches expected' },
         targetEnvironment: {
           type: 'object',
-          description: 'For deployment tasks — the target environment as designated by the Environment SME. Include namespace, hostname, storageClass (if storage needed), and vaultPath (if secrets needed).',
-          properties: {
-            namespace:    { type: 'string', description: 'Kubernetes namespace (e.g. apps, media, security)' },
-            hostname:     { type: 'string', description: 'Ingress hostname (e.g. myapp.khalisio.com)' },
-            storageClass: { type: 'string', description: 'StorageClass for PVC (e.g. longhorn)' },
-            vaultPath:    { type: 'string', description: 'Vault secret path (e.g. secret/data/myapp)' },
-          },
+          description: 'For deployment tasks — the target environment as designated by the Environment SME. Pass as an object with keys: namespace (e.g. "apps"), hostname (e.g. "myapp.khalisio.com"), storageClass (e.g. "longhorn", if storage needed), vaultPath (e.g. "secret/data/myapp", if secrets needed).',
         },
       },
       required: ['featureId', 'title', 'plan'],
