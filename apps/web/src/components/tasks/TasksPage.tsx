@@ -873,7 +873,7 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
                     <TaskChat rooms={taskChatRooms} loading={chatLoading} activeRoom={activeChatRoom}
                       onRoomChange={setActiveChatRoom} onSend={sendChatMessage} sending={chatSending}
                       inputRef={chatInputRef} onInput={setChatInput} input={chatInput}
-                      onOpenChat={roomId => router.push(`/messages?roomId=${roomId}`)} />
+                      onOpenChat={roomId => router.push(`/messages?r=${roomId}`)} />
                   )}
                 </div>
                 {taskTab === 'details' && (
