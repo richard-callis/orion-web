@@ -247,7 +247,7 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
   },
   {
     name: 'orion_cluster_health',
-    description: 'Comprehensive health check across all ORION-managed systems: (1) Kubernetes environments — node readiness, pod status (CrashLoopBackOff, OOMKilled, Failed, Pending), and ingress HTTP/SSL checks; (2) all registered environment gateways; (3) ORION system services (Gitea, Vault, ORION itself). Returns a structured report of healthy and degraded items with specific error details.',
+    description: 'Comprehensive health check across all ORION-managed systems: (1) all enabled IngressRoutes registered in ORION — HTTP reachability and SSL cert validity for each host; (2) Kubernetes cluster node readiness and pod issues (CrashLoopBackOff, OOMKilled, Failed, Pending); (3) all registered environment gateways; (4) ORION system services (Gitea, Vault, ORION itself). Returns a structured report of healthy and degraded items with specific error details.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -810,11 +810,26 @@ function checkGatewayReachability(rawUrl: string): Promise<{ reachable: boolean;
 async function handleClusterHealth(argsRaw: string): Promise<string> {
   const { namespace } = parseArgs(argsRaw) as { namespace?: string }
 
-  const rawIngresses: IngressEntry[] = []
   const clusterIssues: HealthResult[] = []  // node/pod problems from K8s clusters
   const errors: string[] = []
 
-  // ── Kubernetes environments — ingresses, nodes, and pods ──────────────────
+  // ── Registered IngressRoutes — the source of truth for what ORION manages ─
+  // These are the services explicitly registered in the Infrastructure → Ingress
+  // tab. This is the canonical list, not a kubectl discovery sweep.
+  const ingressRoutes = await prisma.ingressRoute.findMany({
+    where:  { enabled: true },
+    select: { host: true, tls: true, ingressPoint: { select: { name: true, domain: { select: { name: true } } } } },
+  })
+
+  // Deduplicate by host (same host may be on multiple routes/paths)
+  const seenHosts = new Set<string>()
+  const uniqueRoutes = ingressRoutes.filter((r) => {
+    if (seenHosts.has(r.host)) return false
+    seenHosts.add(r.host)
+    return true
+  })
+
+  // ── Kubernetes environments — nodes and pods (kubectl) ────────────────────
   const envs = await prisma.environment.findMany({
     where:  { type: 'cluster', kubeconfig: { not: null } },
     select: { id: true, name: true, kubeconfig: true },
@@ -829,26 +844,10 @@ async function handleClusterHealth(argsRaw: string): Promise<string> {
       const kc = `--kubeconfig ${kubeconfigPath}`
       const nsFlag = namespace ? `-n ${namespace}` : '-A'
 
-      // Ingresses
-      const [ingressOut, nodesOut, podsOut] = await Promise.all([
-        execAsync(`kubectl get ingress ${nsFlag} ${kc} -o json`, { timeout: 15_000 }).catch(() => null),
-        execAsync(`kubectl get nodes ${kc} -o json`,             { timeout: 15_000 }).catch(() => null),
-        execAsync(`kubectl get pods ${nsFlag} ${kc} -o json`,    { timeout: 20_000 }).catch(() => null),
+      const [nodesOut, podsOut] = await Promise.all([
+        execAsync(`kubectl get nodes ${kc} -o json`,          { timeout: 15_000 }).catch(() => null),
+        execAsync(`kubectl get pods ${nsFlag} ${kc} -o json`, { timeout: 20_000 }).catch(() => null),
       ])
-
-      if (ingressOut) {
-        const data = JSON.parse(ingressOut.stdout) as { items: any[] }
-        const hosts = data.items.flatMap((item) =>
-          (item.spec?.rules ?? [])
-            .filter((r: any) => r.host)
-            .map((r: any) => ({
-              namespace: `${env.name}/${item.metadata.namespace as string}`,
-              ingress:   item.metadata.name as string,
-              host:      r.host as string,
-            }))
-        )
-        rawIngresses.push(...hosts)
-      }
 
       if (nodesOut) {
         const nodesData = JSON.parse(nodesOut.stdout) as { items: any[] }
@@ -914,30 +913,27 @@ async function handleClusterHealth(argsRaw: string): Promise<string> {
     }
   }
 
-  // Deduplicate ingress hosts — same host may appear in multiple ingresses
-  const seen = new Set<string>()
-  const uniqueIngresses = rawIngresses.filter((ing) => {
-    if (seen.has(ing.host)) return false
-    seen.add(ing.host)
-    return true
-  })
-
-  // Run HTTP + SSL checks on all discovered cluster ingress hosts
+  // Run HTTP + SSL checks on all registered IngressRoutes in parallel
   const results: HealthResult[] = await Promise.all(
-    uniqueIngresses.map(async (ing) => {
+    uniqueRoutes.map(async (route) => {
+      const label = route.ingressPoint?.domain?.name ?? route.ingressPoint?.name ?? 'ingress'
       const [httpCheck, ssl] = await Promise.all([
-        checkHTTPReachability(ing.host),
-        checkSSLCert(ing.host),
+        checkHTTPReachability(route.host),
+        route.tls ? checkSSLCert(route.host) : Promise.resolve({ valid: true, daysUntilExpiry: 999 }),
       ])
 
       const issues: string[] = []
       if (!httpCheck.reachable)           issues.push(`unreachable — ${httpCheck.error ?? `HTTP ${httpCheck.statusCode}`}`)
-      if (!ssl.valid)                     issues.push(`invalid SSL cert — ${ssl.error ?? 'certificate not trusted'}`)
-      else if (ssl.daysUntilExpiry <= 0)  issues.push('SSL cert expired')
-      else if (ssl.daysUntilExpiry < 30)  issues.push(`SSL cert expires in ${ssl.daysUntilExpiry} days`)
+      if (route.tls) {
+        if (!ssl.valid)                     issues.push(`invalid SSL cert — ${(ssl as any).error ?? 'certificate not trusted'}`)
+        else if (ssl.daysUntilExpiry <= 0)  issues.push('SSL cert expired')
+        else if (ssl.daysUntilExpiry < 30)  issues.push(`SSL cert expires in ${ssl.daysUntilExpiry} days`)
+      }
 
       return {
-        ...ing,
+        namespace:          label,
+        ingress:            route.ingressPoint?.name ?? 'unknown',
+        host:               route.host,
         status:             issues.length === 0 ? 'healthy' : 'degraded',
         httpStatus:         httpCheck.statusCode,
         sslValid:           ssl.valid,
