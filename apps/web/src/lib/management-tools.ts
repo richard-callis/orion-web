@@ -247,7 +247,7 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
   },
   {
     name: 'orion_cluster_health',
-    description: 'Check the health of all services ORION knows about: its own system services (Gitea, ORION) plus every ingress host from registered Kubernetes environments. Tests HTTP reachability and SSL certificate validity for each host. Returns a structured report of healthy and degraded services.',
+    description: 'Comprehensive health check across all ORION-managed systems: (1) Kubernetes environments — node readiness, pod status (CrashLoopBackOff, OOMKilled, Failed, Pending), and ingress HTTP/SSL checks; (2) all registered environment gateways; (3) ORION system services (Gitea, Vault, ORION itself). Returns a structured report of healthy and degraded items with specific error details.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -811,11 +811,10 @@ async function handleClusterHealth(argsRaw: string): Promise<string> {
   const { namespace } = parseArgs(argsRaw) as { namespace?: string }
 
   const rawIngresses: IngressEntry[] = []
+  const clusterIssues: HealthResult[] = []  // node/pod problems from K8s clusters
   const errors: string[] = []
 
-  // ── Kubernetes environments — use their kubeconfig to query ingresses ─────
-  // All public hostnames (Gitea, Vault, ORION, apps) have ingresses on the
-  // registered cluster, so kubectl discovery covers everything.
+  // ── Kubernetes environments — ingresses, nodes, and pods ──────────────────
   const envs = await prisma.environment.findMany({
     where:  { type: 'cluster', kubeconfig: { not: null } },
     select: { id: true, name: true, kubeconfig: true },
@@ -827,23 +826,87 @@ async function handleClusterHealth(argsRaw: string): Promise<string> {
       const decoded = Buffer.from(env.kubeconfig!, 'base64').toString('utf-8')
       kubeconfigPath = join(tmpdir(), `orion-health-${env.id}.yaml`)
       writeFileSync(kubeconfigPath, decoded, { mode: 0o600 })
-
+      const kc = `--kubeconfig ${kubeconfigPath}`
       const nsFlag = namespace ? `-n ${namespace}` : '-A'
-      const { stdout } = await execAsync(
-        `kubectl get ingress ${nsFlag} --kubeconfig ${kubeconfigPath} -o json`,
-        { timeout: 15_000 },
-      )
-      const data = JSON.parse(stdout) as { items: any[] }
-      const hosts = data.items.flatMap((item) =>
-        (item.spec?.rules ?? [])
-          .filter((r: any) => r.host)
-          .map((r: any) => ({
-            namespace: `${env.name}/${item.metadata.namespace as string}`,
-            ingress:   item.metadata.name as string,
-            host:      r.host as string,
-          }))
-      )
-      rawIngresses.push(...hosts)
+
+      // Ingresses
+      const [ingressOut, nodesOut, podsOut] = await Promise.all([
+        execAsync(`kubectl get ingress ${nsFlag} ${kc} -o json`, { timeout: 15_000 }).catch(() => null),
+        execAsync(`kubectl get nodes ${kc} -o json`,             { timeout: 15_000 }).catch(() => null),
+        execAsync(`kubectl get pods ${nsFlag} ${kc} -o json`,    { timeout: 20_000 }).catch(() => null),
+      ])
+
+      if (ingressOut) {
+        const data = JSON.parse(ingressOut.stdout) as { items: any[] }
+        const hosts = data.items.flatMap((item) =>
+          (item.spec?.rules ?? [])
+            .filter((r: any) => r.host)
+            .map((r: any) => ({
+              namespace: `${env.name}/${item.metadata.namespace as string}`,
+              ingress:   item.metadata.name as string,
+              host:      r.host as string,
+            }))
+        )
+        rawIngresses.push(...hosts)
+      }
+
+      if (nodesOut) {
+        const nodesData = JSON.parse(nodesOut.stdout) as { items: any[] }
+        for (const node of nodesData.items) {
+          const readyCond = node.status?.conditions?.find((c: any) => c.type === 'Ready')
+          if (readyCond?.status !== 'True') {
+            const reason = readyCond?.reason ?? readyCond?.message ?? 'Unknown'
+            clusterIssues.push({
+              namespace:          env.name,
+              ingress:            'node',
+              host:               `node/${node.metadata.name as string}`,
+              status:             'degraded',
+              httpStatus:         0,
+              sslValid:           true,
+              sslDaysUntilExpiry: 999,
+              issues:             [`node NotReady — ${reason}`],
+            })
+          }
+        }
+      }
+
+      if (podsOut) {
+        const podsData = JSON.parse(podsOut.stdout) as { items: any[] }
+        for (const pod of podsData.items) {
+          const phase = pod.status?.phase as string | undefined
+          if (phase === 'Succeeded') continue
+          const podIssues: string[] = []
+          if (phase === 'Pending') {
+            const condition = pod.status?.conditions?.find((c: any) => c.type === 'PodScheduled' && c.status !== 'True')
+            podIssues.push(`Pending${condition ? ` — ${condition.reason as string}` : ''}`)
+          } else if (phase === 'Failed') {
+            podIssues.push(`Failed — ${pod.status?.reason ?? pod.status?.message ?? 'unknown'}`)
+          } else if (phase === 'Running' || !phase) {
+            for (const cs of (pod.status?.containerStatuses ?? []) as any[]) {
+              const waiting = cs.state?.waiting
+              if (waiting?.reason === 'CrashLoopBackOff') {
+                podIssues.push(`CrashLoopBackOff — ${cs.name as string} (${cs.restartCount as number} restarts)`)
+              } else if (waiting?.reason === 'OOMKilled' || cs.lastState?.terminated?.reason === 'OOMKilled') {
+                podIssues.push(`OOMKilled — ${cs.name as string}`)
+              } else if (!cs.ready && !waiting?.reason) {
+                podIssues.push(`container not ready — ${cs.name as string}`)
+              }
+            }
+          }
+          if (podIssues.length > 0) {
+            clusterIssues.push({
+              namespace:          `${env.name}/${pod.metadata.namespace as string}`,
+              ingress:            'pod',
+              host:               `pod/${pod.metadata.name as string}`,
+              status:             'degraded',
+              httpStatus:         0,
+              sslValid:           true,
+              sslDaysUntilExpiry: 999,
+              issues:             podIssues,
+            })
+          }
+        }
+      }
     } catch (e) {
       errors.push(`${env.name}: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
@@ -851,7 +914,7 @@ async function handleClusterHealth(argsRaw: string): Promise<string> {
     }
   }
 
-  // Deduplicate by host — same host may appear in multiple ingresses
+  // Deduplicate ingress hosts — same host may appear in multiple ingresses
   const seen = new Set<string>()
   const uniqueIngresses = rawIngresses.filter((ing) => {
     if (seen.has(ing.host)) return false
@@ -859,22 +922,16 @@ async function handleClusterHealth(argsRaw: string): Promise<string> {
     return true
   })
 
-  if (uniqueIngresses.length === 0) {
-    return JSON.stringify({
-      summary: { total: 0, healthy: 0, degraded: 0 },
-      degraded: [], all: [], errors,
-    })
-  }
-
+  // Run HTTP + SSL checks on all discovered cluster ingress hosts
   const results: HealthResult[] = await Promise.all(
     uniqueIngresses.map(async (ing) => {
-      const [http, ssl] = await Promise.all([
+      const [httpCheck, ssl] = await Promise.all([
         checkHTTPReachability(ing.host),
         checkSSLCert(ing.host),
       ])
 
       const issues: string[] = []
-      if (!http.reachable)                issues.push(`unreachable — ${http.error ?? `HTTP ${http.statusCode}`}`)
+      if (!httpCheck.reachable)           issues.push(`unreachable — ${httpCheck.error ?? `HTTP ${httpCheck.statusCode}`}`)
       if (!ssl.valid)                     issues.push(`invalid SSL cert — ${ssl.error ?? 'certificate not trusted'}`)
       else if (ssl.daysUntilExpiry <= 0)  issues.push('SSL cert expired')
       else if (ssl.daysUntilExpiry < 30)  issues.push(`SSL cert expires in ${ssl.daysUntilExpiry} days`)
@@ -882,7 +939,7 @@ async function handleClusterHealth(argsRaw: string): Promise<string> {
       return {
         ...ing,
         status:             issues.length === 0 ? 'healthy' : 'degraded',
-        httpStatus:         http.statusCode,
+        httpStatus:         httpCheck.statusCode,
         sslValid:           ssl.valid,
         sslDaysUntilExpiry: ssl.daysUntilExpiry,
         issues,
@@ -890,32 +947,65 @@ async function handleClusterHealth(argsRaw: string): Promise<string> {
     })
   )
 
-  // ── Non-cluster environments — check gateway reachability ────────────────
-  // For docker/localhost environments there are no ingresses to discover;
-  // we simply verify the gateway URL is reachable so ORION knows whether
-  // the environment is up.
-  const nonClusterEnvs = await prisma.environment.findMany({
-    where:  { type: { not: 'cluster' }, gatewayUrl: { not: null } },
+  // Add cluster-level issues (NotReady nodes, CrashLoopBackOff pods, etc.)
+  results.push(...clusterIssues)
+
+  // ── All registered environment gateways ───────────────────────────────────
+  // Every environment (cluster or otherwise) has a gatewayUrl — this is the
+  // ORION gateway that connects ORION to the environment. Check it regardless
+  // of type so we know whether ORION can reach each environment.
+  const allEnvsWithGateway = await prisma.environment.findMany({
+    where:  { gatewayUrl: { not: null } },
     select: { id: true, name: true, type: true, gatewayUrl: true },
   })
 
-  for (const env of nonClusterEnvs) {
+  for (const env of allEnvsWithGateway) {
     try {
       const reach = await checkGatewayReachability(env.gatewayUrl!)
       const issues: string[] = []
       if (!reach.reachable) issues.push(`gateway unreachable — ${reach.error ?? `HTTP ${reach.statusCode}`}`)
       results.push({
-        namespace:          env.type,
+        namespace:          `gateway/${env.type}`,
         ingress:            env.name,
         host:               env.gatewayUrl!,
         status:             issues.length === 0 ? 'healthy' : 'degraded',
         httpStatus:         reach.statusCode,
-        sslValid:           true,   // internal gateway — SSL check not applicable
+        sslValid:           true,   // internal gateway endpoint — no SSL check
         sslDaysUntilExpiry: 999,
         issues,
       } as HealthResult)
     } catch (e) {
       errors.push(`${env.name} gateway: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  // ── ORION system services ─────────────────────────────────────────────────
+  // Core services bundled with ORION that are not registered environments but
+  // must always be reachable. URLs are resolved from SystemSetting so an admin
+  // can override them without a code deploy.
+  const systemServiceSettings = await prisma.systemSetting.findMany({
+    where: { key: { startsWith: 'system.service.' } },
+  })
+  for (const setting of systemServiceSettings) {
+    const url = typeof setting.value === 'string' ? setting.value : null
+    if (!url) continue
+    const label = setting.key.replace('system.service.', '')
+    try {
+      const reach = await checkGatewayReachability(url)
+      const issues: string[] = []
+      if (!reach.reachable) issues.push(`unreachable — ${reach.error ?? `HTTP ${reach.statusCode}`}`)
+      results.push({
+        namespace:          'orion-system',
+        ingress:            label,
+        host:               url,
+        status:             issues.length === 0 ? 'healthy' : 'degraded',
+        httpStatus:         reach.statusCode,
+        sslValid:           true,
+        sslDaysUntilExpiry: 999,
+        issues,
+      } as HealthResult)
+    } catch (e) {
+      errors.push(`${label}: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
