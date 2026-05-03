@@ -12,6 +12,12 @@
 import type { ManagementToolDef } from '@/lib/agent-runner/types'
 import { prisma } from '@/lib/db'
 import { getDefaultModelId } from '@/lib/default-model'
+import { exec } from 'child_process'
+import { promisify } from 'util'
+import tls from 'tls'
+import https from 'https'
+
+const execAsync = promisify(exec)
 
 // SOC2 [INPUT-001]: mirrors the reserved-name check in POST /api/agents
 export const RESERVED_AGENT_NAMES = ['human', 'user', 'system', 'admin']
@@ -233,6 +239,16 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
         tool_name:        { type: 'string', description: 'Suggested tool name (e.g. "file_write", "docker_run")' },
       },
       required: ['tool_description'],
+    },
+  },
+  {
+    name: 'orion_cluster_health',
+    description: 'Check the health of all cluster ingresses. For each ingress host, tests HTTP reachability and SSL certificate validity. Returns a structured report of healthy and degraded services, including SSL expiry warnings and error details.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        namespace: { type: 'string', description: 'Limit check to a specific namespace (optional — omit to check all namespaces)' },
+      },
     },
   },
 ]
@@ -713,6 +729,108 @@ async function handleProposeGitops(argsRaw: string, actorId?: string): Promise<s
   }
 }
 
+// ── Cluster health handler ────────────────────────────────────────────────────
+
+interface IngressEntry { namespace: string; ingress: string; host: string }
+interface HealthResult extends IngressEntry {
+  status: 'healthy' | 'degraded'
+  httpStatus: number
+  sslValid: boolean
+  sslDaysUntilExpiry: number
+  issues: string[]
+}
+
+function checkSSLCert(hostname: string): Promise<{ valid: boolean; daysUntilExpiry: number; error?: string }> {
+  return new Promise((resolve) => {
+    const socket = tls.connect(443, hostname, { servername: hostname, rejectUnauthorized: false }, () => {
+      const cert = socket.getPeerCertificate()
+      if (!cert?.valid_to) {
+        socket.destroy()
+        return resolve({ valid: false, daysUntilExpiry: 0, error: 'no certificate returned' })
+      }
+      const daysUntilExpiry = Math.floor((new Date(cert.valid_to).getTime() - Date.now()) / 86_400_000)
+      const valid = socket.authorized
+      socket.destroy()
+      resolve({ valid, daysUntilExpiry })
+    })
+    socket.setTimeout(6_000, () => { socket.destroy(); resolve({ valid: false, daysUntilExpiry: 0, error: 'timeout' }) })
+    socket.on('error', (e) => resolve({ valid: false, daysUntilExpiry: 0, error: e.message }))
+  })
+}
+
+function checkHTTPReachability(hostname: string): Promise<{ statusCode: number; reachable: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const req = https.get(
+      `https://${hostname}`,
+      { timeout: 8_000, rejectUnauthorized: false, headers: { 'User-Agent': 'ORION-HealthCheck/1.0' } },
+      (res) => {
+        const statusCode = res.statusCode ?? 0
+        resolve({ statusCode, reachable: statusCode > 0 && statusCode < 500 })
+        res.destroy()
+      },
+    )
+    req.on('timeout', () => { req.destroy(); resolve({ statusCode: 0, reachable: false, error: 'timeout' }) })
+    req.on('error', (e) => resolve({ statusCode: 0, reachable: false, error: e.message }))
+  })
+}
+
+async function handleClusterHealth(argsRaw: string): Promise<string> {
+  const { namespace } = parseArgs(argsRaw) as { namespace?: string }
+
+  let rawIngresses: IngressEntry[]
+  try {
+    const nsFlag = namespace ? `-n ${namespace}` : '-A'
+    const { stdout } = await execAsync(`kubectl get ingress ${nsFlag} -o json`, { timeout: 15_000 })
+    const data = JSON.parse(stdout) as { items: any[] }
+    rawIngresses = data.items.flatMap((item) =>
+      (item.spec?.rules ?? [])
+        .filter((r: any) => r.host)
+        .map((r: any) => ({
+          namespace: item.metadata.namespace as string,
+          ingress:   item.metadata.name as string,
+          host:      r.host as string,
+        }))
+    )
+  } catch (e) {
+    return `Error fetching ingresses: ${e instanceof Error ? e.message : String(e)}`
+  }
+
+  if (rawIngresses.length === 0) {
+    return JSON.stringify({ summary: { total: 0, healthy: 0, degraded: 0 }, degraded: [], all: [] })
+  }
+
+  const results: HealthResult[] = await Promise.all(
+    rawIngresses.map(async (ing) => {
+      const [http, ssl] = await Promise.all([
+        checkHTTPReachability(ing.host),
+        checkSSLCert(ing.host),
+      ])
+
+      const issues: string[] = []
+      if (!http.reachable)                            issues.push(`unreachable — ${http.error ?? `HTTP ${http.statusCode}`}`)
+      if (!ssl.valid)                                 issues.push(`invalid SSL cert — ${ssl.error ?? 'certificate not trusted'}`)
+      else if (ssl.daysUntilExpiry <= 0)              issues.push('SSL cert expired')
+      else if (ssl.daysUntilExpiry < 30)              issues.push(`SSL cert expires in ${ssl.daysUntilExpiry} days`)
+
+      return {
+        ...ing,
+        status:              issues.length === 0 ? 'healthy' : 'degraded',
+        httpStatus:          http.statusCode,
+        sslValid:            ssl.valid,
+        sslDaysUntilExpiry:  ssl.daysUntilExpiry,
+        issues,
+      }
+    })
+  )
+
+  const degraded = results.filter((r) => r.status === 'degraded')
+  return JSON.stringify({
+    summary: { total: results.length, healthy: results.length - degraded.length, degraded: degraded.length },
+    degraded,
+    all: results,
+  }, null, 2)
+}
+
 // ── Tool request handler ──────────────────────────────────────────────────────
 
 async function handleRequestTool(argsRaw: string, actorId?: string): Promise<string> {
@@ -751,8 +869,9 @@ const TOOL_REGISTRY: Record<string, Handler> = {
   orion_send_message:   handleSendMessage,
   orion_create_feature: handleCreateFeature,
   orion_create_task:    handleCreateTask,
-  orion_propose_gitops: handleProposeGitops,
-  orion_request_tool:   handleRequestTool,
+  orion_propose_gitops:    handleProposeGitops,
+  orion_request_tool:      handleRequestTool,
+  orion_cluster_health:    handleClusterHealth,
 }
 
 /**
