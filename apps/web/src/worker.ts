@@ -344,21 +344,14 @@ async function postToFeed(agentId: string, content: string, taskId?: string) {
  * SOC2: room creation is logged to the agent-feed audit trail.
  */
 async function findOrCreateFeatureRoom(featureId: string, agentId: string): Promise<string | null> {
-  // Find existing room for this feature
-  let room = await prisma.chatRoom.findFirst({
-    where: { featureId, type: 'feature' },
+  // Upsert on featureId unique constraint — race-condition safe, enforces 1:1 feature↔room
+  const feature = await prisma.feature.findUnique({ where: { id: featureId }, select: { title: true } })
+  const existing = await prisma.chatRoom.findUnique({ where: { featureId }, select: { id: true } })
+  const room = existing ?? await prisma.chatRoom.create({
+    data: { name: feature?.title ?? '', featureId, type: 'feature', createdBy: agentId },
     select: { id: true },
   })
-  if (!room) {
-    room = await prisma.chatRoom.create({
-      data: { name: '', featureId, type: 'feature', createdBy: agentId },
-      select: { id: true },
-    })
-    // Set name from feature title
-    const feature = await prisma.feature.findUnique({ where: { id: featureId }, select: { title: true } })
-    if (feature) {
-      await prisma.chatRoom.update({ where: { id: room.id }, data: { name: feature.title } })
-    }
+  if (!existing) {
     // SOC2: log room creation to audit feed
     await postToFeed(agentId, `Room created for feature ${featureId} (room ${room.id})`)
   }

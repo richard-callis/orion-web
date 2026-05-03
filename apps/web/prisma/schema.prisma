@@ -741,6 +741,7 @@ model ChatRoom {
   members       ChatRoomMember[]
   messages      ChatMessage[]
 
+  @@unique([featureId])
   @@map("chat_rooms")
 }
 
