@@ -324,6 +324,13 @@ async function handleAssignTask(argsRaw: string, actorId?: string): Promise<stri
   if (!task_id) return 'Error: task_id is required'
   if (!agent_id) return 'Error: agent_id is required'
 
+  const targetAgent = await prisma.agent.findUnique({ where: { id: agent_id }, select: { name: true, metadata: true } })
+  if (!targetAgent) return `Error: agent "${agent_id}" not found`
+  const targetMeta = (targetAgent.metadata ?? {}) as Record<string, unknown>
+  if (targetMeta.archived === true) {
+    return `Error: agent "${targetAgent.name}" is archived and cannot be assigned tasks. Use orion_list_agents to find an active agent.`
+  }
+
   await prisma.task.update({
     where: { id: task_id },
     data:  { assignedAgent: agent_id, status: 'pending' },
@@ -364,9 +371,13 @@ async function handleCreateAgent(argsRaw: string, actorId?: string): Promise<str
   // Prevents Alpha's watcher from stacking Debugger agents on each cycle.
   const existingByName = await prisma.agent.findUnique({
     where:  { name: spec.name.trim() },
-    select: { id: true, name: true, role: true },
+    select: { id: true, name: true, role: true, metadata: true },
   })
   if (existingByName) {
+    const existingMeta = (existingByName.metadata ?? {}) as Record<string, unknown>
+    if (existingMeta.archived === true) {
+      return `Error: an archived agent named "${spec.name.trim()}" already exists (id: ${existingByName.id}). Choose a different name — do not reuse archived agent names.`
+    }
     return JSON.stringify({ id: existingByName.id, name: existingByName.name, role: existingByName.role, note: 'Agent already exists — returning existing record' }, null, 2)
   }
 
