@@ -72,6 +72,8 @@ export async function POST(
   const content = String(body.content ?? '')
   if (!content.trim()) return NextResponse.json({ error: 'Message content required' }, { status: 400 })
 
+  const taskId = body.taskId ? String(body.taskId) : undefined
+
   const msg = await prisma.chatMessage.create({
     data: {
       roomId: id,
@@ -80,6 +82,7 @@ export async function POST(
       senderType: body.senderType ? String(body.senderType) : (agentId ? 'agent' : 'human'),
       content: content.trim(),
       attachments: (body.attachments as any) ?? undefined,
+      taskId: taskId ?? null,
     },
     include: {
       agent: { select: { id: true, name: true } },

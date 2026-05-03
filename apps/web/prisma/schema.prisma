@@ -246,7 +246,8 @@ model Task {
   planApprovedAt  DateTime?
   events          TaskEvent[]
   metadata        Json?
-  chatRooms       ChatRoom[]  @relation("ChatRoomTask")
+  chatRooms       ChatRoom[]    @relation("ChatRoomTask")
+  chatMessages    ChatMessage[]
 }
 
 model TaskEvent {
@@ -767,6 +768,7 @@ model ChatMessage {
   room          ChatRoom    @relation(fields: [roomId], references: [id], onDelete: Cascade)
   agentId       String?
   userId        String?
+  taskId        String?
   senderType    String              // "agent" | "human" | "system"
   content       String          @db.Text
   attachments   Json?
@@ -775,7 +777,9 @@ model ChatMessage {
 
   agent         Agent?      @relation(fields: [agentId], references: [id], onDelete: SetNull)
   user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  task          Task?       @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   @@index([roomId, createdAt])
+  @@index([roomId, taskId, createdAt])
   @@map("chat_messages")
 }

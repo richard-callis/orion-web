@@ -1,21 +1,30 @@
 /**
  * /api/tasks/[id]/chat
  *
- * GET — Fetch chat rooms and messages for a task
+ * GET — Fetch the feature chat room for a task, filtered to messages tagged to this task.
+ *       Also returns the roomId so the UI can link directly to the full feature room.
  */
 import { NextResponse } from 'next/server'
+import { prisma } from '@/lib/db'
 
 export async function GET(
   _req: Request,
   { params }: { params: { id: string } }
 ) {
-  const { prisma } = await import('@/lib/db')
+  const task = await prisma.task.findUnique({
+    where: { id: params.id },
+    select: { feature: { select: { id: true } } },
+  })
+
+  const featureId = task?.feature?.id
+  if (!featureId) return NextResponse.json({ rooms: [] })
 
   const rooms = await prisma.chatRoom.findMany({
-    where: { taskId: params.id },
+    where: { featureId },
     orderBy: { createdAt: 'asc' },
     include: {
       messages: {
+        where: { taskId: params.id },
         orderBy: { createdAt: 'asc' },
         include: {
           agent: { select: { id: true, name: true, type: true } },

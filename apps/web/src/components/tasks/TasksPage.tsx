@@ -198,7 +198,7 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
       const res = await fetch(`/api/chatrooms/${activeChatRoom}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, taskId: panel.task.id }),
       })
       if (res.ok) {
         // Refresh room messages
@@ -872,7 +872,8 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
                   {taskTab === 'chat' && (
                     <TaskChat rooms={taskChatRooms} loading={chatLoading} activeRoom={activeChatRoom}
                       onRoomChange={setActiveChatRoom} onSend={sendChatMessage} sending={chatSending}
-                      inputRef={chatInputRef} onInput={setChatInput} input={chatInput} />
+                      inputRef={chatInputRef} onInput={setChatInput} input={chatInput}
+                      onOpenChat={roomId => router.push(`/messages?roomId=${roomId}`)} />
                   )}
                 </div>
                 {taskTab === 'details' && (
@@ -1123,7 +1124,7 @@ const SENDER_BG: Record<string, string> = {
 }
 
 function TaskChat({
-  rooms, loading, activeRoom, onRoomChange, onSend, sending, inputRef, onInput, input
+  rooms, loading, activeRoom, onRoomChange, onSend, sending, inputRef, onInput, input, onOpenChat
 }: {
   rooms: Array<{id:string;name:string;type:string;messages:Array<{id:string;senderType:string;content:string;sender:{type:string;id:string|null;name:string};createdAt:string}>}>
   loading: boolean
@@ -1134,6 +1135,7 @@ function TaskChat({
   inputRef: React.RefObject<HTMLInputElement | null>
   onInput: (v: string) => void
   input: string
+  onOpenChat?: (roomId: string) => void
 }) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -1158,26 +1160,40 @@ function TaskChat({
 
   const messages = currentRoom.messages.length > 0 ? currentRoom.messages : []
 
+  const roomIdForLink = activeRoom ?? (rooms[0]?.id ?? null)
+
   return (
     <div className="flex flex-col h-full">
-      {/* Room selector */}
-      {rooms.length > 1 && (
-        <div className="flex gap-1.5 mb-3 overflow-x-auto pb-1">
-          {rooms.map(room => (
-            <button
-              key={room.id}
-              onClick={() => onRoomChange(room.id)}
-              className={`flex-shrink-0 px-2.5 py-1 rounded text-[10px] border transition-colors ${
-                activeRoom === room.id
-                  ? 'bg-accent/15 border-accent/40 text-accent'
-                  : 'bg-bg-raised border-border-subtle text-text-muted hover:text-text-secondary'
-              }`}
-            >
-              {room.name}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Room selector + open in chat button */}
+      <div className="flex items-center gap-1.5 mb-3">
+        {rooms.length > 1 && (
+          <div className="flex gap-1.5 overflow-x-auto pb-1 flex-1">
+            {rooms.map(room => (
+              <button
+                key={room.id}
+                onClick={() => onRoomChange(room.id)}
+                className={`flex-shrink-0 px-2.5 py-1 rounded text-[10px] border transition-colors ${
+                  activeRoom === room.id
+                    ? 'bg-accent/15 border-accent/40 text-accent'
+                    : 'bg-bg-raised border-border-subtle text-text-muted hover:text-text-secondary'
+                }`}
+              >
+                {room.name}
+              </button>
+            ))}
+          </div>
+        )}
+        {roomIdForLink && onOpenChat && (
+          <button
+            onClick={() => onOpenChat(roomIdForLink)}
+            className="flex-shrink-0 ml-auto flex items-center gap-1 px-2.5 py-1 rounded text-[10px] border border-border-subtle bg-bg-raised text-text-muted hover:text-text-secondary hover:border-accent/40 transition-colors"
+            title="Open full feature chat room"
+          >
+            <MessageSquare size={10} />
+            Open in Chat
+          </button>
+        )}
+      </div>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-3 pr-1">
