@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { Bot, User, Bell, Terminal } from 'lucide-react'
+import { Bot, User, Bell, Terminal, Pause, Play } from 'lucide-react'
 
 interface AgentMsg {
   id: string
@@ -18,8 +18,10 @@ const typeIcon = (type: string) => {
   return <User size={12} className="text-text-muted" />
 }
 
-export function AgentFeed({ initialMessages }: { initialMessages: AgentMsg[] }) {
+export function AgentFeed({ initialMessages, initialPaused = false }: { initialMessages: AgentMsg[]; initialPaused?: boolean }) {
   const [messages, setMessages] = useState(initialMessages)
+  const [paused, setPaused] = useState(initialPaused)
+  const [toggling, setToggling] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -34,10 +36,41 @@ export function AgentFeed({ initialMessages }: { initialMessages: AgentMsg[] }) 
     return () => clearInterval(t)
   }, [])
 
+  const togglePause = async () => {
+    setToggling(true)
+    try {
+      const res = await fetch('/api/admin/watchers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paused: !paused }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setPaused(data.paused)
+      }
+    } finally {
+      setToggling(false)
+    }
+  }
+
   return (
     <aside className="flex-1 min-h-0 flex flex-col border-l border-border-subtle bg-bg-sidebar overflow-hidden">
-      <div className="flex items-center px-4 py-3 border-b border-border-subtle flex-shrink-0">
-        <span className="text-xs font-semibold text-text-secondary">Agent Feed</span>
+      <div className="flex items-center px-4 py-3 border-b border-border-subtle flex-shrink-0 gap-2">
+        <span className="text-xs font-semibold text-text-secondary flex-1">Agent Feed</span>
+        {paused && (
+          <span className="text-[10px] font-medium text-status-warning bg-status-warning/10 px-1.5 py-0.5 rounded">
+            Watchers paused
+          </span>
+        )}
+        <button
+          onClick={togglePause}
+          disabled={toggling}
+          title={paused ? 'Resume watchers' : 'Pause watchers'}
+          className="flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded border border-border-subtle text-text-secondary hover:text-text-primary hover:border-border-default transition-colors disabled:opacity-50"
+        >
+          {paused ? <Play size={10} /> : <Pause size={10} />}
+          {paused ? 'Resume' : 'Pause'}
+        </button>
       </div>
       <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
         {[...messages].reverse().map(msg => (
