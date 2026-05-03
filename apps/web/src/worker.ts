@@ -202,7 +202,7 @@ async function runTask(taskId: string): Promise<void> {
     await postToFeed(agent.id, `▶ Starting task: **${task.title}**`, taskId)
     // Additionally post to feature room if one exists
     if (featureRoomId) {
-      await postToRoom(featureRoomId, agent.id, `▶ Starting task: **${task.title}**`)
+      await postToRoom(featureRoomId, agent.id, `▶ Starting task: **${task.title}**`, taskId)
     }
 
     const roomNote = featureRoomId
@@ -251,7 +251,7 @@ async function runTask(taskId: string): Promise<void> {
           }).catch(() => {})
           if (featureRoomId) {
             const argsSummary = String(event.args ?? '').slice(0, 200)
-            await postToRoom(featureRoomId, agent.id, `🔧 \`${event.tool}\`(${argsSummary})`)
+            await postToRoom(featureRoomId, agent.id, `🔧 \`${event.tool}\`(${argsSummary})`, taskId)
           }
           break
 
@@ -266,7 +266,7 @@ async function runTask(taskId: string): Promise<void> {
           if (featureRoomId) {
             // SOC2: redact secrets, truncate to 300 chars before posting to room
             const safeResult = redactSecrets(event.result).slice(0, 300)
-            await postToRoom(featureRoomId, agent.id, `↩ \`${event.tool}\`: ${safeResult}`)
+            await postToRoom(featureRoomId, agent.id, `↩ \`${event.tool}\`: ${safeResult}`, taskId)
           }
           break
         }
@@ -289,7 +289,7 @@ async function runTask(taskId: string): Promise<void> {
       // SOC2: always keep postToFeed for audit trail
       postToFeed(agent.id, completionMsg, taskId),
       // Also post to feature room if one exists
-      ...(featureRoomId ? [postToRoom(featureRoomId, agent.id, completionMsg)] : []),
+      ...(featureRoomId ? [postToRoom(featureRoomId, agent.id, completionMsg, taskId)] : []),
       prisma.claudeInvocation.create({
         data: {
           conversationId: conversation.id,
@@ -382,10 +382,11 @@ function redactSecrets(content: string): string {
 
 /**
  * Post a message to a ChatRoom. agentId provides SOC2 attribution.
+ * taskId tags the message to a specific task for filtered views.
  */
-async function postToRoom(roomId: string, agentId: string, content: string) {
+async function postToRoom(roomId: string, agentId: string, content: string, taskId?: string) {
   await prisma.chatMessage.create({
-    data: { roomId, agentId, senderType: 'agent', content },
+    data: { roomId, agentId, senderType: 'agent', content, taskId: taskId ?? null },
   }).catch(() => {})
 }
 
