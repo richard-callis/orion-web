@@ -12,6 +12,7 @@ import { prisma } from './lib/db'
 import { createRunner } from './lib/agent-runner'
 import type { TaskRunContext } from './lib/agent-runner'
 import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './lib/management-tools'
+import { getSystemRooms } from './lib/seed-system-epic'
 
 const POLL_INTERVAL_MS = 15_000
 const MAX_CONCURRENT   = 3
@@ -496,17 +497,30 @@ async function runWatchers() {
       : null
 
     // Pre-fetch all context the agent needs — no API calls from the agent side
-    const [contextNotes, snapshot] = await Promise.all([
+    const [contextNotes, snapshot, systemRooms] = await Promise.all([
       prisma.note.findMany({ where: { type: 'llm-context' }, select: { title: true, content: true } }),
       buildSystemSnapshot(),
+      getSystemRooms(),
     ])
 
     const wikiContext = buildWikiContext(contextNotes)
 
+    // Build system room context block so agents know where to post
+    const roomLines = Object.entries({
+      health:      systemRooms['system.room.health'],
+      operations:  systemRooms['system.room.operations'],
+      maintenance: systemRooms['system.room.maintenance'],
+    })
+      .filter(([, id]) => id !== null)
+      .map(([name, id]) => `  ${name}: ${id}`)
+    const roomContext = roomLines.length > 0
+      ? `\n[System rooms — use these room_id values with orion_send_message]\n${roomLines.join('\n')}`
+      : ''
+
     // The agent receives all data it needs as context — no outbound calls required.
     // Mutations go through tool calls (orion_assign_task, orion_create_agent, etc.)
     // executed server-side with full attribution (SOC2 [A-001]).
-    const enrichedPrompt = [watchPrompt, ``, snapshot].join('\n')
+    const enrichedPrompt = [watchPrompt, roomContext, ``, snapshot].join('\n')
 
     const ctx: TaskRunContext = {
       taskId:          `watch:${agent.id}`,

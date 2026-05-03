@@ -9,5 +9,8 @@ export async function register() {
 
     const { ensureSystemAgents } = await import('./lib/seed-system-agents')
     await ensureSystemAgents()
+
+    const { ensureSystemEpic } = await import('./lib/seed-system-epic')
+    await ensureSystemEpic()
   }
 }
