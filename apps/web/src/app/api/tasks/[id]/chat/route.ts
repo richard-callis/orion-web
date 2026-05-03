@@ -24,7 +24,6 @@ export async function GET(
     orderBy: { createdAt: 'asc' },
     include: {
       messages: {
-        where: { taskId: params.id },
         orderBy: { createdAt: 'asc' },
         include: {
           agent: { select: { id: true, name: true, type: true } },
