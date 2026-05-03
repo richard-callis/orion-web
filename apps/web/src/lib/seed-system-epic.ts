@@ -121,6 +121,20 @@ export async function ensureSystemEpic(): Promise<void> {
         })
       }
     }
+    // 6. Seed default ORION system service URLs (create-only — admin can override via UI)
+    //    Uses internal Docker network hostnames so checks work from inside the container.
+    const systemServices: Record<string, string> = {
+      'system.service.orion':  'http://orion:3000',
+      'system.service.gitea':  'http://gitea:3000',
+      'system.service.vault':  'http://vault-proxy:8200',
+    }
+    for (const [key, value] of Object.entries(systemServices)) {
+      const existing = await prisma.systemSetting.findUnique({ where: { key } })
+      if (!existing) {
+        await prisma.systemSetting.create({ data: { key, value } })
+        console.log(`[seed] Registered system service: ${key} → ${value}`)
+      }
+    }
   } catch (err) {
     console.error('[seed] Failed to seed system epic:', err instanceof Error ? err.message : err)
   }
