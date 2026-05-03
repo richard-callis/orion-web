@@ -243,7 +243,7 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
   },
   {
     name: 'orion_cluster_health',
-    description: 'Check the health of all cluster ingresses. For each ingress host, tests HTTP reachability and SSL certificate validity. Returns a structured report of healthy and degraded services, including SSL expiry warnings and error details.',
+    description: 'Check the health of all K3s cluster ingresses. For each ingress host, tests HTTP reachability and SSL certificate validity. Returns a structured report of healthy and degraded services, including SSL expiry warnings and error details.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -793,7 +793,9 @@ async function handleClusterHealth(argsRaw: string): Promise<string> {
   let rawIngresses: IngressEntry[]
   try {
     const nsFlag = namespace ? `-n ${namespace}` : '-A'
-    const { stdout } = await execAsync(`kubectl get ingress ${nsFlag} -o json`, { timeout: 15_000 })
+    // Use the k3s context explicitly — ORION may have multiple kubeconfig contexts
+    const contextFlag = '--context default'
+    const { stdout } = await execAsync(`kubectl get ingress ${nsFlag} ${contextFlag} -o json`, { timeout: 15_000 })
     const data = JSON.parse(stdout) as { items: any[] }
     rawIngresses = data.items.flatMap((item) =>
       (item.spec?.rules ?? [])
