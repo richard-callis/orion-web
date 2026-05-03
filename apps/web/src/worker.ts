@@ -152,6 +152,12 @@ async function runTask(taskId: string): Promise<void> {
 
     const agent = task.agent
     const meta = (agent.metadata ?? {}) as Record<string, unknown>
+
+    if (meta.archived === true) {
+      err(`Task ${taskId} assigned to archived agent "${agent.name}" — skipping`)
+      return
+    }
+
     const contextConfig = (meta.contextConfig ?? {}) as Record<string, unknown>
     const agentSystemPrompt = (meta.systemPrompt as string | undefined) ?? 'You are a helpful AI agent.'
     const modelId = await resolveModelId(contextConfig.llm)
@@ -603,6 +609,11 @@ async function pollOnce() {
     where: {
       status:        'pending',
       assignedAgent: { not: null },
+      agent: {
+        NOT: {
+          metadata: { path: ['archived'], equals: true },
+        },
+      },
     },
     orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
     take: available,
