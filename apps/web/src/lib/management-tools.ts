@@ -742,19 +742,27 @@ interface HealthResult extends IngressEntry {
 
 function checkSSLCert(hostname: string): Promise<{ valid: boolean; daysUntilExpiry: number; error?: string }> {
   return new Promise((resolve) => {
-    const socket = tls.connect(443, hostname, { servername: hostname, rejectUnauthorized: false }, () => {
+    // Connect with default cert validation enabled. The secureConnect callback fires
+    // only when the cert is valid — errors are handled separately below.
+    const socket = tls.connect(443, hostname, { servername: hostname }, () => {
       const cert = socket.getPeerCertificate()
       if (!cert?.valid_to) {
         socket.destroy()
         return resolve({ valid: false, daysUntilExpiry: 0, error: 'no certificate returned' })
       }
       const daysUntilExpiry = Math.floor((new Date(cert.valid_to).getTime() - Date.now()) / 86_400_000)
-      const valid = socket.authorized
       socket.destroy()
-      resolve({ valid, daysUntilExpiry })
+      resolve({ valid: true, daysUntilExpiry })
     })
     socket.setTimeout(6_000, () => { socket.destroy(); resolve({ valid: false, daysUntilExpiry: 0, error: 'timeout' }) })
-    socket.on('error', (e) => resolve({ valid: false, daysUntilExpiry: 0, error: e.message }))
+    socket.on('error', (e: NodeJS.ErrnoException) => {
+      // Map TLS error codes to human-readable messages
+      const msg = e.code === 'CERT_HAS_EXPIRED'             ? 'certificate expired'
+                : e.code === 'DEPTH_ZERO_SELF_SIGNED_CERT'  ? 'self-signed certificate'
+                : e.code === 'ERR_TLS_CERT_ALTNAME_INVALID' ? 'hostname mismatch'
+                : e.message
+      resolve({ valid: false, daysUntilExpiry: 0, error: msg })
+    })
   })
 }
 
@@ -762,7 +770,7 @@ function checkHTTPReachability(hostname: string): Promise<{ statusCode: number; 
   return new Promise((resolve) => {
     const req = https.get(
       `https://${hostname}`,
-      { timeout: 8_000, rejectUnauthorized: false, headers: { 'User-Agent': 'ORION-HealthCheck/1.0' } },
+      { timeout: 8_000, headers: { 'User-Agent': 'ORION-HealthCheck/1.0' } },
       (res) => {
         const statusCode = res.statusCode ?? 0
         resolve({ statusCode, reachable: statusCode > 0 && statusCode < 500 })
@@ -770,7 +778,12 @@ function checkHTTPReachability(hostname: string): Promise<{ statusCode: number; 
       },
     )
     req.on('timeout', () => { req.destroy(); resolve({ statusCode: 0, reachable: false, error: 'timeout' }) })
-    req.on('error', (e) => resolve({ statusCode: 0, reachable: false, error: e.message }))
+    req.on('error', (e: NodeJS.ErrnoException) => {
+      // TLS/cert errors mean the service is running but has a bad cert — treat as
+      // reachable so the SSL check (not this check) surfaces the cert issue.
+      const isCertError = !!(e.code?.startsWith('CERT_') || e.code?.startsWith('ERR_TLS') || e.code === 'DEPTH_ZERO_SELF_SIGNED_CERT')
+      resolve({ statusCode: 0, reachable: isCertError, error: e.message })
+    })
   })
 }
 
