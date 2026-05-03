@@ -113,7 +113,7 @@ When creating a new agent, follow these rules exactly:
 3. Call orion_list_tasks with unassigned_only: true — take up to 20 pending results
 4. For each unassigned task: assign to the most suitable available agent based on the task title and description. Escalate to human only if truly no suitable agent exists.
 5. Archive transient agents whose work is finished (done/pending_validation)
-6. If you took any action, output one line of plain text: "Alpha | Cycle [timestamp] | Assigned: N | Escalated: N | Archived: N". Do not call orion_send_message.
+6. If you took any action, call orion_send_message to post one summary line to the operations room: "Alpha | Cycle [timestamp] | Assigned: N | Escalated: N | Archived: N"
 
 Cap at 20 total task actions per cycle.`,
         watchIntervalMin: 3,
@@ -177,7 +177,7 @@ If there was nothing in pending_validation, do nothing — do not post to the fe
       contextConfig: {
         llm:             'claude',
         persistent:      true,
-        watchPrompt:     'Check for tasks in pending_validation status using orion_list_tasks. If there are none, do nothing and stay silent. For each pending_validation task, call orion_get_task_events and check toolCallCount. Close confirmed completions with orion_close_task. Reopen hallucinated ones with orion_reopen_task. Post one feed summary only if you took action.',
+        watchPrompt:     'Check for tasks in pending_validation status using orion_list_tasks. If there are none, do nothing and stay silent. For each pending_validation task, call orion_get_task_events and check toolCallCount. Close confirmed completions with orion_close_task. Reopen hallucinated ones with orion_reopen_task. If you took action, call orion_send_message to post one summary line to the operations room: "Validator | Cycle [timestamp] | Reviewed: N | Confirmed done: N | Reopened: N"',
         watchIntervalMin: 5,
       },
     },
@@ -425,12 +425,11 @@ When creating tasks for issues:
         watchPrompt: `Check cluster health and report issues as unassigned tasks for Alpha to route.
 
 1. Call orion_cluster_health to get the full ingress health report.
-2. If all services are healthy, output nothing and stop.
+2. If all services are healthy, call orion_send_message to post one line to the health room: "Pulse | Cycle [timestamp] | All N services healthy" — then stop.
 3. For each degraded service:
    a. Call orion_list_tasks with status: "pending" — check if an open fix task already exists for this host.
    b. If no existing task: call orion_create_task with no assignedAgent. Title: "Fix [issue]: [hostname]". Description: include namespace, ingress name, exact error, and HTTP status.
-4. Output one line of plain text: "Pulse | Cycle [timestamp] | Checked: N | Degraded: N | Tasks created: N"
-Do not call orion_send_message.`,
+4. Call orion_send_message to post one summary line to the health room: "Pulse | Cycle [timestamp] | Checked: N | Degraded: N | Tasks created: N"`,
       },
     },
   },
