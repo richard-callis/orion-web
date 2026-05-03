@@ -79,9 +79,18 @@ export async function ensureSystemEpic(): Promise<void> {
             description: def.description,
             status:      'active',
             createdBy:   'system',
+            // Plan is required before tasks can be created under a feature.
+            // System features are managed by system agents — no manual planning needed.
+            plan:        'System-managed feature. Tasks are created automatically by system agents (Pulse, Alpha, Warden). No manual planning required.',
           },
         })
         console.log(`[seed] Created System feature: ${def.title} (${feature.id})`)
+      } else if (!feature.plan) {
+        // Backfill plan for existing System features that were created before this seed ran
+        await prisma.feature.update({
+          where: { id: feature.id },
+          data:  { plan: 'System-managed feature. Tasks are created automatically by system agents (Pulse, Alpha, Warden). No manual planning required.' },
+        })
       }
 
       // 3. Upsert ChatRoom (@@unique on featureId guarantees one room per feature)

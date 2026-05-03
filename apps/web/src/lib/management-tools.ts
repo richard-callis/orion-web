@@ -203,6 +203,10 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
           type: 'object',
           description: 'For deployment tasks — the target environment as designated by the Environment SME. Pass as an object with keys: namespace (e.g. "apps"), hostname (e.g. "myapp.khalisio.com"), storageClass (e.g. "longhorn", if storage needed), vaultPath (e.g. "secret/data/myapp", if secrets needed).',
         },
+        dedup_key: {
+          type: 'string',
+          description: 'Optional deduplication key. If an open task (pending/running/pending_validation) with this exact key already exists under the same feature, creation is skipped and the existing task is returned. Use a stable identifier like "pulse:host:vault-proxy" or "pulse:node:talos-rpi2".',
+        },
       },
       required: ['featureId', 'title', 'plan'],
     },
@@ -297,6 +301,7 @@ async function handleListAgents(argsRaw: string): Promise<string> {
         id:          a.id,
         name:        a.name,
         type:        a.type,
+        status:      a.status,   // 'online' | 'offline' — only assign tasks to online agents
         role:        a.role ?? null,
         description: a.description ?? null,
         persistent:  !!cfg.persistent,
@@ -344,11 +349,14 @@ async function handleAssignTask(argsRaw: string, actorId?: string): Promise<stri
   if (!task_id) return 'Error: task_id is required'
   if (!agent_id) return 'Error: agent_id is required'
 
-  const targetAgent = await prisma.agent.findUnique({ where: { id: agent_id }, select: { name: true, metadata: true } })
+  const targetAgent = await prisma.agent.findUnique({ where: { id: agent_id }, select: { name: true, status: true, metadata: true } })
   if (!targetAgent) return `Error: agent "${agent_id}" not found`
   const targetMeta = (targetAgent.metadata ?? {}) as Record<string, unknown>
   if (targetMeta.archived === true) {
     return `Error: agent "${targetAgent.name}" is archived and cannot be assigned tasks. Use orion_list_agents to find an active agent.`
+  }
+  if (targetAgent.status === 'offline') {
+    return `Error: agent "${targetAgent.name}" is offline and cannot accept tasks right now. Use orion_list_agents to find an online agent.`
   }
 
   await prisma.task.update({
@@ -589,11 +597,12 @@ async function handleCreateFeature(argsRaw: string, actorId?: string): Promise<s
 }
 
 async function handleCreateTask(argsRaw: string, actorId?: string): Promise<string> {
-  const { featureId, title, description, plan, targetEnvironment } = parseArgs(argsRaw) as {
+  const { featureId, title, description, plan, targetEnvironment, dedup_key } = parseArgs(argsRaw) as {
     featureId?: string
     title?: string
     description?: string
     plan?: string
+    dedup_key?: string  // if set, creation is skipped when an open task with this key already exists
     targetEnvironment?: { namespace?: string; hostname?: string; storageClass?: string; vaultPath?: string }
   }
   if (!featureId) return 'Error: featureId is required'
@@ -606,6 +615,21 @@ async function handleCreateTask(argsRaw: string, actorId?: string): Promise<stri
     return 'Error: Feature must have a saved plan before tasks can be created.'
   }
 
+  // Deduplication — if a dedup_key is provided, check for any open task with that key
+  if (dedup_key?.trim()) {
+    const existing = await prisma.task.findFirst({
+      where: {
+        featureId,
+        status:   { in: ['pending', 'running', 'pending_validation'] },
+        metadata: { path: ['dedup_key'], equals: dedup_key.trim() },
+      },
+      select: { id: true, title: true },
+    })
+    if (existing) {
+      return JSON.stringify({ id: existing.id, title: existing.title, duplicate: true, message: 'Task already exists for this issue — skipped.' })
+    }
+  }
+
   const task = await prisma.task.create({
     data: {
       featureId,
@@ -615,7 +639,10 @@ async function handleCreateTask(argsRaw: string, actorId?: string): Promise<stri
       status:      'pending',
       priority:    'medium',
       createdBy:   actorId ?? 'agent',
-      ...(targetEnvironment ? { metadata: { targetEnvironment } as object } : {}),
+      metadata:    {
+        ...(targetEnvironment ? { targetEnvironment } : {}),
+        ...(dedup_key?.trim() ? { dedup_key: dedup_key.trim() } : {}),
+      } as object,
     },
   })
   await auditLog(actorId, `📋 Created task **${task.title}** (\`${task.id}\`) under feature \`${featureId}\`${targetEnvironment?.namespace ? ` → namespace: ${targetEnvironment.namespace}` : ''}`)

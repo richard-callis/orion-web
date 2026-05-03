@@ -529,7 +529,7 @@ export async function ensureSystemAgents(): Promise<void> {
           type:        def.agent.type,
           role:        def.agent.role,
           description: def.agent.description,
-          status:      'offline',
+          status:      'online',
           novaId:      nova.id,
           metadata: {
             systemPrompt:  def.agent.systemPrompt,
