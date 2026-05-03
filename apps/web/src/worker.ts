@@ -179,8 +179,8 @@ async function runTask(taskId: string): Promise<void> {
 
     log(`Starting task "${task.title}" (${taskId}) → agent "${agent.name}" [${modelId}]`)
 
-    // Mark task as running
-    await prisma.task.update({ where: { id: taskId }, data: { status: 'running' } })
+    // Mark task as in progress
+    await prisma.task.update({ where: { id: taskId }, data: { status: 'in_progress' } })
 
     // Create a conversation to hold the task's AI activity
     const conversation = await prisma.conversation.create({
@@ -401,14 +401,14 @@ const watcherLastRun = new Map<string, number>()
 async function buildSystemSnapshot(): Promise<string> {
   const [tasks, agents, recentEvents] = await Promise.all([
     prisma.task.findMany({
-      where:   { status: { in: ['pending', 'running', 'failed'] } },
+      where:   { status: { in: ['pending', 'in_progress', 'failed'] } },
       include: { agent: true, assignedUser: true, feature: { include: { epic: true } } },
       orderBy: { updatedAt: 'desc' },
       take:    50,
     }),
     prisma.agent.findMany({
       orderBy: { name: 'asc' },
-      include: { tasks: { where: { status: 'running' }, take: 1 } },
+      include: { tasks: { where: { status: 'in_progress' }, take: 1 } },
     }),
     prisma.taskEvent.findMany({
       where:   { eventType: { in: ['completed', 'failed', 'started'] } },
@@ -419,7 +419,7 @@ async function buildSystemSnapshot(): Promise<string> {
   ])
 
   const unassigned = tasks.filter((t: any) => !t.assignedAgent && !t.assignedUserId)
-  const running    = tasks.filter((t: any) => t.status === 'running')
+  const running    = tasks.filter((t: any) => t.status === 'in_progress')
   const failed     = tasks.filter((t: any) => t.status === 'failed')
   const pending    = tasks.filter((t: any) => t.status === 'pending')
 
