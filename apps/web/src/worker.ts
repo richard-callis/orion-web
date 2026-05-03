@@ -467,6 +467,12 @@ async function buildSystemSnapshot(): Promise<string> {
 }
 
 async function runWatchers() {
+  const pausedSetting = await prisma.systemSetting.findUnique({ where: { key: 'system.watchers.paused' } })
+  if (pausedSetting?.value === true) {
+    log('Watchers paused — skipping this cycle')
+    return
+  }
+
   const watchers = await prisma.agent.findMany({
     where:   { type: { not: 'human' } },
     include: { environments: { include: { environment: true }, take: 1 } },

@@ -5,9 +5,10 @@ import { TeamDetailPanel } from '@/components/tasks/TeamDetailPanel'
 export const dynamic = 'force-dynamic'
 
 export default async function AgentsPage() {
-  const [messagesRaw, agentsRaw] = await Promise.all([
+  const [messagesRaw, agentsRaw, pausedSetting] = await Promise.all([
     prisma.agentMessage.findMany({ orderBy: { createdAt: 'desc' }, take: 50, include: { agent: true } }),
     prisma.agent.findMany({ orderBy: { name: 'asc' } }),
+    prisma.systemSetting.findUnique({ where: { key: 'system.watchers.paused' } }),
   ])
 
   const messages = messagesRaw.map((msg: any) => ({
@@ -20,11 +21,13 @@ export default async function AgentsPage() {
     lastSeen: a.lastSeen?.toISOString() ?? null,
   }))
 
+  const initialPaused = pausedSetting?.value === true
+
   return (
     <div className="absolute inset-0 flex flex-col md:flex-row overflow-hidden">
       {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
       <TeamDetailPanel initialAgents={agents as any} />
-      <AgentFeed initialMessages={messages} />
+      <AgentFeed initialMessages={messages} initialPaused={initialPaused} />
     </div>
   )
 }
