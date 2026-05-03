@@ -14,8 +14,12 @@ import { prisma } from '@/lib/db'
 import { getDefaultModelId } from '@/lib/default-model'
 import { exec } from 'child_process'
 import { promisify } from 'util'
+import { writeFileSync, unlinkSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import tls from 'tls'
 import https from 'https'
+import http from 'http'
 
 const execAsync = promisify(exec)
 
@@ -243,7 +247,7 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
   },
   {
     name: 'orion_cluster_health',
-    description: 'Check the health of all cluster ingresses. For each ingress host, tests HTTP reachability and SSL certificate validity. Returns a structured report of healthy and degraded services, including SSL expiry warnings and error details.',
+    description: 'Check the health of all services ORION knows about: its own system services (Gitea, ORION) plus every ingress host from registered Kubernetes environments. Tests HTTP reachability and SSL certificate validity for each host. Returns a structured report of healthy and degraded services.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -787,60 +791,140 @@ function checkHTTPReachability(hostname: string): Promise<{ statusCode: number; 
   })
 }
 
+function checkGatewayReachability(rawUrl: string): Promise<{ reachable: boolean; statusCode: number; error?: string }> {
+  return new Promise((resolve) => {
+    let parsed: URL
+    try { parsed = new URL(rawUrl) }
+    catch { return resolve({ reachable: false, statusCode: 0, error: 'invalid URL' }) }
+
+    const requester = parsed.protocol === 'https:' ? https : http
+    const req = requester.get(rawUrl, { timeout: 8_000 }, (res) => {
+      res.resume()
+      resolve({ reachable: true, statusCode: res.statusCode ?? 0 })
+    })
+    req.on('timeout', () => { req.destroy(); resolve({ reachable: false, statusCode: 0, error: 'timeout' }) })
+    req.on('error',   (e) => resolve({ reachable: false, statusCode: 0, error: e.message }))
+  })
+}
+
 async function handleClusterHealth(argsRaw: string): Promise<string> {
   const { namespace } = parseArgs(argsRaw) as { namespace?: string }
 
-  let rawIngresses: IngressEntry[]
-  try {
-    const nsFlag = namespace ? `-n ${namespace}` : '-A'
-    const { stdout } = await execAsync(`kubectl get ingress ${nsFlag} -o json`, { timeout: 15_000 })
-    const data = JSON.parse(stdout) as { items: any[] }
-    rawIngresses = data.items.flatMap((item) =>
-      (item.spec?.rules ?? [])
-        .filter((r: any) => r.host)
-        .map((r: any) => ({
-          namespace: item.metadata.namespace as string,
-          ingress:   item.metadata.name as string,
-          host:      r.host as string,
-        }))
-    )
-  } catch (e) {
-    return `Error fetching ingresses: ${e instanceof Error ? e.message : String(e)}`
+  const rawIngresses: IngressEntry[] = []
+  const errors: string[] = []
+
+  // ── Kubernetes environments — use their kubeconfig to query ingresses ─────
+  // All public hostnames (Gitea, Vault, ORION, apps) have ingresses on the
+  // registered cluster, so kubectl discovery covers everything.
+  const envs = await prisma.environment.findMany({
+    where:  { type: 'cluster', kubeconfig: { not: null } },
+    select: { id: true, name: true, kubeconfig: true },
+  })
+
+  for (const env of envs) {
+    let kubeconfigPath: string | null = null
+    try {
+      const decoded = Buffer.from(env.kubeconfig!, 'base64').toString('utf-8')
+      kubeconfigPath = join(tmpdir(), `orion-health-${env.id}.yaml`)
+      writeFileSync(kubeconfigPath, decoded, { mode: 0o600 })
+
+      const nsFlag = namespace ? `-n ${namespace}` : '-A'
+      const { stdout } = await execAsync(
+        `kubectl get ingress ${nsFlag} --kubeconfig ${kubeconfigPath} -o json`,
+        { timeout: 15_000 },
+      )
+      const data = JSON.parse(stdout) as { items: any[] }
+      const hosts = data.items.flatMap((item) =>
+        (item.spec?.rules ?? [])
+          .filter((r: any) => r.host)
+          .map((r: any) => ({
+            namespace: `${env.name}/${item.metadata.namespace as string}`,
+            ingress:   item.metadata.name as string,
+            host:      r.host as string,
+          }))
+      )
+      rawIngresses.push(...hosts)
+    } catch (e) {
+      errors.push(`${env.name}: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      if (kubeconfigPath) try { unlinkSync(kubeconfigPath) } catch { /* ignore */ }
+    }
   }
 
-  if (rawIngresses.length === 0) {
-    return JSON.stringify({ summary: { total: 0, healthy: 0, degraded: 0 }, degraded: [], all: [] })
+  // Deduplicate by host — same host may appear in multiple ingresses
+  const seen = new Set<string>()
+  const uniqueIngresses = rawIngresses.filter((ing) => {
+    if (seen.has(ing.host)) return false
+    seen.add(ing.host)
+    return true
+  })
+
+  if (uniqueIngresses.length === 0) {
+    return JSON.stringify({
+      summary: { total: 0, healthy: 0, degraded: 0 },
+      degraded: [], all: [], errors,
+    })
   }
 
   const results: HealthResult[] = await Promise.all(
-    rawIngresses.map(async (ing) => {
+    uniqueIngresses.map(async (ing) => {
       const [http, ssl] = await Promise.all([
         checkHTTPReachability(ing.host),
         checkSSLCert(ing.host),
       ])
 
       const issues: string[] = []
-      if (!http.reachable)                            issues.push(`unreachable — ${http.error ?? `HTTP ${http.statusCode}`}`)
-      if (!ssl.valid)                                 issues.push(`invalid SSL cert — ${ssl.error ?? 'certificate not trusted'}`)
-      else if (ssl.daysUntilExpiry <= 0)              issues.push('SSL cert expired')
-      else if (ssl.daysUntilExpiry < 30)              issues.push(`SSL cert expires in ${ssl.daysUntilExpiry} days`)
+      if (!http.reachable)                issues.push(`unreachable — ${http.error ?? `HTTP ${http.statusCode}`}`)
+      if (!ssl.valid)                     issues.push(`invalid SSL cert — ${ssl.error ?? 'certificate not trusted'}`)
+      else if (ssl.daysUntilExpiry <= 0)  issues.push('SSL cert expired')
+      else if (ssl.daysUntilExpiry < 30)  issues.push(`SSL cert expires in ${ssl.daysUntilExpiry} days`)
 
       return {
         ...ing,
-        status:              issues.length === 0 ? 'healthy' : 'degraded',
-        httpStatus:          http.statusCode,
-        sslValid:            ssl.valid,
-        sslDaysUntilExpiry:  ssl.daysUntilExpiry,
+        status:             issues.length === 0 ? 'healthy' : 'degraded',
+        httpStatus:         http.statusCode,
+        sslValid:           ssl.valid,
+        sslDaysUntilExpiry: ssl.daysUntilExpiry,
         issues,
-      }
+      } as HealthResult
     })
   )
+
+  // ── Non-cluster environments — check gateway reachability ────────────────
+  // For docker/localhost environments there are no ingresses to discover;
+  // we simply verify the gateway URL is reachable so ORION knows whether
+  // the environment is up.
+  const nonClusterEnvs = await prisma.environment.findMany({
+    where:  { type: { not: 'cluster' }, gatewayUrl: { not: null } },
+    select: { id: true, name: true, type: true, gatewayUrl: true },
+  })
+
+  for (const env of nonClusterEnvs) {
+    try {
+      const reach = await checkGatewayReachability(env.gatewayUrl!)
+      const issues: string[] = []
+      if (!reach.reachable) issues.push(`gateway unreachable — ${reach.error ?? `HTTP ${reach.statusCode}`}`)
+      results.push({
+        namespace:          env.type,
+        ingress:            env.name,
+        host:               env.gatewayUrl!,
+        status:             issues.length === 0 ? 'healthy' : 'degraded',
+        httpStatus:         reach.statusCode,
+        sslValid:           true,   // internal gateway — SSL check not applicable
+        sslDaysUntilExpiry: 999,
+        issues,
+      } as HealthResult)
+    } catch (e) {
+      errors.push(`${env.name} gateway: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
 
   const degraded = results.filter((r) => r.status === 'degraded')
   return JSON.stringify({
     summary: { total: results.length, healthy: results.length - degraded.length, degraded: degraded.length },
     degraded,
     all: results,
+    ...(errors.length > 0 && { errors }),
   }, null, 2)
 }
 
