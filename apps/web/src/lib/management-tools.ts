@@ -251,7 +251,7 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
   },
   {
     name: 'orion_cluster_health',
-    description: 'Comprehensive health check across all ORION-managed systems: (1) all enabled IngressRoutes registered in ORION — HTTP reachability and SSL cert validity for each host; (2) Kubernetes cluster node readiness and pod issues (CrashLoopBackOff, OOMKilled, Failed, Pending); (3) all registered environment gateways; (4) ORION system services (Gitea, Vault, ORION itself). Returns a structured report of healthy and degraded items with specific error details.',
+    description: 'Comprehensive health check across all ORION-managed systems: (1) all enabled IngressRoutes — HTTP reachability and SSL cert validity; (2) Kubernetes cluster node readiness and pod issues (CrashLoopBackOff, OOMKilled, Failed, Pending); (3) all registered environment gateways; (4) ORION system services (Gitea, Vault, ORION itself). Each degraded item includes a canonical taskKey field — pass this as dedup_key when calling orion_create_task to prevent duplicate fix tasks.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -769,6 +769,7 @@ interface HealthResult extends IngressEntry {
   sslValid: boolean
   sslDaysUntilExpiry: number
   issues: string[]
+  taskKey: string  // canonical dedup key — use this as dedup_key when calling orion_create_task
 }
 
 function checkSSLCert(hostname: string): Promise<{ valid: boolean; daysUntilExpiry: number; error?: string }> {
@@ -891,6 +892,7 @@ async function handleClusterHealth(argsRaw: string): Promise<string> {
               sslValid:           true,
               sslDaysUntilExpiry: 999,
               issues:             [`node NotReady — ${reason}`],
+              taskKey:            `pulse:node:${node.metadata.name as string}`,
             })
           }
         }
@@ -929,6 +931,7 @@ async function handleClusterHealth(argsRaw: string): Promise<string> {
               sslValid:           true,
               sslDaysUntilExpiry: 999,
               issues:             podIssues,
+              taskKey:            `pulse:pod:${pod.metadata.namespace as string}/${pod.metadata.name as string}`,
             })
           }
         }
@@ -966,6 +969,7 @@ async function handleClusterHealth(argsRaw: string): Promise<string> {
         sslValid:           ssl.valid,
         sslDaysUntilExpiry: ssl.daysUntilExpiry,
         issues,
+        taskKey:            `pulse:host:${route.host}`,
       } as HealthResult
     })
   )
@@ -996,6 +1000,7 @@ async function handleClusterHealth(argsRaw: string): Promise<string> {
         sslValid:           true,   // internal gateway endpoint — no SSL check
         sslDaysUntilExpiry: 999,
         issues,
+        taskKey:            `pulse:gateway:${env.name.toLowerCase().replace(/\s+/g, '-')}`,
       } as HealthResult)
     } catch (e) {
       errors.push(`${env.name} gateway: ${e instanceof Error ? e.message : String(e)}`)
@@ -1026,6 +1031,7 @@ async function handleClusterHealth(argsRaw: string): Promise<string> {
         sslValid:           true,
         sslDaysUntilExpiry: 999,
         issues,
+        taskKey:            `pulse:svc:${label}`,
       } as HealthResult)
     } catch (e) {
       errors.push(`${label}: ${e instanceof Error ? e.message : String(e)}`)
