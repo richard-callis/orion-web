@@ -101,10 +101,11 @@ async function callClaude(
   history: HistoryEntry[],
   latestMessage: string,
   modelId?: string,
+  hasTools = false,
 ): Promise<string | null> {
   setupClaudeCredentials()
   const { query } = await import('@anthropic-ai/claude-code')
-  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants)
+  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools)
   // Claude query() only accepts a single prompt string — prepend history as context
   const historyBlock = history.length
     ? history.map(e => `${e.name}: ${e.content}`).join('\n') + '\n\n'
@@ -142,8 +143,9 @@ async function callOllamaChat(
   latestMessage: string,
   model: string,
   baseUrl: string,
+  hasTools = false,
 ): Promise<string | null> {
-  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants)
+  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools)
   const chatMsgs = buildChatMessages(history, latestMessage)
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: 'POST',
@@ -297,7 +299,7 @@ export async function triggerRoomAgentReplies(
   const triggeredAgents = mentionedNames.length > 0
     ? agentMembers.filter((a: any) => mentionedNames.some(n => a.name.toLowerCase() === n.toLowerCase()))
     : agentMembers.filter((a: any) => {
-        // Watcher agents (e.g. Alpha, Validator) have watchPrompt set — they coordinate
+        // Watcher agents (e.g. Alpha, Veritas) have watchPrompt set — they coordinate
         // on a schedule and must not auto-reply to every message. They only speak when
         // explicitly @mentioned.
         const cc = ((a.metadata ?? {}) as Record<string, unknown>).contextConfig as Record<string, unknown> | undefined
@@ -372,7 +374,7 @@ export async function triggerRoomAgentReplies(
           }
           const baseUrl = extModel.baseUrl ?? 'http://localhost:11434'
           if (extModel.provider === 'ollama') {
-            reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl)
+            reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, !!toolContext)
           } else {
             // openai / custom — OpenAI-compatible (supports tool calling)
             reply = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey, toolContext)
@@ -380,11 +382,17 @@ export async function triggerRoomAgentReplies(
         } else if (llm.startsWith('ollama:')) {
           const model   = llm.slice('ollama:'.length)
           const baseUrl = await resolveOllamaBaseUrl()
-          reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl)
+          if (toolsEnabled) {
+            console.warn(`[room-agents] ${agent.name} has tools enabled but ${llm} route does not support function calling — scope awareness injected but tool invocation unavailable`)
+          }
+          reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl, !!toolContext)
         } else {
           // claude / claude:<model>
           const claudeModel = llm.startsWith('claude:') ? llm.slice('claude:'.length) : undefined
-          reply = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel)
+          if (toolsEnabled) {
+            console.warn(`[room-agents] ${agent.name} has tools enabled but ${llm} route does not support function calling — scope awareness injected but tool invocation unavailable`)
+          }
+          reply = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel, !!toolContext)
         }
       } finally {
         clearTyping(roomId, agent.name)
