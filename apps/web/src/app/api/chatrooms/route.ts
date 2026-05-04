@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
     }).catch(() => {})
   }
 
-  // ── Planning rooms: auto-add Planner + Environment SME + seed initial context ─
+  // ── Planning rooms: auto-add Planner + Atlas + seed initial context ──────────
   if (room.type === 'planning') {
     const [plannerId, envSMEId] = await Promise.all([
       getPlannerAgentId(),
@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
         create: { roomId: room.id, agentId: plannerId, role: 'lead' },
       })
 
-      // Add Environment SME as a member (idempotent)
+      // Add Atlas as a member (idempotent)
       if (envSMEId) {
         await prisma.chatRoomMember.upsert({
           where:  { roomId_agentId: { roomId: room.id, agentId: envSMEId } },

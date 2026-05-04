@@ -45,7 +45,7 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        status:          { type: 'string',  description: 'Filter by status: pending, running, pending_validation, done, failed. Defaults to pending+running+failed. Use "pending_validation" to find tasks awaiting Validator review.' },
+        status:          { type: 'string',  description: 'Filter by status: pending, running, pending_validation, done, failed. Defaults to pending+running+failed. Use "pending_validation" to find tasks awaiting Veritas review.' },
         unassigned_only: { type: 'boolean', description: 'Only return tasks with no agent or user assigned (default false)' },
       },
     },
@@ -201,7 +201,7 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
         plan:              { type: 'string', description: 'Numbered step-by-step implementation plan. Each step should be specific enough for a smaller LLM to execute. E.g.:\n1. Read /path/to/file and understand X\n2. Edit Y to add Z\n3. Run the test suite\n4. Verify output matches expected' },
         targetEnvironment: {
           type: 'object',
-          description: 'For deployment tasks — the target environment as designated by the Environment SME. Pass as an object with keys: namespace (e.g. "apps"), hostname (e.g. "myapp.khalisio.com"), storageClass (e.g. "longhorn", if storage needed), vaultPath (e.g. "secret/data/myapp", if secrets needed).',
+          description: 'For deployment tasks — the target environment as designated by the Atlas. Pass as an object with keys: namespace (e.g. "apps"), hostname (e.g. "myapp.khalisio.com"), storageClass (e.g. "longhorn", if storage needed), vaultPath (e.g. "secret/data/myapp", if secrets needed).',
         },
         dedup_key: {
           type: 'string',
@@ -213,7 +213,7 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
   },
   {
     name: 'orion_propose_gitops',
-    description: 'Propose a GitOps change for a cluster environment. Creates a branch, commits manifests, opens a PR, and auto-merges if the change matches policy (e.g. scaling, patch image tags). Use this for ALL infrastructure work — deploying services, creating configmaps/secrets, updating ingresses, etc.\n\nREQUIRED: you must know the target environment. Ask the Environment SME in the feature room, or check orion_list_agents for the Environment SME. If you have no way to get the environment designation, use environment_id: "localhost" as a fallback.\n\nRules:\n- Always include a clear reasoning field explaining why the change is needed\n- Provide operation_description for policy classification (e.g. "deploy new service", "update image tag")\n- Write manifests with namespace, proper labels, and correct resource types\n- For deployments: include namespace selector, resource limits if appropriate\n- For services: use ClusterIP unless ingress is explicitly needed',
+    description: 'Propose a GitOps change for a cluster environment. Creates a branch, commits manifests, opens a PR, and auto-merges if the change matches policy (e.g. scaling, patch image tags). Use this for ALL infrastructure work — deploying services, creating configmaps/secrets, updating ingresses, etc.\n\nREQUIRED: you must know the target environment. Ask the Atlas in the feature room, or check orion_list_agents for the Atlas. If you have no way to get the environment designation, use environment_id: "localhost" as a fallback.\n\nRules:\n- Always include a clear reasoning field explaining why the change is needed\n- Provide operation_description for policy classification (e.g. "deploy new service", "update image tag")\n- Write manifests with namespace, proper labels, and correct resource types\n- For deployments: include namespace selector, resource limits if appropriate\n- For services: use ClusterIP unless ingress is explicitly needed',
     inputSchema: {
       type: 'object',
       properties: {
@@ -388,6 +388,7 @@ async function handleCreateAgent(argsRaw: string, actorId?: string): Promise<str
   if (!spec.name?.trim())         return 'Error: name is required'
   if (!spec.role?.trim())         return 'Error: role is required'
   if (!spec.systemPrompt?.trim()) return 'Error: systemPrompt is required — agents without a system prompt will not behave correctly'
+  if (spec.systemPrompt.trim().length < 20) return 'Error: systemPrompt is too short (minimum 20 characters) — provide a meaningful role description'
 
   // SOC2 [INPUT-001]: reserved name guard
   if (RESERVED_AGENT_NAMES.includes(spec.name.toLowerCase())) {
@@ -444,6 +445,10 @@ async function handleArchiveAgent(argsRaw: string, actorId?: string): Promise<st
   if (!existing) return `Error: agent ${agent_id} not found`
 
   const existingMeta = (existing.metadata ?? {}) as Record<string, unknown>
+  const contextConfig = (existingMeta.contextConfig ?? {}) as Record<string, unknown>
+  if (contextConfig.persistent === true) {
+    return `Error: agent "${existing.name}" is a persistent system agent and cannot be archived.`
+  }
   await prisma.agent.update({
     where: { id: agent_id },
     data: {
