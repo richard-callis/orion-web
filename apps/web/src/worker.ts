@@ -13,6 +13,7 @@ import { createRunner } from './lib/agent-runner'
 import type { TaskRunContext } from './lib/agent-runner'
 import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './lib/management-tools'
 import { getSystemRooms } from './lib/seed-system-epic'
+import { getPrompt } from './lib/system-prompts'
 
 const POLL_INTERVAL_MS = 15_000
 const MAX_CONCURRENT   = 3
@@ -170,13 +171,23 @@ async function runTask(taskId: string): Promise<void> {
       select: { title: true, content: true },
     })
     const wikiContext = buildWikiContext(contextNotes)
-    const systemPrompt = agentSystemPrompt + wikiContext
 
     // Get the agent's first linked environment (if any)
     const envLink = agent.environments?.[0]
     const gateway = envLink?.environment?.gatewayUrl && envLink?.environment?.gatewayToken
       ? { url: envLink.environment.gatewayUrl, token: envLink.environment.gatewayToken }
       : null
+
+    // Inject tool awareness preamble — lists all available tools at runtime
+    // This is injected here (not in the agent's stored prompt) so it always reflects
+    // the current tool set, not a stale snapshot from when the agent was created.
+    const toolList = [
+      ...MANAGEMENT_TOOL_DEFS.map((t: any) => `- ${t.name}: ${t.description.split('\n')[0]}`),
+      ...(gateway ? ['- (gateway tools available: kubectl_get, shell_exec, and others connected via environment gateway)'] : []),
+    ].join('\n')
+    const toolsPreamble = await getPrompt('system.task-runner-tools')
+    const injectedPreamble = toolsPreamble.replace('{{toolList}}', toolList)
+    const systemPrompt = injectedPreamble + '\n\n' + agentSystemPrompt + wikiContext
 
     log(`Starting task "${task.title}" (${taskId}) → agent "${agent.name}" [${modelId}]`)
 

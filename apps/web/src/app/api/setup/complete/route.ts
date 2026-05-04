@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
   // Invalidate setup token — cannot be reused
   await prisma.systemSetting.delete({ where: { key: 'setup.token' } }).catch(() => {})
 
-  // Seed system agents (Alpha, Validator, Planner, Pulse) as Novas + imported Agents
+  // Seed system agents (Alpha, Veritas, Planner, Pulse) as Novas + imported Agents
   await ensureSystemAgents()
 
   // Seed System epic + Health / Operations / Maintenance features + chatrooms

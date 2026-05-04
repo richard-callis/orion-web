@@ -8,7 +8,7 @@
  * Structure:
  *   Epic: "System"
  *     Feature: "Health"      → ChatRoom for Pulse reports + cluster health tasks
- *     Feature: "Operations"  → ChatRoom for Alpha/Validator cycle summaries
+ *     Feature: "Operations"  → ChatRoom for Alpha/Veritas cycle summaries
  *     Feature: "Maintenance" → ChatRoom for scheduled upkeep, upgrades, patches
  *
  * After seeding, room IDs are stored in SystemSetting:
@@ -38,9 +38,9 @@ const SYSTEM_FEATURES: SystemFeatureDef[] = [
   },
   {
     title:       'Operations',
-    description: 'Day-to-day operational activity. Alpha and Validator post cycle summaries here.',
+    description: 'Day-to-day operational activity. Alpha and Veritas post cycle summaries here.',
     settingKey:  'system.room.operations',
-    agents:      ['Alpha', 'Validator'],
+    agents:      ['Alpha', 'Veritas'],
   },
   {
     title:       'Maintenance',
@@ -58,7 +58,7 @@ export async function ensureSystemEpic(): Promise<void> {
       epic = await prisma.epic.create({
         data: {
           title:       'System',
-          description: 'Reserved for system-level operations. Features here are owned by system agents — Alpha, Validator, Pulse, and other persistent watchers.',
+          description: 'Reserved for system-level operations. Features here are owned by system agents — Alpha, Veritas, Pulse, and other persistent watchers.',
           status:      'active',
           createdBy:   'system',
         },
