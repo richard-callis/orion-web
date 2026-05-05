@@ -242,6 +242,12 @@ async function callOpenAIChat(
       try { args = JSON.parse(tc.function.arguments) } catch { /* ignore */ }
       console.log(`[room-agents] ${agentName} calling tool: ${tc.function.name}`, args)
 
+      // Post tool call to the room so participants can see what the agent is doing
+      const argsSummary = String(tc.function.arguments ?? '').slice(0, 200)
+      await prisma.chatMessage.create({
+        data: { roomId: toolContext!.roomId, agentId: toolContext!.agentId, senderType: 'agent', content: `🔧 \`${tc.function.name}\`(${argsSummary})` },
+      }).catch(() => {})
+
       let result: string
       if (orionToolNames.has(tc.function.name)) {
         result = await executeTool(tc.function.name, args, {
@@ -256,6 +262,13 @@ async function callOpenAIChat(
       }
 
       console.log(`[room-agents] tool result: ${result}`)
+
+      // Post truncated result to the room (redact any secrets before display)
+      const safeResult = result.replace(/(?:token|secret|password|key)\s*[=:]\s*\S+/gi, (m) => m.split(/[=:]/)[0] + ': [REDACTED]')
+      await prisma.chatMessage.create({
+        data: { roomId: toolContext!.roomId, agentId: toolContext!.agentId, senderType: 'agent', content: `↩ \`${tc.function.name}\`: ${safeResult.slice(0, 500)}` },
+      }).catch(() => {})
+
       messages.push({ role: 'tool', content: result, tool_call_id: tc.id, name: tc.function.name })
     }
   }
