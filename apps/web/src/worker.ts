@@ -522,6 +522,15 @@ async function runWatchers() {
 
     const wikiContext = buildWikiContext(contextNotes)
 
+    // Inject tool awareness preamble into watcher system prompt — same as task runner
+    const watcherToolList = [
+      ...MANAGEMENT_TOOL_DEFS.map((t: any) => `- ${t.name}: ${t.description.split('\n')[0]}`),
+      ...(gateway ? ['- (gateway tools available: kubectl_get, shell_exec, and others connected via environment gateway)'] : []),
+    ].join('\n')
+    const watcherToolsPreamble = await getPrompt('system.task-runner-tools')
+    const watcherInjectedPreamble = watcherToolsPreamble.replace('{{toolList}}', watcherToolList)
+    const watcherSystemPrompt = watcherInjectedPreamble + '\n\n' + systemPrompt + wikiContext
+
     // Build system room context block so agents know where to post
     const roomLines = Object.entries({
       health:      systemRooms['system.room.health'],
@@ -546,7 +555,7 @@ async function runWatchers() {
       taskPlan:        null,
       agentId:         agent.id,
       agentName:       agent.name,
-      systemPrompt:    systemPrompt + wikiContext,
+      systemPrompt:    watcherSystemPrompt,
       modelId,
       gateway,
       managementTools: {
