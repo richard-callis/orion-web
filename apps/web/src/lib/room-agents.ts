@@ -20,6 +20,9 @@ import { prisma } from './db'
 import { setTyping, clearTyping } from './typing-state'
 import { ORION_TOOL_DEFINITIONS, TOOLS_SYSTEM_ADDENDUM, executeTool } from './agent-tools'
 import { publishChatMessage } from './chat-redis'
+import { resolveAgentGateway } from './agent-gateway'
+import type { AgentGateway } from './agent-gateway'
+import type { GatewayTool } from './agent-runner/types'
 
 // ── Mention parsing ───────────────────────────────────────────────────────────
 
@@ -179,6 +182,8 @@ async function callOpenAIChat(
   baseUrl: string,
   apiKey?: string | null,
   toolContext?: { roomId: string; agentId: string; llm: string },
+  gateway?: AgentGateway | null,
+  gatewayTools?: GatewayTool[],
 ): Promise<string | null> {
   const hasTools = !!toolContext
   const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools)
@@ -188,11 +193,25 @@ async function callOpenAIChat(
 
   const messages: OpenAIMessage[] = [{ role: 'system', content: sys }, ...chatMsgs]
 
+  // Merge ORION tool definitions with gateway tools (if any)
+  const allTools = hasTools
+    ? [
+        ...ORION_TOOL_DEFINITIONS,
+        ...(gatewayTools ?? []).map(t => ({
+          type: 'function' as const,
+          function: { name: t.name, description: t.description, parameters: t.inputSchema },
+        })),
+      ]
+    : undefined
+
+  // Names of ORION-native tools for dispatch routing
+  const orionToolNames: Set<string> = new Set(ORION_TOOL_DEFINITIONS.map(d => d.function.name))
+
   // Tool-call loop — keep going until the model produces a text reply
   const MAX_TOOL_ROUNDS = 5
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const body: Record<string, unknown> = { model, stream: false, messages }
-    if (hasTools) body.tools = ORION_TOOL_DEFINITIONS
+    if (allTools) body.tools = allTools
 
     const res = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: 'POST',
@@ -222,11 +241,20 @@ async function callOpenAIChat(
       let args: Record<string, unknown> = {}
       try { args = JSON.parse(tc.function.arguments) } catch { /* ignore */ }
       console.log(`[room-agents] ${agentName} calling tool: ${tc.function.name}`, args)
-      const result = await executeTool(tc.function.name, args, {
-        roomId:        toolContext!.roomId,
-        callerAgentId: toolContext!.agentId,
-        callerLlm:     toolContext!.llm,
-      })
+
+      let result: string
+      if (orionToolNames.has(tc.function.name)) {
+        result = await executeTool(tc.function.name, args, {
+          roomId:        toolContext!.roomId,
+          callerAgentId: toolContext!.agentId,
+          callerLlm:     toolContext!.llm,
+        })
+      } else if (gateway) {
+        result = await gateway.client.executeTool(tc.function.name, args)
+      } else {
+        result = `Error: tool "${tc.function.name}" is not available`
+      }
+
       console.log(`[room-agents] tool result: ${result}`)
       messages.push({ role: 'tool', content: result, tool_call_id: tc.id, name: tc.function.name })
     }
@@ -359,7 +387,11 @@ export async function triggerRoomAgentReplies(
         ? { roomId, agentId: agent.id, llm }
         : undefined
 
-      console.log(`[room-agents] ${agent.name} (${llm}${toolsEnabled ? ', tools' : ''}) → replying to room ${roomId}`)
+      // Resolve gateway from the agent's linked environment (same tools regardless of execution context)
+      const gateway = toolsEnabled ? await resolveAgentGateway(agent.id) : null
+      const gatewayTools = gateway ? await gateway.client.listTools().catch(() => []) : []
+
+      console.log(`[room-agents] ${agent.name} (${llm}${toolsEnabled ? ', tools' : ''}${gateway ? ', gateway' : ''}) → replying to room ${roomId}`)
 
       let reply: string | null = null
 
@@ -377,7 +409,7 @@ export async function triggerRoomAgentReplies(
             reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, !!toolContext)
           } else {
             // openai / custom — OpenAI-compatible (supports tool calling)
-            reply = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey, toolContext)
+            reply = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey, toolContext, gateway, gatewayTools)
           }
         } else if (llm.startsWith('ollama:')) {
           const model   = llm.slice('ollama:'.length)

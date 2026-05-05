@@ -14,6 +14,7 @@ import type { TaskRunContext } from './lib/agent-runner'
 import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './lib/management-tools'
 import { getSystemRooms } from './lib/seed-system-epic'
 import { getPrompt } from './lib/system-prompts'
+import { resolveAgentGateway } from './lib/agent-gateway'
 
 const POLL_INTERVAL_MS = 15_000
 const MAX_CONCURRENT   = 3
@@ -136,13 +137,11 @@ async function runTask(taskId: string): Promise<void> {
   const startedAt = Date.now()
 
   try {
-    // Load task with agent and environment
+    // Load task with agent
     const task = await prisma.task.findUnique({
       where: { id: taskId },
       include: {
-        agent: {
-          include: { environments: { include: { environment: true }, take: 1 } },
-        },
+        agent: true,
         feature: { select: { id: true } },
       },
     })
@@ -172,11 +171,9 @@ async function runTask(taskId: string): Promise<void> {
     })
     const wikiContext = buildWikiContext(contextNotes)
 
-    // Get the agent's first linked environment (if any)
-    const envLink = agent.environments?.[0]
-    const gateway = envLink?.environment?.gatewayUrl && envLink?.environment?.gatewayToken
-      ? { url: envLink.environment.gatewayUrl, token: envLink.environment.gatewayToken }
-      : null
+    // Resolve gateway from the agent's linked environment
+    const agentGw = await resolveAgentGateway(agent.id)
+    const gateway = agentGw ? { url: agentGw.url, token: agentGw.token } : null
 
     // Inject tool awareness preamble — lists all available tools at runtime
     // This is injected here (not in the agent's stored prompt) so it always reflects
@@ -485,8 +482,7 @@ async function runWatchers() {
   }
 
   const watchers = await prisma.agent.findMany({
-    where:   { type: { not: 'human' } },
-    include: { environments: { include: { environment: true }, take: 1 } },
+    where: { type: { not: 'human' } },
   })
 
   for (const agent of watchers) {
@@ -508,10 +504,8 @@ async function runWatchers() {
 
     const systemPrompt = (meta.systemPrompt as string | undefined) ?? 'You are a monitoring agent.'
     const modelId = await resolveModelId(cfg.llm)
-    const envLink = agent.environments?.[0]
-    const gateway = envLink?.environment?.gatewayUrl && envLink?.environment?.gatewayToken
-      ? { url: envLink.environment.gatewayUrl, token: envLink.environment.gatewayToken }
-      : null
+    const agentGw = await resolveAgentGateway(agent.id)
+    const gateway = agentGw ? { url: agentGw.url, token: agentGw.token } : null
 
     // Pre-fetch all context the agent needs — no API calls from the agent side
     const [contextNotes, snapshot, systemRooms] = await Promise.all([
