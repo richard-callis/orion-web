@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Users, Bot, User as UserIcon,
-  Hash, Send, X, Loader2, Plus, LogOut, AtSign, BookmarkCheck,
+  Hash, Send, X, Loader2, Plus, LogOut, AtSign, BookmarkCheck, Terminal,
 } from 'lucide-react'
 
 /** Render message content with @mention highlighting */
@@ -27,11 +27,17 @@ interface RoomMember {
   user?: { id: string; username: string; name: string } | null
 }
 
+interface ToolCallAttachment {
+  tool: string
+  input: string
+  output?: string
+}
+
 interface RoomMessage {
   id: string
   senderType: string
   content: string
-  attachments: unknown[]
+  attachments: ToolCallAttachment | unknown[] | null
   sender: { type: string; id: string | null; name: string }
   createdAt: string
 }
@@ -430,6 +436,24 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
               >
                 {msg.senderType === 'system' ? (
                   <div className="text-[10px] text-text-muted py-1">{msg.content}</div>
+                ) : msg.senderType === 'tool_call' ? (
+                  (() => {
+                    const tc = msg.attachments as ToolCallAttachment
+                    return (
+                      <div className="w-full rounded-lg border border-status-info/30 bg-status-info/5 text-xs overflow-hidden">
+                        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-status-info/20 bg-status-info/10">
+                          <Terminal size={12} className="text-status-info" />
+                          <span className="font-mono text-status-info">{tc?.tool ?? msg.content}</span>
+                        </div>
+                        {tc?.input && (
+                          <div className="px-3 py-2 font-mono text-text-secondary break-all">{tc.input}</div>
+                        )}
+                        {tc?.output && (
+                          <div className="px-3 py-2 border-t border-status-info/20 font-mono text-text-muted whitespace-pre-wrap max-h-48 overflow-y-auto">{tc.output}</div>
+                        )}
+                      </div>
+                    )
+                  })()
                 ) : (
                   <div className={`rounded-lg px-3 py-2 ${msg.sender?.type === 'human' || msg.sender?.type === 'user' ? 'bg-accent/20 text-text-primary' : 'bg-bg-raised border border-border-subtle text-text-primary'}`}>
                     <div className="flex items-center gap-1.5 mb-1">
