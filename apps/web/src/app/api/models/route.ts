@@ -1,7 +1,15 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { existsSync } from 'fs'
 
 export const dynamic = 'force-dynamic'
+
+function claudeAvailable(): boolean {
+  if (process.env.ANTHROPIC_API_KEY) return true
+  // OAuth via orion-claude sidecar — check credentials file on shared volume
+  const credPath = process.env.CLAUDE_CREDENTIALS_PATH ?? '/claude-creds/.credentials.json'
+  return existsSync(credPath)
+}
 
 export interface AppModel {
   id: string        // "claude:claude-sonnet-4-6" | "gemini:..." | "ext:<cuid>"
@@ -36,8 +44,8 @@ export async function GET() {
   const isDefault = (id: string) => id === defaultModelId
 
   const builtIns: AppModel[] = [
-    ...(process.env.ANTHROPIC_API_KEY ? CLAUDE_MODELS(isDefault) : []),
-    ...(process.env.GEMINI_API_KEY    ? GEMINI_MODELS(isDefault)  : []),
+    ...(claudeAvailable()           ? CLAUDE_MODELS(isDefault) : []),
+    ...(process.env.GEMINI_API_KEY  ? GEMINI_MODELS(isDefault) : []),
   ]
 
   const extMapped: AppModel[] = external.map((m: any) => ({
