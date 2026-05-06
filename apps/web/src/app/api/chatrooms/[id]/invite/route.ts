@@ -28,6 +28,14 @@ export async function POST(
   })
   if (!room) return NextResponse.json({ error: 'Chat room not found' }, { status: 404 })
 
+  // Block archived agents from being invited
+  if (agentId) {
+    const agent = await prisma.agent.findUnique({ where: { id: agentId }, select: { metadata: true } })
+    if ((agent?.metadata as Record<string, unknown> | null)?.archived === true) {
+      return NextResponse.json({ error: 'Cannot invite an archived agent' }, { status: 400 })
+    }
+  }
+
   // Check if already a member
   const already = room.members.find((m: any) =>
     (userId && m.userId === userId) || (agentId && m.agentId === agentId)

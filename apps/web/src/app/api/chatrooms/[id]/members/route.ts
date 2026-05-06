@@ -28,7 +28,7 @@ export async function GET(
     orderBy: { username: 'asc' },
   })
   const allAgents = await prisma.agent.findMany({
-    select: { id: true, name: true, type: true },
+    select: { id: true, name: true, type: true, metadata: true },
     orderBy: { name: 'asc' },
   })
 
@@ -36,7 +36,11 @@ export async function GET(
   const memberAgentIds = room.members.map((m: any) => m.agentId).filter(Boolean) as string[]
 
   const availableUsers = allUsers.filter((u: any) => u.id !== session.user.id && !memberUserIds.includes(u.id))
-  const availableAgents = allAgents.filter((a: any) => !memberAgentIds.includes(a.id))
+  const availableAgents = allAgents.filter((a: any) => {
+    if (memberAgentIds.includes(a.id)) return false
+    if ((a.metadata as Record<string, unknown> | null)?.archived === true) return false
+    return true
+  }).map(({ metadata: _m, ...rest }: any) => rest)
 
   return NextResponse.json({ users: availableUsers, agents: availableAgents })
 }

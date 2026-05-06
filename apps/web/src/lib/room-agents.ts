@@ -343,7 +343,10 @@ export async function triggerRoomAgentReplies(
     },
   })
 
-  const agentMembers = (room?.members ?? []).map((m: any) => m.agent!).filter(Boolean)
+  const agentMembers = (room?.members ?? [])
+    .map((m: any) => m.agent!)
+    .filter(Boolean)
+    .filter((a: any) => (a.metadata as Record<string, unknown> | null)?.archived !== true)
   if (agentMembers.length === 0) return
 
   const mentionedNames  = parseMentions(triggerContent)
