@@ -257,9 +257,9 @@ async function callOpenAIChat(
 
       console.log(`[room-agents] tool result: ${result}`)
 
-      // Save as structured tool_call message — rendered as blue card in chat UI
+      // Save as structured tool_call message and publish via SSE so it appears in real-time
       const safeOutput = result.replace(/(?:token|secret|password|key)\s*[=:]\s*\S+/gi, (m) => m.split(/[=:]/)[0] + ': [REDACTED]')
-      await prisma.chatMessage.create({
+      const toolMsg = await prisma.chatMessage.create({
         data: {
           roomId:      toolContext!.roomId,
           agentId:     toolContext!.agentId,
@@ -267,7 +267,17 @@ async function callOpenAIChat(
           content:     tc.function.name,
           attachments: { tool: tc.function.name, input: tc.function.arguments ?? '', output: safeOutput.slice(0, 2000) } as any,
         },
-      }).catch(() => {})
+      }).catch(() => null)
+      if (toolMsg) {
+        await publishChatMessage(toolContext!.roomId, {
+          id:          toolMsg.id,
+          senderType:  'tool_call',
+          content:     tc.function.name,
+          attachments: { tool: tc.function.name, input: tc.function.arguments ?? '', output: safeOutput.slice(0, 2000) },
+          sender:      { type: 'agent', id: toolContext!.agentId, name: agentName },
+          createdAt:   toolMsg.createdAt instanceof Date ? toolMsg.createdAt.toISOString() : toolMsg.createdAt,
+        })
+      }
 
       messages.push({ role: 'tool', content: result, tool_call_id: tc.id, name: tc.function.name })
     }
