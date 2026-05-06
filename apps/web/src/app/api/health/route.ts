@@ -14,7 +14,7 @@ export async function GET() {
   let claude = false
   try {
     const { existsSync, readFileSync } = await import('fs')
-    const credPath = process.env.CLAUDE_CREDENTIALS_PATH ?? '/claude-creds/.claude'
+    const credPath = process.env.CLAUDE_CREDENTIALS_PATH ?? '/claude-creds/.credentials.json'
     if (existsSync(credPath)) {
       const raw = readFileSync(credPath, 'utf8')
       const parsed = JSON.parse(raw)
