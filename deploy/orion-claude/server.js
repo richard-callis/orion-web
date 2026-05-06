@@ -18,9 +18,9 @@
  */
 
 const http  = require('http')
-const { spawn } = require('child_process')
 const fs    = require('fs')
 const path  = require('path')
+const pty   = require('node-pty')
 
 const PORT       = parseInt(process.env.PORT || '3100', 10)
 const CLAUDE_HOME = process.env.CLAUDE_HOME || '/root/.claude'
@@ -37,6 +37,11 @@ function resetLogin() {
   loginProc   = null
   loginOutput = ''
   loginStatus = 'idle'
+}
+
+// Strip ANSI escape sequences from PTY output for clean URL extraction
+function stripAnsi(str) {
+  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '').replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '')
 }
 
 function extractUrl(text) {
@@ -119,30 +124,29 @@ const server = http.createServer(async (req, res) => {
       resetLogin()
       loginStatus = 'starting'
 
-      console.log('[orion-claude] Starting claude login...')
+      console.log('[orion-claude] Starting claude auth login (PTY)...')
 
-      loginProc = spawn('claude', ['login'], {
-        env:   { ...process.env, HOME: '/root', TERM: 'dumb' },
-        stdio: ['pipe', 'pipe', 'pipe'],
+      // Use a PTY so claude CLI sees a real terminal and displays the OAuth URL
+      loginProc = pty.spawn('claude', ['auth', 'login'], {
+        name: 'xterm-color',
+        cols: 120,
+        rows: 30,
+        env: { ...process.env, HOME: '/root', TERM: 'xterm-color', COLORTERM: 'truecolor' },
       })
 
-      loginProc.stdout.on('data', (chunk) => {
-        loginOutput += chunk.toString()
+      loginProc.onData((chunk) => {
+        const clean = stripAnsi(chunk)
+        loginOutput += clean
         if (loginStatus === 'starting' && extractUrl(loginOutput)) {
           loginStatus = 'waiting'
           console.log('[orion-claude] Auth URL captured, waiting for code')
         }
-        console.log('[stdout]', chunk.toString().trim())
+        process.stdout.write('[pty] ' + clean.trim() + '\n')
       })
 
-      loginProc.stderr.on('data', (chunk) => {
-        loginOutput += chunk.toString()
-        console.log('[stderr]', chunk.toString().trim())
-      })
-
-      loginProc.on('close', (code) => {
-        console.log('[orion-claude] claude login exited with code', code)
-        if (code === 0) {
+      loginProc.onExit(({ exitCode }) => {
+        console.log('[orion-claude] claude auth login exited with code', exitCode)
+        if (exitCode === 0) {
           loginStatus = 'done'
           // Copy credentials to shared volume path if needed
           const sharedPath = '/claude-creds/.credentials.json'
@@ -157,12 +161,6 @@ const server = http.createServer(async (req, res) => {
           loginStatus = 'error'
         }
         loginProc = null
-      })
-
-      loginProc.on('error', (err) => {
-        loginOutput += `\nProcess error: ${err.message}\n`
-        loginStatus = 'error'
-        loginProc   = null
       })
 
       // Wait up to 5s for the URL to appear before responding
@@ -192,8 +190,8 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: 'No login in progress — start one first' })
       }
 
-      console.log('[orion-claude] Sending code to claude stdin...')
-      loginProc.stdin.write(code.trim() + '\n')
+      console.log('[orion-claude] Sending code to PTY...')
+      loginProc.write(code.trim() + '\r')
       loginStatus = 'completing'
 
       // Give claude a moment to process
