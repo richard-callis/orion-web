@@ -181,9 +181,15 @@ const server = http.createServer(async (req, res) => {
     if (method === 'POST' && url === '/auth/code') {
       const body = await readBody(req)
       const { code } = JSON.parse(body || '{}')
+      const normalizedCode = String(code || '').trim()
 
-      if (!code?.trim()) {
+      if (!normalizedCode) {
         return json(res, 400, { error: 'code is required' })
+      }
+
+      // Accept only expected device/auth code characters to avoid PTY/control injection.
+      if (!/^[A-Za-z0-9_-]{4,128}$/.test(normalizedCode)) {
+        return json(res, 400, { error: 'Invalid code format' })
       }
 
       if (!loginProc) {
@@ -191,7 +197,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       console.log('[orion-claude] Sending code to PTY...')
-      loginProc.write(code.trim() + '\r')
+      loginProc.write(normalizedCode + '\r')
       loginStatus = 'completing'
 
       // Give claude a moment to process
