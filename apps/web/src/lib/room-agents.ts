@@ -351,12 +351,13 @@ export async function triggerRoomAgentReplies(
   if (agentMembers.length === 0) return
 
   const mentionedNames  = parseMentions(triggerContent)
+  const isDirect        = agentMembers.length === 1  // 1-on-1 room — always reply
   const triggeredAgents = mentionedNames.length > 0
     ? agentMembers.filter((a: any) => mentionedNames.some(n => a.name.toLowerCase() === n.toLowerCase()))
     : agentMembers.filter((a: any) => {
-        // Watcher agents (e.g. Alpha, Veritas) have watchPrompt set — they coordinate
-        // on a schedule and must not auto-reply to every message. They only speak when
-        // explicitly @mentioned.
+        if (isDirect) return true  // In a 1-on-1 room the agent is always the conversation partner
+        // In group rooms, watcher agents (watchPrompt set) only speak when @mentioned —
+        // they coordinate on a schedule and shouldn't auto-reply to every message.
         const cc = ((a.metadata ?? {}) as Record<string, unknown>).contextConfig as Record<string, unknown> | undefined
         return !cc?.watchPrompt
       })
