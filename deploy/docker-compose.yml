@@ -52,6 +52,8 @@ services:
       REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26380,redis-sentinel-3:26381}
       REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:-}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # Claude Code sidecar URL (for OAuth bootstrap and credential status)
+      ORION_CLAUDE_URL: ${ORION_CLAUDE_URL:-http://orion-claude:3100}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - orion-claude-creds:/claude-creds
@@ -278,6 +280,26 @@ services:
         limits:
           cpus: '0.5'
           memory: 256M
+
+  # ── Claude Code Service ────────────────────────────────────────────────────
+  # Persistent Claude Code sidecar. Handles OAuth login interactively and
+  # stores credentials in the shared orion-claude-creds volume.
+  # ORION web reads credentials from /claude-creds (same volume).
+  orion-claude:
+    build:
+      context: ./orion-claude
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    volumes:
+      - orion-claude-creds:/root/.claude   # native claude credentials directory
+    environment:
+      PORT: 3100
+      CLAUDE_HOME: /root/.claude
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
 
   # ── Claude Creds Refresh ───────────────────────────────────────────────────
   claude-refresh:
