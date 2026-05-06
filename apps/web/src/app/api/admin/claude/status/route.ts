@@ -1,33 +1,15 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
-import fs from 'fs'
 
-const CREDS_PATH = '/claude-creds/.claude/.credentials.json'
+const CLAUDE_URL = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
 
 export async function GET() {
   await requireAdmin()
-
   try {
-    const raw = fs.readFileSync(CREDS_PATH, 'utf8')
-    const parsed = JSON.parse(raw)
-    const oauth = parsed?.claudeAiOauth
-    const accessToken: string | undefined = oauth?.accessToken
-    const expiresAt: number | undefined = oauth?.expiresAt
-
-    if (!accessToken) {
-      return NextResponse.json({ configured: true, valid: false, reason: 'No access token found' })
-    }
-
-    const now = Date.now()
-    const valid = !expiresAt || expiresAt > now
-
-    return NextResponse.json({
-      configured: true,
-      valid,
-      expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
-      reason: valid ? null : 'Token expired',
-    })
+    const res = await fetch(`${CLAUDE_URL}/auth/status`, { signal: AbortSignal.timeout(5000) })
+    const data = await res.json()
+    return NextResponse.json(data)
   } catch {
-    return NextResponse.json({ configured: false, valid: false, reason: 'Credentials file not found' })
+    return NextResponse.json({ authenticated: false, valid: false, reason: 'Claude Code service unreachable' })
   }
 }

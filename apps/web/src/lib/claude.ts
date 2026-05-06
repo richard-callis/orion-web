@@ -125,7 +125,8 @@ function getOAuthToken(): string | null {
     process.env.CLAUDE_CREDENTIALS_PATH
       ? path.join(process.env.CLAUDE_CREDENTIALS_PATH, '.claude', '.credentials.json')
       : null,
-    '/claude-creds/.claude/.credentials.json', // shared volume written by admin bootstrap or claude-refresh
+    '/claude-creds/.credentials.json',       // orion-claude volume (native /root/.claude mount)
+    '/claude-creds/.claude/.credentials.json', // legacy path from claude-refresh
     '/tmp/claude-home/.claude/.credentials.json',
   ].filter(Boolean) as string[]
   for (const p of candidates) {

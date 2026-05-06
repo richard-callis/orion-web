@@ -1,102 +1,67 @@
 /**
- * POST /api/admin/claude/oauth
+ * Claude Code OAuth proxy routes
  *
- * Starts the Claude Code OAuth flow by running `claude login` inside the
- * claude-refresh container via Docker exec. Returns a BackgroundJob ID that
- * the UI can poll for log output (which includes the auth URL to visit).
- *
- * On completion, `claude login` writes credentials to /root/.claude in the
- * claude-refresh container, and the refresh script copies them to the shared
- * /claude-creds volume — which the web container also mounts.
+ * POST /api/admin/claude/oauth/login   — start the login flow on the orion-claude service
+ * POST /api/admin/claude/oauth/code    — forward the pasted code to the running login process
+ * GET  /api/admin/claude/oauth/poll    — poll login progress and output
+ * POST /api/admin/claude/oauth/cancel  — cancel any running login
  */
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
-import { prisma } from '@/lib/db'
-import { spawn } from 'child_process'
 
-// Name of the claude-refresh container (matches docker-compose service name)
-const REFRESH_CONTAINER = process.env.CLAUDE_REFRESH_CONTAINER ?? 'deploy-claude-refresh-1'
-const CREDS_PATH = '/claude-creds/.claude/.credentials.json'
+const CLAUDE_URL = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
 
-export async function POST() {
-  await requireAdmin()
-
-  const job = await prisma.backgroundJob.create({
-    data: {
-      type: 'claude-oauth',
-      title: 'Claude Code OAuth Login',
-      status: 'running',
-      logs: 'Starting Claude OAuth flow...\n',
-    },
+async function proxy(path: string, method: string, body?: unknown) {
+  const res = await fetch(`${CLAUDE_URL}${path}`, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body:    body ? JSON.stringify(body) : undefined,
+    signal:  AbortSignal.timeout(10_000),
   })
-
-  // Run async — do not await
-  runOAuthFlow(job.id).catch(async (err) => {
-    await prisma.backgroundJob.update({
-      where: { id: job.id },
-      data: { status: 'failed', logs: { set: `Error: ${err instanceof Error ? err.message : String(err)}\n` } },
-    }).catch(() => {})
-  })
-
-  return NextResponse.json({ jobId: job.id })
+  return res.json()
 }
 
-async function runOAuthFlow(jobId: string) {
-  const appendLog = async (line: string) => {
-    const current = await prisma.backgroundJob.findUnique({ where: { id: jobId }, select: { logs: true } })
-    const prev = typeof current?.logs === 'string' ? current.logs : ''
-    await prisma.backgroundJob.update({
-      where: { id: jobId },
-      data: { logs: prev + line },
-    }).catch(() => {})
-  }
+export async function POST(req: NextRequest) {
+  await requireAdmin()
 
-  await appendLog(`Executing: docker exec ${REFRESH_CONTAINER} claude login\n`)
-  await appendLog('Waiting for auth URL — this may take a few seconds...\n\n')
+  const url    = new URL(req.url)
+  const action = url.searchParams.get('action') ?? 'login'
 
-  await new Promise<void>((resolve, reject) => {
-    const proc = spawn('docker', ['exec', '-i', REFRESH_CONTAINER, 'claude', 'login'], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-
-    const handle = async (data: Buffer) => {
-      const text = data.toString()
-      await appendLog(text)
+  try {
+    if (action === 'login') {
+      const data = await proxy('/auth/login', 'POST')
+      return NextResponse.json(data)
     }
 
-    proc.stdout.on('data', handle)
-    proc.stderr.on('data', handle)
+    if (action === 'code') {
+      const body = await req.json().catch(() => ({}))
+      const data = await proxy('/auth/code', 'POST', { code: body.code })
+      return NextResponse.json(data)
+    }
 
-    proc.on('close', async (code) => {
-      if (code === 0) {
-        await appendLog('\n✓ Login completed. Copying credentials to shared volume...\n')
+    if (action === 'cancel') {
+      const data = await proxy('/auth/cancel', 'POST')
+      return NextResponse.json(data)
+    }
 
-        // claude login writes to /root/.claude in the refresh container.
-        // The refresh script already copies to /claude-creds on each loop,
-        // but we trigger a copy immediately via docker exec.
-        const copy = spawn('docker', [
-          'exec', REFRESH_CONTAINER,
-          'sh', '-c',
-          `mkdir -p /claude-creds/.claude && cp /root/.claude/.credentials.json ${CREDS_PATH}`,
-        ])
-        await new Promise<void>(r => copy.on('close', () => r()))
-        await appendLog('✓ Credentials saved. Claude Code is ready.\n')
+    return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
+  } catch {
+    return NextResponse.json({ error: 'Claude Code service unreachable' }, { status: 503 })
+  }
+}
 
-        await prisma.backgroundJob.update({
-          where: { id: jobId },
-          data: { status: 'completed' },
-        }).catch(() => {})
-        resolve()
-      } else {
-        await appendLog(`\n✗ claude login exited with code ${code}\n`)
-        await prisma.backgroundJob.update({
-          where: { id: jobId },
-          data: { status: 'failed' },
-        }).catch(() => {})
-        reject(new Error(`Exit code ${code}`))
-      }
-    })
+export async function GET(req: NextRequest) {
+  await requireAdmin()
+  const url    = new URL(req.url)
+  const action = url.searchParams.get('action') ?? 'poll'
 
-    proc.on('error', reject)
-  })
+  try {
+    if (action === 'poll') {
+      const data = await proxy('/auth/poll', 'GET')
+      return NextResponse.json(data)
+    }
+    return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
+  } catch {
+    return NextResponse.json({ error: 'Claude Code service unreachable' }, { status: 503 })
+  }
 }
