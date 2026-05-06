@@ -3,5 +3,7 @@
   "version": "1.0.0",
   "description": "Persistent Claude Code service for ORION — handles OAuth and task execution",
   "main": "server.js",
-  "dependencies": {}
+  "dependencies": {
+    "node-pty": "^1.0.0"
+  }
 }
