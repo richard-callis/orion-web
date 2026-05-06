@@ -208,7 +208,7 @@ async function callOpenAIChat(
   const orionToolNames: Set<string> = new Set(ORION_TOOL_DEFINITIONS.map(d => d.function.name))
 
   // Tool-call loop — keep going until the model produces a text reply
-  const MAX_TOOL_ROUNDS = 5
+  const MAX_TOOL_ROUNDS = 15
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const body: Record<string, unknown> = { model, stream: false, messages }
     if (allTools) body.tools = allTools
