@@ -41,12 +41,14 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
   },
   {
     name: 'orion_list_tasks',
-    description: 'List tasks filtered by status and assignment. Use this to find unassigned work, check what is running, or review failed tasks.',
+    description: 'List tasks filtered by status, assignment, and date. Use this to find unassigned work, check what is running, or review failed tasks.',
     inputSchema: {
       type: 'object',
       properties: {
         status:          { type: 'string',  description: 'Filter by status: pending, running, pending_validation, done, failed. Defaults to pending+running+failed. Use "pending_validation" to find tasks awaiting Veritas review.' },
         unassigned_only: { type: 'boolean', description: 'Only return tasks with no agent or user assigned (default false)' },
+        assigned_agent_id: { type: 'string', description: 'Filter to tasks assigned to a specific agent ID' },
+        since:           { type: 'string',  description: 'ISO 8601 timestamp — only return tasks created or updated after this date. Use this to fetch only new work since your last review.' },
       },
     },
   },
@@ -81,15 +83,16 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = [
   },
   {
     name: 'orion_update_agent',
-    description: 'Update an existing agent\'s role, description, system prompt, or LLM. Use this to improve agents based on observed performance — sharpen their prompts, fix their role description, or reassign their LLM.',
+    description: 'Update an existing agent\'s role, description, system prompt, LLM, or review timestamp. Use this to improve agents based on observed performance — sharpen their prompts, fix their role description, or reassign their LLM. Also call this with mentorReviewedAt to record that you have reviewed an agent even if no prompt change was needed.',
     inputSchema: {
       type: 'object',
       properties: {
-        agent_id:     { type: 'string', description: 'Agent ID to update' },
-        role:         { type: 'string', description: 'Updated one-line role description' },
-        description:  { type: 'string', description: 'Updated longer description' },
-        systemPrompt: { type: 'string', description: 'Updated full system prompt' },
-        llm:          { type: 'string', description: 'Updated LLM (e.g. ext:<id>)' },
+        agent_id:          { type: 'string', description: 'Agent ID to update' },
+        role:              { type: 'string', description: 'Updated one-line role description' },
+        description:       { type: 'string', description: 'Updated longer description' },
+        systemPrompt:      { type: 'string', description: 'Updated full system prompt' },
+        llm:               { type: 'string', description: 'Updated LLM (e.g. ext:<id>)' },
+        mentorReviewedAt:  { type: 'string', description: 'ISO 8601 timestamp to record when Mentor last reviewed this agent. Always set this after completing a review, even if no changes were made.' },
       },
       required: ['agent_id'],
     },
@@ -314,17 +317,22 @@ async function handleListAgents(argsRaw: string): Promise<string> {
 }
 
 async function handleListTasks(argsRaw: string): Promise<string> {
-  const { status, unassigned_only } = parseArgs(argsRaw) as {
+  const { status, unassigned_only, assigned_agent_id, since } = parseArgs(argsRaw) as {
     status?: string | string[]
     unassigned_only?: boolean
+    assigned_agent_id?: string
+    since?: string
   }
   const statuses = status
     ? (Array.isArray(status) ? status : [status])
     : ['pending', 'running', 'failed']
+  const sinceDate = since ? new Date(since) : undefined
   const tasks = await prisma.task.findMany({
     where: {
       status: { in: statuses as any },
       ...(unassigned_only ? { assignedAgent: null, assignedUserId: null } : {}),
+      ...(assigned_agent_id ? { assignedAgent: assigned_agent_id } : {}),
+      ...(sinceDate ? { OR: [{ createdAt: { gte: sinceDate } }, { updatedAt: { gte: sinceDate } }] } : {}),
     },
     include: { agent: { select: { id: true, name: true } } },
     orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
@@ -691,6 +699,7 @@ async function handleUpdateAgent(argsRaw: string, actorId?: string): Promise<str
     description?: string
     systemPrompt?: string
     llm?: string
+    mentorReviewedAt?: string
   }
   if (!spec.agent_id) return 'Error: agent_id is required'
 
@@ -704,15 +713,18 @@ async function handleUpdateAgent(argsRaw: string, actorId?: string): Promise<str
   const existingCfg  = (existingMeta.contextConfig ?? {}) as Record<string, unknown>
 
   const updatedMeta: Record<string, unknown> = { ...existingMeta }
-  if (spec.systemPrompt !== undefined) updatedMeta.systemPrompt = spec.systemPrompt
-  if (spec.llm !== undefined) updatedMeta.contextConfig = { ...existingCfg, llm: spec.llm }
+  if (spec.systemPrompt    !== undefined) updatedMeta.systemPrompt    = spec.systemPrompt
+  if (spec.llm             !== undefined) updatedMeta.contextConfig   = { ...existingCfg, llm: spec.llm }
+  if (spec.mentorReviewedAt !== undefined) updatedMeta.mentorReviewedAt = spec.mentorReviewedAt
 
   const data: Record<string, unknown> = { metadata: updatedMeta }
   if (spec.role        !== undefined) data.role        = spec.role
   if (spec.description !== undefined) data.description = spec.description
 
   await prisma.agent.update({ where: { id: spec.agent_id }, data })
-  await auditLog(actorId, `✏️ Updated agent **${existing.name}** (${spec.agent_id})`)
+  if (spec.systemPrompt !== undefined) {
+    await auditLog(actorId, `✏️ Updated agent **${existing.name}** system prompt (${spec.agent_id})`)
+  }
   return `Updated agent "${existing.name}" (${spec.agent_id})`
 }
 
