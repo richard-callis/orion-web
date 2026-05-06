@@ -1,5 +1,8 @@
 FROM node:20-alpine
 
+# node-pty requires native compilation
+RUN apk add --no-cache python3 make g++ libc6-compat
+
 # Install claude CLI globally
 RUN npm install -g @anthropic-ai/claude-code
 
