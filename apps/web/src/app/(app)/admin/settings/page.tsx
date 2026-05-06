@@ -15,6 +15,7 @@ interface Settings {
   'app.description': string
   'ai.default-model': string
   'chat.historyLimit': number
+  'agent.chat.maxToolRounds': number
   'features.notes': boolean
   'features.backups': boolean
 }
@@ -24,6 +25,7 @@ const DEFAULTS: Settings = {
   'app.description': '',
   'ai.default-model': 'claude',
   'chat.historyLimit': 10,
+  'agent.chat.maxToolRounds': 15,
   'features.notes': true,
   'features.backups': true,
 }
@@ -46,6 +48,7 @@ export default function SettingsPage() {
         ...data,
         // API stores all values as strings — coerce back to their correct types
         'chat.historyLimit': parseInt(data['chat.historyLimit']) || s['chat.historyLimit'],
+        'agent.chat.maxToolRounds': parseInt(data['agent.chat.maxToolRounds']) || s['agent.chat.maxToolRounds'],
         'features.notes': data['features.notes'] === undefined ? s['features.notes'] : data['features.notes'] === 'true',
         'features.backups': data['features.backups'] === undefined ? s['features.backups'] : data['features.backups'] === 'true',
       }))
@@ -152,6 +155,18 @@ export default function SettingsPage() {
             max={100}
             value={settings['chat.historyLimit']}
             onChange={e => set('chat.historyLimit', parseInt(e.target.value) || 10)}
+            className="w-32 px-3 py-1.5 text-sm bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none focus:border-accent transition-colors"
+          />
+        </SettingRow>
+
+        {/* Max tool rounds */}
+        <SettingRow label="Max Agent Tool Rounds" description="How many tool calls a chat room agent can make before it must reply. Increase if agents time out mid-task.">
+          <input
+            type="number"
+            min={1}
+            max={50}
+            value={settings['agent.chat.maxToolRounds']}
+            onChange={e => set('agent.chat.maxToolRounds', parseInt(e.target.value) || 15)}
             className="w-32 px-3 py-1.5 text-sm bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none focus:border-accent transition-colors"
           />
         </SettingRow>
