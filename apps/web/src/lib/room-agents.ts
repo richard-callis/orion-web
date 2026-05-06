@@ -14,8 +14,6 @@
  *   gemini:<model>            — falls back to Claude for now
  */
 
-import fs from 'fs'
-import path from 'path'
 import { prisma } from './db'
 import { setTyping, clearTyping } from './typing-state'
 import { ORION_TOOL_DEFINITIONS, TOOLS_SYSTEM_ADDENDUM, executeTool } from './agent-tools'
@@ -33,15 +31,7 @@ export function parseMentions(content: string): string[] {
 
 // ── Credential helpers (mirrors claude.ts) ────────────────────────────────────
 
-function setupClaudeCredentials(): void {
-  if (!process.env.CLAUDE_CREDENTIALS_PATH) return
-  try {
-    const src  = path.join(process.env.CLAUDE_CREDENTIALS_PATH, '.claude', '.credentials.json')
-    const dest = '/tmp/claude-home/.claude/.credentials.json'
-    fs.mkdirSync(path.dirname(dest), { recursive: true })
-    if (fs.existsSync(src)) fs.copyFileSync(src, dest)
-  } catch { /* best-effort */ }
-}
+const CLAUDE_URL = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
 
 // ── LLM call helpers ──────────────────────────────────────────────────────────
 
@@ -106,35 +96,29 @@ async function callClaude(
   modelId?: string,
   hasTools = false,
 ): Promise<string | null> {
-  setupClaudeCredentials()
-  const { query } = await import('@anthropic-ai/claude-code')
   const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools)
-  // Claude query() only accepts a single prompt string — prepend history as context
   const historyBlock = history.length
     ? history.map(e => `${e.name}: ${e.content}`).join('\n') + '\n\n'
     : ''
   const prompt = historyBlock + latestMessage
-  const response = query({
-    prompt,
-    options: {
+  const res = await fetch(`${CLAUDE_URL}/run/collect`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({
+      prompt,
+      systemPrompt: sys,
       allowedTools: [],
-      maxTurns: 1,
-      customSystemPrompt: sys,
+      maxTurns:     1,
       ...(modelId ? { model: modelId } : {}),
-    },
-  })
-  let text = ''
-  for await (const raw of response) {
-    const msg = raw as { type: string; message?: { content: Array<{ type: string; text?: string }> }; subtype?: string; result?: string }
-    if (msg.type === 'assistant' && msg.message) {
-      for (const block of msg.message.content) {
-        if (block.type === 'text' && block.text) text += block.text
-      }
-    } else if (msg.type === 'result' && msg.subtype === 'success' && msg.result) {
-      if (!text.includes(msg.result.trim())) text += msg.result
-    }
+    }),
+    signal: AbortSignal.timeout(120_000),
+  }).catch((e: Error) => { console.error(`[room-agents] orion-claude fetch failed: ${e.message}`); return null })
+  if (!res?.ok) {
+    console.error(`[room-agents] orion-claude /run/collect returned HTTP ${res?.status}`)
+    return null
   }
-  return text.trim() || null
+  const data = await res.json() as { text?: string }
+  return data.text?.trim() || null
 }
 
 /** Ollama native /api/chat endpoint */
@@ -447,11 +431,8 @@ export async function triggerRoomAgentReplies(
           }
           reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl, !!toolContext)
         } else {
-          // claude / claude:<model>
+          // claude / claude:<model> — routed through orion-claude sidecar
           const claudeModel = llm.startsWith('claude:') ? llm.slice('claude:'.length) : undefined
-          if (toolsEnabled) {
-            console.warn(`[room-agents] ${agent.name} has tools enabled but ${llm} route does not support function calling — scope awareness injected but tool invocation unavailable`)
-          }
           reply = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel, !!toolContext)
         }
       } finally {
