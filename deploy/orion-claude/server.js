@@ -1,22 +1,20 @@
 /**
  * orion-claude — persistent Claude Code sidecar for ORION
  *
- * Wraps the `claude` CLI with an HTTP API so ORION can:
- *   - Check auth status
- *   - Initiate the OAuth login flow and capture the auth URL
- *   - Accept the pasted authorization code and forward it to claude's stdin
- *   - Poll login progress
- *
- * Credentials are stored in /root/.claude (the volume mount point).
- * ORION web reads from the same volume at /claude-creds.
+ * All Claude Code SDK calls go through this service. The OAuth token
+ * never leaves this container — ORION sends prompts here, we run them
+ * with the SDK, and stream results back as NDJSON.
  *
  * Endpoints:
- *   GET  /health          — liveness probe
- *   GET  /auth/status     — credential validity + expiry
- *   POST /auth/login      — start claude login, return auth URL when available
- *   POST /auth/code       — send code to running login process via stdin
- *   GET  /auth/poll       — poll login output + status
- *   POST /auth/cancel     — kill any running login process
+ *   GET  /health             — liveness probe
+ *   GET  /auth/status        — credential validity + expiry
+ *   POST /auth/login         — start claude login, return auth URL when available
+ *   POST /auth/code          — send code to running login process via stdin
+ *   GET  /auth/poll          — poll login output + status
+ *   POST /auth/cancel        — kill any running login process
+ *   POST /auth/credentials   — store pasted credentials directly
+ *   POST /run                — execute a query(), stream SDK events as NDJSON
+ *   POST /run/collect        — execute a query(), return full text as JSON (for summarizer/review)
  */
 
 const http  = require('http')
@@ -235,6 +233,76 @@ const server = http.createServer(async (req, res) => {
       fs.writeFileSync(CREDS_PATH, JSON.stringify(credentials, null, 2), 'utf8')
       console.log('[orion-claude] Credentials stored via paste')
       return json(res, 200, { ok: true })
+    }
+
+    // ── POST /run ────────────────────────────────────────────────────────────
+    // Execute a Claude Code query and stream SDK events back as NDJSON.
+    // Each line is one JSON-serialised SDK event (assistant / user / result / error).
+    if (method === 'POST' && url === '/run') {
+      const body = await readBody(req)
+      let opts
+      try { opts = JSON.parse(body || '{}') } catch { return json(res, 400, { error: 'Invalid JSON' }) }
+
+      res.writeHead(200, {
+        'Content-Type': 'application/x-ndjson',
+        'Transfer-Encoding': 'chunked',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+      })
+
+      try {
+        const { query } = await import('@anthropic-ai/claude-code')
+        const response = query({
+          prompt: String(opts.prompt || ''),
+          options: {
+            allowedTools:     opts.allowedTools ?? [],
+            maxTurns:         opts.maxTurns     ?? 20,
+            ...(opts.systemPrompt && { customSystemPrompt: opts.systemPrompt }),
+            ...(opts.model        && { model: opts.model }),
+          },
+        })
+        for await (const event of response) {
+          res.write(JSON.stringify(event) + '\n')
+        }
+      } catch (err) {
+        try { res.write(JSON.stringify({ type: 'error', error: err instanceof Error ? err.message : String(err) }) + '\n') } catch {}
+      }
+      return res.end()
+    }
+
+    // ── POST /run/collect ────────────────────────────────────────────────────
+    // Like /run but buffers the full text and returns it as JSON.
+    // Used by the plan-reviewer and conversation summariser.
+    if (method === 'POST' && url === '/run/collect') {
+      const body = await readBody(req)
+      let opts
+      try { opts = JSON.parse(body || '{}') } catch { return json(res, 400, { error: 'Invalid JSON' }) }
+
+      try {
+        const { query } = await import('@anthropic-ai/claude-code')
+        const response = query({
+          prompt: String(opts.prompt || ''),
+          options: {
+            allowedTools:     opts.allowedTools ?? [],
+            maxTurns:         opts.maxTurns     ?? 1,
+            ...(opts.systemPrompt && { customSystemPrompt: opts.systemPrompt }),
+            ...(opts.model        && { model: opts.model }),
+          },
+        })
+        let text = ''
+        for await (const event of response) {
+          if (event.type === 'assistant') {
+            for (const block of event.message?.content ?? []) {
+              if (block.type === 'text') text += block.text
+            }
+          } else if (event.type === 'result' && event.subtype === 'success') {
+            if (event.result && !text.includes(event.result.trim())) text += (text ? '\n\n' : '') + event.result
+          }
+        }
+        return json(res, 200, { text })
+      } catch (err) {
+        return json(res, 500, { error: err instanceof Error ? err.message : String(err) })
+      }
     }
 
     json(res, 404, { error: 'Not found' })

@@ -1,9 +1,7 @@
 import fs from 'fs'
-import path from 'path'
 import { prisma } from './db'
 import { getPrompt, interpolate } from './system-prompts'
 import { generateEmbedding, vectorSearch } from './embeddings'
-import type { SDKAssistantMessage, SDKResultMessage } from '@anthropic-ai/claude-code'
 import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './management-tools'
 
 async function getActiveTasksSection(): Promise<string> {
@@ -93,51 +91,6 @@ export interface StreamChunk {
   error?: string
 }
 
-// Collect all text from a query() response into a single string
-type AnyMsg = { type: string; message?: { content: Array<{ type: string; text?: string }> }; subtype?: string; result?: string }
-
-async function collectQueryText(response: AsyncIterable<unknown>): Promise<string> {
-  let text = ''
-  for await (const raw of response) {
-    const msg = raw as AnyMsg
-    if (msg.type === 'assistant' && msg.message) {
-      for (const block of msg.message.content) {
-        if (block.type === 'text' && block.text) text += block.text
-      }
-    } else if (msg.type === 'result' && msg.subtype === 'success' && msg.result && !text.includes(msg.result.trim())) {
-      text += msg.result
-    }
-  }
-  return text.trim()
-}
-
-function getOAuthToken(): string | null {
-  // Try the CLAUDE_CREDENTIALS env var first (raw JSON blob set by ESO)
-  if (process.env.CLAUDE_CREDENTIALS) {
-    try {
-      const parsed = JSON.parse(process.env.CLAUDE_CREDENTIALS)
-      const token = parsed?.claudeAiOauth?.accessToken
-      if (token) return token
-    } catch { /* fall through */ }
-  }
-  // Fall back to mounted credentials file
-  const candidates = [
-    process.env.CLAUDE_CREDENTIALS_PATH
-      ? path.join(process.env.CLAUDE_CREDENTIALS_PATH, '.claude', '.credentials.json')
-      : null,
-    '/claude-creds/.credentials.json',       // orion-claude volume (native /root/.claude mount)
-    '/claude-creds/.claude/.credentials.json', // legacy path from claude-refresh
-    '/tmp/claude-home/.claude/.credentials.json',
-  ].filter(Boolean) as string[]
-  for (const p of candidates) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(p, 'utf8'))
-      const token = parsed?.claudeAiOauth?.accessToken
-      if (token) return token
-    } catch { /* try next */ }
-  }
-  return null
-}
 
 export interface AgentContextConfig {
   maxTurns?: number        // default 6 for agent chats
@@ -1627,17 +1580,14 @@ ${transcript}`,
     }
   } catch { /* Ollama unavailable — fall through to Claude */ }
 
-  // Fallback: use Claude Code SDK (costs quota)
+  // Fallback: use orion-claude service (Claude Code SDK — token stays in the sidecar)
   try {
-    if (process.env.CLAUDE_CREDENTIALS_PATH) {
-      const srcCreds = path.join(process.env.CLAUDE_CREDENTIALS_PATH, '.claude', '.credentials.json')
-      const dest = '/tmp/claude-home/.claude/.credentials.json'
-      fs.mkdirSync(path.dirname(dest), { recursive: true })
-      if (fs.existsSync(srcCreds)) fs.copyFileSync(srcCreds, dest)
-    }
-    const { query } = await import('@anthropic-ai/claude-code')
-    const response = query({
-      prompt: `Create a detailed conversation summary that captures:
+    const claudeUrl = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
+    const res = await fetch(`${claudeUrl}/run/collect`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        prompt: `Create a detailed conversation summary that captures:
 - Key facts discovered or established (names, values, configurations)
 - Decisions made and the reasoning behind them
 - Important context about systems, services, or state
@@ -1646,13 +1596,18 @@ ${transcript}`,
 Be specific with details. Use 5-8 sentences if needed for completeness:
 
 ${transcript}`,
-      options: { allowedTools: [], maxTurns: 1, customSystemPrompt: 'You are a conversation summarizer. Produce a detailed factual summary that preserves important context and facts.' },
+        systemPrompt: 'You are a conversation summarizer. Produce a detailed factual summary that preserves important context and facts.',
+        allowedTools: [],
+        maxTurns: 1,
+      }),
+      signal: AbortSignal.timeout(60_000),
     })
-    const summary = await collectQueryText(response as AsyncIterable<unknown>)
-    return summary || null
-  } catch {
-    return null
-  }
+    if (res.ok) {
+      const data = await res.json() as { text?: string }
+      return data.text?.trim() || null
+    }
+  } catch { /* orion-claude unreachable */ }
+  return null
 }
 
 export async function* streamClaudeResponse(
@@ -1670,20 +1625,9 @@ export async function* streamClaudeResponse(
   let totalText = ''
   const toolCallLog: Array<{ tool: string; input: string; output?: string }> = []
 
+  const claudeUrl = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
+
   try {
-    const { query } = await import('@anthropic-ai/claude-code')
-
-    // Claude Code needs a writable HOME to store state (.claude.json).
-    // The Secret volume is read-only, so copy creds to /tmp and point HOME there.
-    if (process.env.CLAUDE_CREDENTIALS_PATH) {
-      const srcCreds = path.join(process.env.CLAUDE_CREDENTIALS_PATH, '.claude', '.credentials.json')
-      const claudeHome = '/tmp/claude-home'
-      const destDir = path.join(claudeHome, '.claude')
-      fs.mkdirSync(destDir, { recursive: true })
-      try { fs.copyFileSync(srcCreds, path.join(destDir, '.credentials.json')) } catch { /* ignore if missing */ }
-      process.env.HOME = claudeHome
-    }
-
     const baseSystemPrompt = agentSystemPrompt ?? (planTarget
       ? await getPlanningSystemPrompt(planTarget.type)
       : await getSystemPrompt([], undefined, conversationId, knowledgeContext))
@@ -1695,79 +1639,137 @@ export async function* streamClaudeResponse(
       ? previousMessages.map(m => `${m.role}: ${m.content}`).join('\n\n') + `\n\nuser: ${prompt}`
       : prompt
 
-    // ── Phase 1: Sonnet — gathers info with tools, produces the draft plan ─────
-    const response = query({
-      prompt: fullPrompt,
-      options: {
-        allowedTools: ALLOWED_TOOLS,
-        customSystemPrompt: systemPrompt,
-        maxTurns: overrides?.maxTurns ?? 20,
-        ...(overrides?.allowedTools !== undefined && { allowedTools: overrides.allowedTools }),
+    // ── Phase 1: stream via orion-claude service (SDK token stays in the sidecar) ─
+    const runRes = await fetch(`${claudeUrl}/run`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        prompt:       fullPrompt,
+        systemPrompt,
+        allowedTools: overrides?.allowedTools ?? ALLOWED_TOOLS,
+        maxTurns:     overrides?.maxTurns ?? 20,
         ...(overrides?.model && { model: overrides.model }),
-      },
+      }),
+      signal: abortSignal ?? AbortSignal.timeout(300_000),
     })
 
-    for await (const msg of response) {
-      if (abortSignal?.aborted) break
+    if (!runRes.ok || !runRes.body) {
+      throw new Error(`orion-claude /run returned ${runRes.status}`)
+    }
+
+    // Read NDJSON stream — each line is one raw SDK event
+    const reader  = runRes.body.getReader()
+    const decoder = new TextDecoder()
+    let   buf     = ''
+
+    const processLine = (line: string) => {
+      if (!line.trim()) return
+      let msg: Record<string, unknown>
+      try { msg = JSON.parse(line) } catch { return }
+
       if (msg.type === 'assistant') {
-        const assistantMsg = msg as SDKAssistantMessage
-        for (const block of assistantMsg.message.content) {
-          if (block.type === 'text') {
+        const content = (msg as any).message?.content as Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }> ?? []
+        for (const block of content) {
+          if (block.type === 'text' && block.text) {
             totalText += block.text
-            yield { type: 'text', content: block.text }
+            // Note: can't yield inside a regular function — batched below
           } else if (block.type === 'tool_use') {
-            const toolInput = JSON.stringify(block.input)
+            const toolInput = JSON.stringify(block.input ?? {})
             toolsUsed.push(`${block.name}(${toolInput})`)
-            toolCallLog.push({ tool: block.name, input: toolInput })
-            yield { type: 'tool_call', tool: block.name, input: toolInput }
-          }
-        }
-      } else if (msg.type === 'user') {
-        const userMsg = msg as { type: 'user'; message: { role: 'user'; content: unknown[] } }
-        for (const block of userMsg.message.content as Array<{ type: string; content?: unknown }>) {
-          if (block.type === 'tool_result') {
-            const result = Array.isArray(block.content)
-              ? (block.content as Array<{ type: string; text?: string }>).map(c => c.type === 'text' ? c.text : '').join('')
-              : String(block.content ?? '')
-            if (toolCallLog.length > 0) toolCallLog[toolCallLog.length - 1].output = result
-            yield { type: 'tool_result', output: result }
+            toolCallLog.push({ tool: block.name!, input: toolInput })
           }
         }
       } else if (msg.type === 'result') {
-        const resultMsg = msg as SDKResultMessage
-        const subtype = (resultMsg as { subtype?: string }).subtype
-        const resultText = subtype === 'success' ? (resultMsg as { result: string }).result : undefined
-        process.stderr.write(`[claude] result: subtype=${subtype} result_len=${resultText?.length ?? 0}\n`)
-        if (resultText && resultText.trim() && !totalText.includes(resultText.trim())) {
+        const subtype    = (msg as any).subtype as string | undefined
+        const resultText = subtype === 'success' ? (msg as any).result as string : undefined
+        if (resultText?.trim() && !totalText.includes(resultText.trim())) {
           totalText += (totalText ? '\n\n' : '') + resultText
-          yield { type: 'text', content: resultText }
         }
       }
     }
 
-    // ── Phase 2 (planning only): Opus reviews the Sonnet draft ────────────────
+    // Streaming yield loop — process lines and yield events as they arrive
+    while (true) {
+      if (abortSignal?.aborted) break
+      const { done, value } = await reader.read()
+      if (done) { if (buf.trim()) processLine(buf); break }
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop()!
+      for (const line of lines) {
+        if (!line.trim()) continue
+        let msg: Record<string, unknown>
+        try { msg = JSON.parse(line) } catch { continue }
+
+        if (msg.type === 'error') {
+          throw new Error((msg as any).error ?? 'Unknown error from orion-claude')
+        }
+
+        if (msg.type === 'assistant') {
+          const content = (msg as any).message?.content as Array<{ type: string; text?: string; name?: string; input?: unknown }> ?? []
+          for (const block of content) {
+            if (block.type === 'text' && block.text) {
+              totalText += block.text
+              yield { type: 'text', content: block.text }
+            } else if (block.type === 'tool_use') {
+              const toolInput = JSON.stringify(block.input ?? {})
+              toolsUsed.push(`${block.name}(${toolInput})`)
+              toolCallLog.push({ tool: block.name!, input: toolInput })
+              yield { type: 'tool_call', tool: block.name!, input: toolInput }
+            }
+          }
+        } else if (msg.type === 'user') {
+          const content = (msg as any).message?.content as Array<{ type: string; content?: unknown }> ?? []
+          for (const block of content) {
+            if (block.type === 'tool_result') {
+              const result = Array.isArray(block.content)
+                ? (block.content as Array<{ type: string; text?: string }>).map(c => c.type === 'text' ? c.text : '').join('')
+                : String(block.content ?? '')
+              if (toolCallLog.length > 0) toolCallLog[toolCallLog.length - 1].output = result
+              yield { type: 'tool_result', output: result }
+            }
+          }
+        } else if (msg.type === 'result') {
+          const subtype    = (msg as any).subtype as string | undefined
+          const resultText = subtype === 'success' ? (msg as any).result as string : undefined
+          process.stderr.write(`[claude] result: subtype=${subtype} result_len=${resultText?.length ?? 0}\n`)
+          if (resultText?.trim() && !totalText.includes(resultText.trim())) {
+            totalText += (totalText ? '\n\n' : '') + resultText
+            yield { type: 'text', content: resultText }
+          }
+        }
+      }
+    }
+
+    // ── Phase 2 (planning only): Opus reviews the Sonnet draft via orion-claude ─
     let opusReview = ''
     if (planTarget && totalText.trim()) {
       const separator = '\n\n---\n\n*Reviewing with Opus...*\n\n'
       yield { type: 'text', content: separator }
 
-      const opusReviewText = await collectQueryText(query({
-        prompt: `Review this draft plan and output the final, improved version. Work only from the text below — do not attempt to run any commands or gather additional information. Fill gaps, sharpen implementation steps, remove vagueness, and ensure the plan is complete and actionable. Output the final plan directly with no preamble and no open-ended questions at the end.
+      const reviewRes = await fetch(`${claudeUrl}/run/collect`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          prompt: `Review this draft plan and output the final, improved version. Work only from the text below — do not attempt to run any commands or gather additional information. Fill gaps, sharpen implementation steps, remove vagueness, and ensure the plan is complete and actionable. Output the final plan directly with no preamble and no open-ended questions at the end.
 
 Draft plan to review:
 
 ${totalText}`,
-        options: {
+          systemPrompt: await getPrompt('system.plan-review'),
           allowedTools: [],
-          customSystemPrompt: await getPrompt('system.plan-review'),
-          maxTurns: 1,
-          model: 'claude-opus-4-6',
-        },
-      }))
+          maxTurns:     1,
+          model:        'claude-opus-4-6',
+        }),
+        signal: AbortSignal.timeout(120_000),
+      }).catch(() => null)
 
-      if (opusReviewText) {
-        opusReview = opusReviewText
-        yield { type: 'text', content: opusReviewText }
+      if (reviewRes?.ok) {
+        const d = await reviewRes.json() as { text?: string }
+        if (d.text) {
+          opusReview = d.text
+          yield { type: 'text', content: d.text }
+        }
       }
     }
 
