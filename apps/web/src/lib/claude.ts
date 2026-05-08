@@ -3,6 +3,7 @@ import { prisma } from './db'
 import { getPrompt, interpolate } from './system-prompts'
 import { generateEmbedding, vectorSearch } from './embeddings'
 import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './management-tools'
+import { validateToolArgs } from './tool-registry'
 
 async function getActiveTasksSection(): Promise<string> {
   const tasks = await prisma.task.findMany({
@@ -1310,6 +1311,18 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
         toolsUsed.push(tc.name)
 
         let result: string
+
+        // Validate arguments before executing
+        let tcParsedArgs: unknown
+        try { tcParsedArgs = JSON.parse(tc.argsRaw || '{}') } catch { tcParsedArgs = {} }
+        const tcValidation = validateToolArgs(tc.name, tcParsedArgs)
+        if (!tcValidation.valid) {
+          result = `Tool validation failed for ${tc.name}: ${tcValidation.errors.join(', ')}. Check the tool schema and retry with correct arguments.`
+          toolCallLog.push({ tool: tc.name, input: tc.argsRaw, output: result })
+          yield { type: 'tool_result', tool: tc.name, output: result }
+          messages.push({ role: 'tool', content: result, tool_call_id: tc.id })
+          continue
+        }
 
         // ── Management tools — handled server-side by ORION ──────────────────
         if (tc.name === 'propose_tool') {
