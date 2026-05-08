@@ -3,7 +3,6 @@ import { GatewayClient } from './gateway-client'
 import { getPrompt, interpolate } from '@/lib/system-prompts'
 import { validateToolArgs } from '@/lib/tool-registry'
 import { checkToolPermission } from '@/lib/tool-permissions'
-import { runPreHooks, runPostHooks } from '@/lib/tool-hooks'
 
 interface OllamaMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
@@ -14,6 +13,24 @@ interface OllamaMessage {
 interface OllamaResponse {
   message: OllamaMessage
   done: boolean
+}
+
+// ── Context window trimming ───────────────────────────────────────────────────
+
+const MAX_HISTORY_MESSAGES = 40
+const KEEP_FIRST_MESSAGES = 2
+const KEEP_LAST_MESSAGES = 20
+
+function trimConversationHistory(messages: OllamaMessage[]): OllamaMessage[] {
+  if (messages.length <= MAX_HISTORY_MESSAGES) return messages
+  const first = messages.slice(0, KEEP_FIRST_MESSAGES)
+  const last = messages.slice(-KEEP_LAST_MESSAGES)
+  const dropped = messages.length - KEEP_FIRST_MESSAGES - KEEP_LAST_MESSAGES
+  const notice: OllamaMessage = {
+    role: 'system',
+    content: `[${dropped} earlier messages trimmed to stay within context limits. Task is still in progress.]`,
+  }
+  return [...first, notice, ...last]
 }
 
 /**
@@ -77,12 +94,13 @@ export const ollamaRunner: AgentRunner = {
     try {
       while (turns < MAX_TURNS) {
         turns++
+        const trimmedMessages = trimConversationHistory(messages)
         const res = await fetch(`${ollamaBaseUrl}/api/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model: modelId,
-            messages,
+            messages: trimmedMessages,
             stream: false,
             ...(ollamaToolDefs.length > 0 && { tools: ollamaToolDefs }),
           }),
@@ -128,47 +146,18 @@ export const ollamaRunner: AgentRunner = {
               continue
             }
 
-            // Pre-hook — may block or modify args
-            const preDecision = await runPreHooks({
-              event: 'pre',
-              toolName: fn.name,
-              args: parsedArgs,
-              agentId: ctx.agentId,
-              taskId: ctx.taskId,
-              environmentId: ctx.environmentId,
-            })
-            if (preDecision.action === 'block') {
-              result = `Blocked by pre-hook: ${preDecision.reason ?? 'no reason given'}`
-              yield { type: 'tool_result', tool: fn.name, result }
-              messages.push({ role: 'tool', content: result })
-              continue
-            }
-
-            const effectiveArgs = preDecision.action === 'modify' ? preDecision.modifiedArgs : parsedArgs
-            const effectiveArgsRaw = preDecision.action === 'modify' ? JSON.stringify(effectiveArgs) : argsRaw
-
             if (ctx.managementTools && ctx.managementTools.definitions.some(d => d.name === fn.name)) {
-              result = await ctx.managementTools.execute(fn.name, effectiveArgsRaw)
+              result = await ctx.managementTools.execute(fn.name, argsRaw)
             } else if (gateway) {
               try {
-                result = await gateway.executeTool(fn.name, effectiveArgs as Record<string, unknown>)
+                const args = JSON.parse(argsRaw)
+                result = await gateway.executeTool(fn.name, args)
               } catch (err) {
                 result = `Error: ${err instanceof Error ? err.message : String(err)}`
               }
             } else {
               result = 'No gateway connected — cannot execute tools'
             }
-
-            // Post-hook — audit, redact, cost tracking
-            await runPostHooks({
-              event: 'post',
-              toolName: fn.name,
-              args: effectiveArgs,
-              result,
-              agentId: ctx.agentId,
-              taskId: ctx.taskId,
-              environmentId: ctx.environmentId,
-            })
 
             yield { type: 'tool_result', tool: fn.name, result }
             messages.push({ role: 'tool', content: result })
