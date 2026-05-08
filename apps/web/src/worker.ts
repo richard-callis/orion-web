@@ -15,6 +15,7 @@ import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './lib/management-tools
 import { getSystemRooms } from './lib/seed-system-epic'
 import { getPrompt } from './lib/system-prompts'
 import { resolveAgentGateway } from './lib/agent-gateway'
+import { getAgentsMd } from './lib/agents-md'
 
 const POLL_INTERVAL_MS = 15_000
 const MAX_CONCURRENT   = 3
@@ -225,7 +226,22 @@ async function runTask(taskId: string): Promise<void> {
     ].join('\n')
     const toolsPreamble = await getPrompt('system.task-runner-tools')
     const injectedPreamble = toolsPreamble.replace('{{toolList}}', toolList)
-    const systemPrompt = injectedPreamble + '\n\n' + agentSystemPrompt + wikiContext
+
+    // Fetch AGENTS.md from the environment's Gitea repo (if linked)
+    const agentsMd = agentGw?.environmentId
+      ? await getAgentsMd(agentGw.environmentId)
+      : null
+    const agentsMdSection = agentsMd
+      ? `\n\n## Environment-Specific Instructions (from AGENTS.md)\n${agentsMd}`
+      : ''
+
+    let systemPrompt = injectedPreamble + '\n\n' + agentSystemPrompt + agentsMdSection + wikiContext
+
+    // Prepend plan-before-execute instruction if configured on this agent
+    if (contextConfig.planBeforeExecute === true) {
+      const planPrefix = await getPrompt('system.task-plan-prefix')
+      systemPrompt = planPrefix + '\n\n' + systemPrompt
+    }
 
     log(`Starting task "${task.title}" (${taskId}) → agent "${agent.name}" [${modelId}]`)
 
@@ -587,7 +603,16 @@ async function runWatchers() {
     ].join('\n')
     const watcherToolsPreamble = await getPrompt('system.task-runner-tools')
     const watcherInjectedPreamble = watcherToolsPreamble.replace('{{toolList}}', watcherToolList)
-    const watcherSystemPrompt = watcherInjectedPreamble + '\n\n' + systemPrompt + wikiContext
+
+    // Fetch AGENTS.md from the environment's Gitea repo (if linked)
+    const watcherAgentsMd = agentGw?.environmentId
+      ? await getAgentsMd(agentGw.environmentId)
+      : null
+    const watcherAgentsMdSection = watcherAgentsMd
+      ? `\n\n## Environment-Specific Instructions (from AGENTS.md)\n${watcherAgentsMd}`
+      : ''
+
+    const watcherSystemPrompt = watcherInjectedPreamble + '\n\n' + systemPrompt + watcherAgentsMdSection + wikiContext
 
     // Build system room context block so agents know where to post
     const roomLines = Object.entries({

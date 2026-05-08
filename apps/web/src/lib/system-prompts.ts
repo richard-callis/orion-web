@@ -433,6 +433,21 @@ Rules:
   },
 
   {
+    key: 'system.task-plan-prefix',
+    name: 'Task Plan Prefix',
+    category: 'system',
+    description: 'Prepended to a task agent\'s system prompt when planBeforeExecute is enabled. Requires the agent to output a structured plan before taking any actions.',
+    content: `Before taking any actions, first output your complete plan inside <plan> tags:
+
+<plan>
+List each step you will take, what tool you will call, and what you expect to happen.
+Only proceed to execution after the plan is complete.
+</plan>
+
+Now execute your plan step by step.`,
+  },
+
+  {
     key: 'system.agent-creation',
     name: 'Agent Creation Planning System Prompt',
     category: 'system',
