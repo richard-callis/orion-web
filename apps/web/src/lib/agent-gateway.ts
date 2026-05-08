@@ -6,6 +6,7 @@ export interface AgentGateway {
   url: string
   token: string
   client: GatewayClient
+  environmentId: string
 }
 
 /**
@@ -15,12 +16,13 @@ export interface AgentGateway {
 export async function resolveAgentGateway(agentId: string): Promise<AgentGateway | null> {
   const envLink = await prisma.agentEnvironment.findFirst({
     where: { agentId },
-    include: { environment: { select: { gatewayUrl: true, gatewayToken: true } } },
+    include: { environment: { select: { id: true, gatewayUrl: true, gatewayToken: true } } },
   })
-  const url   = envLink?.environment?.gatewayUrl
-  const token = envLink?.environment?.gatewayToken
-  if (!url || !token) return null
-  return { url, token, client: new GatewayClient(url, token) }
+  const url           = envLink?.environment?.gatewayUrl
+  const token         = envLink?.environment?.gatewayToken
+  const environmentId = envLink?.environment?.id
+  if (!url || !token || !environmentId) return null
+  return { url, token, environmentId, client: new GatewayClient(url, token) }
 }
 
 /**

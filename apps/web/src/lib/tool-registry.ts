@@ -656,6 +656,60 @@ async function handleRequestTool(args: unknown, ctx: ToolExecutionContext): Prom
   return `Tool request submitted: "${name}"\n\nAlpha will review this request during the next watcher cycle. Description: ${tool_description}`
 }
 
+async function handleRequestToolGrant(args: unknown, ctx: ToolExecutionContext): Promise<string> {
+  const { tool_name, reason } = parseArgs(args) as {
+    tool_name?: string
+    reason?: string
+  }
+
+  if (!tool_name?.trim()) return 'Error: tool_name is required'
+  if (!reason?.trim())    return 'Error: reason is required — explain why this destructive tool is needed'
+
+  const actorId = ctx.agentId ?? ctx.userId
+  if (!actorId) return 'Error: actorId is required to request a tool grant (SOC2 attribution)'
+
+  // Resolve environmentId from agent link
+  let resolvedEnvId = ctx.environmentId ?? null
+  if (!resolvedEnvId && ctx.agentId) {
+    const envLink = await ctx.prisma.agentEnvironment.findFirst({
+      where:  { agentId: ctx.agentId },
+      select: { environmentId: true },
+    })
+    resolvedEnvId = envLink?.environmentId ?? null
+  }
+
+  if (!resolvedEnvId) return 'Error: no environment linked to this agent — cannot create a tool grant request'
+
+  // De-duplicate: only create one pending request per (agent, tool)
+  const existing = await ctx.prisma.toolApprovalRequest.findFirst({
+    where: {
+      userId:        actorId,
+      environmentId: resolvedEnvId,
+      toolName:      tool_name.trim(),
+      status:        'pending',
+    },
+  })
+
+  if (existing) {
+    return `A pending grant request for \`${tool_name.trim()}\` already exists (id: ${existing.id}). An admin must approve it before you can use this tool.`
+  }
+
+  const request = await ctx.prisma.toolApprovalRequest.create({
+    data: {
+      conversationId: `task-agent:${actorId}`,
+      userId:         actorId,
+      environmentId:  resolvedEnvId,
+      toolName:       tool_name.trim(),
+      reason:         reason.trim(),
+    },
+  })
+
+  const msg = `🔒 Tool grant requested: **${tool_name.trim()}** — ${reason.trim().slice(0, 200)}`
+  await auditLog(actorId, msg)
+
+  return `Grant request submitted (id: ${request.id}) for \`${tool_name.trim()}\`. An admin must approve this request in the ORION UI (Administration → Approvals) before you can call this tool. Reason recorded: ${reason.trim()}`
+}
+
 // ── Cluster health handler ────────────────────────────────────────────────────
 
 interface IngressEntry { namespace: string; ingress: string; host: string }
@@ -1241,6 +1295,23 @@ registerTool({
   parallelSafe: true,
   availableIn: 'both',
   handler: handleClusterHealth,
+})
+
+registerTool({
+  name: 'orion_request_tool_grant',
+  description: 'Request explicit authorization to call a destructive-tier tool. Creates an approval request that a human admin must review in the ORION UI (Administration → Approvals). Once approved, a one-time grant is created and the next call to the tool will succeed. Use this when a tool call was denied with "destructive tool requires explicit authorization".',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      tool_name: { type: 'string', description: 'Exact name of the destructive tool being requested (e.g. "orion_archive_agent")' },
+      reason:    { type: 'string', description: 'Why this destructive tool is needed for the current task — be specific' },
+    },
+    required: ['tool_name', 'reason'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'both',
+  handler: handleRequestToolGrant,
 })
 
 registerTool({
