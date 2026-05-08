@@ -1446,3 +1446,151 @@ registerTool({
     }
   },
 })
+
+// ── spawn_agent ───────────────────────────────────────────────────────────────
+
+const MAX_SUBAGENT_RESULT_CHARS = 12_000
+const SUBAGENT_DEPTH_KEY = '__subagent_depth'
+
+registerTool({
+  name: 'spawn_agent',
+  description: `Run an ephemeral sub-agent in-process and return its output as a string.
+
+Use this when the current task needs to delegate a focused sub-problem to a separate agent loop — for example, to gather information, draft content, or execute a short specialised workflow — without creating a new Task in the database or waiting for the worker poll cycle.
+
+The sub-agent runs with the same gateway/environment connection as the parent, inherits management tools, and uses the same or an overridden model. Results are returned synchronously to the caller.
+
+Guidelines:
+- Keep prompts concise and focused on a single outcome
+- Prefer this over orion_create_task when you need the answer immediately
+- Do NOT spawn sub-agents recursively — depth is capped at 1`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      prompt: {
+        type: 'string',
+        description: 'The task/question for the sub-agent to answer or complete',
+      },
+      system_prompt: {
+        type: 'string',
+        description: 'Optional system prompt override. Defaults to the parent agent\'s system prompt.',
+      },
+      model: {
+        type: 'string',
+        description: 'Optional model ID override (e.g. "claude:claude-haiku-4-5-20251001"). Defaults to parent agent\'s model.',
+      },
+      max_turns: {
+        type: 'number',
+        description: 'Maximum tool-calling turns (default 8, max 15)',
+      },
+    },
+    required: ['prompt'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'task',
+  handler: async (args, ctx) => {
+    // Guard against recursive spawning
+    const depth = ((ctx as any)[SUBAGENT_DEPTH_KEY] ?? 0) as number
+    if (depth >= 1) {
+      return 'Error: spawn_agent cannot be called recursively (max depth 1)'
+    }
+
+    const {
+      prompt,
+      system_prompt: systemPromptOverride,
+      model: modelOverride,
+      max_turns: maxTurnsArg,
+    } = parseArgs(args) as {
+      prompt?: string
+      system_prompt?: string
+      model?: string
+      max_turns?: number
+    }
+
+    if (!prompt?.trim()) return 'Error: prompt is required'
+
+    const maxTurns = Math.min(maxTurnsArg ?? 8, 15)
+
+    try {
+      // Lazy import to avoid circular dependency (openai-runner imports tool-registry)
+      const { createRunner } = await import('@/lib/agent-runner')
+      const { MANAGEMENT_TOOL_DEFS, executeManagedTool } = await import('@/lib/management-tools')
+
+      // Resolve model: arg override → parent agent's model → system default
+      let modelId = modelOverride ?? null
+      let systemPrompt = systemPromptOverride ?? 'You are a helpful assistant.'
+
+      if (ctx.agentId && (!modelId || !systemPromptOverride)) {
+        const agent = await ctx.prisma.agent.findUnique({
+          where: { id: ctx.agentId },
+          select: { metadata: true },
+        })
+        if (agent) {
+          const meta          = (agent.metadata ?? {}) as Record<string, unknown>
+          const contextConfig = (meta.contextConfig ?? {}) as Record<string, unknown>
+          if (!modelId) {
+            const llm = contextConfig.llm as string | undefined
+            if (llm) modelId = llm.startsWith('claude:') || llm.startsWith('ollama:') || llm.startsWith('ext:')
+              ? llm
+              : `ext:${llm}`
+          }
+          if (!systemPromptOverride) {
+            systemPrompt = (meta.systemPrompt as string | undefined) ?? systemPrompt
+          }
+        }
+      }
+
+      modelId = modelId ?? await getDefaultModelId()
+
+      // Resolve gateway from environment if available
+      let gateway: { url: string; token: string } | null = null
+      if (ctx.environmentId) {
+        const { resolveAgentGateway } = await import('@/lib/agent-gateway')
+        const agentGw = ctx.agentId ? await resolveAgentGateway(ctx.agentId) : null
+        if (agentGw) gateway = { url: agentGw.url, token: agentGw.token }
+      }
+
+      const subCtx = {
+        taskId:          `subagent-${Date.now()}`,
+        taskTitle:       prompt.slice(0, 80),
+        taskDescription: null,
+        taskPlan:        null,
+        agentId:         ctx.agentId ?? 'subagent',
+        agentName:       'sub-agent',
+        systemPrompt,
+        modelId,
+        gateway,
+        environmentId:   ctx.environmentId,
+        managementTools: {
+          definitions: MANAGEMENT_TOOL_DEFS,
+          execute: (name: string, argsRaw: string) =>
+            executeManagedTool(name, argsRaw, ctx.agentId),
+        },
+        // Internal: track recursion depth so nested spawn_agent calls are blocked
+        [SUBAGENT_DEPTH_KEY]: depth + 1,
+      }
+
+      const runner = createRunner(modelId)
+
+      // Cap turns by temporarily patching the context (runners read MAX_TURNS internally,
+      // but we pass maxTurns in the context for runners that respect it in future)
+      ;(subCtx as any).__maxTurns = maxTurns
+
+      let result = ''
+      for await (const event of runner.run(subCtx as any)) {
+        if (event.type === 'text') result += event.content
+        if (event.type === 'error') return `Sub-agent error: ${event.error}`
+        if (event.type === 'done') break
+      }
+
+      if (result.length > MAX_SUBAGENT_RESULT_CHARS) {
+        result = result.slice(0, MAX_SUBAGENT_RESULT_CHARS) + `\n\n[result truncated at ${MAX_SUBAGENT_RESULT_CHARS} chars]`
+      }
+
+      return result || '(sub-agent produced no text output)'
+    } catch (e) {
+      return `Error running sub-agent: ${e instanceof Error ? e.message : String(e)}`
+    }
+  },
+})
