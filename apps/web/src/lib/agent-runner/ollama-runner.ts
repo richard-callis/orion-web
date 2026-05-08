@@ -3,6 +3,7 @@ import { GatewayClient } from './gateway-client'
 import { getPrompt, interpolate } from '@/lib/system-prompts'
 import { validateToolArgs } from '@/lib/tool-registry'
 import { checkToolPermission } from '@/lib/tool-permissions'
+import { runPreHooks, runPostHooks } from '@/lib/tool-hooks'
 
 interface OllamaMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
@@ -127,18 +128,47 @@ export const ollamaRunner: AgentRunner = {
               continue
             }
 
+            // Pre-hook — may block or modify args
+            const preDecision = await runPreHooks({
+              event: 'pre',
+              toolName: fn.name,
+              args: parsedArgs,
+              agentId: ctx.agentId,
+              taskId: ctx.taskId,
+              environmentId: ctx.environmentId,
+            })
+            if (preDecision.action === 'block') {
+              result = `Blocked by pre-hook: ${preDecision.reason ?? 'no reason given'}`
+              yield { type: 'tool_result', tool: fn.name, result }
+              messages.push({ role: 'tool', content: result })
+              continue
+            }
+
+            const effectiveArgs = preDecision.action === 'modify' ? preDecision.modifiedArgs : parsedArgs
+            const effectiveArgsRaw = preDecision.action === 'modify' ? JSON.stringify(effectiveArgs) : argsRaw
+
             if (ctx.managementTools && ctx.managementTools.definitions.some(d => d.name === fn.name)) {
-              result = await ctx.managementTools.execute(fn.name, argsRaw)
+              result = await ctx.managementTools.execute(fn.name, effectiveArgsRaw)
             } else if (gateway) {
               try {
-                const args = JSON.parse(argsRaw)
-                result = await gateway.executeTool(fn.name, args)
+                result = await gateway.executeTool(fn.name, effectiveArgs as Record<string, unknown>)
               } catch (err) {
                 result = `Error: ${err instanceof Error ? err.message : String(err)}`
               }
             } else {
               result = 'No gateway connected — cannot execute tools'
             }
+
+            // Post-hook — audit, redact, cost tracking
+            await runPostHooks({
+              event: 'post',
+              toolName: fn.name,
+              args: effectiveArgs,
+              result,
+              agentId: ctx.agentId,
+              taskId: ctx.taskId,
+              environmentId: ctx.environmentId,
+            })
 
             yield { type: 'tool_result', tool: fn.name, result }
             messages.push({ role: 'tool', content: result })
