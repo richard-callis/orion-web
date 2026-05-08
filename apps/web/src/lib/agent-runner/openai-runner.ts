@@ -1,6 +1,7 @@
 import type { AgentRunner, AgentEvent, TaskRunContext, GatewayTool } from './types'
 import { GatewayClient } from './gateway-client'
 import { getPrompt, interpolate } from '@/lib/system-prompts'
+import { validateToolArgs } from '@/lib/tool-registry'
 
 interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
@@ -109,6 +110,18 @@ export const openaiRunner: AgentRunner = {
 
             let result: string
             const argsRaw = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments)
+
+            // Validate arguments before executing
+            let parsedArgs: unknown
+            try { parsedArgs = JSON.parse(argsRaw || '{}') } catch { parsedArgs = {} }
+            const validation = validateToolArgs(fn.name, parsedArgs)
+            if (!validation.valid) {
+              result = `Tool validation failed for ${fn.name}: ${validation.errors.join(', ')}. Check the tool schema and retry with correct arguments.`
+              yield { type: 'tool_result', tool: fn.name, result }
+              messages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
+              continue
+            }
+
             if (ctx.managementTools && ctx.managementTools.definitions.some(d => d.name === fn.name)) {
               result = await ctx.managementTools.execute(fn.name, argsRaw)
             } else if (gateway) {
