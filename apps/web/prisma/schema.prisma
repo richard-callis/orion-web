@@ -244,6 +244,9 @@ model Task {
   planProgress    Int?
   planApprovedBy  String?
   planApprovedAt  DateTime?
+  retryCount      Int       @default(0)
+  maxRetries      Int       @default(3)
+  nextRetryAt     DateTime?
   events          TaskEvent[]
   metadata        Json?
   chatRooms       ChatRoom[]    @relation("ChatRoomTask")

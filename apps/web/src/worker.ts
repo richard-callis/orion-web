@@ -90,6 +90,41 @@ function buildWikiContext(notes: Array<{ title: string; content: string }>): str
 
 const runningTasks = new Set<string>()
 
+const TASK_TIMEOUT_MS = 60 * 60 * 1000 // 60 minutes
+
+function isTransientError(errorMessage: string): boolean {
+  const transientPatterns = [
+    'ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED',
+    'rate_limit', '429', '503', '502',
+    'timeout', 'Gateway timeout', 'upstream connect error',
+    'Connection reset', 'socket hang up'
+  ]
+  return transientPatterns.some(p => errorMessage.toLowerCase().includes(p.toLowerCase()))
+}
+
+async function recoverStuckTasks() {
+  const stuckCutoff = new Date(Date.now() - 30 * 60 * 1000) // 30 minutes ago
+  const stuck = await prisma.task.findMany({
+    where: { status: 'in_progress', updatedAt: { lt: stuckCutoff } }
+  })
+  for (const task of stuck) {
+    await prisma.task.update({
+      where: { id: task.id },
+      data: { status: 'failed' }
+    })
+    await prisma.taskEvent.create({
+      data: {
+        taskId: task.id,
+        eventType: 'system',
+        content: 'Task recovered from crashed worker — marked failed for safety. Use orion_reopen_task to retry if appropriate.',
+        agentId: null
+      }
+    })
+    console.log(`[recovery] Recovered stuck task ${task.id} — marked failed`)
+  }
+  if (stuck.length > 0) console.log(`[recovery] Recovered ${stuck.length} stuck task(s)`)
+}
+
 // ── Logging helpers ────────────────────────────────────────────────────────────
 
 function log(msg: string) { process.stdout.write(`[orchestrator] ${msg}\n`) }
@@ -135,6 +170,12 @@ async function resolveModelId(llm: unknown): Promise<string> {
 async function runTask(taskId: string): Promise<void> {
   runningTasks.add(taskId)
   const startedAt = Date.now()
+
+  const taskAbort = new AbortController()
+  const timeoutHandle = setTimeout(() => {
+    taskAbort.abort()
+    console.log(`[timeout] Task ${taskId} exceeded ${TASK_TIMEOUT_MS / 60000} minutes — aborting`)
+  }, TASK_TIMEOUT_MS)
 
   try {
     // Load task with agent
@@ -239,6 +280,11 @@ async function runTask(taskId: string): Promise<void> {
     let toolsUsed: string[] = []
 
     for await (const event of runner.run(ctx)) {
+      // Check for task-level abort (60-minute timeout)
+      if (taskAbort.signal.aborted) {
+        throw new Error('Task exceeded maximum runtime of 60 minutes and was automatically terminated.')
+      }
+
       switch (event.type) {
         case 'text':
           outputText += event.content
@@ -312,18 +358,39 @@ async function runTask(taskId: string): Promise<void> {
 
     log(`Completed task "${task.title}" (${taskId}) in ${durationSec}s`)
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    err(`Task ${taskId} failed: ${msg}`)
+    const errMsg = e instanceof Error ? e.message : String(e)
+    err(`Task ${taskId} failed: ${errMsg}`)
 
-    const failedTask = await prisma.task.findUnique({ where: { id: taskId }, select: { title: true, assignedAgent: true } }).catch(() => null)
-    await Promise.all([
-      prisma.task.update({ where: { id: taskId }, data: { status: 'failed' } }).catch(() => {}),
-      logTaskEvent(taskId, 'failed', msg, failedTask?.assignedAgent ?? undefined),
-    ])
-    if (failedTask?.assignedAgent) {
-      await postToFeed(failedTask.assignedAgent, `❌ Failed: **${failedTask.title}**\n\n${msg}`, taskId).catch(() => {})
+    const failedTask = await prisma.task.findUnique({
+      where: { id: taskId },
+      select: { title: true, assignedAgent: true, retryCount: true, maxRetries: true },
+    }).catch(() => null)
+
+    const canRetry = isTransientError(errMsg) && (failedTask?.retryCount ?? 0) < (failedTask?.maxRetries ?? 3)
+
+    if (canRetry) {
+      const newRetryCount = (failedTask!.retryCount ?? 0) + 1
+      const delayMs = 15000 * Math.pow(2, failedTask!.retryCount ?? 0) // 15s, 30s, 60s
+      const nextRetryAt = new Date(Date.now() + delayMs)
+      await prisma.task.update({
+        where: { id: taskId },
+        data: { status: 'pending', retryCount: newRetryCount, nextRetryAt },
+      }).catch(() => {})
+      await logTaskEvent(taskId, 'system',
+        `Transient failure (${errMsg.slice(0, 100)}) — retry ${newRetryCount}/${failedTask!.maxRetries ?? 3} scheduled in ${delayMs / 1000}s`,
+        failedTask?.assignedAgent ?? undefined,
+      )
+    } else {
+      await Promise.all([
+        prisma.task.update({ where: { id: taskId }, data: { status: 'failed' } }).catch(() => {}),
+        logTaskEvent(taskId, 'failed', errMsg, failedTask?.assignedAgent ?? undefined),
+      ])
+      if (failedTask?.assignedAgent) {
+        await postToFeed(failedTask.assignedAgent, `❌ Failed: **${failedTask.title}**\n\n${errMsg}`, taskId).catch(() => {})
+      }
     }
   } finally {
+    clearTimeout(timeoutHandle)
     runningTasks.delete(taskId)
   }
 }
@@ -393,9 +460,6 @@ async function postToRoom(roomId: string, agentId: string, content: string, task
 }
 
 // ── Persistent watcher loop ────────────────────────────────────────────────────
-
-// Track last-run time per watcher agent
-const watcherLastRun = new Map<string, number>()
 
 /**
  * Build a snapshot of current system state (tasks, agents, recent events)
@@ -492,10 +556,9 @@ async function runWatchers() {
 
     const intervalMin = (cfg.watchIntervalMin as number | undefined) ?? 60
     const intervalMs  = intervalMin * 60 * 1000
-    const lastRun     = watcherLastRun.get(agent.id) ?? 0
+    const lastRun     = (meta.watcherLastRun as number | undefined) ?? 0
 
     if (Date.now() - lastRun < intervalMs) continue
-    watcherLastRun.set(agent.id, Date.now())
 
     const watchPrompt = (cfg.watchPrompt as string | undefined)
     if (!watchPrompt?.trim()) continue
@@ -565,6 +628,17 @@ async function runWatchers() {
         if (event.type === 'text')  output += event.content
         if (event.type === 'error') throw new Error(event.error)
       }
+
+      // Persist last-run timestamp to DB so it survives restarts
+      await prisma.agent.update({
+        where: { id: agent.id },
+        data: {
+          metadata: {
+            ...(agent.metadata as object ?? {}),
+            watcherLastRun: Date.now()
+          }
+        }
+      })
 
       if (output.trim()) {
         await postToFeed(agent.id, `👁 **${agent.name}**:\n\n${output.trim().slice(0, 1500)}`)
@@ -637,6 +711,7 @@ async function pollOnce() {
     where: {
       status:        'pending',
       assignedAgent: { not: null },
+      OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: new Date() } }],
       agent: {
         NOT: {
           metadata: { path: ['archived'], equals: true },
@@ -664,6 +739,9 @@ async function main() {
   await new Promise(resolve => setTimeout(resolve, 5_000))
 
   log(`Polling every ${POLL_INTERVAL_MS / 1000}s, max ${MAX_CONCURRENT} concurrent tasks`)
+
+  // Recover any tasks that were in_progress when the worker last crashed
+  await recoverStuckTasks().catch(e => err(`Startup recovery failed: ${e}`))
 
   // Initial poll
   await pollOnce().catch(e => err(`Initial poll failed: ${e}`))
