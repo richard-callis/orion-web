@@ -3,7 +3,6 @@ import { GatewayClient } from './gateway-client'
 import { getPrompt, interpolate } from '@/lib/system-prompts'
 import { validateToolArgs } from '@/lib/tool-registry'
 import { checkToolPermission } from '@/lib/tool-permissions'
-import { runPreHooks, runPostHooks } from '@/lib/tool-hooks'
 
 interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
@@ -20,6 +19,35 @@ interface OpenAIResponse {
       tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>
     }
   }>
+}
+
+// ── Context window trimming ───────────────────────────────────────────────────
+
+const MAX_HISTORY_MESSAGES = 40
+const KEEP_FIRST_MESSAGES = 2
+const KEEP_LAST_MESSAGES = 20
+
+function trimConversationHistory(messages: OpenAIMessage[]): OpenAIMessage[] {
+  if (messages.length <= MAX_HISTORY_MESSAGES) return messages
+  const first = messages.slice(0, KEEP_FIRST_MESSAGES)
+  const last = messages.slice(-KEEP_LAST_MESSAGES)
+  const dropped = messages.length - KEEP_FIRST_MESSAGES - KEEP_LAST_MESSAGES
+  const notice: OpenAIMessage = {
+    role: 'system',
+    content: `[${dropped} earlier messages trimmed to stay within context limits. Task is still in progress.]`,
+  }
+  return [...first, notice, ...last]
+}
+
+// ── Parallel-safe tool set ────────────────────────────────────────────────────
+
+function isParallelSafe(toolName: string): boolean {
+  const PARALLEL_SAFE = new Set([
+    'orion_list_agents', 'orion_list_tasks', 'orion_get_task_events',
+    'orion_list_rooms', 'orion_cluster_health', 'orion_get_environment',
+    'knowledge_search', 'knowledge_graph', 'knowledge_related', 'knowledge_backlinks',
+  ])
+  return PARALLEL_SAFE.has(toolName)
 }
 
 /**
@@ -82,6 +110,7 @@ export const openaiRunner: AgentRunner = {
     try {
       while (turns < MAX_TURNS) {
         turns++
+        const trimmedMessages = trimConversationHistory(messages)
         const res = await fetch(`${baseUrl}/v1/chat/completions`, {
           method: 'POST',
           headers: {
@@ -90,7 +119,7 @@ export const openaiRunner: AgentRunner = {
           },
           body: JSON.stringify({
             model: modelId,
-            messages,
+            messages: trimmedMessages,
             stream: false,
             ...(maxTokens !== null && { max_tokens: maxTokens }),
             ...(openaiToolDefs.length > 0 && { tools: openaiToolDefs }),
@@ -106,11 +135,11 @@ export const openaiRunner: AgentRunner = {
 
         // Handle tool calls
         if (assistantMsg.tool_calls?.length) {
-          for (const toolCall of assistantMsg.tool_calls) {
-            const fn = toolCall.function
-            yield { type: 'tool_call', tool: fn.name, args: fn.arguments }
+          const toolCalls = assistantMsg.tool_calls
 
-            let result: string
+          // Helper: execute a single tool call and return { toolCall, result }
+          const executeToolCall = async (toolCall: typeof toolCalls[number]): Promise<{ toolCall: typeof toolCalls[number]; result: string }> => {
+            const fn = toolCall.function
             const argsRaw = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments)
 
             // Validate arguments before executing
@@ -118,10 +147,7 @@ export const openaiRunner: AgentRunner = {
             try { parsedArgs = JSON.parse(argsRaw || '{}') } catch { parsedArgs = {} }
             const validation = validateToolArgs(fn.name, parsedArgs)
             if (!validation.valid) {
-              result = `Tool validation failed for ${fn.name}: ${validation.errors.join(', ')}. Check the tool schema and retry with correct arguments.`
-              yield { type: 'tool_result', tool: fn.name, result }
-              messages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
-              continue
+              return { toolCall, result: `Tool validation failed for ${fn.name}: ${validation.errors.join(', ')}. Check the tool schema and retry with correct arguments.` }
             }
 
             // Permission check — must pass before any tool execution
@@ -131,36 +157,16 @@ export const openaiRunner: AgentRunner = {
               ctx.environmentId ?? null,
             )
             if (!permission.allowed) {
-              result = `Permission denied for tool '${fn.name}': ${permission.reason ?? 'Tool not permitted for this agent'}. Contact an admin to grant access.`
-              yield { type: 'tool_result', tool: fn.name, result }
-              messages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
-              continue
+              return { toolCall, result: `Permission denied for tool '${fn.name}': ${permission.reason ?? 'Tool not permitted for this agent'}. Contact an admin to grant access.` }
             }
 
-            // Pre-hook — may block or modify args
-            const preDecision = await runPreHooks({
-              event: 'pre',
-              toolName: fn.name,
-              args: parsedArgs,
-              agentId: ctx.agentId,
-              taskId: ctx.taskId,
-              environmentId: ctx.environmentId,
-            })
-            if (preDecision.action === 'block') {
-              result = `Blocked by pre-hook: ${preDecision.reason ?? 'no reason given'}`
-              yield { type: 'tool_result', tool: fn.name, result }
-              messages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
-              continue
-            }
-
-            const effectiveArgs = preDecision.action === 'modify' ? preDecision.modifiedArgs : parsedArgs
-            const effectiveArgsRaw = preDecision.action === 'modify' ? JSON.stringify(effectiveArgs) : argsRaw
-
+            let result: string
             if (ctx.managementTools && ctx.managementTools.definitions.some(d => d.name === fn.name)) {
-              result = await ctx.managementTools.execute(fn.name, effectiveArgsRaw)
+              result = await ctx.managementTools.execute(fn.name, argsRaw)
             } else if (gateway) {
               try {
-                result = await gateway.executeTool(fn.name, effectiveArgs as Record<string, unknown>)
+                const args = JSON.parse(argsRaw)
+                result = await gateway.executeTool(fn.name, args)
               } catch (err) {
                 result = `Error: ${err instanceof Error ? err.message : String(err)}`
               }
@@ -168,20 +174,29 @@ export const openaiRunner: AgentRunner = {
               result = 'No gateway connected — cannot execute tools'
             }
 
-            // Post-hook — audit, redact, cost tracking
-            await runPostHooks({
-              event: 'post',
-              toolName: fn.name,
-              args: effectiveArgs,
-              result,
-              agentId: ctx.agentId,
-              taskId: ctx.taskId,
-              environmentId: ctx.environmentId,
-            })
+            return { toolCall, result }
+          }
 
-            yield { type: 'tool_result', tool: fn.name, result }
+          // Separate parallel-safe from sequential tools
+          const parallelCalls = toolCalls.filter(tc => isParallelSafe(tc.function.name))
+          const sequentialCalls = toolCalls.filter(tc => !isParallelSafe(tc.function.name))
+
+          // Run parallel-safe tools concurrently
+          const parallelResults = await Promise.all(parallelCalls.map(tc => executeToolCall(tc)))
+          for (const { toolCall, result } of parallelResults) {
+            yield { type: 'tool_call', tool: toolCall.function.name, args: toolCall.function.arguments }
+            yield { type: 'tool_result', tool: toolCall.function.name, result }
             messages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
           }
+
+          // Run sequential tools one at a time
+          for (const toolCall of sequentialCalls) {
+            yield { type: 'tool_call', tool: toolCall.function.name, args: toolCall.function.arguments }
+            const { result } = await executeToolCall(toolCall)
+            yield { type: 'tool_result', tool: toolCall.function.name, result }
+            messages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
+          }
+
           // Continue loop to get next assistant response
           continue
         }

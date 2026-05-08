@@ -1391,6 +1391,57 @@ registerTool({
 })
 
 registerTool({
+  name: 'knowledge_remember',
+  description: 'Save an important fact, insight, or learned pattern to persistent memory for future tasks to reference',
+  inputSchema: {
+    type: 'object' as const,
+    properties: {
+      key:     { type: 'string', description: 'Short category label (e.g. "deployment-pattern", "cluster-quirk")' },
+      value:   { type: 'string', description: 'The fact or insight to remember' },
+      context: { type: 'string', description: 'Why this is important (optional)' },
+    },
+    required: ['key', 'value'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'both',
+  handler: async (args, ctx) => {
+    const { key, value, context: ctx2 } = parseArgs(args) as { key?: string; value?: string; context?: string }
+    if (!key?.trim())   return 'Error: key is required'
+    if (!value?.trim()) return 'Error: value is required'
+
+    // Find the conversation linked to this task
+    let conversationId: string | null = null
+    if (ctx.taskId) {
+      const conv = await ctx.prisma.conversation.findFirst({
+        where: { metadata: { path: ['taskId'], equals: ctx.taskId } },
+        select: { id: true },
+        orderBy: { createdAt: 'desc' },
+      })
+      conversationId = conv?.id ?? null
+    }
+
+    if (!conversationId) {
+      // No linked conversation — fall back to a shared "agent-memory" conversation
+      const fallback = await ctx.prisma.conversation.upsert({
+        where:  { id: 'agent-memory-global' },
+        update: {},
+        create: { id: 'agent-memory-global', title: 'Agent Memory (global)', metadata: { system: true } as any },
+      })
+      conversationId = fallback.id
+    }
+
+    await ctx.prisma.memory.upsert({
+      where:  { conversationId_key: { conversationId, key: key.trim() } },
+      update: { value: value.trim(), context: ctx2 ?? null },
+      create: { conversationId, key: key.trim(), value: value.trim(), context: ctx2 ?? null },
+    })
+
+    return `Remembered: [${key.trim()}] ${value.trim()}`
+  },
+})
+
+registerTool({
   name: 'orion_bootstrap_environment',
   description: 'Trigger the bootstrap process for a Kubernetes cluster environment. Deploys ArgoCD and ORION Gateway into the cluster.',
   inputSchema: {
