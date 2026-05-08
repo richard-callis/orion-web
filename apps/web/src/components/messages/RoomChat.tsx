@@ -445,9 +445,6 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
                           <Terminal size={12} className="text-status-info" />
                           <span className="font-mono text-status-info">{tc?.tool ?? msg.content}</span>
                         </div>
-                        {tc?.input && (
-                          <div className="px-3 py-2 font-mono text-text-secondary break-all">{tc.input}</div>
-                        )}
                         {tc?.output && (
                           <div className="px-3 py-2 border-t border-status-info/20 font-mono text-text-muted whitespace-pre-wrap max-h-48 overflow-y-auto">{tc.output}</div>
                         )}
