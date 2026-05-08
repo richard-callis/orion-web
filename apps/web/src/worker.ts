@@ -269,6 +269,7 @@ async function runTask(taskId: string): Promise<void> {
       systemPrompt,
       modelId,
       gateway,
+      environmentId:   agentGw?.environmentId,
       managementTools: {
         definitions: MANAGEMENT_TOOL_DEFS,
         execute: (name, argsRaw) => executeManagedTool(name, argsRaw, agent.id),
@@ -615,6 +616,7 @@ async function runWatchers() {
       systemPrompt:    watcherSystemPrompt,
       modelId,
       gateway,
+      environmentId:   agentGw?.environmentId,
       managementTools: {
         definitions: MANAGEMENT_TOOL_DEFS,
         execute: (name, argsRaw) => executeManagedTool(name, argsRaw, agent.id),

@@ -2,6 +2,7 @@ import type { AgentRunner, AgentEvent, TaskRunContext, GatewayTool } from './typ
 import { GatewayClient } from './gateway-client'
 import { getPrompt, interpolate } from '@/lib/system-prompts'
 import { validateToolArgs } from '@/lib/tool-registry'
+import { checkToolPermission } from '@/lib/tool-permissions'
 
 interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
@@ -117,6 +118,19 @@ export const openaiRunner: AgentRunner = {
             const validation = validateToolArgs(fn.name, parsedArgs)
             if (!validation.valid) {
               result = `Tool validation failed for ${fn.name}: ${validation.errors.join(', ')}. Check the tool schema and retry with correct arguments.`
+              yield { type: 'tool_result', tool: fn.name, result }
+              messages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
+              continue
+            }
+
+            // Permission check — must pass before any tool execution
+            const permission = await checkToolPermission(
+              fn.name,
+              ctx.agentId ?? null,
+              ctx.environmentId ?? null,
+            )
+            if (!permission.allowed) {
+              result = `Permission denied for tool '${fn.name}': ${permission.reason ?? 'Tool not permitted for this agent'}. Contact an admin to grant access.`
               yield { type: 'tool_result', tool: fn.name, result }
               messages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
               continue
