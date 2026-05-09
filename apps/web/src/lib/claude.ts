@@ -264,18 +264,21 @@ async function* streamOllamaToolLoop(
   environmentId: string,
   abortSignal?: AbortSignal,
   userId?: string,
+  temperature?: number,
 ): AsyncGenerator<StreamChunk> {
   const { GatewayClient: _GC } = await import('./agent-runner/gateway-client')
   void _GC
 
   let ollamaUrl = baseUrl
   let timeoutSecs = 120
+  let resolvedTemp = temperature
   if (!ollamaUrl) {
     const extModel = await prisma.externalModel.findFirst({ where: { provider: 'ollama', modelId: model, enabled: true } })
       ?? await prisma.externalModel.findFirst({ where: { provider: 'ollama', enabled: true } })
     if (!extModel?.baseUrl) { yield { type: 'error', error: 'No Ollama model configured' }; return }
     ollamaUrl = extModel.baseUrl
     timeoutSecs = extModel.timeoutSecs ?? 120
+    if (resolvedTemp === undefined && extModel.temperature != null) resolvedTemp = extModel.temperature
   }
 
   // Synthetic management tools — handled locally, never forwarded to the gateway
@@ -357,7 +360,7 @@ async function* streamOllamaToolLoop(
       const res = await fetch(`${ollamaUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages, stream: false, tools: ollamaToolDefs }),
+        body: JSON.stringify({ model, messages, stream: false, tools: ollamaToolDefs, ...(resolvedTemp !== undefined && { options: { temperature: resolvedTemp } }) }),
         signal: fetchSignal,
       })
       if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`)
@@ -541,6 +544,7 @@ export async function* streamAgentChat(
     let timeoutSecs = 120
     let provider = 'ollama'
     let apiKey: string | undefined
+    let extTemperature: number | undefined
 
     if (llm.startsWith('ext:')) {
       const extId = llm.slice('ext:'.length)
@@ -551,6 +555,7 @@ export async function* streamAgentChat(
       timeoutSecs = extModel.timeoutSecs ?? 120
       provider = extModel.provider   // 'ollama' | 'openai' | 'custom' | etc.
       apiKey = extModel.apiKey ?? undefined
+      if (extModel.temperature != null) extTemperature = extModel.temperature
     } else {
       model = llm.slice('ollama:'.length)
     }
@@ -567,9 +572,9 @@ export async function* streamAgentChat(
       const activeTasks = await getActiveTasksSection()
       if (gw) {
         const systemPrompt = await getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt + activeTasks, conversationId, knowledgeContext)
-        yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, trimmedHistory, model, baseUrl, gw.tools, gw.gc, gw.environmentId, undefined, userId)
+        yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, trimmedHistory, model, baseUrl, gw.tools, gw.gc, gw.environmentId, undefined, userId, extTemperature)
       } else {
-        yield* streamOllamaAgentChat(prompt, conversationId, agentSystemPrompt + activeTasks + noGwSuffix + kcSection, trimmedHistory, model, baseUrl, timeoutSecs)
+        yield* streamOllamaAgentChat(prompt, conversationId, agentSystemPrompt + activeTasks + noGwSuffix + kcSection, trimmedHistory, model, baseUrl, timeoutSecs, undefined, extTemperature)
       }
     } else {
       // OpenAI-compatible endpoint (custom / openai / llama.cpp / etc.)
@@ -597,7 +602,7 @@ ${readClusterContext()}${kcSection}`
         prompt, conversationId, openAISystemPrompt, trimmedHistory,
         model!, baseUrl!, apiKey,
         gw?.tools ?? [], gw?.gc ?? null, gw?.environmentId,
-        undefined, userId,
+        undefined, userId, extTemperature,
       )
     }
     return
@@ -637,12 +642,14 @@ async function* streamOllamaAgentChat(
   systemPrompt: string,
   history: Array<{ role: string; content: string }>,
   model: string,
-  resolvedBaseUrl?: string,     // pre-resolved from ext: lookup — skips second DB query
+  resolvedBaseUrl?: string,       // pre-resolved from ext: lookup — skips second DB query
   resolvedTimeoutSecs?: number,
   abortSignal?: AbortSignal,
+  resolvedTemperature?: number,
 ): AsyncGenerator<StreamChunk> {
   let ollamaUrl = resolvedBaseUrl
   let timeoutSecs = resolvedTimeoutSecs ?? 120
+  let resolvedTemp = resolvedTemperature
   if (!ollamaUrl) {
     const extModel = await prisma.externalModel.findFirst({
       where: { provider: 'ollama', modelId: model, enabled: true },
@@ -652,6 +659,7 @@ async function* streamOllamaAgentChat(
     if (!extModel) throw new Error('No Ollama model configured — add one in Admin → Models')
     ollamaUrl = extModel.baseUrl
     timeoutSecs = extModel.timeoutSecs ?? 120
+    if (resolvedTemp === undefined && extModel.temperature != null) resolvedTemp = extModel.temperature
   }
   const start = Date.now()
   let totalText = ''
@@ -671,7 +679,7 @@ async function* streamOllamaAgentChat(
     const res = await fetch(`${ollamaUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, stream: true }),
+      body: JSON.stringify({ model, messages, stream: true, ...(resolvedTemp !== undefined && { options: { temperature: resolvedTemp } }) }),
       signal: fetchSignal,
     })
 
@@ -1060,6 +1068,7 @@ async function* streamOpenAIChatCore(
   environmentId: string | undefined,
   abortSignal?: AbortSignal,
   userId?: string,
+  temperature?: number,
 ): AsyncGenerator<StreamChunk> {
   const start = Date.now()
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -1230,6 +1239,7 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
     for (let turn = 0; turn < 10; turn++) {
       const body: Record<string, unknown> = { model, messages, stream: true }
       if (openaiTools.length) body.tools = openaiTools
+      if (temperature !== undefined) body.temperature = temperature
 
       const timeoutSignal = AbortSignal.timeout(120_000)
       const fetchSignal = abortSignal ? AbortSignal.any([abortSignal, timeoutSignal]) : timeoutSignal

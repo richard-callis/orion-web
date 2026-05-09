@@ -1,0 +1,1 @@
+ALTER TABLE "ExternalModel" ADD COLUMN "temperature" DOUBLE PRECISION;
