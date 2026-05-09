@@ -28,9 +28,9 @@ import { prisma } from './db'
 import { decrypt } from './encryption'
 import { bootstrapEnvironmentRepo } from './gitops'
 import { getGitProvider } from './git-provider'
+import { VAULT_ADDR, vaultFetch } from './vault'
 
 const ORION_URL       = process.env.NEXTAUTH_URL  ?? 'http://localhost:3000'
-const VAULT_ADDR      = process.env.VAULT_ADDR    ?? 'http://vault:8200'
 const MANAGEMENT_IP   = process.env.MANAGEMENT_IP ?? 'localhost'
 
 export type BootstrapEvent =
@@ -362,11 +362,10 @@ async function vaultRequest(
   method: string = 'GET',
   body?: unknown,
 ): Promise<{ ok: boolean; status: number; data: unknown }> {
-  const res = await fetch(`${VAULT_ADDR}/v1/${path}`, {
+  const res = await vaultFetch(`${VAULT_ADDR}/v1/${path}`, {
     method,
     headers: { 'X-Vault-Token': token, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(10000),
   })
   const data = res.status !== 204 ? await res.json().catch(() => ({})) : {}
   return { ok: res.ok, status: res.status, data }

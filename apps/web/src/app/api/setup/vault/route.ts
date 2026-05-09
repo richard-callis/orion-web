@@ -14,8 +14,8 @@ import { prisma } from '@/lib/db'
 import { requireWizardSession } from '@/lib/setup-guard'
 import { generateVaultProxyCerts } from '@/lib/vault-proxy'
 import { encrypt, encryptJson } from '@/lib/encryption'
+import { VAULT_ADDR, vaultFetch } from '@/lib/vault'
 
-const VAULT_ADDR       = process.env.VAULT_ADDR ?? 'http://vault:8200'
 const UNSEAL_SHARES    = 5
 const UNSEAL_THRESHOLD = 3
 
@@ -43,9 +43,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const healthRes = await fetch(`${VAULT_ADDR}/v1/sys/health`, {
-      signal: AbortSignal.timeout(5000),
-    })
+    const healthRes = await vaultFetch(`${VAULT_ADDR}/v1/sys/health`)
     const health = await healthRes.json()
 
     if (health.initialized) {
@@ -56,11 +54,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Initialize Vault
-    const initRes = await fetch(`${VAULT_ADDR}/v1/sys/init`, {
+    const initRes = await vaultFetch(`${VAULT_ADDR}/v1/sys/init`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ secret_shares: UNSEAL_SHARES, secret_threshold: UNSEAL_THRESHOLD }),
-      signal: AbortSignal.timeout(15000),
     })
 
     if (!initRes.ok) {
@@ -77,25 +74,23 @@ export async function POST(req: NextRequest) {
     // Unseal with threshold keys
     await Promise.all(
       thresholdKeys.map((key: string) =>
-        fetch(`${VAULT_ADDR}/v1/sys/unseal`, {
+        vaultFetch(`${VAULT_ADDR}/v1/sys/unseal`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ key }),
-          signal: AbortSignal.timeout(5000),
         })
       )
     )
 
     // Create scoped admin policy
-    await fetch(`${VAULT_ADDR}/v1/sys/policies/acl/orion-admin`, {
+    await vaultFetch(`${VAULT_ADDR}/v1/sys/policies/acl/orion-admin`, {
       method: 'PUT',
       headers: { 'X-Vault-Token': root_token, 'Content-Type': 'application/json' },
       body: JSON.stringify({ policy: ORION_ADMIN_POLICY }),
-      signal: AbortSignal.timeout(5000),
     })
 
     // Mint a 1-year renewable admin token bound to that policy
-    const adminTokenRes = await fetch(`${VAULT_ADDR}/v1/auth/token/create`, {
+    const adminTokenRes = await vaultFetch(`${VAULT_ADDR}/v1/auth/token/create`, {
       method: 'POST',
       headers: { 'X-Vault-Token': root_token, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -104,7 +99,6 @@ export async function POST(req: NextRequest) {
         ttl: '8760h',
         renewable: true,
       }),
-      signal: AbortSignal.timeout(5000),
     })
     if (!adminTokenRes.ok) {
       const errText = await adminTokenRes.text()
@@ -116,10 +110,9 @@ export async function POST(req: NextRequest) {
     const { auth: { client_token: adminToken } } = await adminTokenRes.json()
 
     // Revoke root token — never persisted
-    await fetch(`${VAULT_ADDR}/v1/auth/token/revoke-self`, {
+    await vaultFetch(`${VAULT_ADDR}/v1/auth/token/revoke-self`, {
       method: 'POST',
       headers: { 'X-Vault-Token': root_token },
-      signal: AbortSignal.timeout(5000),
     })
 
     // Store unseal keys + admin token encrypted in DB — no files written to disk
