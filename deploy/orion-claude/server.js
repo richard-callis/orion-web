@@ -52,22 +52,49 @@ function extractUrl(text) {
 
 // ── Claude CLI subprocess helper ──────────────────────────────────────────────
 
+function sanitizeModel(model) {
+  if (typeof model !== 'string') return null
+  const trimmed = model.trim()
+  // allow common model identifier characters only
+  if (!/^[a-zA-Z0-9._:-]{1,100}$/.test(trimmed)) return null
+  return trimmed
+}
+
+function sanitizeSystemPrompt(systemPrompt) {
+  if (typeof systemPrompt !== 'string') return null
+  // preserve behavior while preventing excessively large/unexpected values
+  return systemPrompt.slice(0, 20000)
+}
+
+function sanitizeMaxTurns(maxTurns, fallback = 20) {
+  const n = Number(maxTurns)
+  if (!Number.isFinite(n)) return fallback
+  const i = Math.trunc(n)
+  if (i < 1) return 1
+  if (i > 200) return 200
+  return i
+}
+
 /**
  * Call the `claude` CLI as a subprocess — same approach as the Discord bot.
  * Strips ANTHROPIC_API_KEY and CLAUDECODE from env to force OAuth credential use.
  */
 function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 120000 } = {}) {
   return new Promise((resolve, reject) => {
-    const cmd = ['claude', '-p', prompt, '--output-format', 'json']
-    if (model)       cmd.push('--model', model)
-    if (systemPrompt) cmd.push('--append-system-prompt', systemPrompt)
-    if (maxTurns)    cmd.push('--max-turns', String(maxTurns))
+    const safeModel = sanitizeModel(model)
+    const safeSystemPrompt = sanitizeSystemPrompt(systemPrompt)
+    const safeMaxTurns = sanitizeMaxTurns(maxTurns, 20)
+
+    const args = ['-p', String(prompt), '--output-format', 'json']
+    if (safeModel)        args.push('--model', safeModel)
+    if (safeSystemPrompt) args.push('--append-system-prompt', safeSystemPrompt)
+    if (safeMaxTurns)     args.push('--max-turns', String(safeMaxTurns))
 
     const env = Object.fromEntries(
       Object.entries(process.env).filter(([k]) => k !== 'ANTHROPIC_API_KEY' && k !== 'CLAUDECODE')
     )
 
-    const child = execFile(cmd[0], cmd.slice(1), { env, timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    const child = execFile('claude', args, { env, timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
         console.error('[orion-claude] claude CLI error:', err.message, stderr?.slice(0, 300))
         return reject(err)
