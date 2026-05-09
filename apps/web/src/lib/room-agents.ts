@@ -372,8 +372,11 @@ export async function triggerRoomAgentReplies(
   if (agentMembers.length === 0) return
 
   const mentionedNames  = parseMentions(triggerContent)
+  const isEveryone      = mentionedNames.some(n => n.toLowerCase() === 'everyone')
   const isDirect        = agentMembers.length === 1  // 1-on-1 room — always reply
-  const triggeredAgents = mentionedNames.length > 0
+  const triggeredAgents = isEveryone
+    ? agentMembers  // @everyone pings all agents regardless of type
+    : mentionedNames.length > 0
     ? agentMembers.filter((a: any) => mentionedNames.some(n => a.name.toLowerCase() === n.toLowerCase()))
     : agentMembers.filter((a: any) => {
         if (isDirect) return true  // In a 1-on-1 room the agent is always the conversation partner
