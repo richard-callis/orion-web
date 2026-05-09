@@ -18,8 +18,8 @@ export async function writeVaultSecret(
   kvPath: string,
   data: Record<string, string>,
 ): Promise<void> {
-  const setting = await prisma.systemSetting.findUnique({ where: { key: 'vault.adminToken' } })
-  if (!setting?.value) throw new Error('Vault admin token not configured — has the Vault setup wizard been completed?')
+  const setting = await prisma.systemSetting.findUnique({ where: { key: 'vault.rootToken' } })
+  if (!setting?.value) throw new Error('Vault root token not configured — has the Vault setup wizard been completed?')
   const token = decrypt(String(setting.value))
 
   // Normalise: strip "secret/data/" prefix if the caller included it
