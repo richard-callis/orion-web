@@ -19,12 +19,15 @@
 
 const http       = require('http')
 const fs         = require('fs')
+const os         = require('os')
 const path       = require('path')
 const pty        = require('node-pty')
 const { execFile } = require('child_process')
 
-const PORT       = parseInt(process.env.PORT || '3100', 10)
+const PORT        = parseInt(process.env.PORT || '3100', 10)
 const CLAUDE_HOME = process.env.CLAUDE_HOME || '/root/.claude'
+const ORION_URL   = process.env.ORION_URL   || 'http://orion:3000'
+const MCP_TOKEN   = process.env.ORION_MCP_TOKEN || ''
 const CREDS_PATH = path.join(CLAUDE_HOME, '.credentials.json')
 
 // ── Login state ───────────────────────────────────────────────────────────────
@@ -76,25 +79,64 @@ function sanitizeMaxTurns(maxTurns, fallback = 20) {
 }
 
 /**
+ * Write a temporary directory containing .mcp.json so the claude CLI can call
+ * ORION tools via MCP for this specific agent+room combination.
+ * Returns the temp dir path — caller must clean it up after execFile completes.
+ */
+function writeMcpDir(agentId, roomId) {
+  const url = `${ORION_URL}/api/mcp?agentId=${encodeURIComponent(agentId)}&roomId=${encodeURIComponent(roomId)}`
+  const config = {
+    mcpServers: {
+      orion: {
+        type: 'http',
+        url,
+        ...(MCP_TOKEN ? { headers: { 'x-mcp-token': MCP_TOKEN } } : {}),
+      },
+    },
+  }
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'orion-mcp-'))
+  fs.writeFileSync(path.join(tmpDir, '.mcp.json'), JSON.stringify(config, null, 2))
+  return tmpDir
+}
+
+/**
  * Call the `claude` CLI as a subprocess — same approach as the Discord bot.
  * Strips ANTHROPIC_API_KEY and CLAUDECODE from env to force OAuth credential use.
+ * When agentId + roomId are provided, writes a .mcp.json so Claude can call
+ * ORION tools natively — ORION is the harness, Claude is the brain.
  */
-function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 120000 } = {}) {
+function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 120000, agentId, roomId } = {}) {
   return new Promise((resolve, reject) => {
-    const safeModel = sanitizeModel(model)
+    const safeModel       = sanitizeModel(model)
     const safeSystemPrompt = sanitizeSystemPrompt(systemPrompt)
-    const safeMaxTurns = sanitizeMaxTurns(maxTurns, 20)
+    const useMcp          = !!(agentId && roomId)
+    const safeMaxTurns    = sanitizeMaxTurns(maxTurns, useMcp ? 10 : 1)
 
     const args = ['-p', String(prompt), '--output-format', 'json']
     if (safeModel)        args.push('--model', safeModel)
     if (safeSystemPrompt) args.push('--append-system-prompt', safeSystemPrompt)
-    if (safeMaxTurns)     args.push('--max-turns', String(safeMaxTurns))
+    args.push('--max-turns', String(safeMaxTurns))
 
     const env = Object.fromEntries(
       Object.entries(process.env).filter(([k]) => k !== 'ANTHROPIC_API_KEY' && k !== 'CLAUDECODE')
     )
 
-    const child = execFile('claude', args, { env, timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    // Per-request MCP dir: claude picks up .mcp.json from cwd
+    let tmpDir = null
+    let cwd    = undefined
+    if (useMcp) {
+      try {
+        tmpDir = writeMcpDir(agentId, roomId)
+        cwd    = tmpDir
+        console.log(`[orion-claude] MCP enabled — agent=${agentId} room=${roomId} url=${ORION_URL}/api/mcp`)
+      } catch (e) {
+        console.error('[orion-claude] Failed to write MCP config, falling back to no-tools:', e.message)
+      }
+    }
+
+    const child = execFile('claude', args, { env, timeout, maxBuffer: 10 * 1024 * 1024, cwd }, (err, stdout, stderr) => {
+      // Always clean up the temp dir
+      if (tmpDir) { try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {} }
       if (err) {
         console.error('[orion-claude] claude CLI error:', err.message, stderr?.slice(0, 300))
         return reject(err)
@@ -340,11 +382,14 @@ const server = http.createServer(async (req, res) => {
       try { opts = JSON.parse(body || '{}') } catch { return json(res, 400, { error: 'Invalid JSON' }) }
 
       try {
+        const useMcp = !!(opts.agentId && opts.roomId)
         const stdout = await runClaude(String(opts.prompt || ''), {
           systemPrompt: opts.systemPrompt,
           model:        opts.model,
-          maxTurns:     opts.maxTurns ?? 1,
-          timeout:      120000,
+          maxTurns:     opts.maxTurns ?? (useMcp ? 10 : 1),
+          timeout:      useMcp ? 300000 : 120000,
+          agentId:      opts.agentId,
+          roomId:       opts.roomId,
         })
         let text = stdout.trim()
         try {
@@ -364,9 +409,90 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
+// ── Token refresh watchdog ────────────────────────────────────────────────────
+// Checks every 30 minutes. If the token expires within 2 hours, runs
+// `claude auth refresh` to get a fresh token before it goes invalid.
+
+function scheduleTokenRefresh() {
+  const CHECK_INTERVAL_MS = 30 * 60 * 1000   // 30 min
+  const REFRESH_THRESHOLD_MS = 2 * 60 * 60 * 1000 // refresh if expiry < 2h away
+
+  function check() {
+    const status = getCredStatus()
+    if (!status.authenticated) {
+      console.warn('[orion-claude] token-watchdog: not authenticated, skipping refresh check')
+      return
+    }
+    if (!status.expiresAt) return  // no expiry info — nothing to do
+
+    const expiresAt = new Date(status.expiresAt).getTime()
+    const now = Date.now()
+    const ttl = expiresAt - now
+
+    if (ttl < REFRESH_THRESHOLD_MS) {
+      console.log(`[orion-claude] token-watchdog: token expires in ${Math.round(ttl / 60000)}min — refreshing`)
+      execFile('claude', ['auth', 'refresh'], { env: process.env, timeout: 30000 }, (err, stdout, stderr) => {
+        if (err) {
+          console.error('[orion-claude] token-watchdog: refresh failed:', err.message, stderr?.slice(0, 200))
+        } else {
+          console.log('[orion-claude] token-watchdog: refresh succeeded')
+          // Copy refreshed credentials to shared volume if present
+          const sharedPath = '/claude-creds/.credentials.json'
+          try {
+            fs.mkdirSync('/claude-creds', { recursive: true })
+            fs.copyFileSync(CREDS_PATH, sharedPath)
+          } catch {}
+        }
+      })
+    }
+  }
+
+  // Run once at startup, then on interval
+  check()
+  setInterval(check, CHECK_INTERVAL_MS)
+}
+
+// ── Bootstrap Claude Code global MCP settings ────────────────────────────────
+// Writes ~/.claude.json with the ORION MCP server so Claude Code always has
+// ORION as its tool harness — both for task runs and fallback during chat.
+// The per-request .mcp.json in chat rooms merges on top with agentId/roomId.
+
+function bootstrapMcpSettings() {
+  if (!ORION_URL || !MCP_TOKEN) {
+    console.log('[orion-claude] bootstrap-mcp: ORION_URL or ORION_MCP_TOKEN not set — skipping global MCP config')
+    return
+  }
+
+  const claudeJsonPath = path.join(CLAUDE_HOME, 'claude.json')
+
+  let existing = {}
+  try {
+    existing = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8'))
+  } catch { /* first run or missing — start fresh */ }
+
+  // Merge: preserve all existing settings, upsert only the orion MCP entry
+  const updated = {
+    ...existing,
+    mcpServers: {
+      ...(existing.mcpServers ?? {}),
+      orion: {
+        type: 'http',
+        url:  `${ORION_URL}/api/mcp`,
+        headers: { 'x-mcp-token': MCP_TOKEN },
+      },
+    },
+  }
+
+  fs.mkdirSync(CLAUDE_HOME, { recursive: true })
+  fs.writeFileSync(claudeJsonPath, JSON.stringify(updated, null, 2), 'utf8')
+  console.log(`[orion-claude] bootstrap-mcp: ORION MCP server registered in ${claudeJsonPath}`)
+}
+
 server.listen(PORT, () => {
   console.log(`[orion-claude] Listening on :${PORT}`)
   console.log(`[orion-claude] Credentials path: ${CREDS_PATH}`)
   const status = getCredStatus()
   console.log(`[orion-claude] Auth status: ${JSON.stringify(status)}`)
+  bootstrapMcpSettings()
+  scheduleTokenRefresh()
 })

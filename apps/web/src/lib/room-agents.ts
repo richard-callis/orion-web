@@ -45,13 +45,22 @@ type ChatMsg = { role: 'system' | 'user' | 'assistant'; content: string }
  * otherParticipants lists the names of other agents/users in the room so the
  * model knows who it can @mention to continue the conversation.
  */
-function buildSystemPrompt(agentName: string, agentBasePrompt: string, otherParticipants: string[], hasTools = false): string {
+function buildSystemPrompt(
+  agentName: string,
+  agentBasePrompt: string,
+  otherParticipants: string[],
+  hasTools: false | 'legacy' | 'mcp' = false,
+): string {
   const othersLine = otherParticipants.length > 0
     ? `Other participants in this chat: ${otherParticipants.join(', ')}`
     : 'You are the only agent in this chat.'
   const mentionHint = otherParticipants.length > 0
     ? `To address or continue the conversation with another participant, use @TheirName in your reply (e.g. "@${otherParticipants[0]} what do you think?"). This will notify them and invite their response.`
     : ''
+  const toolAddendum =
+    hasTools === 'mcp'    ? '\n\n## ORION Tools\nYou have ORION management tools available via MCP. Use them — do not describe hypothetical actions when you can call a tool to get real data.' :
+    hasTools === 'legacy' ? TOOLS_SYSTEM_ADDENDUM :
+    ''
   return `IMPORTANT — YOUR ROLE:
 You are ${agentName}. You are ONE participant in a group chat.
 ${othersLine}
@@ -66,7 +75,7 @@ Rules you must follow without exception:
 7. If the conversation has naturally concluded or you have nothing meaningful to add, reply with exactly the single word: SILENT
 
 ---
-${agentBasePrompt}${hasTools ? TOOLS_SYSTEM_ADDENDUM : ''}`
+${agentBasePrompt}${toolAddendum}`
 }
 
 /**
@@ -87,7 +96,9 @@ function buildChatMessages(history: HistoryEntry[], latestMessage: string): Chat
   return messages
 }
 
-/** Claude Code SDK — OAuth credentials, same path as streamClaudeResponse */
+/** Claude Code SDK — OAuth credentials, routed through orion-claude sidecar.
+ *  When agentId + roomId are supplied, the sidecar writes a per-request .mcp.json
+ *  so Claude can call ORION tools natively via MCP instead of going around the system. */
 async function callClaude(
   agentName: string,
   agentBasePrompt: string,
@@ -96,8 +107,12 @@ async function callClaude(
   latestMessage: string,
   modelId?: string,
   hasTools = false,
+  agentId?: string,
+  roomId?: string,
 ): Promise<string | null> {
-  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools)
+  const useMcp = hasTools && !!agentId && !!roomId
+  const toolMode: false | 'legacy' | 'mcp' = useMcp ? 'mcp' : hasTools ? 'legacy' : false
+  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, toolMode)
   const historyBlock = history.length
     ? history.map(e => `${e.name}: ${e.content}`).join('\n') + '\n\n'
     : ''
@@ -108,11 +123,12 @@ async function callClaude(
     body:    JSON.stringify({
       prompt,
       systemPrompt: sys,
-      allowedTools: [],
-      maxTurns:     1,
+      // MCP context: sidecar writes .mcp.json and gives Claude up to 10 turns
+      ...(useMcp ? { agentId, roomId, maxTurns: 10 } : { maxTurns: 1 }),
       ...(modelId ? { model: modelId } : {}),
     }),
-    signal: AbortSignal.timeout(120_000),
+    // MCP tool calls can take longer — allow 5 min for tool-using sessions
+    signal: AbortSignal.timeout(useMcp ? 300_000 : 120_000),
   }).catch((e: Error) => { console.error(`[room-agents] orion-claude fetch failed: ${e.message}`); return null })
   if (!res?.ok) {
     console.error(`[room-agents] orion-claude /run/collect returned HTTP ${res?.status}`)
@@ -452,9 +468,11 @@ export async function triggerRoomAgentReplies(
           }
           reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl, !!toolContext)
         } else {
-          // claude / claude:<model> — routed through orion-claude sidecar
+          // claude / claude:<model> — routed through orion-claude sidecar.
+          // When tools are enabled, the sidecar writes a per-request .mcp.json so Claude
+          // calls ORION tools natively via MCP (ORION is the harness, Claude is the brain).
           const claudeModel = llm.startsWith('claude:') ? llm.slice('claude:'.length) : undefined
-          reply = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel, !!toolContext)
+          reply = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel, !!toolContext, agent.id, roomId)
           if (reply === null) {
             // Claude is unavailable — post a message on the agent's behalf rather than silently skipping
             console.warn(`[room-agents] ${agent.name}: Claude unavailable, posting unavailability notice`)
