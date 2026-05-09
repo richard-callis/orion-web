@@ -19,16 +19,22 @@ interface GiteaProviderOptions {
   url: string
   token: string
   webhookSecret?: string
+  /** Public-facing base URL used for PR links in the UI (e.g. https://gitea.khalisio.com).
+   *  Defaults to `url` when omitted. Needed when ORION calls Gitea via an internal
+   *  Docker/K8s hostname — Gitea echoes that hostname back in html_url. */
+  publicUrl?: string
 }
 
 export class GiteaGitProvider implements GitProvider {
   readonly type = 'gitea' as const
   private readonly url: string
+  private readonly publicUrl: string
   private readonly token: string
   private readonly webhookSecret?: string
 
   constructor(opts: GiteaProviderOptions) {
     this.url = opts.url.replace(/\/$/, '')
+    this.publicUrl = (opts.publicUrl ?? opts.url).replace(/\/$/, '')
     this.token = opts.token
     this.webhookSecret = opts.webhookSecret
   }
@@ -165,17 +171,17 @@ export class GiteaGitProvider implements GitProvider {
       method: 'POST',
       body: JSON.stringify(body),
     })
-    return toGitPR(pr)
+    return toGitPR(pr, this.url, this.publicUrl)
   }
 
   async getPR(owner: string, repo: string, prNumber: number): Promise<GitPR> {
     const pr = await this.fetch<GiteaPR>(`/repos/${owner}/${repo}/pulls/${prNumber}`)
-    return toGitPR(pr)
+    return toGitPR(pr, this.url, this.publicUrl)
   }
 
   async listOpenPRs(owner: string, repo: string): Promise<GitPR[]> {
     const prs = await this.fetch<GiteaPR[]>(`/repos/${owner}/${repo}/pulls?state=open&limit=50`)
-    return (prs ?? []).map(toGitPR)
+    return (prs ?? []).map(p => toGitPR(p, this.url, this.publicUrl))
   }
 
   async mergePR(owner: string, repo: string, prNumber: number, message?: string): Promise<void> {
@@ -207,7 +213,7 @@ export class GiteaGitProvider implements GitProvider {
   // ── Utilities ──────────────────────────────────────────────────────────────
 
   getPRUrl(owner: string, repo: string, prNumber: number): string {
-    return `${this.url}/${owner}/${repo}/pulls/${prNumber}`
+    return `${this.publicUrl}/${owner}/${repo}/pulls/${prNumber}`
   }
 
   verifyWebhookSignature(rawBody: string, headers: Record<string, string>, secret: string): boolean {
@@ -299,13 +305,19 @@ function toGitRepo(r: GiteaRepo): GitRepo {
   }
 }
 
-function toGitPR(p: GiteaPR): GitPR {
+function toGitPR(p: GiteaPR, internalUrl?: string, publicUrl?: string): GitPR {
+  // Gitea echoes the request hostname back in html_url when called via an internal
+  // network address. Rewrite to the public URL so links work in the browser.
+  let htmlUrl = p.html_url
+  if (internalUrl && publicUrl && internalUrl !== publicUrl) {
+    htmlUrl = htmlUrl.replace(internalUrl, publicUrl)
+  }
   return {
     number: p.number,
     title: p.title,
     body: p.body,
     state: p.merged ? 'merged' : p.state,
-    htmlUrl: p.html_url,
+    htmlUrl,
     headBranch: p.head.ref,
     baseBranch: p.base.ref,
     merged: p.merged,

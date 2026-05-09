@@ -24,6 +24,7 @@ services:
       # Git provider — configured via first-run wizard (stored in DB).
       # These env vars are used as fallback before the wizard completes.
       GITEA_URL: http://gitea:3000
+      GITEA_PUBLIC_URL: https://${GITEA_DOMAIN:-gitea.khalisio.com}
       GITEA_ADMIN_TOKEN: ${GITEA_ADMIN_TOKEN:-}
       GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-}
       GITEA_ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-}
