@@ -636,6 +636,22 @@ async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Pr
       ? `auto-merged (${result.classification.reason})`
       : `opened for review — ${result.classification.reason}`
 
+    // Persist the PR so the dashboard can surface pending reviews
+    await ctx.prisma.gitOpsPR.create({
+      data: {
+        environmentId: env.id,
+        prNumber:  result.prNumber,
+        title:     title!,
+        operation: result.classification.operation,
+        decision:  result.classification.decision,
+        status:    result.merged ? 'merged' : 'open',
+        prUrl:     result.prUrl,
+        reasoning: reasoning ?? null,
+        branch:    result.branch,
+        mergedAt:  result.merged ? new Date() : null,
+      },
+    }).catch(() => {}) // non-fatal — PR already exists in Gitea even if DB write fails
+
     await auditLog(ctx.agentId ?? ctx.userId, `🔀 GitOps PR #${result.prNumber} ${action} — **${title}**`)
     return `PR #${result.prNumber} ${action}. URL: ${result.prUrl}`
   } catch (e) {

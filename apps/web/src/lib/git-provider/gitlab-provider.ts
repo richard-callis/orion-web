@@ -176,6 +176,13 @@ export class GitLabGitProvider implements GitProvider {
     return toGitPR(mr)
   }
 
+  async listOpenPRs(owner: string, repo: string): Promise<import('./index').GitPR[]> {
+    const mrs = await this.fetch<GLMR[]>(
+      `/projects/${this.projectPath(owner, repo)}/merge_requests?state=opened&per_page=50`,
+    )
+    return (mrs ?? []).map(toGitPR)
+  }
+
   async mergePR(owner: string, repo: string, prNumber: number, message?: string): Promise<void> {
     await this.fetch(
       `/projects/${this.projectPath(owner, repo)}/merge_requests/${prNumber}/merge`,
