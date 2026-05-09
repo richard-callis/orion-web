@@ -114,6 +114,7 @@ model Environment {
   ingressPoints IngressPoint[]
   coreDnsDomains Domain[]              @relation("DomainCoreDns")
   novaDeployments NovaDeployment[]
+  managedSecrets  ManagedSecret[]
 }
 
 /// Tracks every PR opened by the GitOps loop — open, auto-merged, or awaiting review.
@@ -383,6 +384,7 @@ model User {
   apiKeys          ApiKey[]
   chatRoomMembers  ChatRoomMember[]
   chatMessages     ChatMessage[]
+  managedSecrets   ManagedSecret[]
 }
 
 model ApiKey {
@@ -786,4 +788,51 @@ model ChatMessage {
   @@index([roomId, createdAt])
   @@index([roomId, taskId, createdAt])
   @@map("chat_messages")
+}
+
+// ── Managed Secrets ────────────────────────────────────────────────────────────
+// Human-defined ExternalSecret configurations. Each record stores the full
+// definition needed to render an ExternalSecret CRD (name, namespace, store
+// reference, key mappings). Status tracks whether it has been applied to the
+// cluster and what ESO last reported.
+
+model ManagedSecret {
+  id              String      @id @default(cuid())
+  environmentId   String
+  environment     Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
+  // Identity
+  name            String      // ExternalSecret CRD name (becomes K8s secret name by default)
+  namespace       String      @default("default")
+  description     String?     @db.Text
+
+  // External store config
+  secretStore     String      @default("vault-backend")      // SecretStore or ClusterSecretStore name
+  secretStoreKind String      @default("ClusterSecretStore") // "SecretStore" | "ClusterSecretStore"
+  remoteRef       String      // Vault path e.g. "secret/data/myapp/db"
+  targetSecretName String?    // Override K8s secret name (defaults to `name`)
+  refreshInterval String      @default("1h")                 // ESO sync interval
+
+  // Key mappings: Array<{ secretKey: string; remoteKey: string }>
+  // secretKey   = key in the resulting K8s Secret
+  // remoteKey   = key inside the remote secret (Vault field name)
+  dataKeys        Json        @default("[]")
+
+  // Labels/tags for filtering
+  tags            Json        @default("[]")
+
+  // Lifecycle
+  status          String      @default("draft") // "draft" | "applied" | "error"
+  statusMessage   String?     @db.Text
+  appliedAt       DateTime?
+
+  // Ownership
+  createdBy       String?
+  creator         User?       @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([environmentId])
+  @@map("managed_secrets")
 }

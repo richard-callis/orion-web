@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { RefreshCw, ServerCrash, Server, Database, KeyRound, HardDrive, FileText, GitBranch } from 'lucide-react'
+import { RefreshCw, ServerCrash, Server, Database, KeyRound, HardDrive, FileText, GitBranch, Plus, X, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
 import { IngressPage } from '@/components/ingress/IngressPage'
 import { GitOpsPage } from '@/components/gitops/GitOpsPage'
 import { NodeGrid } from '@/components/infrastructure/NodeGrid'
@@ -169,6 +169,43 @@ function StorageTab({ envId, loading, setLoading, error, setError }: {
 
 // ── Secrets tab ────────────────────────────────────────────────────────────────
 
+interface ManagedSecret {
+  id: string
+  name: string
+  namespace: string
+  description: string | null
+  secretStore: string
+  secretStoreKind: string
+  remoteRef: string
+  targetSecretName: string | null
+  refreshInterval: string
+  dataKeys: Array<{ secretKey: string; remoteKey: string }>
+  tags: string[]
+  status: string
+  statusMessage: string | null
+  appliedAt: string | null
+  createdAt: string
+  creator?: { id: string; username: string; name: string | null } | null
+}
+
+const BLANK_FORM = {
+  name: '',
+  namespace: 'default',
+  description: '',
+  secretStore: 'vault-backend',
+  secretStoreKind: 'ClusterSecretStore' as 'ClusterSecretStore' | 'SecretStore',
+  remoteRef: '',
+  targetSecretName: '',
+  refreshInterval: '1h',
+  tags: '',
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  draft:   'text-text-muted border-border-subtle',
+  applied: 'text-status-healthy border-status-healthy/30 bg-status-healthy/10',
+  error:   'text-status-error border-status-error/30 bg-status-error/10',
+}
+
 function SecretsTab({ envId, loading, setLoading, error, setError }: {
   envId: string
   loading: boolean
@@ -176,12 +213,17 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
   error: string | null
   setError: (v: string | null) => void
 }) {
-  interface ExternalSecret {
-    metadata: { name: string; namespace: string }
-    status?: { conditions?: Array<{ type: string; status: string; message?: string; lastTransitionTime?: string }> }
-  }
-
-  const [secrets, setSecrets] = useState<ExternalSecret[]>([])
+  const [secrets, setSecrets] = useState<ManagedSecret[]>([])
+  const [showModal, setShowModal] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [modalError, setModalError] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
+  const [form, setForm] = useState(BLANK_FORM)
+  // Dynamic key-mapping rows inside the modal
+  const [dataKeys, setDataKeys] = useState<Array<{ secretKey: string; remoteKey: string }>>([
+    { secretKey: '', remoteKey: '' },
+  ])
 
   const load = useCallback(async () => {
     if (!envId) return
@@ -189,25 +231,104 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
     try {
       const res = await fetch(`/api/environments/${envId}/secrets`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      setSecrets(data.externalSecrets ?? [])
+      const data = await res.json() as { secrets: ManagedSecret[] }
+      setSecrets(data.secrets ?? [])
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
-  }, [envId, setLoading])
+  }, [envId, setLoading, setError])
 
   useEffect(() => { load() }, [load])
 
+  const openModal = () => {
+    setForm(BLANK_FORM)
+    setDataKeys([{ secretKey: '', remoteKey: '' }])
+    setModalError(null)
+    setShowModal(true)
+  }
+
+  const handleSave = async () => {
+    if (!form.name.trim())     { setModalError('Secret name is required'); return }
+    if (!form.remoteRef.trim()) { setModalError('Vault path (remoteRef) is required'); return }
+
+    const validKeys = dataKeys.filter(k => k.secretKey.trim() && k.remoteKey.trim())
+
+    setSaving(true); setModalError(null)
+    try {
+      const res = await fetch(`/api/environments/${envId}/secrets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name:             form.name.trim(),
+          namespace:        form.namespace.trim() || 'default',
+          description:      form.description.trim() || null,
+          secretStore:      form.secretStore.trim() || 'vault-backend',
+          secretStoreKind:  form.secretStoreKind,
+          remoteRef:        form.remoteRef.trim(),
+          targetSecretName: form.targetSecretName.trim() || null,
+          refreshInterval:  form.refreshInterval.trim() || '1h',
+          dataKeys:         validKeys,
+          tags:             form.tags.split(',').map(t => t.trim()).filter(Boolean),
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setModalError((data as { error?: string }).error ?? `HTTP ${res.status}`); return }
+      setShowModal(false)
+      await load()
+    } catch (e) {
+      setModalError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async (id: string) => {
+    setDeleting(id)
+    try {
+      await fetch(`/api/environments/${envId}/secrets/${id}`, { method: 'DELETE' })
+      setSecrets(prev => prev.filter(s => s.id !== id))
+      if (expandedId === id) setExpandedId(null)
+    } finally {
+      setDeleting(null)
+    }
+  }
+
+  const addKeyRow    = () => setDataKeys(prev => [...prev, { secretKey: '', remoteKey: '' }])
+  const removeKeyRow = (i: number) => setDataKeys(prev => prev.filter((_, idx) => idx !== i))
+  const updateKeyRow = (i: number, field: 'secretKey' | 'remoteKey', val: string) =>
+    setDataKeys(prev => prev.map((r, idx) => idx === i ? { ...r, [field]: val } : r))
+
+  const field = (label: string, node: React.ReactNode, hint?: string) => (
+    <div className="space-y-1">
+      <label className="block text-xs font-medium text-text-secondary">{label}</label>
+      {node}
+      {hint && <p className="text-[10px] text-text-muted">{hint}</p>}
+    </div>
+  )
+
+  const inputCls = 'w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent'
+  const selectCls = inputCls
+
   return (
     <div className="space-y-4">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-text-primary">External Secrets (ESO)</h2>
-        <button onClick={load} disabled={loading} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-text-muted hover:text-text-primary border border-border-subtle hover:border-accent/50 disabled:opacity-50 transition-colors">
-          <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
-          Refresh
-        </button>
+        <div>
+          <h2 className="text-sm font-semibold text-text-primary">External Secrets (ESO + Vault)</h2>
+          <p className="text-[10px] text-text-muted mt-0.5">ExternalSecret CRDs synced from Vault via the External Secrets Operator</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={load} disabled={loading} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-text-muted hover:text-text-primary border border-border-subtle hover:border-accent/50 disabled:opacity-50 transition-colors">
+            <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+          <button onClick={openModal} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-accent border border-accent/40 hover:bg-accent/10 transition-colors">
+            <Plus size={11} />
+            Add Secret
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -217,38 +338,254 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
         </div>
       )}
 
-      <div className="rounded-lg border border-border-subtle overflow-auto">
+      {/* Secret list */}
+      <div className="rounded-lg border border-border-subtle overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-bg-raised border-b border-border-subtle">
             <tr>
               <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Name</th>
               <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Namespace</th>
-              <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Sync Status</th>
-              <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Last Synced</th>
+              <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Vault Path</th>
+              <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Refresh</th>
+              <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Status</th>
+              <th className="px-3 py-2" />
             </tr>
           </thead>
           <tbody className="divide-y divide-border-subtle">
-            {secrets.map((es, i) => {
-              const ready = es.status?.conditions?.find(c => c.type === 'Ready')
-              return (
-                <tr key={i} className="hover:bg-bg-raised">
-                  <td className="px-3 py-2 font-mono text-xs text-text-primary">{es.metadata.name}</td>
-                  <td className="px-3 py-2 text-xs text-text-secondary">{es.metadata.namespace}</td>
-                  <td className={`px-3 py-2 text-xs font-medium ${ready?.status === 'True' ? 'text-status-healthy' : 'text-status-error'}`}>
-                    {ready?.status === 'True' ? 'Synced' : ready?.message ?? 'Unknown'}
+            {secrets.map(s => (
+              <>
+                <tr
+                  key={s.id}
+                  className="hover:bg-bg-raised cursor-pointer"
+                  onClick={() => setExpandedId(expandedId === s.id ? null : s.id)}
+                >
+                  <td className="px-3 py-2 font-mono text-xs text-text-primary">{s.name}</td>
+                  <td className="px-3 py-2 text-xs text-text-secondary">{s.namespace}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-text-muted truncate max-w-[180px]">{s.remoteRef}</td>
+                  <td className="px-3 py-2 text-xs text-text-muted">{s.refreshInterval}</td>
+                  <td className="px-3 py-2">
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-medium ${STATUS_COLORS[s.status] ?? STATUS_COLORS.draft}`}>
+                      {s.status}
+                    </span>
                   </td>
-                  <td className="px-3 py-2 text-xs font-mono text-text-muted">
-                    {ready?.lastTransitionTime ? new Date(ready.lastTransitionTime).toLocaleString() : '—'}
+                  <td className="px-3 py-2 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      {expandedId === s.id ? <ChevronUp size={12} className="text-text-muted" /> : <ChevronDown size={12} className="text-text-muted" />}
+                      <button
+                        onClick={e => { e.stopPropagation(); handleDelete(s.id) }}
+                        disabled={deleting === s.id}
+                        className="p-1 rounded text-text-muted hover:text-status-error transition-colors disabled:opacity-40"
+                        title="Delete secret"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
-              )
-            })}
+                {expandedId === s.id && (
+                  <tr key={`${s.id}-detail`} className="bg-bg-raised/50">
+                    <td colSpan={6} className="px-4 py-3">
+                      <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-xs">
+                        <div><span className="text-text-muted">Secret Store:</span> <span className="font-mono text-text-primary">{s.secretStore}</span> <span className="text-text-muted">({s.secretStoreKind})</span></div>
+                        <div><span className="text-text-muted">Target K8s secret:</span> <span className="font-mono text-text-primary">{s.targetSecretName || s.name}</span></div>
+                        {s.description && (
+                          <div className="col-span-2"><span className="text-text-muted">Description:</span> <span className="text-text-secondary">{s.description}</span></div>
+                        )}
+                        {s.dataKeys.length > 0 && (
+                          <div className="col-span-2">
+                            <span className="text-text-muted">Key mappings:</span>
+                            <div className="mt-1 flex flex-wrap gap-1.5">
+                              {s.dataKeys.map((k, i) => (
+                                <span key={i} className="font-mono text-[10px] bg-bg-sidebar border border-border-subtle px-1.5 py-0.5 rounded">
+                                  {k.remoteKey} → {k.secretKey}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {s.tags.length > 0 && (
+                          <div className="col-span-2">
+                            <span className="text-text-muted">Tags:</span>
+                            <span className="ml-1 text-text-secondary">{s.tags.join(', ')}</span>
+                          </div>
+                        )}
+                        <div className="col-span-2 pt-1 text-[10px] text-text-muted">
+                          Created {new Date(s.createdAt).toLocaleString()}{s.creator ? ` by ${s.creator.name || s.creator.username}` : ''}
+                          {s.appliedAt ? ` · Applied ${new Date(s.appliedAt).toLocaleString()}` : ' · Not yet applied'}
+                        </div>
+                        {s.statusMessage && (
+                          <div className="col-span-2 text-[10px] text-status-error">{s.statusMessage}</div>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </>
+            ))}
             {!secrets.length && (
-              <tr><td colSpan={4} className="px-3 py-8 text-center text-text-muted text-sm">No ExternalSecrets found</td></tr>
+              <tr>
+                <td colSpan={6} className="px-3 py-10 text-center text-text-muted text-sm">
+                  No secrets defined yet.{' '}
+                  <button onClick={openModal} className="text-accent hover:underline">Add the first one.</button>
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
       </div>
+
+      {/* Add Secret Modal */}
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowModal(false)}>
+          <div
+            className="w-full max-w-xl bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <KeyRound size={14} className="text-accent" />
+                <span className="text-sm font-semibold text-text-primary">Add External Secret</span>
+              </div>
+              <button onClick={() => setShowModal(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
+            </div>
+
+            {/* Modal body */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+
+              {/* Info banner */}
+              <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2.5 text-[10px] text-text-muted leading-relaxed">
+                This creates an <span className="text-accent font-mono">ExternalSecret</span> CRD definition stored in ORION.
+                It references a secret in <span className="text-accent">HashiCorp Vault</span> and the{' '}
+                <span className="text-accent">External Secrets Operator</span> will sync it into the cluster as a Kubernetes Secret.
+              </div>
+
+              {/* Identity */}
+              <div className="space-y-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Identity</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {field('Secret Name *',
+                    <input className={inputCls} placeholder="my-app-db-secret" value={form.name}
+                      onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />,
+                    'ExternalSecret CRD name. Also becomes the K8s Secret name unless overridden below.'
+                  )}
+                  {field('Namespace *',
+                    <input className={inputCls} placeholder="default" value={form.namespace}
+                      onChange={e => setForm(f => ({ ...f, namespace: e.target.value }))} />,
+                    'Kubernetes namespace where the Secret will be created.'
+                  )}
+                </div>
+                {field('Description',
+                  <textarea className={`${inputCls} resize-none`} rows={2} placeholder="What does this secret contain? Who uses it?"
+                    value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+                )}
+              </div>
+
+              {/* Vault / Store */}
+              <div className="space-y-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Vault / Secret Store</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {field('Secret Store Name',
+                    <input className={inputCls} placeholder="vault-backend" value={form.secretStore}
+                      onChange={e => setForm(f => ({ ...f, secretStore: e.target.value }))} />,
+                    'Name of the SecretStore or ClusterSecretStore resource in the cluster.'
+                  )}
+                  {field('Store Kind',
+                    <select className={selectCls} value={form.secretStoreKind}
+                      onChange={e => setForm(f => ({ ...f, secretStoreKind: e.target.value as typeof form.secretStoreKind }))}>
+                      <option value="ClusterSecretStore">ClusterSecretStore</option>
+                      <option value="SecretStore">SecretStore</option>
+                    </select>
+                  )}
+                </div>
+                {field('Vault Path (remoteRef) *',
+                  <input className={inputCls} placeholder="secret/data/myapp/db" value={form.remoteRef}
+                    onChange={e => setForm(f => ({ ...f, remoteRef: e.target.value }))} />,
+                  'Path to the secret in Vault. For KV v2 use "secret/data/<path>".'
+                )}
+              </div>
+
+              {/* Target & refresh */}
+              <div className="space-y-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Sync Options</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {field('Target K8s Secret Name',
+                    <input className={inputCls} placeholder={form.name || 'same as name above'} value={form.targetSecretName}
+                      onChange={e => setForm(f => ({ ...f, targetSecretName: e.target.value }))} />,
+                    'Leave blank to use the same name as the ExternalSecret.'
+                  )}
+                  {field('Refresh Interval',
+                    <select className={selectCls} value={form.refreshInterval}
+                      onChange={e => setForm(f => ({ ...f, refreshInterval: e.target.value }))}>
+                      <option value="5m">5 minutes</option>
+                      <option value="15m">15 minutes</option>
+                      <option value="1h">1 hour</option>
+                      <option value="6h">6 hours</option>
+                      <option value="24h">24 hours</option>
+                      <option value="168h">1 week</option>
+                    </select>,
+                    'How often ESO re-syncs from Vault.'
+                  )}
+                </div>
+              </div>
+
+              {/* Key mappings */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Key Mappings</p>
+                  <button onClick={addKeyRow} className="inline-flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition-colors">
+                    <Plus size={10} /> Add row
+                  </button>
+                </div>
+                <p className="text-[10px] text-text-muted">Map Vault field names to K8s Secret data keys. Leave empty to sync all fields.</p>
+                <div className="space-y-1.5">
+                  <div className="grid grid-cols-[1fr_1fr_auto] gap-2 text-[10px] text-text-muted px-0.5">
+                    <span>Vault field (remoteKey)</span>
+                    <span>K8s key (secretKey)</span>
+                    <span />
+                  </div>
+                  {dataKeys.map((row, i) => (
+                    <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+                      <input className={inputCls} placeholder="password" value={row.remoteKey}
+                        onChange={e => updateKeyRow(i, 'remoteKey', e.target.value)} />
+                      <input className={inputCls} placeholder="DB_PASSWORD" value={row.secretKey}
+                        onChange={e => updateKeyRow(i, 'secretKey', e.target.value)} />
+                      <button onClick={() => removeKeyRow(i)} disabled={dataKeys.length === 1}
+                        className="p-1 rounded text-text-muted hover:text-status-error transition-colors disabled:opacity-30">
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tags */}
+              {field('Tags',
+                <input className={inputCls} placeholder="database, production, myapp" value={form.tags}
+                  onChange={e => setForm(f => ({ ...f, tags: e.target.value }))} />,
+                'Comma-separated labels for filtering and discovery.'
+              )}
+            </div>
+
+            {/* Modal footer */}
+            {modalError && (
+              <div className="px-5 py-2 border-t border-status-error/30 bg-status-error/10 text-xs text-status-error flex items-center gap-2 flex-shrink-0">
+                <ServerCrash size={12} />
+                <span>{modalError}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle flex-shrink-0">
+              <button onClick={() => setShowModal(false)} className="px-3 py-1.5 rounded text-xs border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+                Cancel
+              </button>
+              <button onClick={handleSave} disabled={saving} className="px-4 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50 flex items-center gap-1.5 transition-colors">
+                {saving ? <RefreshCw size={11} className="animate-spin" /> : <KeyRound size={11} />}
+                {saving ? 'Saving…' : 'Save Secret'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
