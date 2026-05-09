@@ -2166,3 +2166,80 @@ Use this after completing or investigating any task. Structure content for maxim
     return `Knowledge ${action}: "${note.title}" (id: ${note.id}, folder: ${folder}, embedded: ${embedded})`
   },
 })
+
+// ── Vault / Managed Secrets ───────────────────────────────────────────────────
+
+async function handleListSecrets(args: unknown, ctx: ToolExecutionContext): Promise<string> {
+  const { environment, namespace, status, tag } = parseArgs(args) as {
+    environment?: string
+    namespace?: string
+    status?: string
+    tag?: string
+  }
+
+  let environmentId: string | undefined
+  if (environment) {
+    const env = await ctx.prisma.environment.findFirst({
+      where: { name: { contains: environment, mode: 'insensitive' } },
+      select: { id: true },
+    })
+    if (!env) return `Error: no environment matching "${environment}". Omit to list secrets from all environments.`
+    environmentId = env.id
+  }
+
+  const secrets = await ctx.prisma.managedSecret.findMany({
+    where: {
+      ...(environmentId ? { environmentId } : {}),
+      ...(namespace     ? { namespace }     : {}),
+      ...(status        ? { status }        : {}),
+    },
+    include: { environment: { select: { name: true } } },
+    orderBy: [{ environment: { name: 'asc' } }, { namespace: 'asc' }, { name: 'asc' }],
+    take: 100,
+  })
+
+  const filtered = tag
+    ? secrets.filter((s: any) => Array.isArray(s.tags) && s.tags.includes(tag))
+    : secrets
+
+  if (!filtered.length) return 'No managed secrets found matching the given filters.'
+
+  return JSON.stringify(
+    filtered.map((s: any) => ({
+      id:             s.id,
+      name:           s.name,                    // ExternalSecret / K8s Secret name
+      environment:    s.environment.name,
+      namespace:      s.namespace,
+      description:    s.description ?? null,
+      vaultPath:      s.remoteRef,               // Vault path — e.g. "secret/data/myapp/db"
+      targetSecret:   s.targetSecretName ?? s.name,  // K8s Secret name to mount/reference
+      // Only the K8s key names — how to reference this secret in pod specs / secretKeyRef.
+      // Vault-internal key names are not exposed.
+      k8sKeys:        (s.dataKeys as Array<{ secretKey: string }> ?? []).map(k => k.secretKey),
+      refreshInterval: s.refreshInterval,
+      status:         s.status,                  // "draft" | "applied" | "error"
+      statusMessage:  s.status === 'error' ? (s.statusMessage ?? null) : null,
+      tags:           s.tags ?? [],
+      appliedAt:      s.appliedAt?.toISOString() ?? null,
+    })),
+    null, 2
+  )
+}
+
+registerTool({
+  name: 'orion_list_secrets',
+  description: 'List Vault secrets registered in ORION as managed ExternalSecrets. Returns metadata only — Vault path, target K8s Secret name, the K8s key names you can reference in pod specs, and sync status. Never returns actual secret values or Vault-internal key names.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      environment: { type: 'string', description: 'Filter by environment name (partial match). Omit for all environments.' },
+      namespace:   { type: 'string', description: 'Filter by Kubernetes namespace.' },
+      status:      { type: 'string', description: 'Filter by sync status: draft, applied, error.' },
+      tag:         { type: 'string', description: 'Filter by a single tag value.' },
+    },
+  },
+  tier: 'read',
+  parallelSafe: true,
+  availableIn: 'both',
+  handler: handleListSecrets,
+})
