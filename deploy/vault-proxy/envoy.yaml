@@ -17,7 +17,7 @@ static_resources:
             validation_context:
               trusted_ca: { filename: /certs/ca.crt }
       filters:
-      # 1. Reject anything not from the LAN before spending any resources on it
+      # 1. Reject anything not from the LAN or Docker bridge before spending any resources on it
       - name: envoy.filters.network.rbac
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.filters.network.rbac.v3.RBAC
@@ -32,6 +32,13 @@ static_resources:
                 - remote_ip:
                     address_prefix: 10.2.2.0
                     prefix_len: 24
+              allow-docker:
+                permissions:
+                - any: true
+                principals:
+                - remote_ip:
+                    address_prefix: 172.18.0.0
+                    prefix_len: 16
       # 2. Rate-limit: max 100 new connections/s from any single source
       - name: envoy.filters.network.local_ratelimit
         typed_config:
