@@ -455,6 +455,26 @@ export async function triggerRoomAgentReplies(
           // claude / claude:<model> — routed through orion-claude sidecar
           const claudeModel = llm.startsWith('claude:') ? llm.slice('claude:'.length) : undefined
           reply = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel, !!toolContext)
+          if (reply === null) {
+            // Claude is unavailable — post a message on the agent's behalf rather than silently skipping
+            console.warn(`[room-agents] ${agent.name}: Claude unavailable, posting unavailability notice`)
+            const notice = `I'm currently unavailable — the Claude service is unreachable or out of credits. Please try again shortly.`
+            const msg = await prisma.chatMessage.create({
+              data: { roomId, agentId: agent.id, senderType: 'agent', content: notice },
+              include: {
+                agent: { select: { id: true, name: true } },
+                user:  { select: { id: true, username: true, name: true } },
+              },
+            })
+            await publishChatMessage(roomId, {
+              id:         msg.id,
+              senderType: 'agent',
+              content:    notice,
+              sender:     { type: 'agent', id: agent.id, name: agent.name },
+              createdAt:  msg.createdAt instanceof Date ? msg.createdAt.toISOString() : msg.createdAt,
+            })
+            continue
+          }
         }
       } finally {
         clearTyping(roomId, agent.name)

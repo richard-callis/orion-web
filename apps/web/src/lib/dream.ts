@@ -29,23 +29,84 @@ const EXTRACTION_BATCH       = 80   // messages per LLM call
 const PRUNING_BATCH          = 20   // notes per pruning LLM call
 const MAX_NOTE_AGE_DAYS      = 90   // never auto-delete notes newer than this
 
-// ── LLM call (uses orion-claude sidecar) ─────────────────────────────────────
+// ── LLM routing ───────────────────────────────────────────────────────────────
+// dream.model SystemSetting controls which model runs dream. Falls back to
+// ai.default-model, then falls back again if the specified model errors.
 
-async function callLLM(prompt: string, maxTokens = 2000): Promise<string> {
-  const base = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
-  const res = await fetch(`${base}/run/collect`, {
+async function getDreamModelId(): Promise<string> {
+  const dreamModel = await prisma.systemSetting.findUnique({ where: { key: 'dream.model' } })
+  if (dreamModel?.value) return dreamModel.value
+
+  // Fall back to system default
+  const { getDefaultModelId } = await import('./default-model')
+  return getDefaultModelId()
+}
+
+async function callWithModel(modelId: string, prompt: string): Promise<string> {
+  const CLAUDE_URL = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
+
+  if (modelId === 'claude' || modelId.startsWith('claude:')) {
+    const model = modelId.startsWith('claude:') ? modelId.slice('claude:'.length) : undefined
+    const res = await fetch(`${CLAUDE_URL}/run/collect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, ...(model ? { model } : {}), maxTurns: 1 }),
+      signal: AbortSignal.timeout(90_000),
+    })
+    if (!res.ok) throw new Error(`orion-claude HTTP ${res.status}`)
+    const json = await res.json() as { text?: string }
+    return json.text ?? ''
+  }
+
+  // External model (OpenAI-compatible or Ollama)
+  const extModel = await prisma.externalModel.findUnique({ where: { id: modelId } })
+  if (!extModel) throw new Error(`dream.model '${modelId}' not found`)
+
+  if (extModel.provider === 'ollama') {
+    const res = await fetch(`${extModel.baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: extModel.modelId, prompt, stream: false }),
+      signal: AbortSignal.timeout(90_000),
+    })
+    if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`)
+    const data = await res.json() as { response?: string }
+    return data.response?.trim() ?? ''
+  }
+
+  // OpenAI-compatible
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (extModel.apiKey) headers['Authorization'] = `Bearer ${extModel.apiKey}`
+  const res = await fetch(`${extModel.baseUrl}/v1/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
-      prompt,
-      model: 'claude-haiku-4-5-20251001',
-      maxTurns: 1,
+      model: extModel.modelId,
+      stream: false,
+      messages: [{ role: 'user', content: prompt }],
     }),
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout((extModel.timeoutSecs ?? 120) * 1000),
   })
-  if (!res.ok) throw new Error(`orion-claude HTTP ${res.status}`)
-  const json = await res.json() as { text?: string }
-  return json.text ?? ''
+  if (!res.ok) throw new Error(`External model HTTP ${res.status}`)
+  const data = await res.json() as { choices?: Array<{ message: { content: string } }> }
+  return data.choices?.[0]?.message?.content?.trim() ?? ''
+}
+
+async function callLLM(prompt: string): Promise<string> {
+  const modelId = await getDreamModelId()
+
+  try {
+    return await callWithModel(modelId, prompt)
+  } catch (primaryErr) {
+    console.warn(`[dream] Model '${modelId}' failed (${primaryErr}), falling back to system default`)
+
+    const { getDefaultModelId } = await import('./default-model')
+    const defaultId = await getDefaultModelId()
+
+    if (defaultId === modelId) throw primaryErr  // same model, don't retry
+
+    return await callWithModel(defaultId, prompt)
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
