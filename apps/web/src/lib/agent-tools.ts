@@ -131,6 +131,40 @@ export const ORION_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'gitops_propose',
+      description: `Propose a GitOps change. Creates a branch, commits the files, opens a PR in the environment's git repo, and auto-merges if policy allows. Use this for ALL cluster/infrastructure changes — never apply kubectl manifests directly.
+
+RULES FOR KUBERNETES MANIFESTS (critical):
+1. Always include namespace in every resource.
+2. Use pinned image tags (never 'latest' unless explicitly requested).
+3. Include CrowdSec + Authentik middleware on all public ingresses.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          environment_id:        { type: 'string', description: 'Environment ID or name to deploy to (e.g. "Talos Cluster", "localhost")' },
+          title:                 { type: 'string', description: 'Short PR title, e.g. "feat: deploy Tailscale Operator"' },
+          reasoning:             { type: 'string', description: 'Why this change is needed' },
+          operation_description: { type: 'string', description: 'Plain-language summary: e.g. "add new service", "update image tag", "remove service"' },
+          changes: {
+            type: 'array',
+            description: 'Files to create or update.',
+            items: {
+              type: 'object',
+              properties: {
+                path:    { type: 'string', description: 'Repo-relative file path' },
+                content: { type: 'string', description: 'Full file content' },
+              },
+              required: ['path', 'content'],
+            },
+          },
+        },
+        required: ['environment_id', 'title', 'reasoning', 'operation_description', 'changes'],
+      },
+    },
+  },
 ] as const
 
 // ── Tool execution ────────────────────────────────────────────────────────────
@@ -288,6 +322,53 @@ export async function executeTool(
         return `Task "${updated.title}" (${taskId}): status=${updated.status}, assigned=${updated.assignedAgent ?? 'unassigned'}${args.note ? ', note appended' : ''}`
       }
 
+      case 'gitops_propose': {
+        if (!args.environment_id || !args.title || !args.reasoning || !args.operation_description || !args.changes) {
+          return 'Error: environment_id, title, reasoning, operation_description, and changes are all required'
+        }
+        try {
+          const { proposeChange } = await import('./gitops')
+          const env = await prisma.environment.findFirst({
+            where: { OR: [{ id: String(args.environment_id) }, { name: { equals: String(args.environment_id), mode: 'insensitive' } }] },
+          })
+          if (!env) return `Error: environment "${args.environment_id}" not found`
+          if (!env.gitOwner || !env.gitRepo) return 'Error: environment has no git repo configured — run bootstrap first'
+
+          const policy = (env.policyConfig ?? {}) as import('./gitops-policy').PolicyConfig
+          const result = await proposeChange({
+            owner: env.gitOwner,
+            repo:  env.gitRepo,
+            title: String(args.title),
+            reasoning: String(args.reasoning),
+            operationDescription: String(args.operation_description),
+            changes: (args.changes as Array<{ path: string; content: string }>),
+            policy,
+          })
+
+          await prisma.gitOpsPR.create({
+            data: {
+              environmentId: env.id,
+              prNumber:  result.prNumber,
+              title:     String(args.title),
+              operation: result.classification.operation,
+              decision:  result.classification.decision,
+              status:    result.merged ? 'merged' : 'open',
+              prUrl:     result.prUrl,
+              reasoning: String(args.reasoning),
+              branch:    result.branch,
+              mergedAt:  result.merged ? new Date() : null,
+            },
+          })
+
+          const action = result.merged
+            ? `auto-merged (${result.classification.reason})`
+            : `opened for review — ${result.classification.reason}`
+          return `PR #${result.prNumber} ${action}. URL: ${result.prUrl}`
+        } catch (e) {
+          return `Error proposing GitOps change: ${e instanceof Error ? e.message : String(e)}`
+        }
+      }
+
       default:
         return `Error: unknown tool "${toolName}"`
     }
@@ -315,4 +396,7 @@ You have access to these tools. Use them — do not pretend to perform an action
 - **orion_manage_task**: Assign a task to an agent, change status, or append a feed note.
 - **create_agent**: Create a new AI agent and invite it to this chat room.
 
-When you use a tool, report the result back clearly (e.g. "Done — created task #abc123: 'Deploy Gitea ingress'").`
+**Infrastructure changes:**
+- **gitops_propose**: Propose a GitOps change (Kubernetes manifests, Helm values, etc.) — creates a PR in the environment's git repo. Use this for ALL cluster changes. NEVER use kubectl directly.
+
+When you use a tool, report the result back clearly (e.g. "Done — PR #42 opened: 'feat: deploy Tailscale Operator'").`
