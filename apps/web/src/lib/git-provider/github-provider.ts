@@ -183,6 +183,11 @@ export class GitHubGitProvider implements GitProvider {
     return toGitPR(pr)
   }
 
+  async listOpenPRs(owner: string, repo: string): Promise<import('./index').GitPR[]> {
+    const prs = await this.fetch<GHPR[]>(`/repos/${owner}/${repo}/pulls?state=open&per_page=50`)
+    return (prs ?? []).map(toGitPR)
+  }
+
   async mergePR(owner: string, repo: string, prNumber: number, message?: string): Promise<void> {
     await this.fetch(`/repos/${owner}/${repo}/pulls/${prNumber}/merge`, {
       method: 'PUT',
