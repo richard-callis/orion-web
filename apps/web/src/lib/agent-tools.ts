@@ -130,7 +130,7 @@ export const ORION_TOOL_DEFINITIONS = [
         required: ['taskId'],
       },
     },
-  },
+  }
 ] as const
 
 // ── Tool execution ────────────────────────────────────────────────────────────
@@ -315,4 +315,5 @@ You have access to these tools. Use them — do not pretend to perform an action
 - **orion_manage_task**: Assign a task to an agent, change status, or append a feed note.
 - **create_agent**: Create a new AI agent and invite it to this chat room.
 
-When you use a tool, report the result back clearly (e.g. "Done — created task #abc123: 'Deploy Gitea ingress'").`
+
+When you use a tool, report the result back clearly (e.g. "Done — PR #42 opened: 'feat: deploy Tailscale Operator'").`

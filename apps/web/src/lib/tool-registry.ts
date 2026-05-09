@@ -11,6 +11,7 @@
 
 import { prisma } from '@/lib/db'
 import { getDefaultModelId } from '@/lib/default-model'
+import { generateEmbedding, vectorSearch } from '@/lib/embeddings'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { writeFileSync, unlinkSync } from 'fs'
@@ -1643,5 +1644,252 @@ Guidelines:
     } catch (e) {
       return `Error running sub-agent: ${e instanceof Error ? e.message : String(e)}`
     }
+  },
+})
+
+// ── gitops_propose ────────────────────────────────────────────────────────────
+
+registerTool({
+  name: 'gitops_propose',
+  description: `Propose a GitOps change. Creates a branch, commits files, opens a PR in the environment's git repo, and auto-merges if policy allows. Use this for ALL cluster/infrastructure changes — never apply kubectl manifests directly.
+
+For Kubernetes manifests: always include namespace, use pinned image tags, include CrowdSec + Authentik middleware on all public ingresses.
+For Docker Compose: use self-contained services (no host bind mounts for config files).`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      environment_id:        { type: 'string', description: 'Environment ID or name (e.g. "Talos Cluster", "localhost")' },
+      title:                 { type: 'string', description: 'Short PR title, e.g. "feat: deploy Tailscale Operator"' },
+      reasoning:             { type: 'string', description: 'Why this change is needed' },
+      operation_description: { type: 'string', description: 'Plain-language summary: e.g. "add new service", "update image tag", "remove service"' },
+      changes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            path:    { type: 'string', description: 'Repo-relative file path' },
+            content: { type: 'string', description: 'Full file content' },
+          },
+          required: ['path', 'content'],
+        },
+      },
+    },
+    required: ['environment_id', 'title', 'reasoning', 'operation_description', 'changes'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'both',
+  handler: async (args) => {
+    const { environment_id, title, reasoning, operation_description, changes } =
+      args as { environment_id?: string; title?: string; reasoning?: string; operation_description?: string; changes?: Array<{ path: string; content: string }> }
+
+    if (!environment_id || !title || !reasoning || !operation_description || !changes?.length) {
+      return 'Error: environment_id, title, reasoning, operation_description, and changes are all required'
+    }
+    try {
+      const { proposeChange } = await import('@/lib/gitops')
+      const env = await prisma.environment.findFirst({
+        where: { OR: [{ id: environment_id }, { name: { equals: environment_id, mode: 'insensitive' } }] },
+      })
+      if (!env) return `Error: environment "${environment_id}" not found`
+      if (!env.gitOwner || !env.gitRepo) return 'Error: environment has no git repo configured — run bootstrap first'
+
+      const policy = (env.policyConfig ?? {}) as import('@/lib/gitops-policy').PolicyConfig
+      const result = await proposeChange({
+        owner: env.gitOwner,
+        repo: env.gitRepo,
+        title,
+        reasoning,
+        operationDescription: operation_description,
+        changes,
+        policy,
+      })
+
+      await prisma.gitOpsPR.create({
+        data: {
+          environmentId: env.id,
+          prNumber:  result.prNumber,
+          title,
+          operation: result.classification.operation,
+          decision:  result.classification.decision,
+          status:    result.merged ? 'merged' : 'open',
+          prUrl:     result.prUrl,
+          reasoning,
+          branch:    result.branch,
+          mergedAt:  result.merged ? new Date() : null,
+        },
+      })
+
+      const action = result.merged
+        ? `auto-merged (${result.classification.reason})`
+        : `opened for review — ${result.classification.reason}`
+      return `PR #${result.prNumber} ${action}. URL: ${result.prUrl}`
+    } catch (e) {
+      return `Error proposing GitOps change: ${e instanceof Error ? e.message : String(e)}`
+    }
+  },
+})
+
+// ── propose_tool ──────────────────────────────────────────────────────────────
+
+registerTool({
+  name: 'propose_tool',
+  description: "Propose a new MCP tool for admin review. Use this when you need a capability that isn't in your current tool list. The admin will be notified to approve or reject the proposal.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      name:        { type: 'string', description: 'snake_case tool name' },
+      description: { type: 'string', description: 'Clear one-sentence description of what the tool does' },
+      inputSchema: { type: 'object', description: 'JSON Schema for the tool inputs (type: object, properties, required)' },
+      execType:    { type: 'string', enum: ['shell', 'http', 'builtin'], description: 'How the tool is executed' },
+      execConfig:  { type: 'object', description: 'Execution config: shell={command}, http={url,method}' },
+      environment_id: { type: 'string', description: 'Environment to associate the tool with (optional — inferred from context if omitted)' },
+    },
+    required: ['name', 'description', 'inputSchema'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'both',
+  handler: async (args, ctx) => {
+    const { name, description, inputSchema: schema, execType, execConfig, environment_id } =
+      args as { name?: string; description?: string; inputSchema?: object; execType?: string; execConfig?: object; environment_id?: string }
+
+    if (!name || !description || !schema) {
+      return 'Error: propose_tool requires name, description, and inputSchema'
+    }
+
+    const envId = environment_id ?? ctx.environmentId
+    if (!envId) return 'Error: no environment context — pass environment_id explicitly'
+
+    const existing = await ctx.prisma.mcpTool.findFirst({ where: { environmentId: envId, name } })
+    if (existing) return `Tool "${name}" already exists (status: ${existing.status}).`
+
+    await ctx.prisma.mcpTool.create({
+      data: {
+        environmentId: envId,
+        name,
+        description,
+        inputSchema: schema as object,
+        execType: (execType as string) || 'shell',
+        execConfig: execConfig as object | undefined,
+        enabled: false,
+        builtIn: false,
+        status: 'pending',
+        proposedBy: ctx.agentId,
+        proposedAt: new Date(),
+      },
+    })
+
+    return `Tool "${name}" proposed successfully. An admin will review and approve it from Administration → Environments → Approvals.`
+  },
+})
+
+// ── knowledge_search ──────────────────────────────────────────────────────────
+
+registerTool({
+  name: 'knowledge_search',
+  description: 'Semantically search the knowledge base (notes, runbooks, wiki pages) for content relevant to a query. Returns notes ranked by similarity.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query:          { type: 'string',  description: 'Natural language search query' },
+      limit:          { type: 'number',  description: 'Max results to return (1-20, default 5)' },
+      includeContent: { type: 'boolean', description: 'Whether to include full note content (default true)' },
+    },
+    required: ['query'],
+  },
+  tier: 'read',
+  parallelSafe: true,
+  availableIn: 'both',
+  handler: async (args) => {
+    const { query, limit = 5, includeContent = true } =
+      args as { query?: string; limit?: number; includeContent?: boolean }
+    if (!query) return 'Error: query is required'
+
+    const embedding = await generateEmbedding(query.slice(0, 2000))
+    if (!embedding) return 'No embedding provider configured. Add an embedding model in Admin → Models to enable semantic search.'
+
+    const results = await vectorSearch(embedding.vector, Math.min(limit, 20))
+    if (!results.length) return 'No relevant notes found for this query.'
+
+    return JSON.stringify(
+      results.map((r: any) => ({
+        title:  r.title,
+        type:   r.type,
+        folder: r.folder,
+        score:  parseFloat(r.score.toFixed(3)),
+        ...(includeContent && { content: r.content.slice(0, 2000) }),
+      })),
+      null, 2
+    )
+  },
+})
+
+// ── knowledge_graph ───────────────────────────────────────────────────────────
+
+registerTool({
+  name: 'knowledge_graph',
+  description: 'Get the full knowledge graph — all notes with their types, wikilink dependencies, and semantic connections. Use this to understand what documentation exists and how topics relate.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      threshold:      { type: 'number',  description: 'Minimum similarity score for semantic edges (0.0-1.0, default 0.5)' },
+      includeContent: { type: 'boolean', description: 'Include a short content snippet per note (default false)' },
+    },
+  },
+  tier: 'read',
+  parallelSafe: true,
+  availableIn: 'both',
+  handler: async (args) => {
+    const { threshold = 0.5, includeContent = false } =
+      args as { threshold?: number; includeContent?: boolean }
+
+    const [notes, semanticEdges] = await Promise.all([
+      prisma.note.findMany({
+        select: { id: true, title: true, type: true, folder: true, content: true },
+        orderBy: { title: 'asc' },
+      }),
+      prisma.semanticConnection.findMany({
+        where: { score: { gte: threshold } },
+        select: { sourceNoteId: true, targetNoteId: true, score: true },
+        orderBy: { score: 'desc' },
+        take: 200,
+      }),
+    ])
+
+    const noteByTitle = new Map(notes.map((n: any) => [n.title.toLowerCase(), n.title]))
+    const wikilinkEdges: Array<{ from: string; to: string }> = []
+    const wikilinkRegex = /\[\[([^\]|#]+)(?:[|#][^\]]+)?\]\]/g
+    for (const note of notes) {
+      for (const match of (note as any).content.matchAll(wikilinkRegex)) {
+        const target = match[1].trim()
+        if (noteByTitle.has(target.toLowerCase()) && target.toLowerCase() !== (note as any).title.toLowerCase()) {
+          wikilinkEdges.push({ from: (note as any).title, to: target })
+        }
+      }
+    }
+
+    const nodeLines = notes.map((n: any) => {
+      const tag = n.type !== 'note' ? ` [${n.type}]` : ''
+      const folder = n.folder ? ` (${n.folder})` : ''
+      const snippet = includeContent ? `\n  ${n.content.slice(0, 200).replace(/\n/g, ' ')}` : ''
+      return `- ${n.title}${tag}${folder}${snippet}`
+    })
+
+    const wikiLines = wikilinkEdges.map((e: any) => `  ${e.from} → ${e.to}`)
+    const noteById = new Map(notes.map((n: any) => [n.id, n]))
+    const semLines = semanticEdges
+      .map((e: any) => {
+        const src = (noteById.get(e.sourceNoteId) as any)?.title
+        const tgt = (noteById.get(e.targetNoteId) as any)?.title
+        return src && tgt ? `  ${src} ~${e.score.toFixed(2)}~ ${tgt}` : null
+      })
+      .filter(Boolean)
+
+    return [
+      `## Notes (${notes.length})\n${nodeLines.join('\n')}`,
+      `\n## Wikilink Edges (${wikiLines.length})\n${wikiLines.join('\n') || '  none'}`,
+      `\n## Semantic Edges (${semLines.length})\n${semLines.join('\n') || '  none'}`,
+    ].join('\n')
   },
 })
