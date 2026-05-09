@@ -345,7 +345,7 @@ export async function executeTool(
         const secret = await prisma.managedSecret.create({
           data: {
             environmentId:    env.id,
-            createdBy:        context.callerAgentId,
+            createdBy:        null,  // callerAgentId is an Agent ID, not a User ID
             name,
             namespace,
             description,
