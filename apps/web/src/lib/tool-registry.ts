@@ -40,6 +40,7 @@ export interface ToolDefinition {
 export interface ToolExecutionContext {
   agentId?: string
   taskId?: string
+  roomId?: string
   environmentId?: string
   userId?: string
   prisma: typeof prisma
