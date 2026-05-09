@@ -439,10 +439,14 @@ model ExternalModel {
   apiKey      String?  @db.Text
   modelId     String
   enabled     Boolean  @default(true)
-  timeoutSecs Int      @default(120)
-  maxTokens   Int?
-  temperature Float?
-  createdAt   DateTime @default(now())
+  timeoutSecs   Int      @default(120)
+  maxTokens     Int?
+  temperature   Float?
+  topP          Float?
+  minP          Float?
+  repeatPenalty Float?
+  seed          Int?
+  createdAt     DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
 

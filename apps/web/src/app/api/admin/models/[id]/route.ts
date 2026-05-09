@@ -22,7 +22,11 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (body.enabled     !== undefined) updateData.enabled     = body.enabled
   if (body.timeoutSecs !== undefined) updateData.timeoutSecs = body.timeoutSecs
   if ('maxTokens' in body)            updateData.maxTokens   = body.maxTokens   // null clears the cap
-  if ('temperature' in body)          updateData.temperature = body.temperature // null = model default
+  if ('temperature'   in body) updateData.temperature   = body.temperature
+  if ('topP'          in body) updateData.topP          = body.topP
+  if ('minP'          in body) updateData.minP          = body.minP
+  if ('repeatPenalty' in body) updateData.repeatPenalty = body.repeatPenalty
+  if ('seed'          in body) updateData.seed          = body.seed
   if (body.apiKey)                    updateData.apiKey      = body.apiKey
 
   const model = await prisma.externalModel.update({
