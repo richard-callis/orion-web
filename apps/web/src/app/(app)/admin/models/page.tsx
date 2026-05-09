@@ -13,6 +13,10 @@ interface ExternalModel {
   timeoutSecs: number
   maxTokens: number | null
   temperature: number | null
+  topP: number | null
+  minP: number | null
+  repeatPenalty: number | null
+  seed: number | null
 }
 
 interface Health {
@@ -30,9 +34,13 @@ interface ModelForm {
   timeoutSecs: number
   maxTokens: number | null
   temperature: number | null
+  topP: number | null
+  minP: number | null
+  repeatPenalty: number | null
+  seed: number | null
 }
 
-const EMPTY_FORM: ModelForm = { name: '', provider: 'openai', baseUrl: '', apiKey: '', modelId: '', enabled: true, timeoutSecs: 120, maxTokens: null, temperature: null }
+const EMPTY_FORM: ModelForm = { name: '', provider: 'openai', baseUrl: '', apiKey: '', modelId: '', enabled: true, timeoutSecs: 120, maxTokens: null, temperature: null, topP: null, minP: null, repeatPenalty: null, seed: null }
 
 const PROVIDER_LABELS: Record<string, string> = {
   openai: 'OpenAI Compatible',
@@ -95,7 +103,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
   const isNew = model === null
   const [form, setForm] = useState<ModelForm>(
     model
-      ? { name: model.name, provider: model.provider, baseUrl: model.baseUrl, apiKey: '', modelId: model.modelId, enabled: model.enabled, timeoutSecs: model.timeoutSecs ?? 120, maxTokens: model.maxTokens ?? null, temperature: model.temperature ?? null }
+      ? { name: model.name, provider: model.provider, baseUrl: model.baseUrl, apiKey: '', modelId: model.modelId, enabled: model.enabled, timeoutSecs: model.timeoutSecs ?? 120, maxTokens: model.maxTokens ?? null, temperature: model.temperature ?? null, topP: model.topP ?? null, minP: model.minP ?? null, repeatPenalty: model.repeatPenalty ?? null, seed: model.seed ?? null }
       : EMPTY_FORM
   )
   const [saving, setSaving]         = useState(false)
@@ -111,7 +119,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
     if (!form.name || !form.baseUrl || !form.modelId) { setError('Name, Base URL, and Model ID are required.'); return }
     setSaving(true); setError(null)
     try {
-      const payload = { name: form.name, provider: form.provider, baseUrl: form.baseUrl, apiKey: form.apiKey || undefined, modelId: form.modelId, enabled: form.enabled, timeoutSecs: form.timeoutSecs, maxTokens: form.maxTokens, temperature: form.temperature }
+      const payload = { name: form.name, provider: form.provider, baseUrl: form.baseUrl, apiKey: form.apiKey || undefined, modelId: form.modelId, enabled: form.enabled, timeoutSecs: form.timeoutSecs, maxTokens: form.maxTokens, temperature: form.temperature, topP: form.topP, minP: form.minP, repeatPenalty: form.repeatPenalty, seed: form.seed }
       const res = model
         ? await fetch(`/api/admin/models/${model.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         : await fetch('/api/admin/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -252,6 +260,64 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
                   setForm(f => ({ ...f, temperature: e.target.value === '' ? null : Math.min(2, Math.max(0, isNaN(v) ? 0 : v)) }))
                 }}
                 placeholder="model default"
+                className={inputCls}
+              />
+            </FormField>
+            <FormField label="Top-P (blank = model default)">
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={form.topP ?? ''}
+                onChange={e => {
+                  const v = parseFloat(e.target.value)
+                  setForm(f => ({ ...f, topP: e.target.value === '' ? null : Math.min(1, Math.max(0, isNaN(v) ? 1 : v)) }))
+                }}
+                placeholder="model default"
+                className={inputCls}
+              />
+            </FormField>
+            <FormField label="Min-P — Ollama only (blank = off)">
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={form.minP ?? ''}
+                onChange={e => {
+                  const v = parseFloat(e.target.value)
+                  setForm(f => ({ ...f, minP: e.target.value === '' ? null : Math.min(1, Math.max(0, isNaN(v) ? 0 : v)) }))
+                }}
+                placeholder="off"
+                className={inputCls}
+              />
+            </FormField>
+            <FormField label="Repeat Penalty — Ollama only (blank = off)">
+              <input
+                type="number"
+                min={1}
+                max={2}
+                step={0.05}
+                value={form.repeatPenalty ?? ''}
+                onChange={e => {
+                  const v = parseFloat(e.target.value)
+                  setForm(f => ({ ...f, repeatPenalty: e.target.value === '' ? null : Math.min(2, Math.max(1, isNaN(v) ? 1 : v)) }))
+                }}
+                placeholder="off"
+                className={inputCls}
+              />
+            </FormField>
+            <FormField label="Seed (blank = random)">
+              <input
+                type="number"
+                min={0}
+                value={form.seed ?? ''}
+                onChange={e => {
+                  const v = parseInt(e.target.value)
+                  setForm(f => ({ ...f, seed: e.target.value === '' ? null : (isNaN(v) ? null : Math.max(0, v)) }))
+                }}
+                placeholder="random"
                 className={inputCls}
               />
             </FormField>

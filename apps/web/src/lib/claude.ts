@@ -252,6 +252,23 @@ interface OllamaMsg {
   tool_calls?: Array<{ function: { name: string; arguments: string | Record<string, unknown> } }>
 }
 
+/** Build Ollama options object — only includes fields that are explicitly set. */
+function buildOllamaOptions(
+  temperature?: number,
+  topP?: number,
+  minP?: number,
+  repeatPenalty?: number,
+  seed?: number,
+): Record<string, number> | undefined {
+  const opts: Record<string, number> = {}
+  if (temperature   !== undefined) opts.temperature    = temperature
+  if (topP          !== undefined) opts.top_p          = topP
+  if (minP          !== undefined) opts.min_p          = minP
+  if (repeatPenalty !== undefined) opts.repeat_penalty = repeatPenalty
+  if (seed          !== undefined) opts.seed           = seed
+  return Object.keys(opts).length ? opts : undefined
+}
+
 async function* streamOllamaToolLoop(
   prompt: string,
   conversationId: string,
@@ -265,6 +282,10 @@ async function* streamOllamaToolLoop(
   abortSignal?: AbortSignal,
   userId?: string,
   temperature?: number,
+  topP?: number,
+  minP?: number,
+  repeatPenalty?: number,
+  seed?: number,
 ): AsyncGenerator<StreamChunk> {
   const { GatewayClient: _GC } = await import('./agent-runner/gateway-client')
   void _GC
@@ -272,13 +293,21 @@ async function* streamOllamaToolLoop(
   let ollamaUrl = baseUrl
   let timeoutSecs = 120
   let resolvedTemp = temperature
+  let resolvedTopP = topP
+  let resolvedMinP = minP
+  let resolvedRepeatPenalty = repeatPenalty
+  let resolvedSeed = seed
   if (!ollamaUrl) {
     const extModel = await prisma.externalModel.findFirst({ where: { provider: 'ollama', modelId: model, enabled: true } })
       ?? await prisma.externalModel.findFirst({ where: { provider: 'ollama', enabled: true } })
     if (!extModel?.baseUrl) { yield { type: 'error', error: 'No Ollama model configured' }; return }
     ollamaUrl = extModel.baseUrl
     timeoutSecs = extModel.timeoutSecs ?? 120
-    if (resolvedTemp === undefined && extModel.temperature != null) resolvedTemp = extModel.temperature
+    if (resolvedTemp         === undefined && extModel.temperature   != null) resolvedTemp         = extModel.temperature
+    if (resolvedTopP         === undefined && extModel.topP          != null) resolvedTopP         = extModel.topP
+    if (resolvedMinP         === undefined && extModel.minP          != null) resolvedMinP         = extModel.minP
+    if (resolvedRepeatPenalty=== undefined && extModel.repeatPenalty != null) resolvedRepeatPenalty= extModel.repeatPenalty
+    if (resolvedSeed         === undefined && extModel.seed          != null) resolvedSeed         = extModel.seed
   }
 
   // Synthetic management tools — handled locally, never forwarded to the gateway
@@ -360,7 +389,7 @@ async function* streamOllamaToolLoop(
       const res = await fetch(`${ollamaUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages, stream: false, tools: ollamaToolDefs, ...(resolvedTemp !== undefined && { options: { temperature: resolvedTemp } }) }),
+        body: JSON.stringify({ model, messages, stream: false, tools: ollamaToolDefs, options: buildOllamaOptions(resolvedTemp, resolvedTopP, resolvedMinP, resolvedRepeatPenalty, resolvedSeed) }),
         signal: fetchSignal,
       })
       if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`)
@@ -545,6 +574,10 @@ export async function* streamAgentChat(
     let provider = 'ollama'
     let apiKey: string | undefined
     let extTemperature: number | undefined
+    let extTopP: number | undefined
+    let extMinP: number | undefined
+    let extRepeatPenalty: number | undefined
+    let extSeed: number | undefined
 
     if (llm.startsWith('ext:')) {
       const extId = llm.slice('ext:'.length)
@@ -555,7 +588,11 @@ export async function* streamAgentChat(
       timeoutSecs = extModel.timeoutSecs ?? 120
       provider = extModel.provider   // 'ollama' | 'openai' | 'custom' | etc.
       apiKey = extModel.apiKey ?? undefined
-      if (extModel.temperature != null) extTemperature = extModel.temperature
+      if (extModel.temperature   != null) extTemperature   = extModel.temperature
+      if (extModel.topP          != null) extTopP          = extModel.topP
+      if (extModel.minP          != null) extMinP          = extModel.minP
+      if (extModel.repeatPenalty != null) extRepeatPenalty = extModel.repeatPenalty
+      if (extModel.seed          != null) extSeed          = extModel.seed
     } else {
       model = llm.slice('ollama:'.length)
     }
@@ -572,9 +609,9 @@ export async function* streamAgentChat(
       const activeTasks = await getActiveTasksSection()
       if (gw) {
         const systemPrompt = await getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt + activeTasks, conversationId, knowledgeContext)
-        yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, trimmedHistory, model, baseUrl, gw.tools, gw.gc, gw.environmentId, undefined, userId, extTemperature)
+        yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, trimmedHistory, model, baseUrl, gw.tools, gw.gc, gw.environmentId, undefined, userId, extTemperature, extTopP, extMinP, extRepeatPenalty, extSeed)
       } else {
-        yield* streamOllamaAgentChat(prompt, conversationId, agentSystemPrompt + activeTasks + noGwSuffix + kcSection, trimmedHistory, model, baseUrl, timeoutSecs, undefined, extTemperature)
+        yield* streamOllamaAgentChat(prompt, conversationId, agentSystemPrompt + activeTasks + noGwSuffix + kcSection, trimmedHistory, model, baseUrl, timeoutSecs, undefined, extTemperature, extTopP, extMinP, extRepeatPenalty, extSeed)
       }
     } else {
       // OpenAI-compatible endpoint (custom / openai / llama.cpp / etc.)
@@ -602,7 +639,7 @@ ${readClusterContext()}${kcSection}`
         prompt, conversationId, openAISystemPrompt, trimmedHistory,
         model!, baseUrl!, apiKey,
         gw?.tools ?? [], gw?.gc ?? null, gw?.environmentId,
-        undefined, userId, extTemperature,
+        undefined, userId, extTemperature, extTopP, extSeed,
       )
     }
     return
@@ -646,6 +683,10 @@ async function* streamOllamaAgentChat(
   resolvedTimeoutSecs?: number,
   abortSignal?: AbortSignal,
   resolvedTemperature?: number,
+  resolvedTopP?: number,
+  resolvedMinP?: number,
+  resolvedRepeatPenalty?: number,
+  resolvedSeed?: number,
 ): AsyncGenerator<StreamChunk> {
   let ollamaUrl = resolvedBaseUrl
   let timeoutSecs = resolvedTimeoutSecs ?? 120
@@ -659,7 +700,11 @@ async function* streamOllamaAgentChat(
     if (!extModel) throw new Error('No Ollama model configured — add one in Admin → Models')
     ollamaUrl = extModel.baseUrl
     timeoutSecs = extModel.timeoutSecs ?? 120
-    if (resolvedTemp === undefined && extModel.temperature != null) resolvedTemp = extModel.temperature
+    if (resolvedTemp          === undefined && extModel.temperature   != null) resolvedTemp          = extModel.temperature
+    if (resolvedTopP          === undefined && extModel.topP          != null) resolvedTopP          = extModel.topP
+    if (resolvedMinP          === undefined && extModel.minP          != null) resolvedMinP          = extModel.minP
+    if (resolvedRepeatPenalty === undefined && extModel.repeatPenalty != null) resolvedRepeatPenalty = extModel.repeatPenalty
+    if (resolvedSeed          === undefined && extModel.seed          != null) resolvedSeed          = extModel.seed
   }
   const start = Date.now()
   let totalText = ''
@@ -679,7 +724,7 @@ async function* streamOllamaAgentChat(
     const res = await fetch(`${ollamaUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, stream: true, ...(resolvedTemp !== undefined && { options: { temperature: resolvedTemp } }) }),
+      body: JSON.stringify({ model, messages, stream: true, options: buildOllamaOptions(resolvedTemp, resolvedTopP, resolvedMinP, resolvedRepeatPenalty, resolvedSeed) }),
       signal: fetchSignal,
     })
 
@@ -1069,6 +1114,8 @@ async function* streamOpenAIChatCore(
   abortSignal?: AbortSignal,
   userId?: string,
   temperature?: number,
+  topP?: number,
+  seed?: number,
 ): AsyncGenerator<StreamChunk> {
   const start = Date.now()
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -1238,8 +1285,10 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
     // Agentic loop — handles tool calls until model returns a final text response
     for (let turn = 0; turn < 10; turn++) {
       const body: Record<string, unknown> = { model, messages, stream: true }
-      if (openaiTools.length) body.tools = openaiTools
+      if (openaiTools.length)        body.tools       = openaiTools
       if (temperature !== undefined) body.temperature = temperature
+      if (topP        !== undefined) body.top_p       = topP
+      if (seed        !== undefined) body.seed        = seed
 
       const timeoutSignal = AbortSignal.timeout(120_000)
       const fetchSignal = abortSignal ? AbortSignal.any([abortSignal, timeoutSignal]) : timeoutSignal

@@ -29,8 +29,12 @@ export async function POST(req: NextRequest) {
       apiKey:      body.apiKey ?? null,
       modelId:     body.modelId,
       enabled:     body.enabled ?? true,
-      timeoutSecs: body.timeoutSecs ?? 120,
-      temperature: body.temperature ?? null,
+      timeoutSecs:   body.timeoutSecs ?? 120,
+      temperature:   body.temperature   ?? null,
+      topP:          body.topP          ?? null,
+      minP:          body.minP          ?? null,
+      repeatPenalty: body.repeatPenalty ?? null,
+      seed:          body.seed          ?? null,
     },
   })
 
