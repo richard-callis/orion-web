@@ -17,6 +17,7 @@
 import { prisma } from './db'
 import { setTyping, clearTyping } from './typing-state'
 import { ORION_TOOL_DEFINITIONS, TOOLS_SYSTEM_ADDENDUM, executeTool } from './agent-tools'
+import { getToolsForContext, executeRegisteredTool } from './tool-registry'
 import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
 import type { AgentGateway } from './agent-gateway'
@@ -177,10 +178,23 @@ async function callOpenAIChat(
 
   const messages: OpenAIMessage[] = [{ role: 'system', content: sys }, ...chatMsgs]
 
-  // Merge ORION tool definitions with gateway tools (if any)
+  // Registry tools — all tools available in chat context (the single source of truth)
+  const registryTools = getToolsForContext('chat').map(t => ({
+    type: 'function' as const,
+    function: { name: t.name, description: t.description, parameters: t.inputSchema },
+  }))
+  const registryToolNames: Set<string> = new Set(getToolsForContext('chat').map(t => t.name))
+
+  // Legacy agent-tools (create_task, orion_get_snapshot, etc.) — keep for backward compat.
+  // Exclude any that are now in the registry to avoid duplicates.
+  const legacyTools = ORION_TOOL_DEFINITIONS.filter(d => !registryToolNames.has(d.function.name))
+  const legacyToolNames: Set<string> = new Set(legacyTools.map(d => d.function.name))
+
+  // Merge: registry + legacy + gateway tools
   const allTools = hasTools
     ? [
-        ...ORION_TOOL_DEFINITIONS,
+        ...registryTools,
+        ...legacyTools,
         ...(gatewayTools ?? []).map(t => ({
           type: 'function' as const,
           function: { name: t.name, description: t.description, parameters: t.inputSchema },
@@ -188,8 +202,8 @@ async function callOpenAIChat(
       ]
     : undefined
 
-  // Names of ORION-native tools for dispatch routing
-  const orionToolNames: Set<string> = new Set(ORION_TOOL_DEFINITIONS.map(d => d.function.name))
+  // Names of ORION-native tools for dispatch routing (registry + legacy)
+  const orionToolNames: Set<string> = new Set([...registryToolNames, ...legacyToolNames])
 
   // Tool-call loop — keep going until the model produces a text reply
   const maxToolRoundsSetting = await prisma.systemSetting.findUnique({ where: { key: 'agent.chat.maxToolRounds' } })
@@ -228,7 +242,14 @@ async function callOpenAIChat(
       console.log(`[room-agents] ${agentName} calling tool: ${tc.function.name}`, args)
 
       let result: string
-      if (orionToolNames.has(tc.function.name)) {
+      if (registryToolNames.has(tc.function.name)) {
+        // Registry tool — single source of truth, consistent across all contexts
+        result = await executeRegisteredTool(tc.function.name, args, {
+          agentId: toolContext!.agentId,
+          prisma,
+        })
+      } else if (legacyToolNames.has(tc.function.name)) {
+        // Legacy agent-tools (create_task, orion_get_snapshot, etc.)
         result = await executeTool(tc.function.name, args, {
           roomId:        toolContext!.roomId,
           callerAgentId: toolContext!.agentId,
