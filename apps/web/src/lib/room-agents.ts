@@ -49,7 +49,7 @@ function buildSystemPrompt(
   agentName: string,
   agentBasePrompt: string,
   otherParticipants: string[],
-  hasTools: false | 'legacy' | 'mcp' = false,
+  hasTools: boolean | 'legacy' | 'mcp' = false,
 ): string {
   const othersLine = otherParticipants.length > 0
     ? `Other participants in this chat: ${otherParticipants.join(', ')}`
@@ -58,8 +58,8 @@ function buildSystemPrompt(
     ? `To address or continue the conversation with another participant, use @TheirName in your reply (e.g. "@${otherParticipants[0]} what do you think?"). This will notify them and invite their response.`
     : ''
   const toolAddendum =
-    hasTools === 'mcp'    ? '\n\n## ORION Tools\nYou have ORION management tools available via MCP. Use them — do not describe hypothetical actions when you can call a tool to get real data.' :
-    hasTools === 'legacy' ? TOOLS_SYSTEM_ADDENDUM :
+    hasTools === 'mcp'              ? '\n\n## ORION Tools\nYou have ORION management tools available via MCP. Use them — do not describe hypothetical actions when you can call a tool to get real data.' :
+    hasTools === 'legacy' || hasTools === true ? TOOLS_SYSTEM_ADDENDUM :
     ''
   return `IMPORTANT — YOUR ROLE:
 You are ${agentName}. You are ONE participant in a group chat.
