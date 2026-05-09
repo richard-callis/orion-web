@@ -452,10 +452,47 @@ function scheduleTokenRefresh() {
   setInterval(check, CHECK_INTERVAL_MS)
 }
 
+// ── Bootstrap Claude Code global MCP settings ────────────────────────────────
+// Writes ~/.claude.json with the ORION MCP server so Claude Code always has
+// ORION as its tool harness — both for task runs and fallback during chat.
+// The per-request .mcp.json in chat rooms merges on top with agentId/roomId.
+
+function bootstrapMcpSettings() {
+  if (!ORION_URL || !MCP_TOKEN) {
+    console.log('[orion-claude] bootstrap-mcp: ORION_URL or ORION_MCP_TOKEN not set — skipping global MCP config')
+    return
+  }
+
+  const claudeJsonPath = path.join(CLAUDE_HOME, 'claude.json')
+
+  let existing = {}
+  try {
+    existing = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8'))
+  } catch { /* first run or missing — start fresh */ }
+
+  // Merge: preserve all existing settings, upsert only the orion MCP entry
+  const updated = {
+    ...existing,
+    mcpServers: {
+      ...(existing.mcpServers ?? {}),
+      orion: {
+        type: 'http',
+        url:  `${ORION_URL}/api/mcp`,
+        headers: { 'x-mcp-token': MCP_TOKEN },
+      },
+    },
+  }
+
+  fs.mkdirSync(CLAUDE_HOME, { recursive: true })
+  fs.writeFileSync(claudeJsonPath, JSON.stringify(updated, null, 2), 'utf8')
+  console.log(`[orion-claude] bootstrap-mcp: ORION MCP server registered in ${claudeJsonPath}`)
+}
+
 server.listen(PORT, () => {
   console.log(`[orion-claude] Listening on :${PORT}`)
   console.log(`[orion-claude] Credentials path: ${CREDS_PATH}`)
   const status = getCredStatus()
   console.log(`[orion-claude] Auth status: ${JSON.stringify(status)}`)
+  bootstrapMcpSettings()
   scheduleTokenRefresh()
 })
