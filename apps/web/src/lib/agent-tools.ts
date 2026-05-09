@@ -16,6 +16,7 @@
  */
 
 import { prisma } from './db'
+import { writeVaultSecret } from './vault'
 
 // ── Tool definitions (OpenAI function-call format) ────────────────────────────
 
@@ -130,7 +131,28 @@ export const ORION_TOOL_DEFINITIONS = [
         required: ['taskId'],
       },
     },
-  }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'write_secret',
+      description: 'Create a skeleton External Secret in ORION backed by Vault. Writes PLACEHOLDER values to Vault so the human can fill in the real values inside ORION (Infrastructure > External Secrets > pencil icon). Use this when asked to scaffold, create, or set up a secret for a deployment.',
+      parameters: {
+        type: 'object',
+        properties: {
+          environmentName:  { type: 'string', description: 'Name of the ORION environment to create the secret in (e.g. "homelab-k3s")' },
+          name:             { type: 'string', description: 'Human-readable label for the ExternalSecret (e.g. "gitea-db-secret")' },
+          vaultPath:        { type: 'string', description: 'Vault KV v2 path relative to the "secret" mount (e.g. "gitea/db"). No "secret/data/" prefix.' },
+          keyNames:         { type: 'array', items: { type: 'string' }, description: 'List of secret key names to scaffold (e.g. ["DB_PASSWORD", "DB_USER"]). PLACEHOLDER values will be written to Vault.' },
+          namespace:        { type: 'string', description: 'Kubernetes namespace where the Secret will live (default: "default")' },
+          description:      { type: 'string', description: 'What this secret is for and who uses it (optional)' },
+          targetSecretName: { type: 'string', description: 'K8s Secret name (defaults to the ExternalSecret name)' },
+          refreshInterval:  { type: 'string', description: 'ESO sync interval, e.g. "1h", "15m" (default: "1h")' },
+        },
+        required: ['environmentName', 'name', 'vaultPath', 'keyNames'],
+      },
+    },
+  },
 ] as const
 
 // ── Tool execution ────────────────────────────────────────────────────────────
@@ -288,6 +310,68 @@ export async function executeTool(
         return `Task "${updated.title}" (${taskId}): status=${updated.status}, assigned=${updated.assignedAgent ?? 'unassigned'}${args.note ? ', note appended' : ''}`
       }
 
+      case 'write_secret': {
+        const environmentName = String(args.environmentName ?? '').trim()
+        const name            = String(args.name ?? '').trim()
+        const vaultPath       = String(args.vaultPath ?? '').trim()
+        const keyNames        = Array.isArray(args.keyNames) ? (args.keyNames as unknown[]).map(String).filter(Boolean) : []
+
+        if (!environmentName) return 'Error: environmentName is required'
+        if (!name)            return 'Error: name is required'
+        if (!vaultPath)       return 'Error: vaultPath is required'
+        if (keyNames.length === 0) return 'Error: keyNames must contain at least one key'
+
+        // Resolve environment by name
+        const env = await prisma.environment.findUnique({ where: { name: environmentName } })
+        if (!env) return `Error: environment "${environmentName}" not found. Use orion_get_snapshot to see available environments.`
+
+        const namespace       = String(args.namespace       ?? 'default').trim() || 'default'
+        const description     = args.description     ? String(args.description).trim()     : null
+        const targetSecretName = args.targetSecretName ? String(args.targetSecretName).trim() || null : null
+        const refreshInterval  = String(args.refreshInterval ?? '1h').trim() || '1h'
+
+        // Write PLACEHOLDER values to Vault for each key
+        const placeholderData: Record<string, string> = {}
+        for (const key of keyNames) placeholderData[key] = 'PLACEHOLDER'
+
+        try {
+          await writeVaultSecret(vaultPath, placeholderData)
+        } catch (e) {
+          return `Error: failed to write placeholder to Vault: ${e instanceof Error ? e.message : String(e)}`
+        }
+
+        // Persist metadata (status=draft — human must fill real values in ORION)
+        const dataKeys = keyNames.map(k => ({ remoteKey: k, secretKey: k }))
+        const secret = await prisma.managedSecret.create({
+          data: {
+            environmentId:    env.id,
+            createdBy:        context.callerAgentId,
+            name,
+            namespace,
+            description,
+            secretStore:      'vault-backend',
+            secretStoreKind:  'ClusterSecretStore',
+            remoteRef:        vaultPath,
+            targetSecretName,
+            refreshInterval,
+            dataKeys,
+            tags:             [],
+            status:           'draft',
+          },
+        })
+
+        return [
+          `Secret shell created (id: ${secret.id}):`,
+          `  Name:      ${secret.name}`,
+          `  Vault path: secret/data/${vaultPath}`,
+          `  Keys:      ${keyNames.join(', ')}`,
+          `  Namespace: ${namespace}`,
+          `  Status:    draft (PLACEHOLDER values written — real values needed)`,
+          ``,
+          `Next step: open Infrastructure > External Secrets in environment "${environmentName}", find "${name}", and click the pencil icon to enter the real values. ORION will write them to Vault and mark the secret as applied.`,
+        ].join('\n')
+      }
+
       default:
         return `Error: unknown tool "${toolName}"`
     }
@@ -314,6 +398,6 @@ You have access to these tools. Use them — do not pretend to perform an action
 - **update_task**: Update an existing task by ID (status, title, description, priority).
 - **orion_manage_task**: Assign a task to an agent, change status, or append a feed note.
 - **create_agent**: Create a new AI agent and invite it to this chat room.
-
+- **write_secret**: Scaffold an External Secret in ORION backed by Vault — writes PLACEHOLDER values so the human can fill in real values via the ORION UI.
 
 When you use a tool, report the result back clearly (e.g. "Done — PR #42 opened: 'feat: deploy Tailscale Operator'").`

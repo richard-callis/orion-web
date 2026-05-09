@@ -1,47 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth'
 import { prisma } from '@/lib/db'
-import { decrypt } from '@/lib/encryption'
+import { writeVaultSecret } from '@/lib/vault'
 
 type Params = { params: Promise<{ id: string }> }
-
-// ── Vault helper ──────────────────────────────────────────────────────────────
-
-const VAULT_ADDR = process.env.VAULT_ADDR ?? 'http://vault:8200'
-
-/**
- * Write key/value pairs to Vault KV v2 at the given path.
- * The path may be supplied as "foo/bar" or with the full prefix "secret/data/foo/bar" —
- * we normalise either form before calling the API.
- * Values are NEVER stored in the database.
- */
-async function writeVaultSecret(
-  kvPath: string,
-  data: Record<string, string>,
-): Promise<void> {
-  // Retrieve the encrypted admin token from SystemSetting
-  const setting = await prisma.systemSetting.findUnique({ where: { key: 'vault.adminToken' } })
-  if (!setting?.value) throw new Error('Vault admin token not configured — has the Vault setup wizard been completed?')
-  const token = decrypt(String(setting.value))
-
-  // Normalise: strip "secret/data/" prefix if the user included it
-  const normalised = kvPath.replace(/^secret\/data\//, '')
-
-  const res = await fetch(`${VAULT_ADDR}/v1/secret/data/${normalised}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Vault-Token': token,
-    },
-    body: JSON.stringify({ data }),
-    signal: AbortSignal.timeout(10_000),
-  })
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { errors?: string[] }
-    throw new Error(`Vault responded ${res.status}: ${body.errors?.join(', ') ?? 'unknown error'}`)
-  }
-}
 
 // ── Route handlers ────────────────────────────────────────────────────────────
 
