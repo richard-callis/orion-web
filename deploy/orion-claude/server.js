@@ -80,11 +80,14 @@ function sanitizeMaxTurns(maxTurns, fallback = 20) {
 
 /**
  * Write a temporary directory containing .mcp.json so the claude CLI can call
- * ORION tools via MCP for this specific agent+room combination.
+ * ORION tools via MCP for this agent. roomId is optional — task runners supply
+ * only agentId; chat rooms supply both agentId and roomId.
  * Returns the temp dir path — caller must clean it up after execFile completes.
  */
 function writeMcpDir(agentId, roomId) {
-  const url = `${ORION_URL}/api/mcp?agentId=${encodeURIComponent(agentId)}&roomId=${encodeURIComponent(roomId)}`
+  const params = new URLSearchParams({ agentId })
+  if (roomId) params.set('roomId', roomId)
+  const url = `${ORION_URL}/api/mcp?${params.toString()}`
   const config = {
     mcpServers: {
       orion: {
@@ -102,14 +105,14 @@ function writeMcpDir(agentId, roomId) {
 /**
  * Call the `claude` CLI as a subprocess — same approach as the Discord bot.
  * Strips ANTHROPIC_API_KEY and CLAUDECODE from env to force OAuth credential use.
- * When agentId + roomId are provided, writes a .mcp.json so Claude can call
- * ORION tools natively — ORION is the harness, Claude is the brain.
+ * When agentId is provided, writes a per-request .mcp.json so Claude can call
+ * ORION tools natively via MCP. roomId is optional (chat rooms only).
  */
 function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 120000, agentId, roomId } = {}) {
   return new Promise((resolve, reject) => {
     const safeModel       = sanitizeModel(model)
     const safeSystemPrompt = sanitizeSystemPrompt(systemPrompt)
-    const useMcp          = !!(agentId && roomId)
+    const useMcp          = !!agentId
     const safeMaxTurns    = sanitizeMaxTurns(maxTurns, useMcp ? 10 : 1)
 
     const args = ['-p', String(prompt), '--output-format', 'json']
@@ -128,7 +131,7 @@ function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 12000
       try {
         tmpDir = writeMcpDir(agentId, roomId)
         cwd    = tmpDir
-        console.log(`[orion-claude] MCP enabled — agent=${agentId} room=${roomId} url=${ORION_URL}/api/mcp`)
+        console.log(`[orion-claude] MCP enabled — agent=${agentId}${roomId ? ` room=${roomId}` : ''} url=${ORION_URL}/api/mcp`)
       } catch (e) {
         console.error('[orion-claude] Failed to write MCP config, falling back to no-tools:', e.message)
       }
@@ -382,7 +385,7 @@ const server = http.createServer(async (req, res) => {
       try { opts = JSON.parse(body || '{}') } catch { return json(res, 400, { error: 'Invalid JSON' }) }
 
       try {
-        const useMcp = !!(opts.agentId && opts.roomId)
+        const useMcp = !!opts.agentId
         const stdout = await runClaude(String(opts.prompt || ''), {
           systemPrompt: opts.systemPrompt,
           model:        opts.model,
