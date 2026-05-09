@@ -113,7 +113,7 @@ async function callLLM(prompt: string): Promise<string> {
 
 function getSetting(key: string): Promise<string | null> {
   return prisma.systemSetting.findUnique({ where: { key } })
-    .then(r => r?.value ?? null)
+    .then(r => (typeof r?.value === 'string' ? r.value : null))
 }
 
 async function setSetting(key: string, value: string): Promise<void> {
