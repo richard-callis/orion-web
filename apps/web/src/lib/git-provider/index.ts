@@ -102,6 +102,9 @@ export interface GitProviderConfig {
   type: GitProviderType
   /** API base URL — omit for gitea-bundled (uses http://gitea:3000) and github (uses api.github.com) */
   url?: string
+  /** Public-facing URL for Gitea PR links in the UI. Only needed when `url` is an
+   *  internal hostname (e.g. http://gitea:3000). Defaults to `url` when omitted. */
+  publicUrl?: string
   /** API token / PAT */
   token: string
   /** Default org or user namespace for repo operations */
@@ -117,12 +120,14 @@ export function createProvider(config: GitProviderConfig): GitProvider {
     case 'gitea-bundled':
       return new GiteaGitProvider({
         url: 'http://gitea:3000',
+        publicUrl: config.publicUrl ?? process.env.GITEA_PUBLIC_URL,
         token: config.token,
         webhookSecret: config.webhookSecret,
       })
     case 'gitea':
       return new GiteaGitProvider({
         url: config.url ?? 'http://gitea:3000',
+        publicUrl: config.publicUrl ?? process.env.GITEA_PUBLIC_URL,
         token: config.token,
         webhookSecret: config.webhookSecret,
       })
@@ -166,6 +171,7 @@ export async function getGitProvider(): Promise<GitProvider> {
   // Backwards-compat fallback: env vars
   _cached = new GiteaGitProvider({
     url: process.env.GITEA_URL ?? 'http://gitea:3000',
+    publicUrl: process.env.GITEA_PUBLIC_URL,
     token: process.env.GITEA_ADMIN_TOKEN ?? '',
     webhookSecret: process.env.GITEA_WEBHOOK_SECRET,
   })
