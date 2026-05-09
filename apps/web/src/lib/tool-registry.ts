@@ -1893,3 +1893,80 @@ registerTool({
     ].join('\n')
   },
 })
+
+// ── knowledge_write ───────────────────────────────────────────────────────────
+
+registerTool({
+  name: 'knowledge_write',
+  description: `Write a lesson, pattern, or finding to the shared knowledge base. Automatically embedded into the vector index so all agents can find it via knowledge_search.
+
+Use this after completing or investigating any task. Structure content for maximum searchability:
+
+  ## Context
+  [When does this apply? What task/domain/service?]
+
+  ## Problem
+  [What went wrong, or what needed to be done?]
+
+  ## Root Cause
+  [Why did it happen?]
+
+  ## Solution
+  [Exact steps, commands, or approach that worked]
+
+  ## Rules for Next Time
+  - [Specific do/don't rules derived from this experience]`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      title:   { type: 'string', description: 'Short searchable title — include service/domain name and the key lesson. E.g. "Tailscale: namespace must exist before operator deploy"' },
+      content: { type: 'string', description: 'Structured lesson — use the Context/Problem/Root Cause/Solution/Rules format for best search retrieval' },
+      folder:  { type: 'string', description: '"Success Patterns" | "Failure Patterns" | "Cluster Quirks" | "Tool Usage" | "Agent Lessons" (default: "Agent Lessons")' },
+      tags:    { type: 'array', items: { type: 'string' }, description: 'Domain tags for filtering, e.g. ["tailscale", "networking", "kubernetes"]' },
+    },
+    required: ['title', 'content'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'both',
+  handler: async (args) => {
+    const { title, content, folder = 'Agent Lessons', tags } =
+      args as { title?: string; content?: string; folder?: string; tags?: string[] }
+
+    if (!title?.trim()) return 'Error: title is required'
+    if (!content?.trim()) return 'Error: content is required'
+
+    const { embedNote } = await import('@/lib/embeddings')
+
+    const existing = await prisma.note.findFirst({ where: { title: title.trim() } })
+
+    let note: { id: string; title: string; content: string }
+    if (existing) {
+      note = await prisma.note.update({
+        where: { id: existing.id },
+        data: {
+          content:   content.trim(),
+          folder:    folder.trim(),
+          tags:      tags ? tags : existing.tags,
+          updatedAt: new Date(),
+        },
+      })
+    } else {
+      note = await prisma.note.create({
+        data: {
+          title:   title.trim(),
+          content: content.trim(),
+          folder:  folder.trim(),
+          type:    'note',
+          tags:    tags ? tags as any : undefined,
+        },
+      })
+    }
+
+    // Embed immediately so the note is searchable via knowledge_search right away
+    const embedded = await embedNote(note).catch(() => false)
+
+    const action = existing ? 'updated' : 'written'
+    return `Knowledge ${action}: "${note.title}" (id: ${note.id}, folder: ${folder}, embedded: ${embedded})`
+  },
+})
