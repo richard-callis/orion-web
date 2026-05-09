@@ -12,6 +12,7 @@ interface ExternalModel {
   enabled: boolean
   timeoutSecs: number
   maxTokens: number | null
+  temperature: number | null
 }
 
 interface Health {
@@ -28,9 +29,10 @@ interface ModelForm {
   enabled: boolean
   timeoutSecs: number
   maxTokens: number | null
+  temperature: number | null
 }
 
-const EMPTY_FORM: ModelForm = { name: '', provider: 'openai', baseUrl: '', apiKey: '', modelId: '', enabled: true, timeoutSecs: 120, maxTokens: null }
+const EMPTY_FORM: ModelForm = { name: '', provider: 'openai', baseUrl: '', apiKey: '', modelId: '', enabled: true, timeoutSecs: 120, maxTokens: null, temperature: null }
 
 const PROVIDER_LABELS: Record<string, string> = {
   openai: 'OpenAI Compatible',
@@ -93,7 +95,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
   const isNew = model === null
   const [form, setForm] = useState<ModelForm>(
     model
-      ? { name: model.name, provider: model.provider, baseUrl: model.baseUrl, apiKey: '', modelId: model.modelId, enabled: model.enabled, timeoutSecs: model.timeoutSecs ?? 120, maxTokens: model.maxTokens ?? null }
+      ? { name: model.name, provider: model.provider, baseUrl: model.baseUrl, apiKey: '', modelId: model.modelId, enabled: model.enabled, timeoutSecs: model.timeoutSecs ?? 120, maxTokens: model.maxTokens ?? null, temperature: model.temperature ?? null }
       : EMPTY_FORM
   )
   const [saving, setSaving]         = useState(false)
@@ -109,7 +111,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
     if (!form.name || !form.baseUrl || !form.modelId) { setError('Name, Base URL, and Model ID are required.'); return }
     setSaving(true); setError(null)
     try {
-      const payload = { name: form.name, provider: form.provider, baseUrl: form.baseUrl, apiKey: form.apiKey || undefined, modelId: form.modelId, enabled: form.enabled, timeoutSecs: form.timeoutSecs, maxTokens: form.maxTokens }
+      const payload = { name: form.name, provider: form.provider, baseUrl: form.baseUrl, apiKey: form.apiKey || undefined, modelId: form.modelId, enabled: form.enabled, timeoutSecs: form.timeoutSecs, maxTokens: form.maxTokens, temperature: form.temperature }
       const res = model
         ? await fetch(`/api/admin/models/${model.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         : await fetch('/api/admin/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -235,6 +237,21 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
                 value={form.maxTokens ?? ''}
                 onChange={e => setForm(f => ({ ...f, maxTokens: e.target.value ? Math.max(1, parseInt(e.target.value)) : null }))}
                 placeholder="unlimited"
+                className={inputCls}
+              />
+            </FormField>
+            <FormField label="Temperature (blank = model default)">
+              <input
+                type="number"
+                min={0}
+                max={2}
+                step={0.05}
+                value={form.temperature ?? ''}
+                onChange={e => {
+                  const v = parseFloat(e.target.value)
+                  setForm(f => ({ ...f, temperature: e.target.value === '' ? null : Math.min(2, Math.max(0, isNaN(v) ? 0 : v)) }))
+                }}
+                placeholder="model default"
                 className={inputCls}
               />
             </FormField>
