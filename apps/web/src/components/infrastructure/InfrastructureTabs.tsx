@@ -220,9 +220,9 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [form, setForm] = useState(BLANK_FORM)
-  // Dynamic key-mapping rows inside the modal
-  const [dataKeys, setDataKeys] = useState<Array<{ secretKey: string; remoteKey: string }>>([
-    { secretKey: '', remoteKey: '' },
+  // Each row = one secret key/value pair written directly to Vault
+  const [secretValues, setSecretValues] = useState<Array<{ vaultKey: string; value: string; k8sKey: string }>>([
+    { vaultKey: '', value: '', k8sKey: '' },
   ])
 
   const load = useCallback(async () => {
@@ -244,16 +244,17 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
 
   const openModal = () => {
     setForm(BLANK_FORM)
-    setDataKeys([{ secretKey: '', remoteKey: '' }])
+    setSecretValues([{ vaultKey: '', value: '', k8sKey: '' }])
     setModalError(null)
     setShowModal(true)
   }
 
   const handleSave = async () => {
-    if (!form.name.trim())     { setModalError('Secret name is required'); return }
-    if (!form.remoteRef.trim()) { setModalError('Vault path (remoteRef) is required'); return }
+    if (!form.name.trim())      { setModalError('Secret name is required'); return }
+    if (!form.remoteRef.trim()) { setModalError('Vault path is required'); return }
 
-    const validKeys = dataKeys.filter(k => k.secretKey.trim() && k.remoteKey.trim())
+    const validRows = secretValues.filter(r => r.vaultKey.trim())
+    if (validRows.length === 0) { setModalError('At least one secret key is required'); return }
 
     setSaving(true); setModalError(null)
     try {
@@ -269,7 +270,7 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
           remoteRef:        form.remoteRef.trim(),
           targetSecretName: form.targetSecretName.trim() || null,
           refreshInterval:  form.refreshInterval.trim() || '1h',
-          dataKeys:         validKeys,
+          secretValues:     validRows,   // written to Vault — never stored in DB
           tags:             form.tags.split(',').map(t => t.trim()).filter(Boolean),
         }),
       })
@@ -295,10 +296,10 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
     }
   }
 
-  const addKeyRow    = () => setDataKeys(prev => [...prev, { secretKey: '', remoteKey: '' }])
-  const removeKeyRow = (i: number) => setDataKeys(prev => prev.filter((_, idx) => idx !== i))
-  const updateKeyRow = (i: number, field: 'secretKey' | 'remoteKey', val: string) =>
-    setDataKeys(prev => prev.map((r, idx) => idx === i ? { ...r, [field]: val } : r))
+  const addValueRow    = () => setSecretValues(prev => [...prev, { vaultKey: '', value: '', k8sKey: '' }])
+  const removeValueRow = (i: number) => setSecretValues(prev => prev.filter((_, idx) => idx !== i))
+  const updateValueRow = (i: number, f: 'vaultKey' | 'value' | 'k8sKey', val: string) =>
+    setSecretValues(prev => prev.map((r, idx) => idx === i ? { ...r, [f]: val } : r))
 
   const field = (label: string, node: React.ReactNode, hint?: string) => (
     <div className="space-y-1">
@@ -455,9 +456,8 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
 
               {/* Info banner */}
               <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2.5 text-[10px] text-text-muted leading-relaxed">
-                This creates an <span className="text-accent font-mono">ExternalSecret</span> CRD definition stored in ORION.
-                It references a secret in <span className="text-accent">HashiCorp Vault</span> and the{' '}
-                <span className="text-accent">External Secrets Operator</span> will sync it into the cluster as a Kubernetes Secret.
+                Secret values are written <span className="text-accent font-semibold">directly to Vault</span> and are never stored in ORION.
+                Only the path and key names are saved here. ESO then syncs the values into the cluster as a Kubernetes Secret automatically.
               </div>
 
               {/* Identity */}
@@ -498,10 +498,10 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
                     </select>
                   )}
                 </div>
-                {field('Vault Path (remoteRef) *',
-                  <input className={inputCls} placeholder="secret/data/myapp/db" value={form.remoteRef}
+                {field('Vault Path *',
+                  <input className={inputCls} placeholder="myapp/db" value={form.remoteRef}
                     onChange={e => setForm(f => ({ ...f, remoteRef: e.target.value }))} />,
-                  'Path to the secret in Vault. For KV v2 use "secret/data/<path>".'
+                  'KV v2 path relative to the "secret" mount (e.g. "myapp/db"). Values will be written here.'
                 )}
               </div>
 
@@ -529,28 +529,34 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
                 </div>
               </div>
 
-              {/* Key mappings */}
+              {/* Secret values — written to Vault, never stored in DB */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Key Mappings</p>
-                  <button onClick={addKeyRow} className="inline-flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition-colors">
-                    <Plus size={10} /> Add row
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Secret Values</p>
+                    <p className="text-[10px] text-text-muted mt-0.5">Sent directly to Vault · never stored in ORION</p>
+                  </div>
+                  <button onClick={addValueRow} className="inline-flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition-colors">
+                    <Plus size={10} /> Add key
                   </button>
                 </div>
-                <p className="text-[10px] text-text-muted">Map Vault field names to K8s Secret data keys. Leave empty to sync all fields.</p>
                 <div className="space-y-1.5">
-                  <div className="grid grid-cols-[1fr_1fr_auto] gap-2 text-[10px] text-text-muted px-0.5">
-                    <span>Vault field (remoteKey)</span>
-                    <span>K8s key (secretKey)</span>
+                  <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 text-[10px] text-text-muted px-0.5">
+                    <span>Vault key</span>
+                    <span>Value <span className="text-accent">*</span></span>
+                    <span>K8s key (optional)</span>
                     <span />
                   </div>
-                  {dataKeys.map((row, i) => (
-                    <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
-                      <input className={inputCls} placeholder="password" value={row.remoteKey}
-                        onChange={e => updateKeyRow(i, 'remoteKey', e.target.value)} />
-                      <input className={inputCls} placeholder="DB_PASSWORD" value={row.secretKey}
-                        onChange={e => updateKeyRow(i, 'secretKey', e.target.value)} />
-                      <button onClick={() => removeKeyRow(i)} disabled={dataKeys.length === 1}
+                  {secretValues.map((row, i) => (
+                    <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
+                      <input className={inputCls} placeholder="password" value={row.vaultKey}
+                        onChange={e => updateValueRow(i, 'vaultKey', e.target.value)} />
+                      <input className={inputCls} type="password" placeholder="••••••••" value={row.value}
+                        onChange={e => updateValueRow(i, 'value', e.target.value)}
+                        autoComplete="new-password" />
+                      <input className={inputCls} placeholder={row.vaultKey || 'DB_PASSWORD'} value={row.k8sKey}
+                        onChange={e => updateValueRow(i, 'k8sKey', e.target.value)} />
+                      <button onClick={() => removeValueRow(i)} disabled={secretValues.length === 1}
                         className="p-1 rounded text-text-muted hover:text-status-error transition-colors disabled:opacity-30">
                         <X size={12} />
                       </button>
@@ -580,7 +586,7 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
               </button>
               <button onClick={handleSave} disabled={saving} className="px-4 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50 flex items-center gap-1.5 transition-colors">
                 {saving ? <RefreshCw size={11} className="animate-spin" /> : <KeyRound size={11} />}
-                {saving ? 'Saving…' : 'Save Secret'}
+                {saving ? 'Writing to Vault…' : 'Write to Vault'}
               </button>
             </div>
           </div>
