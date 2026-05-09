@@ -453,8 +453,11 @@ export async function triggerRoomAgentReplies(
           reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl, !!toolContext)
         } else {
           // claude / claude:<model> — routed through orion-claude sidecar
+          // hasTools is forced false: the sidecar /run/collect endpoint does not support
+          // tool execution — passing true causes the model to attempt tool calls that the
+          // CLI cannot handle, resulting in a non-zero exit and HTTP 500.
           const claudeModel = llm.startsWith('claude:') ? llm.slice('claude:'.length) : undefined
-          reply = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel, !!toolContext)
+          reply = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel, false)
           if (reply === null) {
             // Claude is unavailable — post a message on the agent's behalf rather than silently skipping
             console.warn(`[room-agents] ${agent.name}: Claude unavailable, posting unavailability notice`)

@@ -364,9 +364,53 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
+// ── Token refresh watchdog ────────────────────────────────────────────────────
+// Checks every 30 minutes. If the token expires within 2 hours, runs
+// `claude auth refresh` to get a fresh token before it goes invalid.
+
+function scheduleTokenRefresh() {
+  const CHECK_INTERVAL_MS = 30 * 60 * 1000   // 30 min
+  const REFRESH_THRESHOLD_MS = 2 * 60 * 60 * 1000 // refresh if expiry < 2h away
+
+  function check() {
+    const status = getCredStatus()
+    if (!status.authenticated) {
+      console.warn('[orion-claude] token-watchdog: not authenticated, skipping refresh check')
+      return
+    }
+    if (!status.expiresAt) return  // no expiry info — nothing to do
+
+    const expiresAt = new Date(status.expiresAt).getTime()
+    const now = Date.now()
+    const ttl = expiresAt - now
+
+    if (ttl < REFRESH_THRESHOLD_MS) {
+      console.log(`[orion-claude] token-watchdog: token expires in ${Math.round(ttl / 60000)}min — refreshing`)
+      execFile('claude', ['auth', 'refresh'], { env: process.env, timeout: 30000 }, (err, stdout, stderr) => {
+        if (err) {
+          console.error('[orion-claude] token-watchdog: refresh failed:', err.message, stderr?.slice(0, 200))
+        } else {
+          console.log('[orion-claude] token-watchdog: refresh succeeded')
+          // Copy refreshed credentials to shared volume if present
+          const sharedPath = '/claude-creds/.credentials.json'
+          try {
+            fs.mkdirSync('/claude-creds', { recursive: true })
+            fs.copyFileSync(CREDS_PATH, sharedPath)
+          } catch {}
+        }
+      })
+    }
+  }
+
+  // Run once at startup, then on interval
+  check()
+  setInterval(check, CHECK_INTERVAL_MS)
+}
+
 server.listen(PORT, () => {
   console.log(`[orion-claude] Listening on :${PORT}`)
   console.log(`[orion-claude] Credentials path: ${CREDS_PATH}`)
   const status = getCredStatus()
   console.log(`[orion-claude] Auth status: ${JSON.stringify(status)}`)
+  scheduleTokenRefresh()
 })
