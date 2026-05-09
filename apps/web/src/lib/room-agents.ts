@@ -110,7 +110,9 @@ async function callClaude(
   agentId?: string,
   roomId?: string,
 ): Promise<string | null> {
-  const useMcp = hasTools && !!agentId && !!roomId
+  // Always enable MCP when in a room context — Claude should have the same tool access
+  // as OpenAI-compatible agents. maxTurns controls depth; hasTools controls prompt framing.
+  const useMcp = !!agentId && !!roomId
   const toolMode: false | 'legacy' | 'mcp' = useMcp ? 'mcp' : hasTools ? 'legacy' : false
   const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, toolMode)
   const historyBlock = history.length
@@ -123,8 +125,9 @@ async function callClaude(
     body:    JSON.stringify({
       prompt,
       systemPrompt: sys,
-      // MCP context: sidecar writes .mcp.json and gives Claude up to 10 turns
-      ...(useMcp ? { agentId, roomId, maxTurns: 10 } : { maxTurns: 1 }),
+      // MCP context: always enabled in rooms so Claude has the same tools as other agents.
+      // maxTurns: 10 when tools explicitly enabled on agent, 3 otherwise (conversational mode).
+      ...(useMcp ? { agentId, roomId, maxTurns: hasTools ? 10 : 3 } : { maxTurns: 1 }),
       ...(modelId ? { model: modelId } : {}),
     }),
     // MCP tool calls can take longer — allow 5 min for tool-using sessions
