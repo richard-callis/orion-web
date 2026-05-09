@@ -659,6 +659,144 @@ async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Pr
   }
 }
 
+async function handleGetClusterApiResources(): Promise<string> {
+  try {
+    const { customApi } = await import('./k8s')
+
+    const builtins = `Built-in Kubernetes resources (always available):
+  v1: ConfigMap, Endpoints, Namespace, Node, PersistentVolume, PersistentVolumeClaim, Pod, Secret, Service, ServiceAccount
+  apps/v1: DaemonSet, Deployment, ReplicaSet, StatefulSet
+  batch/v1: CronJob, Job
+  networking.k8s.io/v1: Ingress, IngressClass, NetworkPolicy
+  rbac.authorization.k8s.io/v1: ClusterRole, ClusterRoleBinding, Role, RoleBinding
+  storage.k8s.io/v1: StorageClass`
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const crdRes: any = await customApi.listClusterCustomObject('apiextensions.k8s.io', 'v1', 'customresourcedefinitions')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const crds: any[] = crdRes?.body?.items ?? crdRes?.items ?? []
+
+    // Group CRDs by API group+version
+    const groupMap = new Map<string, string[]>()
+    for (const crd of crds) {
+      const group = crd.spec?.group ?? ''
+      const kinds: string[] = []
+      for (const v of (crd.spec?.versions ?? [])) {
+        if (v.served) {
+          const key = `${group}/${v.name}`
+          if (!groupMap.has(key)) groupMap.set(key, [])
+          groupMap.get(key)!.push(crd.spec?.names?.kind ?? '')
+        }
+      }
+      void kinds
+    }
+
+    let crdLines = ''
+    if (groupMap.size === 0) {
+      crdLines = '  (none found or cluster unreachable)'
+    } else {
+      for (const [groupVersion, kinds] of Array.from(groupMap.entries()).sort()) {
+        crdLines += `  ${groupVersion}: ${kinds.sort().join(', ')}\n`
+      }
+      crdLines = crdLines.trimEnd()
+    }
+
+    return `Cluster API Resources:\n\n${builtins}\n\nCustom CRDs installed in this cluster:\n${crdLines}\n\nIMPORTANT: Only use apiVersions listed above. Any other apiVersion does not exist and will cause ArgoCD sync failures.`
+  } catch (e) {
+    return `Error fetching cluster API resources: ${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+async function handleValidateManifest(args: unknown): Promise<string> {
+  const { files } = parseArgs(args) as {
+    files?: Array<{ path: string; content: string }>
+  }
+
+  if (!files?.length) return 'Error: files array is required'
+
+  try {
+    const { customApi } = await import('./k8s')
+
+    // Fetch installed CRD groups from the cluster
+    const installedCrdGroups = new Set<string>()
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const crdRes: any = await customApi.listClusterCustomObject('apiextensions.k8s.io', 'v1', 'customresourcedefinitions')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const crds: any[] = crdRes?.body?.items ?? crdRes?.items ?? []
+      for (const crd of crds) {
+        const group = crd.spec?.group ?? ''
+        if (group) installedCrdGroups.add(group)
+      }
+    } catch {
+      // Cluster unreachable — we'll still check built-ins
+    }
+
+    const builtinGroups = new Set([
+      '', 'apps', 'batch', 'networking.k8s.io', 'rbac.authorization.k8s.io',
+      'storage.k8s.io', 'policy', 'autoscaling', 'apiextensions.k8s.io',
+      'admissionregistration.k8s.io', 'coordination.k8s.io',
+    ])
+
+    interface ParsedDoc {
+      filePath: string
+      apiVersion: string
+      kind: string
+      group: string
+    }
+
+    const docs: ParsedDoc[] = []
+    for (const file of files) {
+      // Split on YAML document separator
+      const parts = file.content.split(/^---\s*$/m).filter(p => p.trim())
+      for (const part of parts) {
+        const avMatch = part.match(/^apiVersion:\s*(.+)$/m)
+        const kindMatch = part.match(/^kind:\s*(.+)$/m)
+        if (!avMatch || !kindMatch) continue
+        const apiVersion = avMatch[1].trim()
+        const kind = kindMatch[1].trim()
+        // Extract group from apiVersion (e.g. "apps/v1" → "apps", "v1" → "")
+        const slashIdx = apiVersion.lastIndexOf('/')
+        const group = slashIdx >= 0 ? apiVersion.slice(0, slashIdx) : ''
+        docs.push({ filePath: file.path, apiVersion, kind, group })
+      }
+    }
+
+    if (docs.length === 0) {
+      return 'No parseable Kubernetes documents found in the provided files (missing apiVersion or kind).'
+    }
+
+    let passed = 0
+    let failed = 0
+    const lines: string[] = [`Manifest validation results (${files.length} files, ${docs.length} documents):\n`]
+
+    for (const doc of docs) {
+      const isBuiltin = builtinGroups.has(doc.group)
+      const isCrd = installedCrdGroups.has(doc.group)
+      if (isBuiltin || isCrd) {
+        lines.push(`✅ ${doc.apiVersion}/${doc.kind} — ${doc.filePath}`)
+        passed++
+      } else {
+        lines.push(`❌ ${doc.apiVersion}/${doc.kind} — ${doc.filePath}`)
+        lines.push(`   CRD group "${doc.group}" is not installed in this cluster.`)
+        lines.push(`   Install the required operator first or check the correct apiVersion.`)
+        failed++
+      }
+    }
+
+    lines.push('')
+    if (failed === 0) {
+      return `✅ All ${passed} documents validated successfully against cluster API resources.\nSafe to call orion_propose_gitops.`
+    }
+
+    lines.push(`Summary: ${passed} passed, ${failed} failed`)
+    lines.push('❌ DO NOT call orion_propose_gitops until all failures are resolved.')
+    return lines.join('\n')
+  } catch (e) {
+    return `Error validating manifests: ${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
 async function handleRequestTool(args: unknown, ctx: ToolExecutionContext): Promise<string> {
   const { tool_description, tool_name } = parseArgs(args) as {
     tool_description?: string
@@ -1254,7 +1392,7 @@ registerTool({
 
 registerTool({
   name: 'orion_propose_gitops',
-  description: 'Propose a GitOps change for a cluster environment. Creates a branch, commits manifests, opens a PR, and auto-merges if the change matches policy (e.g. scaling, patch image tags). Use this for ALL infrastructure work — deploying services, creating configmaps/secrets, updating ingresses, etc.\n\nREQUIRED: you must know the target environment. Ask the Atlas in the feature room, or check orion_list_agents for the Atlas. If you have no way to get the environment designation, use environment_id: "localhost" as a fallback.\n\nRules:\n- Always include a clear reasoning field explaining why the change is needed\n- Provide operation_description for policy classification (e.g. "deploy new service", "update image tag")\n- Write manifests with namespace, proper labels, and correct resource types\n- For deployments: include namespace selector, resource limits if appropriate\n- For services: use ClusterIP unless ingress is explicitly needed',
+  description: 'IMPORTANT: If any manifest uses a non-standard apiVersion (anything outside v1, apps/v1, batch/v1, networking.k8s.io/v1, rbac.authorization.k8s.io/v1), you MUST call validate_manifest first to confirm those CRDs exist in the cluster. Proposing manifests with non-existent CRDs causes ArgoCD sync failures and crash loops. \n\nPropose a GitOps change for a cluster environment. Creates a branch, commits manifests, opens a PR, and auto-merges if the change matches policy (e.g. scaling, patch image tags). Use this for ALL infrastructure work — deploying services, creating configmaps/secrets, updating ingresses, etc.\n\nREQUIRED: you must know the target environment. Ask the Atlas in the feature room, or check orion_list_agents for the Atlas. If you have no way to get the environment designation, use environment_id: "localhost" as a fallback.\n\nRules:\n- Always include a clear reasoning field explaining why the change is needed\n- Provide operation_description for policy classification (e.g. "deploy new service", "update image tag")\n- Write manifests with namespace, proper labels, and correct resource types\n- For deployments: include namespace selector, resource limits if appropriate\n- For services: use ClusterIP unless ingress is explicitly needed',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1281,6 +1419,47 @@ registerTool({
   parallelSafe: false,
   availableIn: 'both',
   handler: handleProposeGitops,
+})
+
+registerTool({
+  name: 'get_cluster_api_resources',
+  description: 'List all API resources available in the cluster — built-in Kubernetes resource types plus all installed CRDs. Use this before writing manifests to verify that the apiVersions and kinds you plan to use actually exist. Prevents ArgoCD sync failures caused by referencing non-existent CRDs.',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+  tier: 'read',
+  parallelSafe: true,
+  availableIn: 'both',
+  handler: () => handleGetClusterApiResources(),
+})
+
+registerTool({
+  name: 'validate_manifest',
+  description: 'Validate Kubernetes manifest files against the cluster\'s actual API resources. Checks each document\'s apiVersion/kind against built-in Kubernetes resources and installed CRDs. Returns a pass/fail report. Call this before orion_propose_gitops whenever manifests use non-standard apiVersions.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      files: {
+        type: 'array',
+        description: 'Array of manifest files to validate.',
+        items: {
+          type: 'object',
+          properties: {
+            path:    { type: 'string', description: 'File path (for display in the report)' },
+            content: { type: 'string', description: 'Full YAML content of the file' },
+          },
+          required: ['path', 'content'],
+        },
+      },
+    },
+    required: ['files'],
+  },
+  tier: 'read',
+  parallelSafe: true,
+  availableIn: 'both',
+  handler: handleValidateManifest,
 })
 
 registerTool({
