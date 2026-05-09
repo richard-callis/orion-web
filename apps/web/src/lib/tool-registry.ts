@@ -1948,7 +1948,7 @@ Use this after completing or investigating any task. Structure content for maxim
         data: {
           content:   content.trim(),
           folder:    folder.trim(),
-          tags:      tags ? tags : existing.tags,
+          tags:      tags ? tags : (existing.tags ?? undefined),
           updatedAt: new Date(),
         },
       })
