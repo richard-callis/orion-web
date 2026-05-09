@@ -54,6 +54,8 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       # Claude Code sidecar URL (for OAuth bootstrap and credential status)
       ORION_CLAUDE_URL: ${ORION_CLAUDE_URL:-http://orion-claude:3100}
+      # MCP service token — shared with orion-claude so Claude can call ORION tools via MCP
+      ORION_MCP_TOKEN: ${ORION_MCP_TOKEN:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - orion-claude-creds:/claude-creds
@@ -295,6 +297,8 @@ services:
     environment:
       PORT: 3100
       CLAUDE_HOME: /root/.claude
+      ORION_URL: http://orion:3000
+      ORION_MCP_TOKEN: ${ORION_MCP_TOKEN:-}
     deploy:
       resources:
         limits:
