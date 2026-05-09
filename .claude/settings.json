@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash(git push*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/orion/.claude/hooks/check-merged-pr.sh",
+            "timeout": 10,
+            "statusMessage": "Checking if branch PR is already merged..."
+          }
+        ]
+      }
+    ]
+  }
+}
