@@ -699,18 +699,12 @@ async function runWatchers() {
 // ── GitOps PR sync ─────────────────────────────────────────────────────────────
 
 /**
- * Poll Gitea for the current state of any open GitOpsPRs and update the DB.
- * This is a fallback for when webhooks don't fire (e.g. Gitea delivery queue issues).
- * Runs every 60s — cheap since it only queries PRs that are still marked 'open'.
+ * Poll Gitea for open PRs across all environments.
+ * - Discovers new orion/auto/* PRs not yet tracked in the DB
+ * - Updates status of existing tracked PRs that have since been merged or closed
+ * Runs every 60s as a fallback for when webhooks don't fire.
  */
 async function syncGitOpsPRs() {
-  const openPRs = await prisma.gitOpsPR.findMany({
-    where: { status: 'open' },
-    include: { environment: { select: { gitOwner: true, gitRepo: true } } },
-  })
-
-  if (openPRs.length === 0) return
-
   const { getGitProvider } = await import('./lib/git-provider')
   let provider: Awaited<ReturnType<typeof getGitProvider>>
   try {
@@ -720,14 +714,50 @@ async function syncGitOpsPRs() {
     return
   }
 
+  // ── 1. Discover open PRs from Gitea and upsert into DB ──────────────────────
+  const envs = await prisma.environment.findMany({
+    where: { gitOwner: { not: null }, gitRepo: { not: null } },
+    select: { id: true, gitOwner: true, gitRepo: true },
+  })
+
+  for (const env of envs) {
+    if (!env.gitOwner || !env.gitRepo) continue
+    try {
+      const remotePRs = await provider.listOpenPRs(env.gitOwner, env.gitRepo)
+      for (const rpr of remotePRs) {
+        if (!rpr.headBranch.startsWith('orion/')) continue
+        await prisma.gitOpsPR.upsert({
+          where: { environmentId_prNumber: { environmentId: env.id, prNumber: rpr.number } },
+          create: {
+            environmentId: env.id,
+            prNumber:      rpr.number,
+            title:         rpr.title,
+            operation:     'unknown',
+            decision:      'review',
+            status:        'open',
+            prUrl:         rpr.htmlUrl,
+            branch:        rpr.headBranch,
+          },
+          update: {},
+        })
+      }
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  // ── 2. Update status of tracked open PRs that have since been merged/closed ──
+  const openPRs = await prisma.gitOpsPR.findMany({
+    where: { status: 'open' },
+    include: { environment: { select: { gitOwner: true, gitRepo: true } } },
+  })
+
   for (const pr of openPRs) {
     const { gitOwner, gitRepo } = pr.environment
     if (!gitOwner || !gitRepo) continue
 
     try {
-      // Fetch current PR state from git provider
       const remotePR = await provider.getPR(gitOwner, gitRepo, pr.prNumber)
-
       const merged = remotePR.merged
       const closed = remotePR.state === 'closed' || remotePR.state === 'merged'
 
@@ -742,7 +772,7 @@ async function syncGitOpsPRs() {
         log(`GitOps sync: PR#${pr.prNumber} in ${gitOwner}/${gitRepo} → ${merged ? 'merged' : 'closed'}`)
       }
     } catch {
-      // Non-fatal — individual PR fetch failures are skipped
+      // Non-fatal
     }
   }
 }
