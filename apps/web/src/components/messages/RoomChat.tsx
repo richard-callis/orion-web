@@ -11,7 +11,9 @@ function MessageContent({ content }: { content: string }) {
   return (
     <>
       {parts.map((part, i) =>
-        part.startsWith('@')
+        part.toLowerCase() === '@everyone'
+          ? <span key={i} className="text-yellow-400 font-semibold">{part}</span>
+          : part.startsWith('@')
           ? <span key={i} className="text-accent font-medium">{part}</span>
           : <span key={i}>{part}</span>
       )}
@@ -110,8 +112,12 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     isAgent: !!m.agentId,
   })).filter(m => m.name)
 
+  const everyoneOption = { id: '__everyone__', name: 'everyone', isAgent: false }
   const mentionOptions = mentionSearch !== null
-    ? mentionableMembers.filter(m => m.name.toLowerCase().includes(mentionSearch.toLowerCase()))
+    ? [
+        ...('everyone'.includes(mentionSearch.toLowerCase()) ? [everyoneOption] : []),
+        ...mentionableMembers.filter(m => m.name.toLowerCase().includes(mentionSearch.toLowerCase())),
+      ]
     : []
 
   const handleMessageChange = (value: string) => {
@@ -444,6 +450,9 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
                         <div className="flex items-center gap-2 px-3 py-1.5 border-b border-status-info/20 bg-status-info/10">
                           <Terminal size={12} className="text-status-info" />
                           <span className="font-mono text-status-info">{tc?.tool ?? msg.content}</span>
+                          {msg.sender?.name && (
+                            <span className="ml-auto text-[9px] text-status-info/60 font-sans">{msg.sender.name}</span>
+                          )}
                         </div>
                         {tc?.output && (
                           <div className="px-3 py-2 border-t border-status-info/20 font-mono text-text-muted whitespace-pre-wrap max-h-48 overflow-y-auto">{tc.output}</div>
@@ -509,8 +518,13 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
                 onMouseDown={e => { e.preventDefault(); insertMention(m.name) }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-xs text-text-secondary hover:bg-bg-raised hover:text-text-primary transition-colors"
               >
-                {m.isAgent ? <Bot size={11} className="text-accent flex-shrink-0" /> : <UserIcon size={11} className="text-text-muted flex-shrink-0" />}
-                <span>@{m.name}</span>
+                {m.id === '__everyone__'
+                  ? <AtSign size={11} className="text-yellow-400 flex-shrink-0" />
+                  : m.isAgent
+                  ? <Bot size={11} className="text-accent flex-shrink-0" />
+                  : <UserIcon size={11} className="text-text-muted flex-shrink-0" />}
+                <span className={m.id === '__everyone__' ? 'text-yellow-400 font-semibold' : ''}>@{m.name}</span>
+                {m.id === '__everyone__' && <span className="text-[9px] text-text-muted ml-auto">notify all agents</span>}
               </button>
             ))}
           </div>
