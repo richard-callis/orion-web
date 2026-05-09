@@ -19,8 +19,11 @@ services:
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       ORION_ENCRYPTION_KEY: ${ORION_ENCRYPTION_KEY}
       ORION_UNSEALER_TOKEN: ${ORION_UNSEALER_TOKEN}
-      VAULT_ADDR: http://vault:8200
+      VAULT_ADDR: https://vault-proxy:8200
       VAULT_TOKEN: ${VAULT_TOKEN}
+      VAULT_CACERT: /vault-proxy-certs/ca.crt
+      VAULT_CLIENT_CERT: /vault-proxy-certs/orion-client.crt
+      VAULT_CLIENT_KEY: /vault-proxy-certs/orion-client.key
       # Git provider — configured via first-run wizard (stored in DB).
       # These env vars are used as fallback before the wizard completes.
       GITEA_URL: http://gitea:3000
