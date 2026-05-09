@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "managed_secrets" (
+CREATE TABLE IF NOT EXISTS "managed_secrets" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
@@ -17,18 +17,25 @@ CREATE TABLE "managed_secrets" (
     "appliedAt" TIMESTAMP(3),
     "createdBy" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "managed_secrets_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
-CREATE INDEX "managed_secrets_environmentId_idx" ON "managed_secrets"("environmentId");
+CREATE INDEX IF NOT EXISTS "managed_secrets_environmentId_idx" ON "managed_secrets"("environmentId");
 
--- AddForeignKey
-ALTER TABLE "managed_secrets" ADD CONSTRAINT "managed_secrets_environmentId_fkey"
-    FOREIGN KEY ("environmentId") REFERENCES "Environment"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- AddForeignKey (idempotent)
+DO $$ BEGIN
+  ALTER TABLE "managed_secrets" ADD CONSTRAINT "managed_secrets_environmentId_fkey"
+    FOREIGN KEY ("environmentId") REFERENCES "Environment"("id")
+    ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
--- AddForeignKey
-ALTER TABLE "managed_secrets" ADD CONSTRAINT "managed_secrets_createdBy_fkey"
-    FOREIGN KEY ("createdBy") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "managed_secrets" ADD CONSTRAINT "managed_secrets_createdBy_fkey"
+    FOREIGN KEY ("createdBy") REFERENCES "User"("id")
+    ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
