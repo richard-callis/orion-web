@@ -51,7 +51,10 @@ export class GiteaGitProvider implements GitProvider {
       try { detail = await res.text() } catch { /* ignore */ }
       throw new Error(`Gitea ${init.method ?? 'GET'} ${path} → ${res.status}: ${detail}`)
     }
-    return res.json() as Promise<T>
+    // Some Gitea endpoints (e.g. POST .../merge) return HTTP 200 with an empty body
+    const text = await res.text()
+    if (!text) return undefined as T
+    return JSON.parse(text) as T
   }
 
   // ── Repos ──────────────────────────────────────────────────────────────────
@@ -168,6 +171,11 @@ export class GiteaGitProvider implements GitProvider {
   async getPR(owner: string, repo: string, prNumber: number): Promise<GitPR> {
     const pr = await this.fetch<GiteaPR>(`/repos/${owner}/${repo}/pulls/${prNumber}`)
     return toGitPR(pr)
+  }
+
+  async listOpenPRs(owner: string, repo: string): Promise<GitPR[]> {
+    const prs = await this.fetch<GiteaPR[]>(`/repos/${owner}/${repo}/pulls?state=open&limit=50`)
+    return (prs ?? []).map(toGitPR)
   }
 
   async mergePR(owner: string, repo: string, prNumber: number, message?: string): Promise<void> {
