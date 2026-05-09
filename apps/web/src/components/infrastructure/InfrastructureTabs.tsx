@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { RefreshCw, ServerCrash, Server, Database, KeyRound, HardDrive, FileText, GitBranch, Plus, X, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
+import { RefreshCw, ServerCrash, Server, Database, KeyRound, HardDrive, FileText, GitBranch, Plus, X, Trash2, ChevronDown, ChevronUp, Pencil } from 'lucide-react'
 import { IngressPage } from '@/components/ingress/IngressPage'
 import { GitOpsPage } from '@/components/gitops/GitOpsPage'
 import { NodeGrid } from '@/components/infrastructure/NodeGrid'
@@ -224,6 +224,11 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
   const [secretValues, setSecretValues] = useState<Array<{ vaultKey: string; value: string; k8sKey: string }>>([
     { vaultKey: '', value: '', k8sKey: '' },
   ])
+  // Edit modal state — update values on an existing secret
+  const [editSecret, setEditSecret] = useState<ManagedSecret | null>(null)
+  const [editValues, setEditValues] = useState<Array<{ vaultKey: string; value: string; k8sKey: string }>>([])
+  const [editSaving, setEditSaving] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     if (!envId) return
@@ -293,6 +298,40 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
       if (expandedId === id) setExpandedId(null)
     } finally {
       setDeleting(null)
+    }
+  }
+
+  const openEditModal = (s: ManagedSecret) => {
+    // Pre-populate key names from dataKeys; values start blank (never stored)
+    setEditValues(
+      s.dataKeys.length > 0
+        ? s.dataKeys.map(k => ({ vaultKey: k.remoteKey, value: '', k8sKey: k.secretKey }))
+        : [{ vaultKey: '', value: '', k8sKey: '' }]
+    )
+    setEditError(null)
+    setEditSecret(s)
+  }
+
+  const handleEditSave = async () => {
+    if (!editSecret) return
+    const validRows = editValues.filter(r => r.vaultKey.trim() && r.value.trim())
+    if (validRows.length === 0) { setEditError('Enter at least one key and value'); return }
+
+    setEditSaving(true); setEditError(null)
+    try {
+      const res = await fetch(`/api/environments/${envId}/secrets/${editSecret.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secretValues: validRows }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setEditError((data as { error?: string }).error ?? `HTTP ${res.status}`); return }
+      setEditSecret(null)
+      await load()
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setEditSaving(false)
     }
   }
 
@@ -373,6 +412,13 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
                     <div className="flex items-center justify-end gap-1">
                       {expandedId === s.id ? <ChevronUp size={12} className="text-text-muted" /> : <ChevronDown size={12} className="text-text-muted" />}
                       <button
+                        onClick={e => { e.stopPropagation(); openEditModal(s) }}
+                        className="p-1 rounded text-text-muted hover:text-accent transition-colors"
+                        title="Update secret values in Vault"
+                      >
+                        <Pencil size={12} />
+                      </button>
+                      <button
                         onClick={e => { e.stopPropagation(); handleDelete(s.id) }}
                         disabled={deleting === s.id}
                         className="p-1 rounded text-text-muted hover:text-status-error transition-colors disabled:opacity-40"
@@ -434,6 +480,99 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
           </tbody>
         </table>
       </div>
+
+      {/* Edit Secret Values Modal */}
+      {editSecret && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setEditSecret(null)}>
+          <div
+            className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <Pencil size={14} className="text-accent" />
+                <span className="text-sm font-semibold text-text-primary">Update Secret Values</span>
+                <span className="font-mono text-xs text-text-muted">· {editSecret.name}</span>
+              </div>
+              <button onClick={() => setEditSecret(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2.5 text-[10px] text-text-muted leading-relaxed">
+                Values are written <span className="text-accent font-semibold">directly to Vault</span> at <span className="font-mono text-text-secondary">{editSecret.remoteRef}</span> and are never stored in ORION.
+                Current values are in Vault — enter new values to overwrite them.
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Secret Values</p>
+                  <button
+                    onClick={() => setEditValues(prev => [...prev, { vaultKey: '', value: '', k8sKey: '' }])}
+                    className="inline-flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition-colors"
+                  >
+                    <Plus size={10} /> Add key
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 text-[10px] text-text-muted px-0.5">
+                    <span>Vault key</span>
+                    <span>New value <span className="text-accent">*</span></span>
+                    <span>K8s key (optional)</span>
+                    <span />
+                  </div>
+                  {editValues.map((row, i) => (
+                    <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
+                      <input
+                        className="w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                        placeholder="password"
+                        value={row.vaultKey}
+                        onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, vaultKey: e.target.value } : r))}
+                      />
+                      <input
+                        className="w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                        type="password"
+                        placeholder="new value"
+                        value={row.value}
+                        onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, value: e.target.value } : r))}
+                        autoComplete="new-password"
+                      />
+                      <input
+                        className="w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                        placeholder={row.vaultKey || 'DB_PASSWORD'}
+                        value={row.k8sKey}
+                        onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, k8sKey: e.target.value } : r))}
+                      />
+                      <button
+                        onClick={() => setEditValues(prev => prev.filter((_, idx) => idx !== i))}
+                        disabled={editValues.length === 1}
+                        className="p-1 rounded text-text-muted hover:text-status-error transition-colors disabled:opacity-30"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {editError && (
+              <div className="px-5 py-2 border-t border-status-error/30 bg-status-error/10 text-xs text-status-error flex items-center gap-2 flex-shrink-0">
+                <ServerCrash size={12} />
+                <span>{editError}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle flex-shrink-0">
+              <button onClick={() => setEditSecret(null)} className="px-3 py-1.5 rounded text-xs border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+                Cancel
+              </button>
+              <button onClick={handleEditSave} disabled={editSaving} className="px-4 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50 flex items-center gap-1.5 transition-colors">
+                {editSaving ? <RefreshCw size={11} className="animate-spin" /> : <KeyRound size={11} />}
+                {editSaving ? 'Writing to Vault…' : 'Write to Vault'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Secret Modal */}
       {showModal && (
