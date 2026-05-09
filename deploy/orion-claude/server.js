@@ -17,10 +17,11 @@
  *   POST /run/collect        — execute a query(), return full text as JSON (for summarizer/review)
  */
 
-const http  = require('http')
-const fs    = require('fs')
-const path  = require('path')
-const pty   = require('node-pty')
+const http       = require('http')
+const fs         = require('fs')
+const path       = require('path')
+const pty        = require('node-pty')
+const { execFile } = require('child_process')
 
 const PORT       = parseInt(process.env.PORT || '3100', 10)
 const CLAUDE_HOME = process.env.CLAUDE_HOME || '/root/.claude'
@@ -47,6 +48,34 @@ function stripAnsi(str) {
 function extractUrl(text) {
   const m = text.match(/https:\/\/[^\s\n]+/)
   return m ? m[0] : null
+}
+
+// ── Claude CLI subprocess helper ──────────────────────────────────────────────
+
+/**
+ * Call the `claude` CLI as a subprocess — same approach as the Discord bot.
+ * Strips ANTHROPIC_API_KEY and CLAUDECODE from env to force OAuth credential use.
+ */
+function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 120000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const cmd = ['claude', '-p', prompt, '--output-format', 'json']
+    if (model)       cmd.push('--model', model)
+    if (systemPrompt) cmd.push('--append-system-prompt', systemPrompt)
+    if (maxTurns)    cmd.push('--max-turns', String(maxTurns))
+
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([k]) => k !== 'ANTHROPIC_API_KEY' && k !== 'CLAUDECODE')
+    )
+
+    const child = execFile(cmd[0], cmd.slice(1), { env, timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) {
+        console.error('[orion-claude] claude CLI error:', err.message, stderr?.slice(0, 300))
+        return reject(err)
+      }
+      resolve(stdout)
+    })
+    child.unref()
+  })
 }
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -255,18 +284,19 @@ const server = http.createServer(async (req, res) => {
       })
 
       try {
-        const { query } = await import('@anthropic-ai/claude-code')
-        const response = query({
-          prompt: String(opts.prompt || ''),
-          options: {
-            allowedTools:     opts.allowedTools ?? [],
-            maxTurns:         opts.maxTurns     ?? 20,
-            ...(opts.systemPrompt && { customSystemPrompt: opts.systemPrompt }),
-            ...(opts.model        && { model: opts.model }),
-          },
+        const stdout = await runClaude(String(opts.prompt || ''), {
+          systemPrompt: opts.systemPrompt,
+          model:        opts.model,
+          maxTurns:     opts.maxTurns ?? 20,
         })
-        for await (const event of response) {
-          res.write(JSON.stringify(event) + '\n')
+        // Parse JSON output from claude --output-format json and re-emit as NDJSON events
+        try {
+          const parsed = JSON.parse(stdout)
+          const text = parsed?.result ?? parsed?.text ?? stdout
+          res.write(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } }) + '\n')
+          res.write(JSON.stringify({ type: 'result', subtype: 'success', result: text }) + '\n')
+        } catch {
+          res.write(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: stdout }] } }) + '\n')
         }
       } catch (err) {
         try { res.write(JSON.stringify({ type: 'error', error: err instanceof Error ? err.message : String(err) }) + '\n') } catch {}
@@ -283,26 +313,17 @@ const server = http.createServer(async (req, res) => {
       try { opts = JSON.parse(body || '{}') } catch { return json(res, 400, { error: 'Invalid JSON' }) }
 
       try {
-        const { query } = await import('@anthropic-ai/claude-code')
-        const response = query({
-          prompt: String(opts.prompt || ''),
-          options: {
-            allowedTools:     opts.allowedTools ?? [],
-            maxTurns:         opts.maxTurns     ?? 1,
-            ...(opts.systemPrompt && { customSystemPrompt: opts.systemPrompt }),
-            ...(opts.model        && { model: opts.model }),
-          },
+        const stdout = await runClaude(String(opts.prompt || ''), {
+          systemPrompt: opts.systemPrompt,
+          model:        opts.model,
+          maxTurns:     opts.maxTurns ?? 1,
+          timeout:      120000,
         })
-        let text = ''
-        for await (const event of response) {
-          if (event.type === 'assistant') {
-            for (const block of event.message?.content ?? []) {
-              if (block.type === 'text') text += block.text
-            }
-          } else if (event.type === 'result' && event.subtype === 'success') {
-            if (event.result && !text.includes(event.result.trim())) text += (text ? '\n\n' : '') + event.result
-          }
-        }
+        let text = stdout.trim()
+        try {
+          const parsed = JSON.parse(stdout)
+          text = parsed?.result ?? parsed?.text ?? stdout.trim()
+        } catch { /* plain text output */ }
         return json(res, 200, { text })
       } catch (err) {
         return json(res, 500, { error: err instanceof Error ? err.message : String(err) })
