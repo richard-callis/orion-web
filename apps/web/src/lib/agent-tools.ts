@@ -11,7 +11,6 @@
  *   create_agent        — create a new agent and invite it to the current room
  *   orion_get_tasks     — list tasks (server-side Prisma, no HTTP round-trip)
  *   orion_get_agents    — list agents (server-side Prisma, no HTTP round-trip)
- *   orion_get_snapshot  — full system snapshot: agents + tasks + recent events
  *   orion_manage_task   — assign, update status, or post feed message for a task
  */
 
@@ -106,18 +105,6 @@ export const ORION_TOOL_DEFINITIONS = [
   {
     type: 'function' as const,
     function: {
-      name: 'orion_get_snapshot',
-      description: 'Get a full ORION system snapshot: all agents, pending/in-progress tasks, and recent task events.',
-      parameters: {
-        type: 'object',
-        properties: {},
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function' as const,
-    function: {
       name: 'orion_manage_task',
       description: 'Assign a task to an agent, update its status, or append a feed note.',
       parameters: {
@@ -140,7 +127,7 @@ export const ORION_TOOL_DEFINITIONS = [
       parameters: {
         type: 'object',
         properties: {
-          environmentName:  { type: 'string', description: 'Name of the ORION environment to create the secret in (e.g. "homelab-k3s")' },
+          environmentName:  { type: 'string', description: 'Name of the ORION environment to create the secret in. Use orion_get_agents or check available environments — current options are "Talos Cluster" or "localhost".' },
           name:             { type: 'string', description: 'Human-readable label for the ExternalSecret (e.g. "gitea-db-secret")' },
           vaultPath:        { type: 'string', description: 'Vault KV v2 path relative to the "secret" mount (e.g. "gitea/db"). No "secret/data/" prefix.' },
           keyNames:         { type: 'array', items: { type: 'string' }, description: 'List of secret key names to scaffold (e.g. ["DB_PASSWORD", "DB_USER"]). PLACEHOLDER values will be written to Vault.' },
@@ -265,32 +252,6 @@ export async function executeTool(
         ).join('\n')
       }
 
-      case 'orion_get_snapshot': {
-        const [agents, tasks, events] = await Promise.all([
-          prisma.agent.findMany({ orderBy: { name: 'asc' } }),
-          prisma.task.findMany({
-            where: { status: { in: ['pending', 'in_progress', 'blocked'] } },
-            orderBy: { updatedAt: 'desc' },
-            take: 30,
-            include: { agent: { select: { name: true } } },
-          }),
-          prisma.taskEvent.findMany({
-            orderBy: { createdAt: 'desc' },
-            take: 10,
-            include: { task: { select: { title: true } } },
-          }),
-        ])
-        const activeAgents = agents.filter((a: any) => (a.metadata as Record<string, unknown> | null)?.archived !== true)
-        const agentLines = activeAgents.map((a: any) => `  ${a.name} (${a.status})${a.role ? ' — ' + a.role : ''}`).join('\n')
-        const taskLines  = tasks.map((t: any) =>
-          `  [${t.id}] ${t.title} — ${t.status}, assigned: ${t.agent?.name ?? 'unassigned'}`
-        ).join('\n')
-        const eventLines = events.map((e: any) =>
-          `  [${e.taskId}] ${e.task?.title ?? '?'}: ${e.eventType}`
-        ).join('\n')
-        return `## Agents (${activeAgents.length})\n${agentLines || '  none'}\n\n## Active Tasks (${tasks.length})\n${taskLines || '  none'}\n\n## Recent Events\n${eventLines || '  none'}`
-      }
-
       case 'orion_manage_task': {
         const taskId = String(args.taskId ?? '')
         if (!taskId) return 'Error: taskId is required'
@@ -323,7 +284,7 @@ export async function executeTool(
 
         // Resolve environment by name
         const env = await prisma.environment.findUnique({ where: { name: environmentName } })
-        if (!env) return `Error: environment "${environmentName}" not found. Use orion_get_snapshot to see available environments.`
+        if (!env) return `Error: environment "${environmentName}" not found. Available environments: "Talos Cluster", "localhost".`
 
         const namespace       = String(args.namespace       ?? 'default').trim() || 'default'
         const description     = args.description     ? String(args.description).trim()     : null
@@ -389,7 +350,6 @@ export const TOOLS_SYSTEM_ADDENDUM = `
 You have access to these tools. Use them — do not pretend to perform an action when you can call a tool instead.
 
 **Read ORION state:**
-- **orion_get_snapshot**: Full system view — all agents, active tasks, recent events. Use this to orient yourself.
 - **orion_get_tasks**: List tasks, optionally filtered by status or assigned agent.
 - **orion_get_agents**: List all active agents and their roles.
 
