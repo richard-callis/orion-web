@@ -126,8 +126,9 @@ async function callClaude(
       prompt,
       systemPrompt: sys,
       // MCP context: always enabled in rooms so Claude has the same tools as other agents.
-      // maxTurns: 10 when tools explicitly enabled on agent, 3 otherwise (conversational mode).
-      ...(useMcp ? { agentId, roomId, maxTurns: hasTools ? 10 : 3 } : { maxTurns: 1 }),
+      // maxTurns: 5 when tools explicitly enabled on agent, 3 otherwise (conversational mode).
+      // Reduced from 10 → 5: Qwen/tool-using models burn turns on exploration; cap keeps them focused.
+      ...(useMcp ? { agentId, roomId, maxTurns: hasTools ? 5 : 3 } : { maxTurns: 1 }),
       ...(modelId ? { model: modelId } : {}),
     }),
     // MCP tool calls can take longer — allow 5 min for tool-using sessions
