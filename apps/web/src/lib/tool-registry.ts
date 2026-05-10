@@ -20,6 +20,7 @@ import { join } from 'path'
 import tls from 'tls'
 import https from 'https'
 import http from 'http'
+import { DEPLOYMENT_TEMPLATES, getTemplate } from '@/lib/deployment-templates'
 
 const execAsync = promisify(exec)
 
@@ -2242,4 +2243,80 @@ registerTool({
   parallelSafe: true,
   availableIn: 'both',
   handler: handleListSecrets,
+})
+
+// ── Deployment templates ───────────────────────────────────────────────────────
+
+registerTool({
+  name: 'list_deployment_templates',
+  description: 'List all available deployment templates (Kubernetes and Docker Compose). Each template is a generic YAML starting point with {{ PLACEHOLDER }} fields the agent fills in before proposing to Gitea via gitops_propose.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      category: {
+        type: 'string',
+        enum: ['core', 'workload', 'networking', 'storage', 'secrets', 'gitops', 'docker'],
+        description: 'Filter by category (optional). Omit to list all templates. Use "docker" for Docker Compose templates.',
+      },
+    },
+  },
+  tier: 'read',
+  parallelSafe: true,
+  availableIn: 'both',
+  handler: async (args) => {
+    const a        = args as { category?: string }
+    const filtered = a.category
+      ? DEPLOYMENT_TEMPLATES.filter(t => t.category === a.category)
+      : DEPLOYMENT_TEMPLATES
+
+    if (filtered.length === 0) return `No templates found${a.category ? ` for category "${a.category}"` : ''}.`
+
+    const grouped: Record<string, typeof filtered> = {}
+    for (const t of filtered) {
+      ;(grouped[t.category] ??= []).push(t)
+    }
+
+    return Object.entries(grouped)
+      .map(([cat, templates]) =>
+        `**${cat}**\n` +
+        templates.map(t => `  • ${t.name} — ${t.description}`).join('\n')
+      )
+      .join('\n\n')
+  },
+})
+
+registerTool({
+  name: 'get_deployment_template',
+  description: 'Get the full YAML content of a deployment template by name. Fill in all {{ PLACEHOLDER }} fields, remove commented-out sections you do not need, then use gitops_propose to open a PR.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      name: {
+        type: 'string',
+        description: 'Template name (from list_deployment_templates). e.g. "deployment", "ingress-public", "externalsecret".',
+      },
+    },
+    required: ['name'],
+  },
+  tier: 'read',
+  parallelSafe: true,
+  availableIn: 'both',
+  handler: async (args) => {
+    const { name } = args as { name: string }
+    const tmpl = getTemplate(name)
+    if (!tmpl) {
+      const names = DEPLOYMENT_TEMPLATES.map(t => t.name).join(', ')
+      return `Template "${name}" not found. Available templates: ${names}`
+    }
+    return [
+      `# Template: ${tmpl.name} [${tmpl.category}]`,
+      `# ${tmpl.description}`,
+      `#`,
+      `# Fill in every {{ PLACEHOLDER }} field before applying.`,
+      `# Remove or uncomment optional sections as needed.`,
+      `# Use gitops_propose to open a Gitea PR when ready.`,
+      ``,
+      tmpl.yaml,
+    ].join('\n')
+  },
 })
