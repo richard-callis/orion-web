@@ -20,6 +20,7 @@ import { ORION_TOOL_DEFINITIONS, TOOLS_SYSTEM_ADDENDUM, executeTool } from './ag
 import { getToolsForContext, executeRegisteredTool } from './tool-registry'
 import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
+import { buildAgentContext, invalidateSnapshotCache } from './agent-context'
 import type { AgentGateway } from './agent-gateway'
 import type { GatewayTool } from './agent-runner/types'
 
@@ -45,11 +46,24 @@ type ChatMsg = { role: 'system' | 'user' | 'assistant'; content: string }
  * otherParticipants lists the names of other agents/users in the room so the
  * model knows who it can @mention to continue the conversation.
  */
+const LOCAL_MODEL_PLAN_FIRST = `
+
+## Plan Before You Act
+
+Before calling any tool:
+1. State what you already know
+2. State what you still need
+3. List the exact sequence of tool calls you will make
+
+Then execute that plan — one tool at a time, in order. Do not call the same tool twice. Do not improvise mid-plan. If a step fails, report it and stop — do not retry or chain to a different tool hoping for a better result.`
+
 function buildSystemPrompt(
   agentName: string,
   agentBasePrompt: string,
   otherParticipants: string[],
   hasTools: boolean | 'legacy' | 'mcp' = false,
+  /** True for non-Claude (Ollama/OpenAI-compat) models — injects plan-first constraint */
+  localModel = false,
 ): string {
   const othersLine = otherParticipants.length > 0
     ? `Other participants in this chat: ${otherParticipants.join(', ')}`
@@ -61,6 +75,7 @@ function buildSystemPrompt(
     hasTools === 'mcp'              ? '\n\n## ORION Tools\nYou have ORION management tools available via MCP. Use them — do not describe hypothetical actions when you can call a tool to get real data.' :
     hasTools === 'legacy' || hasTools === true ? TOOLS_SYSTEM_ADDENDUM :
     ''
+  const planFirst = localModel && hasTools ? LOCAL_MODEL_PLAN_FIRST : ''
   return `IMPORTANT — YOUR ROLE:
 You are ${agentName}. You are ONE participant in a group chat.
 ${othersLine}
@@ -75,7 +90,7 @@ Rules you must follow without exception:
 7. If the conversation has naturally concluded or you have nothing meaningful to add, reply with exactly the single word: SILENT
 
 ---
-${agentBasePrompt}${toolAddendum}`
+${agentBasePrompt}${toolAddendum}${planFirst}`
 }
 
 /**
@@ -126,8 +141,9 @@ async function callClaude(
       prompt,
       systemPrompt: sys,
       // MCP context: always enabled in rooms so Claude has the same tools as other agents.
-      // maxTurns: 10 when tools explicitly enabled on agent, 3 otherwise (conversational mode).
-      ...(useMcp ? { agentId, roomId, maxTurns: hasTools ? 10 : 3 } : { maxTurns: 1 }),
+      // maxTurns: 5 when tools explicitly enabled on agent, 3 otherwise (conversational mode).
+      // Reduced from 10 → 5: Qwen/tool-using models burn turns on exploration; cap keeps them focused.
+      ...(useMcp ? { agentId, roomId, maxTurns: hasTools ? 5 : 3 } : { maxTurns: 1 }),
       ...(modelId ? { model: modelId } : {}),
     }),
     // MCP tool calls can take longer — allow 5 min for tool-using sessions
@@ -152,7 +168,7 @@ async function callOllamaChat(
   baseUrl: string,
   hasTools = false,
 ): Promise<string | null> {
-  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools)
+  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools, true)
   const chatMsgs = buildChatMessages(history, latestMessage)
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: 'POST',
@@ -190,7 +206,7 @@ async function callOpenAIChat(
   gatewayTools?: GatewayTool[],
 ): Promise<string | null> {
   const hasTools = !!toolContext
-  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools)
+  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools, true)
   const chatMsgs = buildChatMessages(history, latestMessage)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
@@ -428,9 +444,14 @@ export async function triggerRoomAgentReplies(
       const toolsEnabled  = !!(contextConfig.tools)
 
       // Base persona description — identity constraint is added by buildSystemPrompt()
-      const agentBasePrompt = rawPrompt
+      const personaPrompt = rawPrompt
         ? `${agent.role ? `Role: ${agent.role}\n\n` : ''}${rawPrompt}`
         : `${agent.role ? `Role: ${agent.role}\n\n` : ''}${agent.description ?? ''}`
+
+      // Inject pre-fetched context (ORION snapshot + vector search) so agents arrive
+      // pre-oriented and don't need to call orion_get_snapshot on every message.
+      const agentContext = await buildAgentContext(latestTurn)
+      const agentBasePrompt = agentContext ? personaPrompt + agentContext : personaPrompt
 
       // Names of other agents/users in the room so the model can @mention them
       const otherParticipants = agentMembers
