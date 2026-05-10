@@ -4,8 +4,7 @@
  * Before each LLM call, this module assembles two context blocks:
  *
  * 1. ORION snapshot — agents, active tasks, recent events.
- *    Cached in-process for 2 minutes so agents don't need to call
- *    orion_get_snapshot on every message.
+ *    Cached via system-cache with a configurable TTL (default 2 min).
  *
  * 2. Knowledge base — semantically relevant notes from the vector store.
  *    Embedding query is the latest user message. Silently skipped if no
@@ -18,19 +17,11 @@
 
 import { prisma } from './db'
 import { retrieveKnowledgeContext } from './embeddings'
+import { getOrFetch, invalidate } from './system-cache'
 
-// ── In-process snapshot cache ────────────────────────────────────────────────
-
-const SNAPSHOT_TTL_MS = 2 * 60 * 1000  // 2 minutes
-
-let snapshotCache: { text: string; expiresAt: number } | null = null
+// ── Snapshot fetcher (pure — no caching, system-cache handles that) ────────────
 
 async function fetchSnapshot(): Promise<string> {
-  const now = Date.now()
-  if (snapshotCache && snapshotCache.expiresAt > now) {
-    return snapshotCache.text
-  }
-
   try {
     const [agents, tasks, events] = await Promise.all([
       prisma.agent.findMany({ orderBy: { name: 'asc' } }),
@@ -63,7 +54,7 @@ async function fetchSnapshot(): Promise<string> {
       .map((e: any) => `  [${e.taskId}] ${e.task?.title ?? '?'}: ${e.eventType}`)
       .join('\n')
 
-    const text = [
+    return [
       `## ORION State (cached ${new Date().toISOString()})`,
       `**Agents (${activeAgents.length}):**`,
       agentLines || '  none',
@@ -74,9 +65,6 @@ async function fetchSnapshot(): Promise<string> {
       `**Recent Events:**`,
       eventLines || '  none',
     ].join('\n')
-
-    snapshotCache = { text, expiresAt: now + SNAPSHOT_TTL_MS }
-    return text
   } catch (err) {
     // Never block an LLM call over a snapshot failure
     console.warn('[agent-context] snapshot fetch failed:', err)
@@ -94,7 +82,7 @@ async function fetchSnapshot(): Promise<string> {
  */
 export async function buildAgentContext(query: string): Promise<string> {
   const [snapshot, knowledge] = await Promise.all([
-    fetchSnapshot(),
+    getOrFetch('snapshot', 'cache.snapshot.ttl', fetchSnapshot).catch(() => ''),
     retrieveKnowledgeContext(query, 3, 0.4),
   ])
 
@@ -111,5 +99,5 @@ export async function buildAgentContext(query: string): Promise<string> {
 
 /** Explicitly invalidate the snapshot cache (call after write operations). */
 export function invalidateSnapshotCache(): void {
-  snapshotCache = null
+  invalidate('snapshot')
 }

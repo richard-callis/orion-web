@@ -16,7 +16,7 @@
 
 import { prisma } from './db'
 import { setTyping, clearTyping } from './typing-state'
-import { ORION_TOOL_DEFINITIONS, TOOLS_SYSTEM_ADDENDUM, executeTool } from './agent-tools'
+import { buildToolDefinitions, TOOLS_SYSTEM_ADDENDUM, executeTool } from './agent-tools'
 import { getToolsForContext, executeRegisteredTool } from './tool-registry'
 import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
@@ -220,9 +220,11 @@ async function callOpenAIChat(
   }))
   const registryToolNames: Set<string> = new Set(getToolsForContext('chat').map(t => t.name))
 
-  // Legacy agent-tools (create_task, orion_get_snapshot, etc.) — keep for backward compat.
+  // Legacy agent-tools (create_task, orion_manage_task, etc.) — keep for backward compat.
   // Exclude any that are now in the registry to avoid duplicates.
-  const legacyTools = ORION_TOOL_DEFINITIONS.filter(d => !registryToolNames.has(d.function.name))
+  // buildToolDefinitions() injects real environment names into write_secret description.
+  const allToolDefs = await buildToolDefinitions()
+  const legacyTools = allToolDefs.filter(d => !registryToolNames.has(d.function.name))
   const legacyToolNames: Set<string> = new Set(legacyTools.map(d => d.function.name))
 
   // Merge: registry + legacy + gateway tools
@@ -284,7 +286,7 @@ async function callOpenAIChat(
           prisma,
         })
       } else if (legacyToolNames.has(tc.function.name)) {
-        // Legacy agent-tools (create_task, orion_get_snapshot, etc.)
+        // Legacy agent-tools (create_task, orion_manage_task, etc.)
         result = await executeTool(tc.function.name, args, {
           roomId:        toolContext!.roomId,
           callerAgentId: toolContext!.agentId,
