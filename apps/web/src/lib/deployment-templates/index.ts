@@ -1,22 +1,26 @@
 /**
  * Deployment template registry.
  *
- * Generic Kubernetes building blocks agents use as starting points.
- * Each template has clearly marked {{ PLACEHOLDER }} fields and comments
- * explaining every option — agents fill in what they need, remove what
- * they don't, and propose the result to Gitea via gitops_propose.
+ * Generic Kubernetes building blocks agents use as starting points for any
+ * cluster. Templates contain only standard Kubernetes primitives and clearly
+ * marked {{ PLACEHOLDER }} fields — no assumptions about ingress controller,
+ * storage class, secret manager, or cloud provider.
  *
- * During bootstrap, all templates are pushed to the configured Gitea repo
- * so they live alongside the cluster manifests.
+ * Agents fill in the placeholders for their target environment, remove
+ * optional sections they don't need, then propose the result to the GitOps
+ * repo via gitops_propose.
+ *
+ * During bootstrap, all templates are pushed to the configured Git repo so
+ * they live alongside cluster manifests from day one.
  *
  * Placeholder convention:
- *   {{ PLACEHOLDER }}   — required, must be replaced
- *   {{ PLACEHOLDER? }}  — optional, remove the line if not needed
+ *   {{ PLACEHOLDER }}   — required, must be replaced before applying
+ *   {{ PLACEHOLDER? }}  — optional, remove the whole line if not needed
  */
 
 export interface DeploymentTemplate {
   name:        string
-  category:    'core' | 'workload' | 'networking' | 'storage' | 'secrets' | 'gitops'
+  category:    'core' | 'workload' | 'networking' | 'storage' | 'secrets' | 'gitops' | 'docker'
   description: string
   yaml:        string
 }
@@ -28,12 +32,12 @@ export const DEPLOYMENT_TEMPLATES: DeploymentTemplate[] = [
   {
     name:     'namespace',
     category: 'core',
-    description: 'Kubernetes Namespace with standard labels. Always the first resource to create for a new service.',
+    description: 'Kubernetes Namespace. Always the first resource to create for a new service.',
     yaml: `\
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: {{ NAMESPACE }}            # e.g. "tailscale", "monitoring", "apps"
+  name: {{ NAMESPACE }}            # e.g. "monitoring", "apps", "my-service"
   labels:
     app.kubernetes.io/name: {{ APP_NAME }}
     app.kubernetes.io/managed-by: orion
@@ -45,7 +49,7 @@ metadata:
   {
     name:     'deployment',
     category: 'workload',
-    description: 'Standard Deployment for stateless services. Includes resource limits, optional health checks, and node affinity for amd64-only images.',
+    description: 'Standard Deployment for stateless services. Includes resource limits and optional health checks.',
     yaml: `\
 apiVersion: apps/v1
 kind: Deployment
@@ -55,7 +59,7 @@ metadata:
   labels:
     app: {{ APP_NAME }}
 spec:
-  replicas: 1                      # increase for HA; use HPA for autoscaling
+  replicas: 1                      # increase for HA; consider HPA for autoscaling
   selector:
     matchLabels:
       app: {{ APP_NAME }}
@@ -66,12 +70,12 @@ spec:
     spec:
       containers:
         - name: {{ APP_NAME }}
-          image: {{ IMAGE }}        # e.g. "ghcr.io/org/app:v1.2.3" — pin to a digest for production
+          image: {{ IMAGE }}        # e.g. "nginx:1.25.3" — pin to a specific version/digest
           ports:
             - containerPort: {{ PORT }}
-          env: []                  # add env vars here or envFrom a Secret
 
-          # Reference a Secret created by an ExternalSecret:
+          # Environment variables — prefer secretRef over plain env for sensitive values:
+          env: []
           # envFrom:
           #   - secretRef:
           #       name: {{ APP_NAME }}-secret
@@ -81,10 +85,10 @@ spec:
               cpu: 100m
               memory: 128Mi
             limits:
-              cpu: 500m             # set based on observed usage
+              cpu: 500m
               memory: 512Mi
 
-          # Uncomment when the app exposes a health endpoint:
+          # Health checks — uncomment and adjust paths/ports when the app supports them:
           # livenessProbe:
           #   httpGet: { path: /health, port: {{ PORT }} }
           #   initialDelaySeconds: 30
@@ -93,21 +97,13 @@ spec:
           #   httpGet: { path: /ready, port: {{ PORT }} }
           #   initialDelaySeconds: 5
           #   periodSeconds: 5
-
-      # Uncomment to restrict to amd64 nodes (RPi nodes are arm64):
-      # affinity:
-      #   nodeAffinity:
-      #     requiredDuringSchedulingIgnoredDuringExecution:
-      #       nodeSelectorTerms:
-      #         - matchExpressions:
-      #             - { key: kubernetes.io/arch, operator: In, values: [amd64] }
 `,
   },
 
   {
     name:     'statefulset',
     category: 'workload',
-    description: 'StatefulSet for services that need stable identity or persistent storage (databases, message queues, stateful operators).',
+    description: 'StatefulSet for services that need stable network identity or persistent storage (databases, queues, stateful operators).',
     yaml: `\
 apiVersion: apps/v1
 kind: StatefulSet
@@ -117,7 +113,7 @@ metadata:
   labels:
     app: {{ APP_NAME }}
 spec:
-  serviceName: {{ APP_NAME }}      # must match a headless Service
+  serviceName: {{ APP_NAME }}      # must match the name of a headless Service for stable DNS
   replicas: 1
   selector:
     matchLabels:
@@ -136,7 +132,7 @@ spec:
 
           volumeMounts:
             - name: data
-              mountPath: {{ MOUNT_PATH }}  # e.g. "/data", "/var/lib/postgresql"
+              mountPath: {{ MOUNT_PATH }}   # e.g. "/data", "/var/lib/postgresql"
 
           resources:
             requests:
@@ -151,10 +147,10 @@ spec:
         name: data
       spec:
         accessModes: [ReadWriteOnce]
-        storageClassName: longhorn        # cluster default — use longhorn for HA replicas
+        storageClassName: {{ STORAGE_CLASS }}   # use your cluster's default or a named class
         resources:
           requests:
-            storage: {{ STORAGE_SIZE }}   # e.g. "10Gi", "50Gi"
+            storage: {{ STORAGE_SIZE }}          # e.g. "10Gi", "50Gi"
 `,
   },
 
@@ -163,7 +159,7 @@ spec:
   {
     name:     'service',
     category: 'networking',
-    description: 'ClusterIP Service — internal cluster access only. Use service-lb for external access via MetalLB, or pair with an Ingress.',
+    description: 'ClusterIP Service — internal cluster access only. Pair with an Ingress for external HTTP/S access.',
     yaml: `\
 apiVersion: v1
 kind: Service
@@ -175,8 +171,8 @@ spec:
     app: {{ APP_NAME }}
   ports:
     - name: http
-      port: {{ SERVICE_PORT }}       # port clients connect to (e.g. 80, 8080)
-      targetPort: {{ PORT }}         # container port (must match Deployment containerPort)
+      port: {{ SERVICE_PORT }}      # port clients connect to (e.g. 80, 8080)
+      targetPort: {{ PORT }}        # container port (must match Deployment containerPort)
   type: ClusterIP
 `,
   },
@@ -184,15 +180,16 @@ spec:
   {
     name:     'service-lb',
     category: 'networking',
-    description: 'LoadBalancer Service that gets a dedicated IP from MetalLB. Use for non-HTTP services (game servers, databases, VPNs). Do NOT set loadBalancerClass — it is immutable and breaks IP assignment.',
+    description: 'LoadBalancer Service for external access to non-HTTP services (game servers, databases, VPNs). The cloud provider or bare-metal load balancer assigns an external IP.',
     yaml: `\
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ APP_NAME }}
   namespace: {{ NAMESPACE }}
-  annotations:
-    metallb.universe.tf/address-pool: default   # use "default" unless you need a specific pool
+  # Add provider-specific annotations here if required by your load balancer:
+  # annotations:
+  #   {{ ANNOTATION_KEY }}: {{ ANNOTATION_VALUE? }}
 spec:
   selector:
     app: {{ APP_NAME }}
@@ -202,14 +199,13 @@ spec:
       targetPort: {{ PORT }}
       protocol: TCP                 # change to UDP if needed
   type: LoadBalancer
-  # DO NOT add loadBalancerClass — it is immutable once set and breaks MetalLB IP assignment
 `,
   },
 
   {
-    name:     'ingress-internal',
+    name:     'ingress',
     category: 'networking',
-    description: 'Traefik Ingress for internal services on *.khalis.corp. CrowdSec only — no Authentik SSO. TLS via cert-manager Let\'s Encrypt.',
+    description: 'Standard Kubernetes Ingress for HTTP/S routing. Fill in the ingress class for your controller (nginx, traefik, istio, etc.) and add any controller-specific annotations.',
     yaml: `\
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -217,50 +213,18 @@ metadata:
   name: {{ APP_NAME }}
   namespace: {{ NAMESPACE }}
   annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.middlewares: security-crowdsec-bouncer@kubernetescrd
-    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Add controller-specific annotations here, for example:
+    # nginx.ingress.kubernetes.io/rewrite-target: /
+    # traefik.ingress.kubernetes.io/router.middlewares: {{ MIDDLEWARE? }}
+    # cert-manager.io/cluster-issuer: {{ CERT_ISSUER? }}
 spec:
-  ingressClassName: traefik
+  ingressClassName: {{ INGRESS_CLASS }}   # e.g. "nginx", "traefik", "istio"
+  # TLS — remove this section if not using HTTPS:
   tls:
-    - hosts: [{{ HOSTNAME }}.khalis.corp]
+    - hosts: [{{ HOSTNAME }}]
       secretName: {{ APP_NAME }}-tls
   rules:
-    - host: {{ HOSTNAME }}.khalis.corp
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ APP_NAME }}
-                port: { number: {{ SERVICE_PORT }} }
-`,
-  },
-
-  {
-    name:     'ingress-public',
-    category: 'networking',
-    description: 'Traefik Ingress for public services on *.khalisio.com. Authentik SSO + CrowdSec. Do NOT apply to Authentik\'s own ingress — causes infinite redirect loop.',
-    yaml: `\
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: {{ APP_NAME }}
-  namespace: {{ NAMESPACE }}
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    # Both middlewares required for all public services:
-    traefik.ingress.kubernetes.io/router.middlewares: >-
-      security-authentik-forward-auth@kubernetescrd,security-crowdsec-bouncer@kubernetescrd
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-spec:
-  ingressClassName: traefik
-  tls:
-    - hosts: [{{ HOSTNAME }}.khalisio.com]
-      secretName: {{ APP_NAME }}-tls
-  rules:
-    - host: {{ HOSTNAME }}.khalisio.com
+    - host: {{ HOSTNAME }}               # e.g. "myapp.example.com"
       http:
         paths:
           - path: /
@@ -277,7 +241,7 @@ spec:
   {
     name:     'pvc',
     category: 'storage',
-    description: 'PersistentVolumeClaim backed by Longhorn (the cluster default). Longhorn replicates data across nodes — do not use hostPath for anything that needs durability.',
+    description: 'PersistentVolumeClaim for durable storage. Set the storageClassName to match your cluster\'s provisioner (e.g. standard, gp2, longhorn).',
     yaml: `\
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -285,11 +249,11 @@ metadata:
   name: {{ APP_NAME }}-data
   namespace: {{ NAMESPACE }}
 spec:
-  accessModes: [ReadWriteOnce]     # use ReadWriteMany only if multiple pods need simultaneous access
-  storageClassName: longhorn
+  accessModes: [ReadWriteOnce]        # use ReadWriteMany only if multiple pods need simultaneous access
+  storageClassName: {{ STORAGE_CLASS }}  # your cluster's storage provisioner
   resources:
     requests:
-      storage: {{ STORAGE_SIZE }}  # e.g. "5Gi", "20Gi", "100Gi"
+      storage: {{ STORAGE_SIZE }}     # e.g. "5Gi", "20Gi", "100Gi"
 `,
   },
 
@@ -298,7 +262,7 @@ spec:
   {
     name:     'externalsecret',
     category: 'secrets',
-    description: 'ExternalSecret that pulls credentials from Vault KV v2 and creates a Kubernetes Secret. All secrets must go through Vault — never hardcode values in manifests.',
+    description: 'ExternalSecret (external-secrets.io) that pulls credentials from a secret store and creates a Kubernetes Secret. Requires the External Secrets Operator to be installed.',
     yaml: `\
 apiVersion: external-secrets.io/v1beta1
 kind: ExternalSecret
@@ -306,25 +270,19 @@ metadata:
   name: {{ APP_NAME }}-secret
   namespace: {{ NAMESPACE }}
 spec:
-  refreshInterval: 1h              # how often ESO re-syncs from Vault
+  refreshInterval: 1h                  # how often to re-sync from the secret store
   secretStoreRef:
-    name: vault-backend
-    kind: ClusterSecretStore
+    name: {{ SECRET_STORE_NAME }}      # name of the SecretStore or ClusterSecretStore
+    kind: ClusterSecretStore           # use SecretStore for namespace-scoped stores
   target:
-    name: {{ APP_NAME }}-secret    # name of the K8s Secret to create
+    name: {{ APP_NAME }}-secret        # name of the Kubernetes Secret to create
     creationPolicy: Owner
   data:
-    # Add one entry per key. vaultPath format: path/to/secret (no "secret/data/" prefix)
-    - secretKey: {{ SECRET_KEY }}          # key name in the resulting K8s Secret
+    # One entry per key — agents should add one block per secret value needed:
+    - secretKey: {{ SECRET_KEY }}          # key in the resulting K8s Secret
       remoteRef:
-        key: secret/data/{{ VAULT_PATH }}  # Vault KV v2 path (e.g. "tailscale/oauth")
-        property: {{ VAULT_PROPERTY }}     # field within that Vault secret
-
-    # Example — multiple keys from the same Vault path:
-    # - secretKey: CLIENT_ID
-    #   remoteRef: { key: secret/data/myapp/oauth, property: clientId }
-    # - secretKey: CLIENT_SECRET
-    #   remoteRef: { key: secret/data/myapp/oauth, property: clientSecret }
+        key: {{ REMOTE_KEY }}             # path/key in the external store
+        property: {{ REMOTE_PROPERTY? }}  # field within the remote key (if the store uses nested values)
 `,
   },
 
@@ -333,35 +291,32 @@ spec:
   {
     name:     'argocd-helm-app',
     category: 'gitops',
-    description: 'ArgoCD Application that deploys a Helm chart from a public or OCI registry. ArgoCD handles upgrades and drift detection — prefer this over kubectl apply for Helm charts.',
+    description: 'ArgoCD Application that deploys a Helm chart. ArgoCD handles upgrades and drift detection. Requires ArgoCD to be installed.',
     yaml: `\
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: {{ APP_NAME }}
-  namespace: argocd               # always argocd — this is where ArgoCD watches
+  namespace: argocd                   # always "argocd" — where ArgoCD watches
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:
-    # For standard Helm repos:
-    repoURL: {{ HELM_REPO_URL }}  # e.g. "https://charts.bitnami.com/bitnami"
-    chart: {{ HELM_CHART }}       # e.g. "postgresql"
-    targetRevision: {{ VERSION }} # e.g. "13.2.1" — pin to a version, never "latest"
+    repoURL: {{ HELM_REPO_URL }}      # e.g. "https://charts.bitnami.com/bitnami"
+    chart: {{ HELM_CHART }}           # chart name within the repo
+    targetRevision: {{ VERSION }}     # pin to a specific version, e.g. "13.2.1"
 
-    # For OCI Helm charts (e.g. Tailscale operator), use instead:
-    # repoURL: oci://ghcr.io/{{ ORG }}
+    # For OCI Helm charts substitute repoURL with the OCI registry:
+    # repoURL: oci://{{ OCI_REGISTRY }}   # e.g. "oci://ghcr.io/org"
     # chart: {{ HELM_CHART }}
     # targetRevision: {{ VERSION }}
 
     helm:
       releaseName: {{ APP_NAME }}
-      valueFiles: []               # add paths to values files in the source repo if needed
       values: |
         # Inline Helm values — override chart defaults here
-        # Reference secrets created by ExternalSecret:
-        # existingSecret: {{ APP_NAME }}-secret
+        # {{ VALUE_KEY }}: {{ VALUE? }}
 
   destination:
     server: https://kubernetes.default.svc
@@ -369,8 +324,8 @@ spec:
 
   syncPolicy:
     automated:
-      prune: true                  # remove resources no longer in chart
-      selfHeal: true               # revert manual kubectl changes
+      prune: true          # remove resources no longer in the chart
+      selfHeal: true       # revert manual kubectl changes
     syncOptions:
       - CreateNamespace=true
 `,
@@ -379,7 +334,7 @@ spec:
   {
     name:     'argocd-gitops-app',
     category: 'gitops',
-    description: 'ArgoCD Application that syncs plain Kubernetes manifests from a Gitea repository directory. Use this when managing raw YAML rather than Helm charts.',
+    description: 'ArgoCD Application that syncs plain Kubernetes manifests from a Git repository directory. Use when managing raw YAML rather than Helm charts.',
     yaml: `\
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -391,9 +346,9 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: {{ GITEA_REPO_URL }}  # e.g. "https://gitea.khalis.corp/khalisio/k8s-manifests"
+    repoURL: {{ REPO_URL }}           # e.g. "https://github.com/org/k8s-manifests"
     targetRevision: main
-    path: {{ MANIFEST_PATH }}      # directory within the repo, e.g. "deployments/tailscale"
+    path: {{ MANIFEST_PATH }}         # directory in the repo, e.g. "deployments/myapp"
 
   destination:
     server: https://kubernetes.default.svc
@@ -405,6 +360,151 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+`,
+  },
+
+  // ── Docker ─────────────────────────────────────────────────────────────────
+
+  {
+    name:     'docker-compose-service',
+    category: 'docker',
+    description: 'Minimal Docker Compose service. Use for stateless apps that need no persistent storage. Extend with volumes, networks, or labels as needed.',
+    yaml: `\
+services:
+  {{ APP_NAME }}:
+    image: {{ IMAGE }}              # e.g. "nginx:1.25.3" — pin to a specific version/digest
+    container_name: {{ APP_NAME }}
+    restart: unless-stopped
+
+    ports:
+      - "{{ HOST_PORT }}:{{ CONTAINER_PORT }}"   # remove if not exposing directly; use a proxy instead
+
+    environment:
+      # Prefer secrets (see docker-compose-secrets template) over plain env vars for sensitive values:
+      # KEY: value
+
+    # Resource limits — remove if your Docker engine does not enforce them:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+`,
+  },
+
+  {
+    name:     'docker-compose-with-volumes',
+    category: 'docker',
+    description: 'Docker Compose service with named volumes for persistent storage. Use for databases, file stores, or any stateful container.',
+    yaml: `\
+services:
+  {{ APP_NAME }}:
+    image: {{ IMAGE }}
+    container_name: {{ APP_NAME }}
+    restart: unless-stopped
+
+    ports:
+      - "{{ HOST_PORT }}:{{ CONTAINER_PORT }}"
+
+    environment: {}
+
+    volumes:
+      - {{ APP_NAME }}-data:{{ MOUNT_PATH }}   # e.g. /var/lib/postgresql/data, /data
+
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+volumes:
+  {{ APP_NAME }}-data:
+    driver: local
+    # To use a bind-mount instead, replace the above with:
+    # driver_opts:
+    #   type: none
+    #   o: bind
+    #   device: {{ HOST_DATA_PATH? }}   # absolute path on the host, e.g. /srv/{{ APP_NAME }}
+`,
+  },
+
+  {
+    name:     'docker-compose-proxy',
+    category: 'docker',
+    description: 'Docker Compose service configured for use behind a reverse proxy (Traefik, Caddy, nginx, etc.). Exposes no host ports — traffic flows through the proxy network.',
+    yaml: `\
+services:
+  {{ APP_NAME }}:
+    image: {{ IMAGE }}
+    container_name: {{ APP_NAME }}
+    restart: unless-stopped
+
+    # No host port mapping — the proxy handles external traffic.
+    expose:
+      - "{{ CONTAINER_PORT }}"
+
+    environment: {}
+
+    networks:
+      - proxy      # shared network the reverse proxy is attached to
+      # - internal # add additional internal-only networks as needed
+
+    # Traefik label example — remove or swap for your proxy's annotation style:
+    # labels:
+    #   traefik.enable: "true"
+    #   traefik.http.routers.{{ APP_NAME }}.rule: "Host(\`{{ HOSTNAME }}\`)"
+    #   traefik.http.routers.{{ APP_NAME }}.entrypoints: "websecure"
+    #   traefik.http.routers.{{ APP_NAME }}.tls.certresolver: "{{ CERT_RESOLVER? }}"
+    #   traefik.http.services.{{ APP_NAME }}.loadbalancer.server.port: "{{ CONTAINER_PORT }}"
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+networks:
+  proxy:
+    external: true   # must already exist: docker network create proxy
+`,
+  },
+
+  {
+    name:     'docker-compose-secrets',
+    category: 'docker',
+    description: 'Docker Compose service that consumes secrets from files (Docker Swarm secrets or bind-mounted secret files). Keeps sensitive values out of environment variables and image layers.',
+    yaml: `\
+services:
+  {{ APP_NAME }}:
+    image: {{ IMAGE }}
+    container_name: {{ APP_NAME }}
+    restart: unless-stopped
+
+    ports:
+      - "{{ HOST_PORT }}:{{ CONTAINER_PORT }}"
+
+    # Secrets are mounted read-only at /run/secrets/<secret-name> inside the container.
+    # The app must read them from the filesystem rather than env vars.
+    secrets:
+      - {{ SECRET_NAME }}         # e.g. db_password, api_key
+
+    environment:
+      # Point the app at the secret file path when it supports a _FILE convention:
+      # {{ ENV_VAR }}_FILE: /run/secrets/{{ SECRET_NAME }}
+
+secrets:
+  {{ SECRET_NAME }}:
+    # Option A — external Docker Swarm secret (swarm mode only):
+    # external: true
+
+    # Option B — bind-mount a file from the host (compose standalone):
+    file: {{ SECRET_FILE_PATH }}   # e.g. ./secrets/db_password.txt — never commit this file
 `,
   },
 

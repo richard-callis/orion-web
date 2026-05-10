@@ -2249,14 +2249,14 @@ registerTool({
 
 registerTool({
   name: 'list_deployment_templates',
-  description: 'List all available Kubernetes deployment templates. Each template is a generic YAML starting point with {{ PLACEHOLDER }} fields the agent fills in before proposing to Gitea via gitops_propose.',
+  description: 'List all available deployment templates (Kubernetes and Docker Compose). Each template is a generic YAML starting point with {{ PLACEHOLDER }} fields the agent fills in before proposing to Gitea via gitops_propose.',
   inputSchema: {
     type: 'object',
     properties: {
       category: {
         type: 'string',
-        enum: ['core', 'workload', 'networking', 'storage', 'secrets', 'gitops'],
-        description: 'Filter by category (optional). Omit to list all templates.',
+        enum: ['core', 'workload', 'networking', 'storage', 'secrets', 'gitops', 'docker'],
+        description: 'Filter by category (optional). Omit to list all templates. Use "docker" for Docker Compose templates.',
       },
     },
   },
