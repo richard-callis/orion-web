@@ -344,6 +344,8 @@ async function resolveOllamaBaseUrl(): Promise<string> {
  * for a room, stop chaining to prevent a runaway loop.
  */
 const MAX_AGENT_MESSAGES_PER_MINUTE = 40
+/** Maximum agent→agent chain hops per human message to prevent infinite loops. */
+const MAX_CHAIN_DEPTH = 4
 
 /**
  * Trigger agent replies for a chat room message (fire-and-forget from POST handler).
@@ -352,16 +354,24 @@ const MAX_AGENT_MESSAGES_PER_MINUTE = 40
  * - @mention present → only mentioned agents reply
  * - No @mention      → all agent members reply
  *
- * After each round, if any saved reply names another agent the chain continues so
- * agents can hold a natural back-and-forth conversation. It stops when:
- *   1. No agent name appears in the last reply (natural end of conversation), or
+ * After each round, chaining continues ONLY on explicit @mentions (bare name
+ * references are ignored — they cause false-positive loops). It stops when:
+ *   1. No @mention appears in the last reply (natural end of conversation), or
  *   2. An agent replies with the single word SILENT, or
- *   3. The room has exceeded MAX_AGENT_MESSAGES_PER_MINUTE (runaway loop guard).
+ *   3. The room has exceeded MAX_AGENT_MESSAGES_PER_MINUTE (rate-limit guard), or
+ *   4. Chain depth exceeds MAX_CHAIN_DEPTH (loop guard).
  */
 export async function triggerRoomAgentReplies(
   roomId: string,
   triggerContent: string,
+  chainDepth = 0,
 ): Promise<void> {
+  // Chain depth guard — stop before agents can loop indefinitely
+  if (chainDepth > MAX_CHAIN_DEPTH) {
+    console.warn(`[room-agents] room ${roomId} hit MAX_CHAIN_DEPTH (${MAX_CHAIN_DEPTH}) — stopping chain`)
+    return
+  }
+
   // Runaway loop guard — count agent messages in this room in the last minute
   const recentAgentCount = await prisma.chatMessage.count({
     where: {
@@ -566,18 +576,18 @@ export async function triggerRoomAgentReplies(
     }
   }
 
-  // Chain: if the last reply names another agent (with or without @), trigger them.
-  // Models often write "Hey Orion" instead of "@Orion", so we check bare names too.
+  // Chain: only on explicit @mentions in the last reply.
+  // Bare name references ("Alpha already handled this") are intentionally ignored —
+  // they cause false-positive loops where agents keep mentioning each other in passing.
   if (lastSavedReply) {
-    const addressed = agentMembers.filter((a: any) => {
-      const pattern = new RegExp(`(?:^|\\s|@)${a.name}\\b`, 'i')
-      return pattern.test(lastSavedReply!)
-    })
+    const mentionedNames = parseMentions(lastSavedReply)
+    const addressed = agentMembers.filter((a: any) =>
+      mentionedNames.some((n: string) => a.name.toLowerCase() === n.toLowerCase()),
+    )
     if (addressed.length > 0) {
-      // Build a synthetic trigger with @mentions so the next round routes correctly
       const syntheticTrigger = addressed.map((a: any) => `@${a.name}`).join(' ')
-      console.log(`[room-agents] chaining to: ${addressed.map((a: any) => a.name).join(', ')}`)
-      await triggerRoomAgentReplies(roomId, syntheticTrigger)
+      console.log(`[room-agents] chaining to: ${addressed.map((a: any) => a.name).join(', ')} (depth ${chainDepth + 1})`)
+      await triggerRoomAgentReplies(roomId, syntheticTrigger, chainDepth + 1)
     }
   }
 }
