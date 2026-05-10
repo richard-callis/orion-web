@@ -16,7 +16,6 @@ import { getSystemRooms } from './lib/seed-system-epic'
 import { getPrompt } from './lib/system-prompts'
 import { resolveAgentGateway } from './lib/agent-gateway'
 import { getAgentsMd } from './lib/agents-md'
-import { retrieveKnowledgeContext } from './lib/embeddings'
 import { startDream } from './lib/dream'
 
 const POLL_INTERVAL_MS = 15_000
@@ -219,23 +218,6 @@ async function runTask(taskId: string): Promise<void> {
     const agentGw = await resolveAgentGateway(agent.id)
     const gateway = agentGw ? { url: agentGw.url, token: agentGw.token } : null
 
-    // Retrieve semantically relevant knowledge context (RAG) for this task
-    let ragContext = ''
-    try {
-      if (agentGw?.environmentId) {
-        const ragResult = await retrieveKnowledgeContext(
-          `${task.title} ${task.description ?? ''}`.trim(),
-          8,
-          0.65,
-        )
-        if (ragResult) {
-          ragContext = '\n\n## Retrieved Knowledge\n' + ragResult
-        }
-      }
-    } catch (ragErr) {
-      err(`[rag] context retrieval failed: ${ragErr}`)
-    }
-
     // Inject tool awareness preamble — lists all available tools at runtime
     // This is injected here (not in the agent's stored prompt) so it always reflects
     // the current tool set, not a stale snapshot from when the agent was created.
@@ -254,7 +236,9 @@ async function runTask(taskId: string): Promise<void> {
       ? `\n\n## Environment-Specific Instructions (from AGENTS.md)\n${agentsMd}`
       : ''
 
-    let systemPrompt = injectedPreamble + '\n\n' + agentSystemPrompt + agentsMdSection + wikiContext + ragContext
+    // Note: ORION snapshot + vector RAG are injected automatically by withContext()
+    // inside createRunner() — no need to fetch them here.
+    let systemPrompt = injectedPreamble + '\n\n' + agentSystemPrompt + agentsMdSection + wikiContext
 
     // Prepend plan-before-execute instruction if configured on this agent
     if (contextConfig.planBeforeExecute === true) {
