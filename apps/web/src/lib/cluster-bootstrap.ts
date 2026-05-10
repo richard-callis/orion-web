@@ -1,22 +1,17 @@
 /**
  * Cluster Bootstrap
  *
- * Deploys ArgoCD + ORION Gateway into a newly registered K8s environment.
- * Called from POST /api/environments/[id]/bootstrap.
- *
- * Steps:
+ * Bootstraps a newly registered K8s environment:
  *   1.  Write kubeconfig to a temp file
  *   2.  Verify cluster connectivity
  *   3.  Ensure Gitea repo exists for this environment
- *   4.  Add ArgoCD Helm repo
- *   5.  Install ArgoCD via Helm
- *   6.  Configure ArgoCD (AppProject + root Application → Gitea repo)
- *   7.  Deploy Gateway via kubectl apply
- *   8.  Create Vault AppRole + policy scoped to this environment
- *   9.  Install External Secrets Operator via Helm
- *   10. Apply ClusterSecretStore pointing to ORION Vault
- *   11. Resolve ArgoCD NodePort URL
- *   12. Update environment record + clean up temp files
+ *   4.  Register cluster with local ArgoCD (REST API)
+ *   5.  Configure ArgoCD (AppProject + Application → Gitea repo /deployments)
+ *   6.  Deploy Gateway via kubectl apply
+ *   7.  Create Vault AppRole + policy scoped to this environment
+ *   8.  Install External Secrets Operator via Helm
+ *   9.  Apply ClusterSecretStore pointing to ORION Vault
+ *   10. Update environment record + clean up temp files
  */
 
 import { spawn } from 'child_process'
@@ -29,6 +24,132 @@ import { decrypt } from './encryption'
 import { bootstrapEnvironmentRepo } from './gitops'
 import { getGitProvider } from './git-provider'
 import { VAULT_ADDR, vaultFetch } from './vault'
+
+const ARGOCD_SERVER = process.env.ARGOCD_SERVER ?? 'http://host.docker.internal:8083'
+const ARGOCD_PASSWORD = process.env.ARGOCD_AUTH_TOKEN
+const TALEOS_KUBECONFIG_PATH = process.env.TALOS_KUBECONFIG ?? '/root/.kube/config'
+
+// ── ArgoCD API helpers ────────────────────────────────────────────────────────
+
+async function argocdLogin(): Promise<string> {
+  if (!ARGOCD_PASSWORD) return ''
+  const res = await fetch(`${ARGOCD_SERVER}/api/v1/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'admin', password: ARGOCD_PASSWORD }),
+  })
+  if (!res.ok) {
+    console.warn(`[bootstrap] ArgoCD login failed: ${res.status} ${res.statusText}`)
+    return ''
+  }
+  const data = await res.json()
+  return data.token ?? ''
+}
+
+async function argocdPut(token: string, path: string, body: unknown): Promise<void> {
+  const res = await fetch(`${ARGOCD_SERVER}${path}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    console.warn(`[bootstrap] ArgoCD PUT ${path} failed: ${res.status} ${body.slice(0, 200)}`)
+  }
+}
+
+/** Extract API server URL from kubeconfig YAML string. */
+function extractKubeconfigServer(kubeconfig: string): string | null {
+  const match = kubeconfig.match(/clusters:\s*\n\s*-+[^-]*?server:\s*(https?:\/\/[^\s]+)/s)
+  return match?.[1]?.trim() ?? null
+}
+
+/** Register the Talos cluster with the local ArgoCD server. */
+async function argocdRegisterCluster(token: string, envName: string): Promise<void> {
+  if (!token) return
+  // Read the Talos kubeconfig
+  const kubeconfig = await readFile('/root/.kube/config', 'utf-8').catch(() => '')
+  if (!kubeconfig) {
+    console.warn('[bootstrap] No kubeconfig found — skipping cluster registration')
+    return
+  }
+
+  const clusterServer = extractKubeconfigServer(kubeconfig)
+  if (!clusterServer) {
+    console.warn('[bootstrap] Could not parse API server URL from kubeconfig — skipping cluster registration')
+    return
+  }
+
+  const slug = envName.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+  const clusterName = `${slug}-cluster`
+
+  // Create cluster via ArgoCD API (cluster resource stored as a secret)
+  await argocdPut(token, '/api/v1/clusters', {
+    secretType: 'kubernetes',
+    metadata: {
+      name: clusterName,
+      namespace: 'argocd',
+      labels: { 'argocd.argoproj.io/secret-type': 'cluster' },
+    },
+    stringData: {
+      name: clusterName,
+      server: clusterServer,
+      config: kubeconfig,
+    },
+  })
+  console.log(`[bootstrap] Registered cluster "${clusterName}" (API: ${clusterServer})`)
+}
+
+/** Create the root Application and AppProject in ArgoCD. */
+async function argocdConfigureApp(token: string, envName: string, repoUrl: string, clusterServer: string): Promise<void> {
+  if (!token) return
+  const slug = envName.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+
+  // AppProject
+  await argocdPut(token, `/api/v1/appprojects/${slug}`, {
+    metadata: {
+      name: slug,
+      namespace: 'argocd',
+    },
+    spec: {
+      description: `ORION-managed cluster: ${envName}`,
+      sourceRepos: [repoUrl],
+      destinations: [{ namespace: '*', server: clusterServer }],
+      clusterResourceWhitelist: [{ group: '*', kind: '*' }],
+    },
+  })
+
+  // Application
+  await argocdPut(token, `/api/v1/applications/${slug}`, {
+    metadata: {
+      name: slug,
+      namespace: 'argocd',
+      annotations: {
+        'argocd.argoproj.io/sync-wave': '0',
+      },
+    },
+    spec: {
+      project: slug,
+      source: {
+        repoURL,
+        targetRevision: 'main',
+        path: 'deployments',
+      },
+      destination: {
+        server: clusterServer,
+        namespace: 'default',
+      },
+      syncPolicy: {
+        automated: { prune: true, selfHeal: true },
+        syncOptions: ['CreateNamespace=true'],
+      },
+    },
+  })
+  console.log(`[bootstrap] Configured ArgoCD app "${slug}" → ${repoUrl}/deployments`)
+}
 
 const ORION_URL       = process.env.NEXTAUTH_URL  ?? 'http://localhost:3000'
 const MANAGEMENT_IP   = process.env.MANAGEMENT_IP ?? 'localhost'
@@ -90,53 +211,6 @@ function runCommand(
 
 function toSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '')
-}
-
-function argoCdAppProject(envName: string, repoUrl: string): string {
-  const slug = toSlug(envName)
-  return `apiVersion: argoproj.io/v1alpha1
-kind: AppProject
-metadata:
-  name: ${slug}
-  namespace: argocd
-spec:
-  description: ORION-managed environment ${envName}
-  sourceRepos:
-    - '${repoUrl}'
-  destinations:
-    - namespace: '*'
-      server: https://kubernetes.default.svc
-  clusterResourceWhitelist:
-    - group: '*'
-      kind: '*'
-`
-}
-
-function argoCdApplication(envName: string, repoUrl: string): string {
-  const slug = toSlug(envName)
-  return `apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: ${slug}
-  namespace: argocd
-  annotations:
-    argocd.argoproj.io/sync-wave: "0"
-spec:
-  project: ${slug}
-  source:
-    repoURL: ${repoUrl}
-    targetRevision: main
-    path: .
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: default
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
-`
 }
 
 // ── Gateway manifest ──────────────────────────────────────────────────────────
@@ -475,54 +549,27 @@ export async function bootstrapCluster(
       emit({ type: 'log', message: `Git repo ready: ${createdRepo.htmlUrl}` })
     }
 
-    // 4. Add Argo Helm repo
-    emit({ type: 'step', message: 'Adding ArgoCD Helm repo...' })
-    await runCommand(
-      'helm',
-      ['repo', 'add', 'argo', 'https://argoproj.github.io/argo-helm', '--force-update'],
-      kenv,
-      msg => emit({ type: 'log', message: msg }),
-    )
-    await runCommand('helm', ['repo', 'update'], kenv, msg => emit({ type: 'log', message: msg }))
+    // 4. Register with local ArgoCD
+    emit({ type: 'step', message: 'Registering with local ArgoCD...' })
+    const argocdToken = await argocdLogin()
+    if (argocdToken) {
+      await argocdRegisterCluster(argocdToken, envName)
+    } else {
+      emit({ type: 'log', message: 'ArgoCD not configured — skipping cluster registration (will retry on next bootstrap)' })
+    }
 
-    // 5. Install ArgoCD
-    emit({ type: 'step', message: 'Installing ArgoCD (this may take 2-3 minutes)...' })
-    await runCommand(
-      'helm',
-      [
-        'upgrade', '--install', 'argocd', 'argo/argo-cd',
-        '--namespace', 'argocd',
-        '--create-namespace',
-        '--wait',
-        '--timeout', '5m',
-        '--set', 'server.service.type=NodePort',
-      ],
-      kenv,
-      msg => emit({ type: 'log', message: msg }),
-    )
-
-    // 6. Configure ArgoCD (AppProject + Application)
+    // 5. Configure ArgoCD Application + AppProject
     if (providerHealthy && env.gitRepo) {
-      emit({ type: 'step', message: 'Configuring ArgoCD...' })
+      emit({ type: 'step', message: 'Configuring ArgoCD Application...' })
       // Use the git provider's repo URL (clone URL without .git suffix stripped for display)
       const gitRepoCloneUrl = provider.getPRUrl(gitOwner, gitRepo, 0)
         .replace(/\/pull\/0$/, '')
         .replace(/\/-\/merge_requests\/0$/, '') + '.git'
 
-      const appProjectYaml = join(tmpDir, 'appproject.yaml')
-      const appYaml = join(tmpDir, 'application.yaml')
-      await writeFile(appProjectYaml, argoCdAppProject(env.name, gitRepoCloneUrl))
-      await writeFile(appYaml, argoCdApplication(env.name, gitRepoCloneUrl))
-
-      await runCommand(
-        'kubectl', ['apply', '-f', appProjectYaml],
-        kenv, msg => emit({ type: 'log', message: msg }),
-      )
-      await runCommand(
-        'kubectl', ['apply', '-f', appYaml],
-        kenv, msg => emit({ type: 'log', message: msg }),
-      )
-      emit({ type: 'log', message: `ArgoCD watching: ${gitRepoCloneUrl}` })
+      if (argocdToken) {
+        await argocdConfigureApp(argocdToken, envName, gitRepoCloneUrl)
+      }
+      emit({ type: 'log', message: `ArgoCD watching: ${gitRepoCloneUrl}/deployments` })
     }
 
     // 7. Deploy Gateway (skip if already running — re-applying would rotate the token)
