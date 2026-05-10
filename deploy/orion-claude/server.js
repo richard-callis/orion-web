@@ -433,20 +433,12 @@ function scheduleTokenRefresh() {
     const ttl = expiresAt - now
 
     if (ttl < REFRESH_THRESHOLD_MS) {
-      console.log(`[orion-claude] token-watchdog: token expires in ${Math.round(ttl / 60000)}min — refreshing`)
-      execFile('claude', ['auth', 'refresh'], { env: process.env, timeout: 30000 }, (err, stdout, stderr) => {
-        if (err) {
-          console.error('[orion-claude] token-watchdog: refresh failed:', err.message, stderr?.slice(0, 200))
-        } else {
-          console.log('[orion-claude] token-watchdog: refresh succeeded')
-          // Copy refreshed credentials to shared volume if present
-          const sharedPath = '/claude-creds/.credentials.json'
-          try {
-            fs.mkdirSync('/claude-creds', { recursive: true })
-            fs.copyFileSync(CREDS_PATH, sharedPath)
-          } catch {}
-        }
-      })
+      // Claude CLI has no headless refresh command — log a warning so an admin
+      // knows to re-authenticate via the ORION UI (Settings → Claude Auth).
+      console.warn(
+        `[orion-claude] token-watchdog: token expires in ${Math.round(ttl / 60000)}min — ` +
+        'manual re-authentication required via ORION UI (Settings → Claude Auth)'
+      )
     }
   }
 
