@@ -20,6 +20,7 @@ import { ORION_TOOL_DEFINITIONS, TOOLS_SYSTEM_ADDENDUM, executeTool } from './ag
 import { getToolsForContext, executeRegisteredTool } from './tool-registry'
 import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
+import { buildAgentContext, invalidateSnapshotCache } from './agent-context'
 import type { AgentGateway } from './agent-gateway'
 import type { GatewayTool } from './agent-runner/types'
 
@@ -443,9 +444,14 @@ export async function triggerRoomAgentReplies(
       const toolsEnabled  = !!(contextConfig.tools)
 
       // Base persona description — identity constraint is added by buildSystemPrompt()
-      const agentBasePrompt = rawPrompt
+      const personaPrompt = rawPrompt
         ? `${agent.role ? `Role: ${agent.role}\n\n` : ''}${rawPrompt}`
         : `${agent.role ? `Role: ${agent.role}\n\n` : ''}${agent.description ?? ''}`
+
+      // Inject pre-fetched context (ORION snapshot + vector search) so agents arrive
+      // pre-oriented and don't need to call orion_get_snapshot on every message.
+      const agentContext = await buildAgentContext(latestTurn)
+      const agentBasePrompt = agentContext ? personaPrompt + agentContext : personaPrompt
 
       // Names of other agents/users in the room so the model can @mention them
       const otherParticipants = agentMembers
