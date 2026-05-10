@@ -16,6 +16,7 @@
 
 import { prisma } from './db'
 import { writeVaultSecret } from './vault'
+import { getOrFetch } from './system-cache'
 
 // ── Tool definitions (OpenAI function-call format) ────────────────────────────
 
@@ -148,9 +149,14 @@ export const ORION_TOOL_DEFINITIONS = [
  * from the DB — so the LLM never needs to call a tool to discover them.
  */
 export async function buildToolDefinitions() {
-  const envs = await prisma.environment.findMany({ select: { name: true }, orderBy: { name: 'asc' } })
-  const envNames = envs.map((e: { name: string }) => `"${e.name}"`).join(', ') || 'none configured'
+  return getOrFetch('environments', 'cache.environments.ttl', async () => {
+    const envs = await prisma.environment.findMany({ select: { name: true }, orderBy: { name: 'asc' } })
+    const envNames = envs.map((e: { name: string }) => `"${e.name}"`).join(', ') || 'none configured'
+    return _buildToolDefinitionsWithEnvs(envNames)
+  })
+}
 
+function _buildToolDefinitionsWithEnvs(envNames: string) {
   return ORION_TOOL_DEFINITIONS.map(def => {
     if (def.function.name !== 'write_secret') return def
     return {
