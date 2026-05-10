@@ -16,7 +16,7 @@
 
 import { prisma } from './db'
 import { setTyping, clearTyping } from './typing-state'
-import { ORION_TOOL_DEFINITIONS, TOOLS_SYSTEM_ADDENDUM, executeTool } from './agent-tools'
+import { buildToolDefinitions, TOOLS_SYSTEM_ADDENDUM, executeTool } from './agent-tools'
 import { getToolsForContext, executeRegisteredTool } from './tool-registry'
 import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
@@ -222,7 +222,9 @@ async function callOpenAIChat(
 
   // Legacy agent-tools (create_task, orion_manage_task, etc.) — keep for backward compat.
   // Exclude any that are now in the registry to avoid duplicates.
-  const legacyTools = ORION_TOOL_DEFINITIONS.filter(d => !registryToolNames.has(d.function.name))
+  // buildToolDefinitions() injects real environment names into write_secret description.
+  const allToolDefs = await buildToolDefinitions()
+  const legacyTools = allToolDefs.filter(d => !registryToolNames.has(d.function.name))
   const legacyToolNames: Set<string> = new Set(legacyTools.map(d => d.function.name))
 
   // Merge: registry + legacy + gateway tools

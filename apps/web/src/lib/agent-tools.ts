@@ -105,18 +105,6 @@ export const ORION_TOOL_DEFINITIONS = [
   {
     type: 'function' as const,
     function: {
-      name: 'orion_list_environments',
-      description: 'List all ORION environments by name and type. Use this before calling write_secret or any tool that requires an environmentName.',
-      parameters: {
-        type: 'object',
-        properties: {},
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function' as const,
-    function: {
       name: 'orion_manage_task',
       description: 'Assign a task to an agent, update its status, or append a feed note.',
       parameters: {
@@ -139,7 +127,7 @@ export const ORION_TOOL_DEFINITIONS = [
       parameters: {
         type: 'object',
         properties: {
-          environmentName:  { type: 'string', description: 'Name of the ORION environment to create the secret in. If unsure, call orion_list_environments to see available names.' },
+          environmentName:  { type: 'string', description: 'Name of the ORION environment to create the secret in.' },
           name:             { type: 'string', description: 'Human-readable label for the ExternalSecret (e.g. "gitea-db-secret")' },
           vaultPath:        { type: 'string', description: 'Vault KV v2 path relative to the "secret" mount (e.g. "gitea/db"). No "secret/data/" prefix.' },
           keyNames:         { type: 'array', items: { type: 'string' }, description: 'List of secret key names to scaffold (e.g. ["DB_PASSWORD", "DB_USER"]). PLACEHOLDER values will be written to Vault.' },
@@ -153,6 +141,36 @@ export const ORION_TOOL_DEFINITIONS = [
     },
   },
 ] as const
+
+/**
+ * Returns a copy of ORION_TOOL_DEFINITIONS with the write_secret
+ * environmentName description patched to list actual environment names
+ * from the DB — so the LLM never needs to call a tool to discover them.
+ */
+export async function buildToolDefinitions() {
+  const envs = await prisma.environment.findMany({ select: { name: true }, orderBy: { name: 'asc' } })
+  const envNames = envs.map((e: { name: string }) => `"${e.name}"`).join(', ') || 'none configured'
+
+  return ORION_TOOL_DEFINITIONS.map(def => {
+    if (def.function.name !== 'write_secret') return def
+    return {
+      ...def,
+      function: {
+        ...def.function,
+        parameters: {
+          ...def.function.parameters,
+          properties: {
+            ...def.function.parameters.properties,
+            environmentName: {
+              type: 'string' as const,
+              description: `Name of the ORION environment to create the secret in. Available environments: ${envNames}.`,
+            },
+          },
+        },
+      },
+    }
+  })
+}
 
 // ── Tool execution ────────────────────────────────────────────────────────────
 
@@ -264,12 +282,6 @@ export async function executeTool(
         ).join('\n')
       }
 
-      case 'orion_list_environments': {
-        const envs = await prisma.environment.findMany({ orderBy: { name: 'asc' } })
-        if (envs.length === 0) return 'No environments configured.'
-        return envs.map((e: any) => `  "${e.name}" (type: ${e.type})`).join('\n')
-      }
-
       case 'orion_manage_task': {
         const taskId = String(args.taskId ?? '')
         if (!taskId) return 'Error: taskId is required'
@@ -374,7 +386,6 @@ You have access to these tools. Use them — do not pretend to perform an action
 **Read ORION state:**
 - **orion_get_tasks**: List tasks, optionally filtered by status or assigned agent.
 - **orion_get_agents**: List all active agents and their roles.
-- **orion_list_environments**: List available ORION environments by name. Call this before write_secret.
 
 **Write ORION state:**
 - **create_task**: Log a new task on the board (title, description, priority, status).
