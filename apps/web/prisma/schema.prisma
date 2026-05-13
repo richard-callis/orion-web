@@ -94,6 +94,7 @@ model Environment {
   status         String             @default("disconnected") // "connected" | "disconnected" | "error"
   lastSeen       DateTime?
   metadata     Json?
+  monitoringConfig Json?   // { stack: 'none' | 'basic' | 'full' }
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
 
@@ -114,7 +115,9 @@ model Environment {
   ingressPoints IngressPoint[]
   coreDnsDomains Domain[]              @relation("DomainCoreDns")
   novaDeployments NovaDeployment[]
-  managedSecrets  ManagedSecret[]
+  managedSecrets   ManagedSecret[]
+  securityEvents   SecurityEvent[]
+  securityConfigs  SecurityConfig[]
 }
 
 /// Tracks every PR opened by the GitOps loop — open, auto-merged, or awaiting review.
@@ -840,4 +843,43 @@ model ManagedSecret {
 
   @@index([environmentId])
   @@map("managed_secrets")
+}
+
+// ── Security: Events ──────────────────────────────────────────────────────────
+// Ingested from CrowdSec, ntopng, Wazuh, ELK/ELK-stack anomaly detection.
+// Deduplicated via `dedupKey`; acknowledged by admins/operators.
+
+model SecurityEvent {
+  id           String   @id @default(uuid())
+  environmentId String?
+  environment  Environment? @relation(fields: [environmentId], references: [id])
+  type         String   // 'crowdsec_block', 'ntopng_threat', 'wazuh_alert', 'anomaly'
+  source       String   // 'crowdsec', 'ntopng', 'wazuh', 'elk'
+  severity     Int      // 0-100
+  title        String
+  description  String?  @db.Text
+  rawEvent     Json     // full event payload
+  dedupKey     String   // hash for dedup
+  acknowledged Boolean  @default(false)
+  acknowledgedAt DateTime?
+  acknowledgedBy String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  @@index([environmentId, createdAt])
+  @@index([environmentId, type, acknowledged])
+}
+
+// ── Security: Per-environment configuration ───────────────────────────────────
+// Key-value pairs for security-related settings (e.g. CrowdSec API key,
+// Wazuh server URL, ntopng credentials, ELK connection string, …).
+
+model SecurityConfig {
+  id          String   @id @default(uuid())
+  environmentId String?
+  environment  Environment? @relation(fields: [environmentId], references: [id])
+  key         String
+  value       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@unique([environmentId, key])
 }
