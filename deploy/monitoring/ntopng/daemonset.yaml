@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ntopng
+  namespace: monitoring
+  labels:
+    app: ntopng
+spec:
+  selector:
+    matchLabels:
+      app: ntopng
+  template:
+    metadata:
+      labels:
+        app: ntopng
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: homelab-master
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: ntopng
+          image: ghcr.io/ntop/ntopng:latest
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          ports:
+            - containerPort: 3000
+              hostPort: 3000
+              name: web
+            - containerPort: 9101
+              hostPort: 9101
+              name: prometheus
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          env:
+            - name: NTOPNG_ARGS
+              value: "-w 3000 --http-uuid ntopng --interface 0 --disable-featured-tasks"
+          volumeMounts:
+            - name: data
+              mountPath: /opt/ntop
+      volumes:
+        - name: data
+          emptyDir: {}
