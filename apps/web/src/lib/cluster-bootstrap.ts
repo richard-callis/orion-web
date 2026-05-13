@@ -547,6 +547,101 @@ export async function bootstrapCluster(
       )
     }
 
+    // 7.5. Deploy monitoring stack (if configured)
+    const monitoringConfig = (env as any).monitoringConfig as { stack?: string } | null
+    if (monitoringConfig?.stack && monitoringConfig.stack !== 'none') {
+      emit({ type: 'step', message: `Deploying monitoring stack (${monitoringConfig.stack})...` })
+
+      // Deploy monitoring namespace
+      await runCommand(
+        'kubectl', ['create', 'namespace', 'monitoring', '--dry-run=client', '-o', 'yaml', '|', 'kubectl', 'apply', '-f', '-'],
+        kenv,
+        msg => emit({ type: 'log', message: msg }),
+      )
+
+      if (monitoringConfig.stack === 'basic' || monitoringConfig.stack === 'full') {
+        // Deploy VictoriaMetrics
+        emit({ type: 'step', message: 'Deploying VictoriaMetrics (metrics & alerting)...' })
+        await runCommand(
+          'helm', [
+            'upgrade', '--install', 'victoria-metrics-k8s-stack', 'victoriametrics/victoria-metrics-k8s-stack',
+            '--namespace', 'victoria-metrics',
+            '--create-namespace',
+            '--wait',
+            '--timeout', '5m',
+            '--set', 'serverServiceEnabled=false',
+            '--set', 'vmsingle.replicas=1',
+          ],
+          kenv,
+          msg => emit({ type: 'log', message: msg }),
+        )
+
+        // Deploy ntopng
+        emit({ type: 'step', message: 'Deploying ntopng (network traffic analysis)...' })
+        await runCommand(
+          'kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/ntopng/service.yaml'],
+          kenv,
+          msg => emit({ type: 'log', message: msg }),
+        )
+      }
+
+      if (monitoringConfig.stack === 'full') {
+        // Deploy ELK stack
+        emit({ type: 'step', message: 'Deploying ELK stack (logs & flow analysis)...' })
+        await runCommand(
+          'kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/elk/namespace.yaml'],
+          kenv,
+          msg => emit({ type: 'log', message: msg }),
+        )
+        await runCommand(
+          'kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/elk/secret.yaml'],
+          kenv,
+          msg => emit({ type: 'log', message: msg }),
+        )
+        await runCommand(
+          'kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/elk/elasticsearch-deployment.yaml'],
+          kenv,
+          msg => emit({ type: 'log', message: msg }),
+        )
+        await runCommand(
+          'kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/elk/logstash-configmap.yaml'],
+          kenv,
+          msg => emit({ type: 'log', message: msg }),
+        )
+        await runCommand(
+          'kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/elk/logstash-deployment.yaml'],
+          kenv,
+          msg => emit({ type: 'log', message: msg }),
+        )
+        await runCommand(
+          'kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/elk/kibana-deployment.yaml'],
+          kenv,
+          msg => emit({ type: 'log', message: msg }),
+        )
+
+        // Deploy Elastiflow
+        emit({ type: 'step', message: 'Deploying Elastiflow (NetFlow collector)...' })
+        await runCommand(
+          'kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/elastiflow/deployment.yaml'],
+          kenv,
+          msg => emit({ type: 'log', message: msg }),
+        )
+      }
+
+      // Wait for monitoring pods
+      emit({ type: 'step', message: 'Waiting for monitoring pods to become ready...' })
+      try {
+        await runCommand(
+          'kubectl', ['wait', '--for=condition=Ready', '--all', '-n', 'monitoring', '--timeout=300s', 'pods'],
+          kenv,
+          msg => emit({ type: 'log', message: msg }),
+        )
+        emit({ type: 'log', message: 'Monitoring stack deployment complete' })
+      } catch {
+        emit({ type: 'log', message: 'Some monitoring pods not ready yet — will continue on next bootstrap' })
+      }
+    }
+
     // 8. Configure Vault AppRole + install ESO (if Vault is initialized in ORION)
     const [vaultAdminSetting, vaultRootSetting, vaultInitSetting] = await Promise.all([
       prisma.systemSetting.findUnique({ where: { key: 'vault.adminToken' } }),
