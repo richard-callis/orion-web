@@ -2357,7 +2357,7 @@ registerTool({
   parallelSafe: true,
   availableIn: 'task',
   handler: async (args) => {
-    const { query, limit, minConfidence } = args as {
+    const { query, environment, limit, minConfidence } = args as {
       query?: string; environment?: string; limit?: number; minConfidence?: number
     }
 

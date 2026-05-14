@@ -134,7 +134,7 @@ async function argocdConfigureApp(token: string, envName: string, repoUrl: strin
     spec: {
       project: slug,
       source: {
-        repoURL,
+        repoURL: repoUrl,
         targetRevision: 'main',
         path: 'deployments',
       },
@@ -738,9 +738,10 @@ async function ensureGitRepo(env: { name: string; gitOwner: string | null; gitRe
 
 /** Bootstrap a K8s/Talos cluster environment (original flow). */
 async function bootstrapK8sCluster(
-  env: Awaited<ReturnType<typeof prisma.environment.findUnique>>,
+  env: NonNullable<Awaited<ReturnType<typeof prisma.environment.findUnique>>>,
   emit: (event: BootstrapEvent) => void,
 ): Promise<void> {
+  if (!env.kubeconfig) throw new Error('No kubeconfig stored for this environment')
   const tmpDir = join(tmpdir(), `orion-bootstrap-${randomBytes(8).toString('hex')}`)
   await mkdir(tmpDir, { recursive: true })
 
@@ -936,7 +937,7 @@ async function bootstrapK8sCluster(
 
 /** Vault + ESO configuration (shared K8s logic). */
 async function bootstrapK8sVaultAndEso(
-  env: Awaited<ReturnType<typeof prisma.environment.findUnique>>,
+  env: NonNullable<Awaited<ReturnType<typeof prisma.environment.findUnique>>>,
   slug: string,
   kenv: Record<string, string>,
   tmpDir: string,
@@ -1047,7 +1048,7 @@ async function bootstrapK8sVaultAndEso(
 
 /** Bootstrap a single Docker host environment. */
 async function bootstrapDockerEnvironment(
-  env: Awaited<ReturnType<typeof prisma.environment.findUnique>>,
+  env: NonNullable<Awaited<ReturnType<typeof prisma.environment.findUnique>>>,
   emit: (event: BootstrapEvent) => void,
 ): Promise<void> {
   const tmpDir = join(tmpdir(), `orion-bootstrap-${randomBytes(8).toString('hex')}`)
@@ -1090,7 +1091,7 @@ async function bootstrapDockerEnvironment(
 
 /** Bootstrap a Docker Swarm environment. */
 async function bootstrapSwarmEnvironment(
-  env: Awaited<ReturnType<typeof prisma.environment.findUnique>>,
+  env: NonNullable<Awaited<ReturnType<typeof prisma.environment.findUnique>>>,
   emit: (event: BootstrapEvent) => void,
 ): Promise<void> {
   const tmpDir = join(tmpdir(), `orion-bootstrap-${randomBytes(8).toString('hex')}`)

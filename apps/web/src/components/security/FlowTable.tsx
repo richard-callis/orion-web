@@ -59,7 +59,7 @@ export default function FlowTable() {
   const sorted = [...filtered].sort((a, b) => {
     const aVal = a[sortCol]
     const bVal = b[sortCol]
-    if (typeof aVal === 'number') {
+    if (typeof aVal === 'number' && typeof bVal === 'number') {
       return sortDir === 'asc' ? aVal - bVal : bVal - aVal
     }
     return sortDir === 'asc'
