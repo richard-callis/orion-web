@@ -134,7 +134,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         ? streamOllamaChat(prompt, conversationId, history, ollamaModel, ollamaBaseUrl, abortCtrl.signal, userId, targetEnvironmentId, agentCreationPrompt, knowledgeContext)
         : geminiModel
         ? streamGeminiChat(prompt, conversationId, history, geminiModel, abortCtrl.signal, knowledgeContext)
-        : streamClaudeResponse(prompt, conversationId, history, planTarget, agentCreationPrompt, undefined, abortCtrl.signal, knowledgeContext)
+        : streamClaudeResponse(prompt, conversationId, history, planTarget, agentCreationPrompt, undefined, abortCtrl.signal, knowledgeContext, targetEnvironmentId)
       for await (const chunk of generator) {
         send(chunk.type, chunk)
         if (chunk.type === 'done' || chunk.type === 'error') {
