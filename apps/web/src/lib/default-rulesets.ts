@@ -41,7 +41,7 @@ export const DEFAULT_RULESETS: RulesetSeed[] = [
     name: "skill-low-precision",
     description: "Periodic check for skills that fire too broadly without helping.",
     criteria: JSON.stringify([
-      { name: "fire_rate", type: "completeness_check", threshold: 5, weight: 0.3 },
+      { name: "fire_rate", type: "tool_count", threshold: 5, weight: 0.3 },
       { name: "success_rate", type: "response_quality", threshold: 0.3, weight: 0.7 },
     ]),
     triggers: JSON.stringify(["periodic"]),
