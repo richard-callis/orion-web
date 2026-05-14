@@ -1,0 +1,115 @@
+---
+# Elasticsearch StatefulSet — ORION Phase 3
+# Adapted from ansible for RPi 4 8GB homelab (2 replicas, amd64)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: elk
+  labels:
+    app: elasticsearch
+spec:
+  serviceName: elasticsearch
+  replicas: 2
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+      initContainers:
+        - name: increase-vm-max-map
+          image: busybox
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
+          securityContext:
+            privileged: true
+            runAsUser: 0
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:8.11.3
+          ports:
+            - containerPort: 9200
+              name: http
+            - containerPort: 9300
+              name: transport
+          env:
+            - name: cluster.name
+              value: "orion-elasticsearch"
+            - name: node.name
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: discovery.seed_hosts
+              value: "elasticsearch-0.elasticsearch.elk,elasticsearch-1.elasticsearch.elk"
+            - name: cluster.initial_master_nodes
+              value: "elasticsearch-0,elasticsearch-1"
+            - name: ES_JAVA_OPTS
+              value: "-Xms1g -Xmx1g"
+            - name: xpack.security.enabled
+              value: "true"
+            - name: xpack.security.http.ssl.enabled
+              value: "false"
+            - name: ELASTIC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elasticsearch-credentials
+                  key: password
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "1000m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: longhorn
+        resources:
+          requests:
+            storage: 50Gi
+---
+# Headless service for StatefulSet pod DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: elk
+spec:
+  clusterIP: None
+  selector:
+    app: elasticsearch
+  ports:
+    - name: http
+      port: 9200
+      targetPort: 9200
+    - name: transport
+      port: 9300
+      targetPort: 9300
+---
+# Client service for Kibana, Logstash, Elastiflow to reach ES
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch-client
+  namespace: elk
+spec:
+  selector:
+    app: elasticsearch
+  ports:
+    - name: http
+      port: 9200
+      targetPort: 9200

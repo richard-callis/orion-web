@@ -9,6 +9,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const body = await req.json()
+
+  await prisma.systemSetting.upsert({
+    where: { key: 'monitoringConfig' },
+    update: { value: (body as any).monitoring ?? 'none' },
+    create: { key: 'monitoringConfig', value: (body as any).monitoring ?? 'none' },
+  })
+
   await prisma.systemSetting.upsert({
     where: { key: 'setup.completed' },
     update: { value: true },

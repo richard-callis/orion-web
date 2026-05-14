@@ -1,0 +1,64 @@
+# ORION Phase 3 — Standalone Grafana values
+# Connects to VictoriaMetrics as datasource
+# Single replica, amd64 only (RPi 4 homelab)
+
+replicas: 1
+
+nodeSelector:
+  kubernetes.io/arch: amd64
+
+resources:
+  limits:
+    memory: 512Mi
+  requests:
+    cpu: 50m
+    memory: 256Mi
+
+persistence:
+  enabled: true
+  storageClassName: longhorn
+  size: 5Gi
+
+adminUser: admin
+adminPasswordFromEnv: GRAFANA_ADMIN_PASSWORD
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: VictoriaMetrics
+        type: prometheus
+        access: proxy
+        url: http://vmsingle-vmsingle.victoria-metrics:8429
+        isDefault: true
+        editable: false
+      - name: Loki
+        type: loki
+        access: proxy
+        url: http://vmalert-vmalert.victoria-metrics:3100
+        editable: false
+
+dashboards:
+  default:
+    gdev:
+      enabled: true
+
+grafana.ini:
+  server:
+    root_url: "%(protocol)s://%(domain)s:%(http_port)s/grafana"
+    serve_from_sub_path: true
+  log:
+    level: warn
+  security:
+    allow_embedding: false
+
+service:
+  type: ClusterIP
+  ports:
+    grafana:
+      port: 80
+      targetPort: 3000
+
+serviceAccount:
+  create: true
+  name: grafana
