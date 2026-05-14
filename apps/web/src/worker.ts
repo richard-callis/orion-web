@@ -358,6 +358,15 @@ async function runTask(taskId: string): Promise<void> {
     const summary = outputText.slice(-500) || 'Task completed.'
 
     const completionMsg = `✅ Completed: **${task.title}** (${durationSec}s · ${toolsUsed.length} tools)\n\n${summary}`
+
+    // Delegation result propagation
+    const delegation = (task.metadata as any)?.delegation as { roomId?: string; ringLeaderId?: string } | undefined
+    const roomPromises = featureRoomId ? [postToRoom(featureRoomId, agent.id, completionMsg, taskId)] : []
+    if (delegation?.roomId) {
+      const delegateResult = `🔔 **Delegation complete**: ${task.title}\n\n${summary}`
+      roomPromises.push(postToRoom(delegation.roomId, agent.id, delegateResult, taskId))
+    }
+
     await Promise.all([
       prisma.task.update({ where: { id: taskId }, data: { status: 'pending_validation' } }),
       logTaskEvent(taskId, 'completed', summary, agent.id),
