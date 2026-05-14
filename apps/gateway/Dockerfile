@@ -23,17 +23,17 @@ RUN ARCH=${TARGETARCH:-amd64} \
          -o /usr/local/bin/kubectl \
     && chmod +x /usr/local/bin/kubectl
 
-# Install talosctl — architecture-aware
+# Install talosctl — architecture-aware (version pinned)
+ARG TALOSCTL_VERSION=1.13.2
 RUN ARCH=${TARGETARCH:-amd64} \
-    && TALOS_VERSION=$(curl -fsSL https://api.github.com/repos/siderolabs/talos/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": "v\([^"]*\)".*/\1/') \
-    && curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-${ARCH}" \
+    && curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOSCTL_VERSION}/talosctl-linux-${ARCH}" \
          -o /usr/local/bin/talosctl \
     && chmod +x /usr/local/bin/talosctl
 
-# Install helm — architecture-aware
+# Install helm — architecture-aware (version pinned)
+ARG HELM_VERSION=4.2.0
 RUN ARCH=${TARGETARCH:-amd64} \
-    && HELM_VERSION=$(curl -fsSL https://api.github.com/repos/helm/helm/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": "\(.*\)".*/\1/') \
-    && curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" \
+    && curl -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-${ARCH}.tar.gz" \
          | tar -xz --strip-components=1 -C /usr/local/bin "linux-${ARCH}/helm" \
     && chmod +x /usr/local/bin/helm
 
