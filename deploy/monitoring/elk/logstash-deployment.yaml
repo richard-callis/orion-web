@@ -1,0 +1,102 @@
+---
+# Logstash Deployment — ORION Phase 3
+# Adapts ansible config for RPi 4 homelab (2 replicas, amd64)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logstash
+  namespace: elk
+  labels:
+    app: logstash
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: logstash
+  template:
+    metadata:
+      labels:
+        app: logstash
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: logstash
+          image: docker.elastic.co/logstash/logstash:8.11.3
+          ports:
+            - containerPort: 5044
+              name: beats
+            - containerPort: 5000
+              name: tcp
+            - containerPort: 5000
+              protocol: UDP
+              name: udp
+            - containerPort: 514
+              name: syslog
+              protocol: UDP
+            - containerPort: 2055
+              name: netflow
+              protocol: UDP
+            - containerPort: 6343
+              name: sflow
+              protocol: UDP
+          volumeMounts:
+            - name: config
+              mountPath: /usr/share/logstash/pipeline/logstash.conf
+              subPath: logstash.conf
+            - name: config
+              mountPath: /usr/share/logstash/config/logstash.yml
+              subPath: logstash.yml
+          env:
+            - name: LS_JAVA_OPTS
+              value: "-Xmx1g -Xms1g"
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+      volumes:
+        - name: config
+          configMap:
+            name: logstash-config
+---
+# Service for Logstash (NodePort for external collectors)
+apiVersion: v1
+kind: Service
+metadata:
+  name: logstash
+  namespace: elk
+  labels:
+    app: logstash
+spec:
+  type: NodePort
+  selector:
+    app: logstash
+  ports:
+    - name: beats
+      port: 5044
+      targetPort: 5044
+    - name: tcp
+      port: 5000
+      targetPort: 5000
+    - name: udp
+      port: 5000
+      targetPort: 5000
+      protocol: UDP
+    - name: syslog
+      port: 514
+      targetPort: 514
+      protocol: UDP
+      nodePort: 30514
+    - name: netflow
+      port: 2055
+      targetPort: 2055
+      protocol: UDP
+      nodePort: 30055
+    - name: sflow
+      port: 6343
+      targetPort: 6343
+      protocol: UDP
+      nodePort: 30343

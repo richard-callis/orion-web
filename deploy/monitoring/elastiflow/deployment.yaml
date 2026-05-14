@@ -1,0 +1,118 @@
+---
+# Elastiflow — ORION Phase 3
+# NetFlow/IPFIX/sFlow collector for network monitoring
+# Adapted from ansible for RPi 4 homelab (single replica, amd64)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elastiflow
+  namespace: monitoring
+  labels:
+    app: elastiflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elastiflow
+  template:
+    metadata:
+      labels:
+        app: elastiflow
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: elastiflow
+          image: elastiflow/unified-flow-collector:6.3.0
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 2055
+              protocol: UDP
+              name: netflow
+            - containerPort: 6343
+              protocol: UDP
+              name: sflow
+            - containerPort: 4739
+              protocol: UDP
+              name: ipfix
+          env:
+            - name: EF_FLOW_SERVER_UDP_IP
+              value: "0.0.0.0"
+            - name: EF_FLOW_SERVER_UDP_PORT
+              value: "2055"
+            - name: EF_OUTPUT_ELASTICSEARCH_ENABLE
+              value: "true"
+            - name: EF_OUTPUT_ELASTICSEARCH_ECS_ENABLE
+              value: "true"
+            - name: EF_OUTPUT_ELASTICSEARCH_ADDRESSES
+              value: "http://elasticsearch-client.elk:9200"
+            - name: EF_OUTPUT_ELASTICSEARCH_USERNAME
+              value: "elastic"
+            - name: EF_OUTPUT_ELASTICSEARCH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elasticsearch-credentials
+                  key: password
+            - name: EF_FLOW_DECODER_NETFLOW_ENABLE
+              value: "true"
+            - name: EF_FLOW_DECODER_SFLOW_ENABLE
+              value: "true"
+            - name: EF_FLOW_DECODER_IPFIX_ENABLE
+              value: "true"
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+---
+# Service for Elastiflow
+apiVersion: v1
+kind: Service
+metadata:
+  name: elastiflow
+  namespace: monitoring
+  labels:
+    app: elastiflow
+spec:
+  type: NodePort
+  selector:
+    app: elastiflow
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: netflow
+      port: 2055
+      targetPort: 2055
+      protocol: UDP
+    - name: sflow
+      port: 6343
+      targetPort: 6343
+      protocol: UDP
+    - name: ipfix
+      port: 4739
+      targetPort: 4739
+      protocol: UDP
+---
+# IngressRoute for Elastiflow web UI
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: elastiflow
+  namespace: monitoring
+  labels:
+    app: elastiflow
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - match: Host(`netflow.khalis.corp`)
+      kind: Rule
+      services:
+        - name: elastiflow
+          port: 8080
+          namespace: monitoring

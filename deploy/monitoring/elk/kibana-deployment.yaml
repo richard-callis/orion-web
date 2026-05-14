@@ -1,0 +1,83 @@
+---
+# Kibana Deployment — ORION Phase 3
+# Adapted from ansible for RPi 4 homelab (2 replicas, amd64)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana
+  namespace: elk
+  labels:
+    app: kibana
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kibana
+  template:
+    metadata:
+      labels:
+        app: kibana
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: kibana
+          image: docker.elastic.co/kibana/kibana:8.11.3
+          ports:
+            - containerPort: 5601
+              name: http
+          env:
+            - name: ELASTICSEARCH_HOSTS
+              value: "http://elasticsearch-client:9200"
+            - name: ELASTICSEARCH_USERNAME
+              value: "elastic"
+            - name: ELASTICSEARCH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elasticsearch-credentials
+                  key: password
+            - name: XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY
+              value: "a7a6311933d3503b89bc2dbc36572c33a6c10925682e591bffcab6911c06786d"
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+---
+# Kibana service
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  namespace: elk
+  labels:
+    app: kibana
+spec:
+  selector:
+    app: kibana
+  ports:
+    - name: http
+      port: 5601
+      targetPort: 5601
+---
+# IngressRoute for Kibana — Traefik IngressRoute
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kibana-internal
+  namespace: elk
+  labels:
+    app: kibana
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - match: Host(`siem.khalis.corp`)
+      kind: Rule
+      services:
+        - name: kibana
+          port: 5601
+          namespace: elk

@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logstash-config
+  namespace: elk
+  labels:
+    app: logstash
+data:
+  logstash.yml: |
+    http.host: "0.0.0.0"
+    path.config: /usr/share/logstash/pipeline
+  logstash.conf: |
+    input {
+      # NetFlow v5/v9/v10 (IPFIX) input
+      udp {
+        port => 2055
+        codec => netflow {
+          versions => [5, 9, 10]
+        }
+        type => "netflow"
+      }
+
+      # sFlow input
+      udp {
+        port => 6343
+        codec => netflow {
+          versions => [10]
+          target => "sflow"
+        }
+        type => "sflow"
+      }
+
+      # Syslog input
+      udp {
+        port => 514
+        type => "syslog"
+      }
+
+      # Beats input
+      beats {
+        port => 5044
+      }
+    }
+
+    filter {
+      # NetFlow enrichment
+      if [type] == "netflow" {
+        if [ipv4_src_addr] {
+          geoip {
+            source => "ipv4_src_addr"
+            target => "geoip_src"
+          }
+        }
+        if [ipv4_dst_addr] {
+          geoip {
+            source => "ipv4_dst_addr"
+            target => "geoip_dst"
+          }
+        }
+
+        mutate {
+          convert {
+            "in_bytes" => "integer"
+            "in_pkts" => "integer"
+            "out_bytes" => "integer"
+            "out_pkts" => "integer"
+          }
+        }
+      }
+
+      # Syslog filtering
+      if [type] == "syslog" {
+        grok {
+          match => { "message" => "%{SYSLOGLINE}" }
+        }
+        date {
+          match => [ "timestamp", "MMM  d HH:mm:ss", "MMM dd HH:mm:ss" ]
+        }
+      }
+    }
+
+    output {
+      elasticsearch {
+        hosts => ["http://elasticsearch-client:9200"]
+        index => "%{[type]}-%{+YYYY.MM.dd}"
+        user => "elastic"
+        password => "orion-elk-default"
+      }
+    }
