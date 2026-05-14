@@ -6,7 +6,7 @@ import { AlertTriangle, Check, Copy, Loader2, Eye, EyeOff, ChevronRight, Shield,
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Step = 1 | 2 | 3 | 4 | 5 | 6
+type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7
 
 interface VaultResult {
   keys: string[]
@@ -43,7 +43,7 @@ function CopyButton({ value }: { value: string }) {
 
 // ── Progress indicator ────────────────────────────────────────────────────────
 
-const STEPS = ['Token', 'Admin', 'Git', 'Domain', 'AI', 'Vault']
+const STEPS = ['Token', 'Admin', 'Git', 'Domain', 'AI', 'Vault', 'Monitoring']
 
 function ProgressBar({ current }: { current: Step }) {
   return (
@@ -764,6 +764,63 @@ function Step6Vault({ onComplete }: { onComplete: () => void }) {
   )
 }
 
+// ── Step 7: Monitoring setup ──────────────────────────────────────────────────
+
+function Step7Monitoring({ onNext }: { onNext: () => void }) {
+  const [selected, setSelected] = useState<'none' | 'basic' | 'full'>('none')
+  const [loading, setLoading] = useState(false)
+
+  async function submit() {
+    setLoading(true)
+    await fetch('/api/setup/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ monitoring: selected }),
+    })
+    setLoading(false)
+    onNext()
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-base font-semibold text-text-primary mb-1">Monitoring &amp; Observability</h2>
+        <p className="text-xs text-text-muted">Choose what monitoring stack to deploy to your cluster.</p>
+      </div>
+
+      <div className="space-y-2">
+        <label className={`flex items-start gap-3 px-3 py-3 rounded-lg border cursor-pointer transition-colors ${selected === 'none' ? 'border-accent bg-accent/5' : 'border-border-subtle hover:border-text-muted'}`}>
+          <input type="radio" name="monitoring" checked={selected === 'none'} onChange={() => setSelected('none')} className="accent-accent mt-0.5" />
+          <div>
+            <div className="text-sm font-medium text-text-primary">None</div>
+            <div className="text-[11px] text-text-muted">Skip monitoring setup. You can enable it later in settings.</div>
+          </div>
+        </label>
+        <label className={`flex items-start gap-3 px-3 py-3 rounded-lg border cursor-pointer transition-colors ${selected === 'basic' ? 'border-accent bg-accent/5' : 'border-border-subtle hover:border-text-muted'}`}>
+          <input type="radio" name="monitoring" checked={selected === 'basic'} onChange={() => setSelected('basic')} className="accent-accent mt-0.5" />
+          <div>
+            <div className="text-sm font-medium text-text-primary">Metrics &amp; Traffic</div>
+            <div className="text-[11px] text-text-muted">Deploy VictoriaMetrics + Grafana + ntopng for metrics and network traffic monitoring.</div>
+          </div>
+        </label>
+        <label className={`flex items-start gap-3 px-3 py-3 rounded-lg border cursor-pointer transition-colors ${selected === 'full' ? 'border-accent bg-accent/5' : 'border-border-subtle hover:border-text-muted'}`}>
+          <input type="radio" name="monitoring" checked={selected === 'full'} onChange={() => setSelected('full')} className="accent-accent mt-0.5" />
+          <div>
+            <div className="text-sm font-medium text-text-primary">Full Observability</div>
+            <div className="text-[11px] text-text-muted">Metrics + ELK stack + Elastiflow + all security tools (CrowdSec, Wazuh, ntopng).</div>
+          </div>
+        </label>
+      </div>
+
+      <button onClick={submit} disabled={loading}
+        className="w-full flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-lg bg-accent text-white hover:bg-accent/90 disabled:opacity-60 transition-colors">
+        {loading && <Loader2 size={14} className="animate-spin" />}
+        {loading ? 'Completing…' : 'Complete setup'}
+      </button>
+    </div>
+  )
+}
+
 // ── Main wizard ───────────────────────────────────────────────────────────────
 
 export default function SetupWizard() {
@@ -775,7 +832,7 @@ export default function SetupWizard() {
     if (saved) setStep(parseInt(saved) as Step)
   }, [])
 
-  function next() { setStep(s => (s < 6 ? (s + 1) as Step : s)) }
+  function next() { setStep(s => (s < 7 ? (s + 1) as Step : s)) }
 
   function handleComplete() {
     sessionStorage.removeItem('orion_setup_step')
@@ -801,11 +858,12 @@ export default function SetupWizard() {
           {step === 4 && <Step4Domain onNext={next} />}
           {step === 5 && <Step5AI onNext={next} />}
           {step === 6 && <Step6Vault onComplete={handleComplete} />}
+          {step === 7 && <Step7Monitoring onNext={handleComplete} />}
         </div>
       </div>
 
       <p className="text-center text-[11px] text-text-muted mt-2 flex-shrink-0">
-        Step {step} of 6 — <span className="text-text-primary">{STEPS[step - 1]}</span>
+        Step {step} of {STEPS.length} — <span className="text-text-primary">{STEPS[step - 1]}</span>
       </p>
     </div>
   )
