@@ -5,9 +5,10 @@ import { useState } from 'react'
 import {
   Server, MessageSquare, Bot,
   Bell, ClipboardList,
-  ChevronLeft, ChevronRight, BookOpen, Settings2, Sparkles,
+  ChevronLeft, ChevronRight, BookOpen, Settings2, Sparkles, Shield,
 } from 'lucide-react'
 import { usePendingTools } from '@/hooks/usePendingTools'
+import { useUnackAlertCount } from '@/hooks/useSecurityAlerts'
 
 const nav = [
   { href: '/infrastructure', icon: Server,  label: 'Infrastructure' },
@@ -15,6 +16,7 @@ const nav = [
   { href: '/tasks',          icon: ClipboardList, label: 'Tasks' },
   { href: '/agents',         icon: Bot,    label: 'Agents' },
   { href: '/alerts',         icon: Bell,   label: 'Alerts' },
+  { href: '/security',       icon: Shield, label: 'Security' },
   { href: '/notes',          icon: BookOpen, label: 'Wiki' },
   { href: '/nova',           icon: Sparkles, label: 'Nova' },
 ]
@@ -23,6 +25,7 @@ export function Sidebar() {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
   const { count: pendingCount } = usePendingTools()
+  const unackCount = useUnackAlertCount()
 
   const NavLink = ({ href, icon: Icon, label, badge }: { href: string; icon: React.ElementType; label: string; badge?: number }) => {
     const active = href === '/' ? pathname === '/' : pathname.startsWith(href)
@@ -53,7 +56,7 @@ export function Sidebar() {
     <aside className={`hidden md:flex flex-col bg-bg-sidebar border-r border-border-subtle transition-all duration-200 flex-shrink-0 ${collapsed ? 'w-16' : 'w-56'}`}>
       {/* Nav */}
       <nav className="flex-1 py-2 overflow-y-auto">
-        {nav.map(item => <NavLink key={item.href} {...item} />)}
+        {nav.map(item => <NavLink key={item.href} {...item} badge={item.href === '/security' ? (unackCount || undefined) : undefined} />)}
       </nav>
 
       {/* Divider + Admin link */}
