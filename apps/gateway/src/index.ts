@@ -362,7 +362,7 @@ function timingSafeCompare(a: string, b: string): boolean {
   const bufB = Buffer.from(b)
   // timingSafeEqual throws on mismatch, so we catch it
   try {
-    return crypto.timingSafeEqual(bufA, bufB)
+    return timingSafeEqual(bufA, bufB)
   } catch {
     return false
   }

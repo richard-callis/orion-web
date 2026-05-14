@@ -82,7 +82,7 @@ function sanitizeEventData(data: Record<string, unknown>): Record<string, string
 export class HooksEngine {
   private orion: OrionClient
   private hooks: Array<{ id: string; name: string; spec: any }> = []
-  private interval: NodeJS.Timer | null = null
+  private interval: ReturnType<typeof setInterval> | null = null
 
   constructor(orion: OrionClient) {
     this.orion = orion
@@ -144,7 +144,7 @@ export class HooksEngine {
       } else if (spec.actionType === 'send_notification') {
         output = spec.actionConfig.message.replace(
           /{(\w+)}/g,
-          (_, key) => String((event.payload as any)[key] ?? ''),
+          (_: string, key: string) => String((event.payload as any)[key] ?? ''),
         )
       }
     } catch (err) {

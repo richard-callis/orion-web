@@ -238,7 +238,7 @@ export const securityTools = [
       const user = process.env.WAZUH_USERNAME ?? ''
       const pass = process.env.WAZUH_PASSWORD ?? ''
       const limit = args.limit ?? 50
-      const filter = args.filter ?? ''
+      const filter = String(args.filter ?? '')
       const params = new URLSearchParams({
         select: '*',
         pretty: 'true',
