@@ -59,7 +59,7 @@ export default function ApprovalsPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <ShieldAlert size={18} className="text-orange-400" />
-          <h1 className="text-lg font-semibold text-text-primary">Tool Approval Requests</h1>
+          <h1 className="text-lg font-semibold text-text-primary">Wrench Approval Requests</h1>
         </div>
         <div className="flex items-center gap-2">
           <select value={filter} onChange={e => setFilter(e.target.value as 'pending' | 'all')}

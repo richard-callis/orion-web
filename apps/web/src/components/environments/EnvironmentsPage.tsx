@@ -80,7 +80,7 @@ const DEFAULT_INPUT_SCHEMA = `{
 interface EnvForm { name: string; type: string; description: string; gatewayUrl: string; gatewayToken: string; kubeconfig: string; nodeIp: string; talosConfig: string }
 const EMPTY_ENV: EnvForm = { name: '', type: 'cluster', description: '', gatewayUrl: '', gatewayToken: '', kubeconfig: '', nodeIp: '', talosConfig: '' }
 
-// ─── Tool form ────────────────────────────────────────────────────────────────
+// ─── Wrench form ────────────────────────────────────────────────────────────────
 
 interface ToolForm { name: string; description: string; inputSchema: string; execType: string; execConfig: string }
 const EMPTY_TOOL: ToolForm = { name: '', description: '', inputSchema: DEFAULT_INPUT_SCHEMA, execType: 'shell', execConfig: '' }
@@ -92,7 +92,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   const [selected, setSelected]         = useState<Environment | null>(initialEnvironments[0] ?? null)
   const [tab, setTab]                   = useState<'tools' | 'agents' | 'groups' | 'access'>('tools')
 
-  // ── Tool groups state ────────────────────────────────────────────────────────
+  // ── Wrench groups state ────────────────────────────────────────────────────────
   interface ToolGroup {
     id: string; name: string; description: string | null; minimumTier: string; environmentId: string
     tools: { toolId: string; tool: McpTool }[]
@@ -163,10 +163,10 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   // Pending tool approval state
   const [approvingTool, setApprovingTool] = useState<string | null>(null)
 
-  // Tool detail modal (click to inspect / toggle enable)
+  // Wrench detail modal (click to inspect / toggle enable)
   const [toolDetailModal, setToolDetailModal] = useState<McpTool | null>(null)
 
-  // Tool CRUD state
+  // Wrench CRUD state
   const [toolModal, setToolModal]   = useState<'create' | 'edit' | null>(null)
   const [toolTarget, setToolTarget] = useState<McpTool | null>(null)
   const [toolForm, setToolForm]     = useState<ToolForm>(EMPTY_TOOL)
@@ -378,7 +378,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
     setEnvModal(null)
   }
 
-  // ── Tool modals ───────────────────────────────────────────────────────────────
+  // ── Wrench modals ───────────────────────────────────────────────────────────────
 
   const openCreateTool = () => { setToolTarget(null); setToolForm(EMPTY_TOOL); setToolError(null); setToolModal('create') }
   const openEditTool = (t: McpTool) => {
@@ -456,7 +456,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
     }
   }
 
-  // ── Tool groups ───────────────────────────────────────────────────────────────
+  // ── Wrench groups ───────────────────────────────────────────────────────────────
 
   const loadToolGroups = useCallback(async () => {
     if (!selected) return
@@ -729,7 +729,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                 }`}>
                 {t === 'tools'   ? `Tools (${selected.tools.length})` :
                  t === 'agents'  ? `Agents (${selected.agents.length})` :
-                 t === 'groups'  ? 'Tool Groups' :
+                 t === 'groups'  ? 'Wrench Groups' :
                  'Access'}
               </button>
             ))}
@@ -791,7 +791,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                   </p>
                   <button onClick={openCreateTool}
                     className="flex items-center gap-2 px-3 py-1.5 rounded bg-accent text-white text-xs font-medium hover:bg-accent/90 transition-colors">
-                    <Plus size={12} /> Add Tool
+                    <Plus size={12} /> Add Wrench
                   </button>
                 </div>
 
@@ -939,7 +939,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
               <div className="space-y-4 max-w-3xl">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-text-primary">Tool Groups</p>
+                    <p className="text-sm font-medium text-text-primary">Wrench Groups</p>
                     <p className="text-xs text-text-muted mt-0.5">Group tools together and set a minimum user tier required to run them</p>
                   </div>
                   <button onClick={() => { setTgForm({ name: '', description: '', minimumTier: 'viewer' }); setTgTarget(null); setTgModal('create') }}
@@ -1465,13 +1465,13 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
         document.body
       )}
 
-      {/* ── Tool modal ── */}
+      {/* ── Wrench modal ── */}
       {toolModalOpen && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setToolModal(null)}>
           <div className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
               <h2 className="text-sm font-semibold text-text-primary">
-                {toolModal === 'create' ? 'New Tool' : `Edit · ${toolTarget?.name}`}
+                {toolModal === 'create' ? 'New Wrench' : `Edit · ${toolTarget?.name}`}
               </h2>
               <button onClick={() => setToolModal(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
             </div>
@@ -1506,7 +1506,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
               )}
 
               <div>
-                <label className={labelCls}>Tool Name * <span className="text-text-muted">(snake_case, e.g. run_script)</span></label>
+                <label className={labelCls}>Wrench Name * <span className="text-text-muted">(snake_case, e.g. run_script)</span></label>
                 <input value={toolForm.name} onChange={e => setToolForm(f => ({ ...f, name: e.target.value }))}
                   placeholder="run_script" className={`${inputCls} font-mono`} autoFocus />
               </div>
@@ -1557,12 +1557,12 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
         document.body
       )}
 
-      {/* ── Tool group modal ── */}
+      {/* ── Wrench group modal ── */}
       {tgModal !== null && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setTgModal(null)}>
           <div className="w-full max-w-sm bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
-              <h2 className="text-sm font-semibold text-text-primary">{tgModal === 'create' ? 'New Tool Group' : `Edit · ${tgTarget?.name}`}</h2>
+              <h2 className="text-sm font-semibold text-text-primary">{tgModal === 'create' ? 'New Wrench Group' : `Edit · ${tgTarget?.name}`}</h2>
               <button onClick={() => setTgModal(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
             </div>
             <div className="p-5 space-y-3">
@@ -1596,7 +1596,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
         document.body
       )}
 
-      {/* ── Tool detail modal ── */}
+      {/* ── Wrench detail modal ── */}
       {toolDetailModal && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setToolDetailModal(null)}>
           <div className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -1624,8 +1624,8 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                   <p className="text-xs font-medium text-text-primary">Enabled</p>
                   <p className="text-[11px] text-text-muted mt-0.5">
                     {toolDetailModal.enabled
-                      ? 'Tool is active and available to the AI'
-                      : 'Tool is disabled — AI cannot call it'}
+                      ? 'Wrench is active and available to the AI'
+                      : 'Wrench is disabled — AI cannot call it'}
                   </p>
                 </div>
                 <button

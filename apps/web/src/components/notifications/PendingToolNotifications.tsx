@@ -78,7 +78,7 @@ export function PendingToolNotifications() {
             {/* Header */}
             <div className="flex items-center gap-2 px-3 py-2 border-b border-yellow-500/20 bg-yellow-500/5">
               <Sparkles size={12} className="text-yellow-400 flex-shrink-0" />
-              <span className="text-xs font-semibold text-yellow-400 flex-1 truncate">Tool Proposed</span>
+              <span className="text-xs font-semibold text-yellow-400 flex-1 truncate">Wrench Proposed</span>
               <span className="text-[10px] text-text-muted">{tool.environment.name}</span>
               <button onClick={() => dismiss(tool.id)} className="p-0.5 rounded text-text-muted hover:text-text-primary transition-colors">
                 <X size={12} />
@@ -126,7 +126,7 @@ export function PendingToolNotifications() {
         ))}
       </div>
 
-      {/* ── Tool detail modal ── */}
+      {/* ── Wrench detail modal ── */}
       {viewTool && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
           onClick={() => setViewTool(null)}>
@@ -137,7 +137,7 @@ export function PendingToolNotifications() {
             <div className="flex items-center gap-2 px-5 py-4 border-b border-border-subtle">
               <Sparkles size={14} className="text-yellow-400 flex-shrink-0" />
               <div className="flex-1 min-w-0">
-                <p className="text-[10px] text-text-muted uppercase tracking-wide">Tool Proposal · {viewTool.environment.name}</p>
+                <p className="text-[10px] text-text-muted uppercase tracking-wide">Wrench Proposal · {viewTool.environment.name}</p>
                 <h2 className="text-sm font-semibold text-text-primary font-mono truncate">{viewTool.name}</h2>
               </div>
               <button onClick={() => setViewTool(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>

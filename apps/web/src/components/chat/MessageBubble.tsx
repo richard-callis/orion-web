@@ -23,7 +23,7 @@ export function MessageBubble({ message }: { message: Message }) {
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div className={`max-w-[85%] space-y-2 ${isUser ? 'items-end' : 'items-start'} flex flex-col`}>
-        {/* Tool calls (AG-UI style) */}
+        {/* Wrench calls (AG-UI style) */}
         {!isUser && message.toolCalls?.map((tc, i) => (
           <div key={i} className="w-full rounded-lg border border-status-info/30 bg-status-info/5 text-xs overflow-hidden">
             <div className="flex items-center gap-2 px-3 py-1.5 border-b border-status-info/20 bg-status-info/10">

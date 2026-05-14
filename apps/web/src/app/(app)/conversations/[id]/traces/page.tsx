@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import {
-  MessageSquare, Tool, Bot, Play, RotateCcw, ChevronDown, ChevronUp,
+  MessageSquare, Wrench, Bot, Play, RotateCcw, ChevronDown, ChevronUp,
   Clock, Terminal, Sparkles,
 } from 'lucide-react'
 
@@ -34,16 +34,16 @@ const TYPE_CONFIG: Record<string, {
   label: string
 }> = {
   tool_call: {
-    icon: <Tool size={14} />,
+    icon: <Wrench size={14} />,
     color: 'text-blue-400',
     bg: 'bg-blue-500/10 border-blue-500/30',
-    label: 'Tool Call',
+    label: 'Wrench Call',
   },
   tool_result: {
     icon: <Play size={14} />,
     color: 'text-green-400',
     bg: 'bg-green-500/10 border-green-500/30',
-    label: 'Tool Result',
+    label: 'Wrench Result',
   },
   skill_injected: {
     icon: <Sparkles size={14} />,
@@ -164,7 +164,7 @@ export default function TracesPage() {
       {traces.length > 0 && (
         <div className="flex items-center gap-3 px-4 py-2 border-b border-border-subtle flex-shrink-0 text-[10px]">
           <span className="flex items-center gap-1 text-blue-400">
-            <Tool size={10} />
+            <Wrench size={10} />
             {typeCounts.tool_call || 0} tool_calls
           </span>
           <span className="flex items-center gap-1 text-green-400">
@@ -199,8 +199,8 @@ export default function TracesPage() {
           className="px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
         >
           <option value="">All Types</option>
-          <option value="tool_call">Tool Calls</option>
-          <option value="tool_result">Tool Results</option>
+          <option value="tool_call">Wrench Calls</option>
+          <option value="tool_result">Wrench Results</option>
           <option value="skill_injected">Skill Injected</option>
           <option value="hook_triggered">Hook Triggered</option>
           <option value="text_generation">Text Generation</option>
