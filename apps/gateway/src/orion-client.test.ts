@@ -126,12 +126,12 @@ describe('OrionClient', () => {
     it('POSTs ingresses to correct endpoint', async () => {
       global.fetch = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('') })
       const client = new OrionClient(cfg)
-      await client.reportIngresses([{ host: 'example.com', path: '/api' }])
+      await client.reportIngresses([{ host: 'example.com', paths: ['/api'], tls: false, namespace: 'default', ingressName: 'test' }])
       expect(global.fetch).toHaveBeenCalledWith(
         'http://orion.local/api/environments/env-1/ingress/sync',
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ ingresses: [{ host: 'example.com', path: '/api' }] }),
+          body: JSON.stringify({ ingresses: [{ host: 'example.com', paths: ['/api'], tls: false, namespace: 'default', ingressName: 'test' }] }),
         }),
       )
     })
@@ -147,12 +147,12 @@ describe('OrionClient', () => {
     it('POSTs sync status to correct endpoint', async () => {
       global.fetch = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('') })
       const client = new OrionClient(cfg)
-      await client.reportSyncStatus([{ name: 'my-app', status: 'Healthy' }])
+      await client.reportSyncStatus([{ name: 'my-app', namespace: 'default', project: 'default', syncStatus: 'Synced', healthStatus: 'Healthy', revision: 'abc', message: '', reconciledAt: null }])
       expect(global.fetch).toHaveBeenCalledWith(
         'http://orion.local/api/environments/env-1/sync-status',
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ applications: [{ name: 'my-app', status: 'Healthy' }] }),
+          body: JSON.stringify({ applications: [{ name: 'my-app', namespace: 'default', project: 'default', syncStatus: 'Synced', healthStatus: 'Healthy', revision: 'abc', message: '', reconciledAt: null }] }),
         }),
       )
     })

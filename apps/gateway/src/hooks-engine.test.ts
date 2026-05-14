@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
 import { HooksEngine, type HookEvent } from './hooks-engine'
+import { OrionClient } from './orion-client'
 
 function createMockOrionClient() {
   return {
@@ -16,7 +17,7 @@ describe('HooksEngine', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     mockClient = createMockOrionClient()
-    engine = new HooksEngine(mockClient)
+    engine = new HooksEngine(mockClient as unknown as OrionClient)
   })
 
   afterAll(() => {
@@ -46,7 +47,7 @@ describe('HooksEngine', () => {
 
   describe('matchesFilter', () => {
     function makeEngine() {
-      return new HooksEngine(createMockOrionClient())
+      return new HooksEngine(createMockOrionClient() as unknown as OrionClient)
     }
 
     it('returns true when event payload matches all filter keys', () => {

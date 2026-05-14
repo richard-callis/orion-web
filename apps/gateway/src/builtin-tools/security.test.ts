@@ -57,7 +57,7 @@ describe('Security Tools', () => {
     it('crowdsec_blocks has limit parameter', () => {
       const tool = securityTools[0]
       expect(tool.inputSchema.properties.limit).toBeDefined()
-      expect(tool.inputSchema.properties.limit.type).toBe('number')
+      expect(tool.inputSchema.properties.limit?.type).toBe('number')
     })
 
     it('prometheus_query requires query parameter', () => {
