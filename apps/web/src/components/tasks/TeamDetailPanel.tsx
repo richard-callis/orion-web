@@ -568,7 +568,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
                     }`}>
                       {msg.content}
                       {msg.toolCalls?.map((tc, j) => (
-                        <div key={j} className="mt-1 text-[10px] text-text-muted">Tool: {tc.tool}</div>
+                        <div key={j} className="mt-1 text-[10px] text-text-muted">Wrench: {tc.tool}</div>
                       ))}
                     </div>
                   </div>
