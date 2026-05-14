@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 export const dynamic = 'force-dynamic'
 
 // GET /api/environments/[id]/evals/rulesets
@@ -33,8 +34,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const envId = params.id
 
   // Admin check
-  const isAdmin = req.headers.get('x-admin') === 'true'
-  if (!isAdmin) {
+  try {
+    await requireAdmin()
+  } catch {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   }
 

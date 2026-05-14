@@ -1,30 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { prisma } from '@/lib/db'
+import { requireServiceAuth } from '@/lib/auth'
+import { parseBodyOrError } from '@/lib/validate'
 export const dynamic = 'force-dynamic'
+
+const RunEvalSchema = z.object({
+  targetType: z.enum(['conversation', 'task', 'skill', 'hook']),
+  targetId: z.string().min(1),
+})
 
 // POST /api/environments/[id]/evals/run
 // Auto-eval trigger — evaluates a conversation or task after completion.
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    await requireServiceAuth(req)
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   const envId = params.id
 
   // Verify environment exists
   const env = await prisma.environment.findUnique({ where: { id: envId } })
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
 
-  let body: { targetType: 'conversation' | 'task' | 'skill' | 'hook'; targetId: string }
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  }
-
-  const { targetType, targetId } = body
-  if (!targetType || !targetId) {
-    return NextResponse.json({ error: 'Missing targetType or targetId' }, { status: 400 })
-  }
-  if (!['conversation', 'task', 'skill', 'hook'].includes(targetType)) {
-    return NextResponse.json({ error: 'Invalid targetType' }, { status: 400 })
-  }
+  const result = await parseBodyOrError(req, RunEvalSchema)
+  if ('error' in result) return result.error
+  const { targetType, targetId } = result.data
 
   // 1. Find all applicable rulesets for this target type
   const rulesets = await prisma.ruleset.findMany({
