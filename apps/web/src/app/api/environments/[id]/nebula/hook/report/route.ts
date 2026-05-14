@@ -25,7 +25,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       status: status || 'success',
       output,
       startedAt: startedAt ? new Date(startedAt) : new Date(),
-      completedAt: durationMs ? new Date(Date.now() + (durationMs || 0)) : undefined,
+      completedAt: durationMs
+        ? new Date((startedAt ? new Date(startedAt).getTime() : Date.now()) + durationMs)
+        : undefined,
       durationMs: durationMs,
     },
   })
