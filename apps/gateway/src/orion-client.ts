@@ -113,4 +113,73 @@ export class OrionClient {
       console.error(`[gateway] reportSyncStatus failed: ${res.status} ${await res.text()}`)
     }
   }
+
+  /** Fetch active NebulaInstances (skills + hooks) for an environment */
+  async fetchNebula(environmentId: string): Promise<unknown[]> {
+    const res = await fetch(
+      `${this.cfg.mccUrl}/api/environments/${environmentId}/nebula/active`,
+      { headers: this.headers() },
+    )
+    if (!res.ok) throw new Error(`Failed to fetch nebula: ${res.status}`)
+    return res.json()
+  }
+
+  /** Report hook execution result back to ORION */
+  async reportHookExecution(
+    environmentId: string,
+    data: {
+      nebulaId: string
+      triggerEvent: string
+      triggerData?: string
+      actionType: string
+      status: string
+      output?: string
+      startedAt?: string | Date
+      durationMs?: number
+    },
+  ): Promise<void> {
+    const res = await fetch(
+      `${this.cfg.mccUrl}/api/environments/${environmentId}/nebula/hook/report`,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify(data),
+      },
+    )
+    if (!res.ok) {
+      console.error(`[gateway] reportHookExecution failed: ${res.status}`)
+    }
+  }
+
+  /** Report an AgentTrace to ORION */
+  async reportTrace(data: {
+    conversationId?: string
+    taskId?: string
+    step: number
+    type: string
+    toolName?: string
+    toolArgs?: string
+    toolResult?: string
+    content?: string
+    skillName?: string
+    hookName?: string
+    durationMs?: number
+    modelUsed?: string
+    systemPromptHash?: string
+    tokensIn?: number
+    tokensOut?: number
+    costCents?: number
+  }): Promise<void> {
+    const res = await fetch(
+      `${this.cfg.mccUrl}/api/observability/trace`,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify(data),
+      },
+    )
+    if (!res.ok) {
+      console.error(`[gateway] reportTrace failed: ${res.status}`)
+    }
+  }
 }
