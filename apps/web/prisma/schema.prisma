@@ -114,7 +114,10 @@ model Environment {
   ingressPoints IngressPoint[]
   coreDnsDomains Domain[]              @relation("DomainCoreDns")
   novaDeployments NovaDeployment[]
-  managedSecrets  ManagedSecret[]
+  managedSecrets   ManagedSecret[]
+  nebulaInstances  NebulaInstance[]
+  evals            Eval[]
+  agentScores      AgentScore[]
 }
 
 /// Tracks every PR opened by the GitOps loop — open, auto-merged, or awaiting review.
@@ -840,4 +843,149 @@ model ManagedSecret {
 
   @@index([environmentId])
   @@map("managed_secrets")
+}
+
+// ── ORION Hooks, Skills, Evals & Observability (Phase 1) ──────────────────────
+
+model NovaDefinition {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  category    String   // "skill" | "hook"
+  version     String   @default("1.0")
+  title       String
+  description String   @db.Text
+  spec        String   @db.Text // JSON string
+  metadata    String?  @db.Text // JSON string
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  instances   NebulaInstance[]
+
+  @@index([category])
+}
+
+model NebulaInstance {
+  id            String             @id @default(cuid())
+  environmentId String
+  environment   Environment        @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  sourceNovaId  String?
+  novaDefinition NovaDefinition?   @relation(fields: [sourceNovaId], references: [id])
+  name          String
+  category      String             // "skill" | "hook"
+  spec          String             @db.Text
+  isForked      Boolean            @default(false)
+  isInstalled   Boolean            @default(true)
+  minimumTier   String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  hookLogs      HookExecutionLog[]
+  skillLogs     SkillExecutionLog[]
+
+  @@unique([environmentId, name])
+  @@index([environmentId, category, isInstalled])
+}
+
+model HookExecutionLog {
+  id           String             @id @default(cuid())
+  nebulaId     String
+  nebula       NebulaInstance     @relation(fields: [nebulaId], references: [id], onDelete: Cascade)
+  triggerEvent String
+  triggerData  String?            @db.Text
+  actionType   String
+  status       String             @default("running")
+  output       String?            @db.Text
+  startedAt    DateTime           @default(now())
+  completedAt  DateTime?
+  durationMs   Int?
+
+  @@index([nebulaId, startedAt])
+  @@index([status, startedAt])
+}
+
+model SkillExecutionLog {
+  id             String           @id @default(cuid())
+  nebulaId       String
+  nebula         NebulaInstance   @relation(fields: [nebulaId], references: [id], onDelete: Cascade)
+  source         String           // "chat_match" | "hook_trigger" | "manual"
+  contextId      String?
+  matchedPattern String?
+  createdAt      DateTime         @default(now())
+
+  @@index([nebulaId, createdAt])
+}
+
+model AgentTrace {
+  id               String   @id @default(cuid())
+  conversationId   String?
+  taskId           String?
+  step             Int
+  type             String   // "tool_call" | "tool_result" | "skill_injected" | "hook_triggered" | "text_generation" | "error"
+  toolName         String?
+  toolArgs         String?  @db.Text
+  toolResult       String?  @db.Text
+  content          String?  @db.Text
+  skillName        String?
+  hookName         String?
+  durationMs       Int?
+  modelUsed        String?
+  systemPromptHash String?
+  tokensIn         Int?
+  tokensOut        Int?
+  costCents        Decimal? @db.Decimal(10,6)
+  createdAt        DateTime @default(now())
+
+  @@index([conversationId, step])
+  @@index([taskId, step])
+  @@index([type, createdAt])
+  @@index([createdAt])
+}
+
+model Eval {
+  id            String         @id @default(cuid())
+  environmentId String
+  environment   Environment    @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  targetType    String         // "conversation" | "task" | "skill" | "hook"
+  targetId      String
+  evalType      String         // "manual" | "auto_rule" | "auto_llm"
+  evaluator     String?
+  rulesetId     String?
+  scores        String         @db.Text // JSON
+  scoreTotal    Float          // 0-100
+  scoreBreakdown String?       @db.Text // JSON
+  feedback      String?        @db.Text
+  evidence      String?        @db.Text // JSON
+  createdAt     DateTime       @default(now())
+
+  @@index([environmentId, targetType, targetId])
+  @@index([evalType, createdAt])
+}
+
+model Ruleset {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String   @db.Text
+  criteria    String   @db.Text // JSON
+  triggers    String   @db.Text // JSON
+  createdAt   DateTime @default(now())
+
+  @@index([name])
+}
+
+model AgentScore {
+  id            String         @id @default(cuid())
+  environmentId String
+  environment   Environment    @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  targetType    String         // "conversation" | "task" | "skill" | "hook"
+  targetId      String
+  scoreTotal    Float          // 0-100
+  accuracy      Float          // 0-100
+  completeness  Float?         // 0-100
+  safety        Float          // 0-100
+  efficiency    Float?         // 0-100
+  quality       Float?         // 0-100
+  evalCount     Int            @default(0)
+  lastEvalAt    DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@unique([targetType, targetId])
 }

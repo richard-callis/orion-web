@@ -5,6 +5,55 @@ import { generateEmbedding, vectorSearch } from './embeddings'
 import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './management-tools'
 import { validateToolArgs } from './tool-registry'
 
+// ── Agent Tracing: record AgentTrace records for observability ──────────────────
+
+async function recordTrace(data: {
+  conversationId?: string | null
+  taskId?: string | null
+  step: number
+  type: string
+  toolName?: string | null
+  toolArgs?: string | null
+  toolResult?: string | null
+  content?: string | null
+  skillName?: string | null
+  hookName?: string | null
+  durationMs?: number | null
+  modelUsed?: string | null
+}): Promise<void> {
+  await prisma.agentTrace.create({ data }).catch(() => { /* non-fatal — tracing must not break chat */ })
+}
+
+// ── Skill Injection: match user query against installed skill trigger patterns ─
+
+/** Parse a NebulaInstance.spec into a typed trigger config. */
+type SkillSpec = { triggerPatterns?: string[]; systemPrompt?: string }
+
+async function matchAndInjectSkills(
+  environmentId: string,
+  message: string,
+  conversationId?: string,
+): Promise<{ injected: string; skillName: string | null }> {
+  const skills = await prisma.nebulaInstance.findMany({
+    where: { environmentId, category: 'skill', isInstalled: true },
+  })
+  const msgLower = message.toLowerCase()
+  for (const skill of skills) {
+    let spec: SkillSpec
+    try { spec = JSON.parse(skill.spec) as SkillSpec } catch { continue }
+    if (!spec?.triggerPatterns?.length) continue
+    const matched = spec.triggerPatterns.find(p => msgLower.includes(p.toLowerCase()))
+    if (matched) {
+      // Non-blocking log — failures must not break the chat flow
+      prisma.skillExecutionLog.create({
+        data: { nebulaId: skill.id, source: 'chat_match', matchedPattern: matched },
+      }).catch(() => {})
+      return { injected: spec.systemPrompt ?? '', skillName: skill.name }
+    }
+  }
+  return { injected: '', skillName: null }
+}
+
 async function getActiveTasksSection(): Promise<string> {
   const tasks = await prisma.task.findMany({
     where: { status: { in: ['pending', 'running'] } },
@@ -211,7 +260,12 @@ export async function* streamOllamaChat(
   targetEnvironmentId?: string,
   systemPromptOverride?: string,
   knowledgeContext?: string,
+  traceId?: string,
 ): AsyncGenerator<StreamChunk> {
+  let _step = 0
+  const inc = () => ++_step
+  await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: model })
+
   // Load tools from the specified (or first connected) gateway
   const { GatewayClient } = await import('./agent-runner/gateway-client')
   type GatewayTool = import('./agent-runner/types').GatewayTool
@@ -243,7 +297,7 @@ export async function* streamOllamaChat(
 
   // Tools available — run agentic loop (non-streaming turns with tool execution)
   const systemPrompt = await getSystemPrompt(gatewayTools.map(t => t.name), undefined, undefined, knowledgeContext)
-  yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, history, model, baseUrl, gatewayTools, gatewayClient, connectedEnv!.id, abortSignal, userId)
+  yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, history, model, baseUrl, gatewayTools, gatewayClient, connectedEnv!.id, abortSignal, userId, undefined, undefined, undefined, undefined, undefined, traceId)
 }
 
 interface OllamaMsg {
@@ -286,9 +340,14 @@ async function* streamOllamaToolLoop(
   minP?: number,
   repeatPenalty?: number,
   seed?: number,
+  traceId?: string,
 ): AsyncGenerator<StreamChunk> {
   const { GatewayClient: _GC } = await import('./agent-runner/gateway-client')
   void _GC
+
+  let _step = 0
+  const inc = () => ++_step
+  await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: model })
 
   let ollamaUrl = baseUrl
   let timeoutSecs = 120
@@ -404,8 +463,11 @@ async function* streamOllamaToolLoop(
 
           // Handle propose_tool locally
           if (fn.name === 'propose_tool') {
-            yield { type: 'tool_call', tool: 'propose_tool', input: JSON.stringify(args) }
+            const toolArgsStr = JSON.stringify(args)
+            await recordTrace({ conversationId, step: inc(), type: 'tool_call', toolName: 'propose_tool', toolArgs: toolArgsStr, modelUsed: model })
+            yield { type: 'tool_call', tool: 'propose_tool', input: toolArgsStr }
             let result: string
+            const toolStart = Date.now()
             try {
               const toolName = String(args.name ?? '').trim().replace(/\s+/g, '_')
               const parameters = (args.parameters as Record<string, { type: string; description?: string }> | undefined) ?? {}
@@ -436,6 +498,7 @@ async function* streamOllamaToolLoop(
             } catch (err) {
               result = `Failed to propose tool: ${err instanceof Error ? err.message : String(err)}`
             }
+            await recordTrace({ conversationId, step: inc(), type: 'tool_result', toolName: 'propose_tool', toolResult: result, durationMs: Date.now() - toolStart, modelUsed: model })
             yield { type: 'tool_result', tool: 'propose_tool', output: result }
             messages.push({ role: 'tool', content: result })
             continue
@@ -444,26 +507,35 @@ async function* streamOllamaToolLoop(
           // Knowledge tools — handled server-side
           if (fn.name === 'knowledge_search') {
             const argsStr = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments)
+            await recordTrace({ conversationId, step: inc(), type: 'tool_call', toolName: 'knowledge_search', toolArgs: argsStr, modelUsed: model })
             yield { type: 'tool_call', tool: fn.name, input: argsStr }
+            const toolStart = Date.now()
             const result = await handleKnowledgeSearch(argsStr)
+            await recordTrace({ conversationId, step: inc(), type: 'tool_result', toolName: 'knowledge_search', toolResult: result, durationMs: Date.now() - toolStart, modelUsed: model })
             yield { type: 'tool_result', tool: fn.name, output: result }
             messages.push({ role: 'tool', content: result })
             continue
           }
           if (fn.name === 'knowledge_graph') {
             const argsStr = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments)
+            await recordTrace({ conversationId, step: inc(), type: 'tool_call', toolName: 'knowledge_graph', toolArgs: argsStr, modelUsed: model })
             yield { type: 'tool_call', tool: fn.name, input: argsStr }
+            const toolStart = Date.now()
             const result = await handleKnowledgeGraph(argsStr)
+            await recordTrace({ conversationId, step: inc(), type: 'tool_result', toolName: 'knowledge_graph', toolResult: result, durationMs: Date.now() - toolStart, modelUsed: model })
             yield { type: 'tool_result', tool: fn.name, output: result }
             messages.push({ role: 'tool', content: result })
             continue
           }
 
-          yield { type: 'tool_call', tool: fn.name, input: typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments) }
+          const toolArgsStr = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments)
+          await recordTrace({ conversationId, step: inc(), type: 'tool_call', toolName: fn.name, toolArgs: toolArgsStr, modelUsed: model })
+          yield { type: 'tool_call', tool: fn.name, input: toolArgsStr }
 
           // Permission check — must happen before forwarding to gateway
           const perm = await checkToolPermission(fn.name, args, environmentId, conversationId, userId)
           let result: string
+          const toolStart = Date.now()
           if (!perm.allowed) {
             result = `Permission denied: ${perm.reason}`
           } else {
@@ -473,6 +545,7 @@ async function* streamOllamaToolLoop(
               result = `Error: ${err instanceof Error ? err.message : String(err)}`
             }
           }
+          await recordTrace({ conversationId, step: inc(), type: 'tool_result', toolName: fn.name, toolResult: result, durationMs: Date.now() - toolStart, modelUsed: model })
           yield { type: 'tool_result', tool: fn.name, output: result }
           messages.push({ role: 'tool', content: result })
         }
@@ -481,8 +554,11 @@ async function* streamOllamaToolLoop(
 
       if (assistantMsg.content) {
         totalText = assistantMsg.content
+        await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: assistantMsg.content, modelUsed: model })
         yield { type: 'text', content: assistantMsg.content }
       }
+      await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: totalText, modelUsed: model, durationMs: Date.now() - start })
+      yield { type: 'done' }
       break
     }
 
@@ -513,7 +589,12 @@ export async function* streamAgentChat(
   userId?: string,
   targetEnvironmentId?: string,
   knowledgeContext?: string,
+  traceId?: string,
 ): AsyncGenerator<StreamChunk> {
+  let _step = 0
+  const inc = () => ++_step
+  await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: contextConfig.llm ?? 'claude' })
+
   const historyLimit   = contextConfig.historyMessages ?? 6
   const summarizeAfter = contextConfig.summarizeAfter  ?? 20
   const llm            = contextConfig.llm             ?? 'claude'
@@ -609,7 +690,7 @@ export async function* streamAgentChat(
       const activeTasks = await getActiveTasksSection()
       if (gw) {
         const systemPrompt = await getSystemPrompt(gw.tools.map(t => t.name), agentSystemPrompt + activeTasks, conversationId, knowledgeContext)
-        yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, trimmedHistory, model, baseUrl, gw.tools, gw.gc, gw.environmentId, undefined, userId, extTemperature, extTopP, extMinP, extRepeatPenalty, extSeed)
+        yield* streamOllamaToolLoop(prompt, conversationId, systemPrompt, trimmedHistory, model, baseUrl, gw.tools, gw.gc, gw.environmentId, undefined, userId, extTemperature, extTopP, extMinP, extRepeatPenalty, extSeed, traceId)
       } else {
         yield* streamOllamaAgentChat(prompt, conversationId, agentSystemPrompt + activeTasks + noGwSuffix + kcSection, trimmedHistory, model, baseUrl, timeoutSecs, undefined, extTemperature, extTopP, extMinP, extRepeatPenalty, extSeed)
       }
@@ -670,7 +751,7 @@ Respond only in the persona described above. Never break character or refer to y
     maxTurns,
     allowedTools,
     ...(claudeModel && { model: claudeModel }),
-  })
+  }, undefined, undefined, targetEnvironmentId)
 }
 
 async function* streamOllamaAgentChat(
@@ -707,6 +788,9 @@ async function* streamOllamaAgentChat(
     if (resolvedSeed          === undefined && extModel.seed          != null) resolvedSeed          = extModel.seed
   }
   const start = Date.now()
+  let _step = 0
+  const inc = () => ++_step
+  await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: model })
   let totalText = ''
 
   const messages = [
@@ -748,6 +832,7 @@ async function* streamOllamaAgentChat(
           const text = chunk.message?.content ?? ''
           if (text) {
             totalText += text
+            await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: text, modelUsed: model })
             yield { type: 'text', content: text }
           }
         } catch { /* skip malformed line */ }
@@ -766,12 +851,14 @@ async function* streamOllamaAgentChat(
         data: { conversationId, prompt, toolsUsed: [], durationMs: Date.now() - start, success: true },
       }),
     ])
+    await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: totalText, modelUsed: model, durationMs: Date.now() - start })
     yield { type: 'done' }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     await prisma.claudeInvocation.create({
       data: { conversationId, prompt, toolsUsed: [], durationMs: Date.now() - start, success: false },
     }).catch(() => {})
+    await recordTrace({ conversationId, step: inc(), type: 'error', content: msg, durationMs: Date.now() - start, modelUsed: model })
     yield { type: 'error', error: `Ollama error: ${msg}` }
   }
 }
@@ -790,7 +877,12 @@ export async function* streamOpenAIChat(
   targetEnvironmentId?: string,
   systemPromptOverride?: string,
   knowledgeContext?: string,
+  traceId?: string,
 ): AsyncGenerator<StreamChunk> {
+  let _step = 0
+  const inc = () => ++_step
+  await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: model })
+
   // Load gateway tools from specified or first connected environment
   const { GatewayClient } = await import('./agent-runner/gateway-client')
   type GatewayTool = import('./agent-runner/types').GatewayTool
@@ -817,6 +909,7 @@ export async function* streamOpenAIChat(
     gatewayTools.length ? gatewayClient : null,
     connectedEnv?.id,
     abortSignal, userId,
+    undefined, undefined, undefined, traceId,
   )
 }
 
@@ -1116,8 +1209,13 @@ async function* streamOpenAIChatCore(
   temperature?: number,
   topP?: number,
   seed?: number,
+  traceId?: string,
 ): AsyncGenerator<StreamChunk> {
   const start = Date.now()
+  let _step = 0
+  const inc = () => ++_step
+  await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: model })
+
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
 
@@ -1366,6 +1464,7 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
       messages.push({ role: 'assistant', content: turnText, tool_calls: assistantToolCalls })
 
       for (const tc of pendingToolCalls) {
+        await recordTrace({ conversationId, step: inc(), type: 'tool_call', toolName: tc.name, toolArgs: tc.argsRaw, modelUsed: model })
         yield { type: 'tool_call', tool: tc.name, input: tc.argsRaw }
         toolsUsed.push(tc.name)
 
@@ -1378,11 +1477,13 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
         if (!tcValidation.valid) {
           result = `Tool validation failed for ${tc.name}: ${tcValidation.errors.join(', ')}. Check the tool schema and retry with correct arguments.`
           toolCallLog.push({ tool: tc.name, input: tc.argsRaw, output: result })
+          await recordTrace({ conversationId, step: inc(), type: 'tool_result', toolName: tc.name, toolResult: result, modelUsed: model })
           yield { type: 'tool_result', tool: tc.name, output: result }
           messages.push({ role: 'tool', content: result, tool_call_id: tc.id })
           continue
         }
 
+        const toolStart = Date.now()
         // ── Management tools — handled server-side by ORION ──────────────────
         if (tc.name === 'propose_tool') {
           result = await handleProposeTool(tc.argsRaw, environmentId, conversationId)
@@ -1417,7 +1518,8 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
           result = 'No gateway connected'
         }
 
-        toolCallLog.push({ tool: tc.name, input: tc.argsRaw, output: result })
+      toolCallLog.push({ tool: tc.name, input: tc.argsRaw, output: result })
+        await recordTrace({ conversationId, step: inc(), type: 'tool_result', toolName: tc.name, toolResult: result, durationMs: Date.now() - toolStart, modelUsed: model })
         yield { type: 'tool_result', tool: tc.name, output: result }
         messages.push({ role: 'tool', content: result, tool_call_id: tc.id })
       }
@@ -1442,12 +1544,14 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
         data: { conversationId, prompt, toolsUsed, durationMs: Date.now() - start, success: true },
       }),
     ])
+    await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: totalText, modelUsed: model, durationMs: Date.now() - start })
     yield { type: 'done' }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     await prisma.claudeInvocation.create({
       data: { conversationId, prompt, toolsUsed: [], durationMs: Date.now() - start, success: false },
     }).catch(() => {})
+    await recordTrace({ conversationId, step: inc(), type: 'error', content: msg, durationMs: Date.now() - start, modelUsed: model })
     yield { type: 'error', error: `OpenAI API error: ${msg}` }
   }
 }
@@ -1479,7 +1583,10 @@ async function* streamGeminiAgentChat(
   }
 
   const start = Date.now()
+  let _step = 0
+  const inc = () => ++_step
   let totalText = ''
+  await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: model })
 
   const contents = [
     ...history.map(m => ({
@@ -1529,6 +1636,7 @@ async function* streamGeminiAgentChat(
           const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
           if (text) {
             totalText += text
+            await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: text, modelUsed: model })
             yield { type: 'text', content: text }
           }
         } catch { /* skip malformed line */ }
@@ -1547,12 +1655,14 @@ async function* streamGeminiAgentChat(
         data: { conversationId, prompt, toolsUsed: [], durationMs: Date.now() - start, success: true },
       }),
     ])
+    await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: totalText, modelUsed: model, durationMs: Date.now() - start })
     yield { type: 'done' }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     await prisma.claudeInvocation.create({
       data: { conversationId, prompt, toolsUsed: [], durationMs: Date.now() - start, success: false },
     }).catch(() => {})
+    await recordTrace({ conversationId, step: inc(), type: 'error', content: msg, durationMs: Date.now() - start, modelUsed: model })
     yield { type: 'error', error: `Gemini error: ${msg}` }
   }
 }
@@ -1691,11 +1801,16 @@ export async function* streamClaudeResponse(
   overrides?: { maxTurns?: number; allowedTools?: string[]; model?: string },
   abortSignal?: AbortSignal,
   knowledgeContext?: string,
+  environmentId?: string,
 ): AsyncGenerator<StreamChunk> {
   const start = Date.now()
+  let _step = 0
+  const inc = () => ++_step
   const toolsUsed: string[] = []
   let totalText = ''
   const toolCallLog: Array<{ tool: string; input: string; output?: string }> = []
+  const claudeModel = overrides?.model ?? 'claude-sonnet-4-6'
+  await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: claudeModel })
 
   const claudeUrl = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
 
@@ -1707,6 +1822,15 @@ export async function* streamClaudeResponse(
       ? agentSystemPrompt + '\n\n---\n## Relevant Knowledge Base\n\n' + knowledgeContext + '\n---'
       : baseSystemPrompt
 
+    // Inject matched skill(s) into the system prompt
+    let effectiveSystemPrompt = systemPrompt
+    if (environmentId) {
+      const { injected, skillName } = await matchAndInjectSkills(environmentId, prompt, conversationId)
+      if (injected) {
+        effectiveSystemPrompt = `## INJECTED SKILL: ${skillName}\n${injected}\n---\n\n` + systemPrompt
+      }
+    }
+
     const fullPrompt = previousMessages.length > 0
       ? previousMessages.map(m => `${m.role}: ${m.content}`).join('\n\n') + `\n\nuser: ${prompt}`
       : prompt
@@ -1717,7 +1841,7 @@ export async function* streamClaudeResponse(
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
         prompt:       fullPrompt,
-        systemPrompt,
+        systemPrompt: effectiveSystemPrompt,
         allowedTools: overrides?.allowedTools ?? ALLOWED_TOOLS,
         maxTurns:     overrides?.maxTurns ?? 20,
         ...(overrides?.model && { model: overrides.model }),
@@ -1782,11 +1906,13 @@ export async function* streamClaudeResponse(
           for (const block of content) {
             if (block.type === 'text' && block.text) {
               totalText += block.text
+              await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: block.text, modelUsed: claudeModel })
               yield { type: 'text', content: block.text }
             } else if (block.type === 'tool_use') {
               const toolInput = JSON.stringify(block.input ?? {})
               toolsUsed.push(`${block.name}(${toolInput})`)
               toolCallLog.push({ tool: block.name!, input: toolInput })
+              await recordTrace({ conversationId, step: inc(), type: 'tool_call', toolName: block.name, toolArgs: toolInput, modelUsed: claudeModel })
               yield { type: 'tool_call', tool: block.name!, input: toolInput }
             }
           }
@@ -1797,6 +1923,8 @@ export async function* streamClaudeResponse(
               const result = Array.isArray(block.content)
                 ? (block.content as Array<{ type: string; text?: string }>).map(c => c.type === 'text' ? c.text : '').join('')
                 : String(block.content ?? '')
+              const lastToolCall = toolCallLog.length > 0 ? toolCallLog[toolCallLog.length - 1] : null
+              await recordTrace({ conversationId, step: inc(), type: 'tool_result', toolName: lastToolCall?.tool ?? null, toolResult: result, modelUsed: claudeModel })
               if (toolCallLog.length > 0) toolCallLog[toolCallLog.length - 1].output = result
               yield { type: 'tool_result', output: result }
             }
@@ -1807,6 +1935,7 @@ export async function* streamClaudeResponse(
           process.stderr.write(`[claude] result: subtype=${subtype} result_len=${resultText?.length ?? 0}\n`)
           if (resultText?.trim() && !totalText.includes(resultText.trim())) {
             totalText += (totalText ? '\n\n' : '') + resultText
+            await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: resultText, modelUsed: claudeModel })
             yield { type: 'text', content: resultText }
           }
         }
@@ -1863,12 +1992,14 @@ ${totalText}`,
         data: { conversationId, prompt, toolsUsed, durationMs: Date.now() - start, success: true },
       }),
     ])
+    await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: totalText, modelUsed: claudeModel, durationMs: Date.now() - start })
     yield { type: 'done' }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     await prisma.claudeInvocation.create({
       data: { conversationId, prompt, toolsUsed, durationMs: Date.now() - start, success: false },
     }).catch(() => {})
+    await recordTrace({ conversationId, step: inc(), type: 'error', content: msg, durationMs: Date.now() - start, modelUsed: claudeModel })
     yield { type: 'error', error: msg }
   }
 }
