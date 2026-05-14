@@ -46,11 +46,14 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import { OrionClient, type McpToolConfig } from './orion-client.js'
 import { runTool } from './tool-runner.js'
+import { HooksEngine } from './hooks-engine.js'
+import { SkillLoader } from './skill-loader.js'
 import { kubernetesTools } from './builtin-tools/kubernetes.js'
 import { dockerTools } from './builtin-tools/docker.js'
 import { localhostTools } from './builtin-tools/localhost.js'
 import { talosTools } from './builtin-tools/talos.js'
 import { knowledgeGraphTools } from './builtin-tools/knowledge-graph.js'
+import { discoveryTools } from './builtin-tools/discovery.js'
 import { ArgoCDWatcher } from './argocd-watcher.js'
 import { IngressWatcher } from './ingress-watcher.js'
 
@@ -265,8 +268,8 @@ function registerBuiltins(tools: BuiltinTool[]) {
   for (const t of tools) BUILTIN_REGISTRY[t.name] = t
 }
 
-if (GATEWAY_TYPE === 'cluster')   { registerBuiltins(kubernetesTools); registerBuiltins(talosTools); registerBuiltins(knowledgeGraphTools) }
-if (GATEWAY_TYPE === 'docker')    registerBuiltins(dockerTools)
+if (GATEWAY_TYPE === 'cluster')   { registerBuiltins(kubernetesTools); registerBuiltins(talosTools); registerBuiltins(knowledgeGraphTools); registerBuiltins(discoveryTools) }
+if (GATEWAY_TYPE === 'docker')   { registerBuiltins(dockerTools); registerBuiltins(discoveryTools) }
 // localhost = the gateway co-located with ORION on the management host.
 // It can talk to the local cluster directly, so it gets the full cluster + talos toolset
 // plus docker/localhost tools for managing the host itself.
@@ -276,6 +279,7 @@ if (GATEWAY_TYPE === 'localhost') {
   registerBuiltins(talosTools)
   registerBuiltins(dockerTools)
   registerBuiltins(localhostTools)
+  registerBuiltins(discoveryTools)
 }
 // Cluster gateways also expose docker if desired
 if (GATEWAY_TYPE === 'cluster' && process.env.ENABLE_DOCKER === 'true') registerBuiltins(dockerTools)
@@ -285,6 +289,8 @@ if (GATEWAY_TYPE === 'cluster' && process.env.ENABLE_DOCKER === 'true') register
 let orion: OrionClient              // initialised in start()
 let argoCdWatcher:  ArgoCDWatcher  | undefined
 let ingressWatcher: IngressWatcher | undefined
+let hooksEngine:  HooksEngine  | undefined
+let skillLoader:  SkillLoader | undefined
 
 // Tools currently active (refreshed from ORION on heartbeat)
 let activeTools: McpToolConfig[] = []
@@ -479,6 +485,13 @@ async function start() {
     console.log(`[gateway] Tool config refreshed: ${tools.length} tools`)
   }, 30_000, GATEWAY_VERSION)
 
+  // Start hooks engine and skill loader — poll ORION for Nebula config
+  hooksEngine = new HooksEngine(orion)
+  skillLoader = new SkillLoader()
+  await hooksEngine.start(ENVIRONMENT_ID)
+  await skillLoader.load(ENVIRONMENT_ID, orion)
+  console.log(`[gateway] Hooks engine and skill loader started for environment ${ENVIRONMENT_ID}`)
+
   // Start ArgoCD + Ingress watchers for K8s clusters
   if (GATEWAY_TYPE === 'cluster') {
     argoCdWatcher = new ArgoCDWatcher(
@@ -507,6 +520,7 @@ process.on('SIGTERM', () => {
   argoCdWatcher?.stop()
   ingressWatcher?.stop()
   orion.stopHeartbeat()
+  hooksEngine?.stop()
   process.exit(0)
 })
 

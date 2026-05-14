@@ -56,10 +56,17 @@ services:
       REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26380,redis-sentinel-3:26381}
       REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:-}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # ArgoCD — bootstrap uses this to register clusters and create apps
+      ARGOCD_SERVER: http://host.docker.internal:8083
+      ARGOCD_AUTH_TOKEN: ${ARGOCD_ADMIN_PASSWORD:-}
+      ARGOCD_SERVER: http://host.docker.internal:8083
+      ARGOCD_AUTH_TOKEN: ${ARGOCD_ADMIN_PASSWORD:-}
       # Claude Code sidecar URL (for OAuth bootstrap and credential status)
       ORION_CLAUDE_URL: ${ORION_CLAUDE_URL:-http://orion-claude:3100}
       # MCP service token — shared with orion-claude so Claude can call ORION tools via MCP
       ORION_MCP_TOKEN: ${ORION_MCP_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - orion-claude-creds:/claude-creds
@@ -147,7 +154,61 @@ services:
           cpus: '2'
           memory: 1G
 
-  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  # ── ArgoCD (GitOps — runs on host, manages the Talos Cluster externally) ─
+  argocd-server:
+    image: quay.io/argoproj/argocd:latest
+    restart: unless-stopped
+    depends_on:
+      - argocd-redis
+    ports:
+      - "8083:8080"
+    environment:
+      - ARGOCD_SERVER_INSECURE=true
+      - ARGOCD_SERVER_INSECURE_HTTP_BASIC_ENABLE=true
+    volumes:
+      - argocd-server-data:/home/argocd
+      - ${HOME}/.kube:/kubeconfig:ro
+    command:
+      - argocd-server
+      - --insecure
+      - --static-assets
+      - /shared/app
+
+  argocd-repo-server:
+    image: quay.io/argoproj/argocd:latest
+    restart: unless-stopped
+    depends_on:
+      - argocd-redis
+    volumes:
+      - argocd-server-data:/shared
+      - ${HOME}/.kube:/kubeconfig:ro
+    command:
+      - argocd-repo-server
+      - /shared/repositories
+      - /shared/generate
+      - /shared/umask
+      - /tmp/argocd
+
+  argocd-application-controller:
+    image: quay.io/argoproj/argocd:latest
+    restart: unless-stopped
+    depends_on:
+      - argocd-redis
+    volumes:
+      - argocd-server-data:/shared
+      - ${HOME}/.kube:/kubeconfig:ro
+    command:
+      - argocd-application-controller
+      - --status-process-limit 1
+      - --local
+
+  argocd-redis:
+    image: docker.io/library/redis:7.4-alpine
+    restart: unless-stopped
+    volumes:
+      - argocd-redis-data:/data
+
+# ── PostgreSQL
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
@@ -504,3 +565,5 @@ volumes:
   redis-sentinel-1-data:
   redis-sentinel-2-data:
   redis-sentinel-3-data:
+  argocd-server-data:
+  argocd-redis-data:

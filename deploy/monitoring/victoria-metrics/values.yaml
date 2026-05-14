@@ -1,0 +1,154 @@
+# VictoriaMetrics K8s Stack Configuration — ORION Phase 3
+# Adapted for RPi 4 8GB (amd64 only) homelab environment
+# Version: 0.60.1
+
+# VictoriaMetrics Single (not cluster mode)
+vmsingle:
+  enabled: true
+  spec:
+    nodeSelector:
+      kubernetes.io/arch: amd64
+    retentionPeriod: "72h"
+    replicaCount: 1
+    storage:
+      storageClassName: longhorn
+      resources:
+        requests:
+          storage: 50Gi
+      accessModes:
+        - ReadWriteOnce
+    resources:
+      limits:
+        memory: 2560Mi
+      requests:
+        cpu: 10m
+        memory: 2560Mi
+    extraArgs:
+      loggerLevel: WARN
+
+# Disable cluster mode
+vmcluster:
+  enabled: false
+
+# VM Agent for metrics collection
+vmagent:
+  enabled: true
+  spec:
+    replicaCount: 1
+    nodeSelector:
+      kubernetes.io/arch: amd64
+    resources:
+      limits:
+        memory: 1024Mi
+      requests:
+        cpu: 10m
+        memory: 1024Mi
+    extraArgs:
+      loggerLevel: WARN
+
+# VM Alert for alerting rules
+vmalert:
+  enabled: true
+  spec:
+    replicaCount: 1
+    nodeSelector:
+      kubernetes.io/arch: amd64
+    resources:
+      limits:
+        memory: 128Mi
+      requests:
+        cpu: 10m
+        memory: 128Mi
+    extraArgs:
+      loggerLevel: WARN
+
+# AlertManager for alert routing
+alertmanager:
+  enabled: true
+  spec:
+    replicaCount: 1
+    nodeSelector:
+      kubernetes.io/arch: amd64
+    resources:
+      limits:
+        memory: 128Mi
+      requests:
+        cpu: 10m
+        memory: 128Mi
+    logLevel: WARN
+
+# Grafana for visualization
+grafana:
+  enabled: true
+  nodeSelector:
+    kubernetes.io/arch: amd64
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: kube-system
+    datasources:
+      enabled: true
+  adminPasswordFromEnv: ADMIN_PASSWORD
+  replicas: 1
+  resources:
+    limits:
+      memory: 256Mi
+    requests:
+      cpu: 10m
+      memory: 256Mi
+  persistence:
+    enabled: true
+    storageClassName: longhorn
+    size: 5Gi
+  grafana.ini:
+    log:
+      level: warn
+    security:
+      allow_embedding: false
+    plugins:
+      - grafana-lokiexplore-app
+
+# Prometheus Node Exporter
+prometheus-node-exporter:
+  enabled: true
+  resources:
+    limits:
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 128Mi
+
+# Kube State Metrics
+kube-state-metrics:
+  enabled: true
+  replicas: 1
+  resources:
+    limits:
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 128Mi
+
+# Default dashboards
+defaultDashboardsEnabled: true
+defaultDashboardsTimezone: utc
+
+# VM Operator
+victoria-metrics-operator:
+  operator:
+    enable_converter_ownership: true
+    resources:
+      limits:
+        memory: 128Mi
+      requests:
+        cpu: 10m
+        memory: 128Mi
+  logLevel: ERROR
+
+# CRDs
+crds:
+  enabled: true
+
+# Service monitors
+serviceMonitor:
+  enabled: true

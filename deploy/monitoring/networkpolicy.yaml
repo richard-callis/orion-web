@@ -1,0 +1,35 @@
+# ORION Phase 3 — Restrict Elasticsearch access
+# Only allow ingress from the elk namespace itself (Logstash, Kibana)
+# and the monitoring namespace (Elastiflow, ELK stack components)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: elk-restrict
+  namespace: elk
+spec:
+  podSelector:
+    matchLabels:
+      app: elasticsearch
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow from any pod in the elk namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: elk
+      ports:
+        - protocol: TCP
+          port: 9200
+        - protocol: TCP
+          port: 9300
+        - protocol: TCP
+          port: 5601
+    # Allow from monitoring namespace (Elastiflow)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9200
