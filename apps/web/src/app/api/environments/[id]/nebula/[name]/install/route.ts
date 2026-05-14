@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,11 +9,16 @@ export const dynamic = 'force-dynamic'
  * Install a default nebula from its NovaDefinition into the given environment.
  */
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string; name: string } }
 ) {
-  const isAdmin = _req.headers.get('x-admin') === 'true'
-  if (!isAdmin) {
+  const user = await getCurrentUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const tier = await prisma.environmentUserTier.findUnique({
+    where: { userId_environmentId: { userId: user.id, environmentId: params.id } },
+  })
+  const effectiveTier = user.role === 'admin' ? 'admin' : (tier?.tier ?? 'viewer')
+  if (!['operator', 'admin'].includes(effectiveTier)) {
     return NextResponse.json(
       { error: 'Operator access required' },
       { status: 403 }

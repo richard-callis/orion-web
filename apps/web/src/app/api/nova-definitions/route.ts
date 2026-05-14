@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,8 +27,9 @@ export async function GET(req: NextRequest) {
  * Create or update a Nova definition (admin only).
  */
 export async function POST(req: NextRequest) {
-  const isAdmin = req.headers.get('x-admin') === 'true'
-  if (!isAdmin) {
+  try {
+    await requireAdmin()
+  } catch {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   }
   const body = await req.json()

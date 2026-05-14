@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,8 +29,9 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const isAdmin = req.headers.get('x-admin') === 'true'
-  if (!isAdmin) {
+  try {
+    await requireAdmin()
+  } catch {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   }
   const body = await req.json()
@@ -48,8 +50,9 @@ export async function DELETE(
   _req: Request,
   { params }: { params: { id: string } }
 ) {
-  const isAdmin = _req.headers.get('x-admin') === 'true'
-  if (!isAdmin) {
+  try {
+    await requireAdmin()
+  } catch {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   }
   // Check for instances
