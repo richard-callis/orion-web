@@ -53,6 +53,7 @@ import { dockerTools } from './builtin-tools/docker.js'
 import { localhostTools } from './builtin-tools/localhost.js'
 import { talosTools } from './builtin-tools/talos.js'
 import { knowledgeGraphTools } from './builtin-tools/knowledge-graph.js'
+import { securityTools } from './builtin-tools/security.js'
 import { discoveryTools } from './builtin-tools/discovery.js'
 import { ArgoCDWatcher } from './argocd-watcher.js'
 import { IngressWatcher } from './ingress-watcher.js'
@@ -283,6 +284,9 @@ if (GATEWAY_TYPE === 'localhost') {
 }
 // Cluster gateways also expose docker if desired
 if (GATEWAY_TYPE === 'cluster' && process.env.ENABLE_DOCKER === 'true') registerBuiltins(dockerTools)
+
+// Security tools — always available (HTTP-based, call external monitoring)
+registerBuiltins(securityTools)
 
 // ── ORION client (constructed after join so credentials are resolved) ───────────
 
