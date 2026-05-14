@@ -101,3 +101,59 @@ export async function buildAgentContext(query: string): Promise<string> {
 export function invalidateSnapshotCache(): void {
   invalidate('snapshot')
 }
+
+// ── Agent-local knowledge ────────────────────────────────────────────────────
+
+/**
+ * Fetch and format agent-local knowledge for a given agent.
+ * Used during delegation to inject the specialist's learned knowledge into their context.
+ */
+export async function buildAgentLocalContext(agentId: string): Promise<string> {
+  try {
+    const knowledge = await prisma.agentKnowledge.findMany({
+      where: { agentId },
+      orderBy: { updatedAt: 'desc' },
+      take: 10,
+    })
+
+    if (knowledge.length === 0) return ''
+
+    const lines = knowledge.map(k => {
+      const tag = k.type !== 'note' ? ` [${k.type}]` : ''
+      return `### ${k.title}${tag}\n${k.content.slice(0, 2000)}`
+    })
+
+    return ['## Agent-Local Knowledge', ...lines].join('\n\n---\n\n')
+  } catch (err) {
+    console.warn('[agent-context] agent local knowledge fetch failed:', err)
+    return ''
+  }
+}
+
+// ── Room-local knowledge ─────────────────────────────────────────────────────
+
+/**
+ * Fetch and format room-local knowledge for a given room.
+ * Used during delegation to inject room-specific context.
+ */
+export async function buildRoomLocalContext(roomId: string): Promise<string> {
+  try {
+    const knowledge = await prisma.roomKnowledge.findMany({
+      where: { roomId },
+      orderBy: { updatedAt: 'desc' },
+      take: 10,
+    })
+
+    if (knowledge.length === 0) return ''
+
+    const lines = knowledge.map(k => {
+      const tag = k.type !== 'note' ? ` [${k.type}]` : ''
+      return `### ${k.title}${tag}\n${k.content.slice(0, 2000)}`
+    })
+
+    return ['## Room Knowledge', ...lines].join('\n\n---\n\n')
+  } catch (err) {
+    console.warn('[agent-context] room local knowledge fetch failed:', err)
+    return ''
+  }
+}

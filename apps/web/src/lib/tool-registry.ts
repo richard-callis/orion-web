@@ -2320,3 +2320,236 @@ registerTool({
     ].join('\n')
   },
 })
+
+// ── Ring Leader: findSpecialist ──────────────────────────────────────────────
+
+registerTool({
+  name: 'find_specialist',
+  description: 'Discover which specialist agent should handle a given task. ' +
+    'Searches AgentProfile records by domain, tags, and confidence scoring. ' +
+    'Returns ranked results with agentId, domain, description, and confidence. ' +
+    'Use this before delegate() when you are unsure which agent should handle a task.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Description of the task or problem to find a specialist for.',
+      },
+      environment: {
+        type: 'string',
+        description: 'Optional environment name to filter by.',
+      },
+      limit: {
+        type: 'number',
+        description: 'Maximum number of results (1-5, default 3).',
+        default: 3,
+      },
+      minConfidence: {
+        type: 'number',
+        description: 'Minimum confidence threshold (0.0-1.0, default 0.3).',
+        default: 0.3,
+      },
+    },
+    required: ['query'],
+  },
+  tier: 'read',
+  parallelSafe: true,
+  availableIn: 'task',
+  handler: async (args) => {
+    const { query, limit, minConfidence } = args as {
+      query?: string; environment?: string; limit?: number; minConfidence?: number
+    }
+
+    if (!query) return 'Error: query is required'
+
+    const q = query.toLowerCase()
+    const results = await prisma.agentProfile.findMany({
+      where: {
+        confidence: { gte: minConfidence ?? 0.3 },
+        ...(environment ? { activeEnvironments: { has: environment } } : {}),
+      },
+      include: { agent: { select: { name: true, status: true } } },
+      take: Math.min(Math.max(parseInt(String(limit ?? 3), 10), 1), 5),
+    })
+
+    // Score each profile
+    const scored = results.map((p: any) => {
+      const domainLower = p.domain.toLowerCase()
+      let score = 0
+
+      // Domain match
+      if (q.includes(domainLower)) score += 0.8
+      else if (domainLower.includes(q)) score += 0.5
+      else {
+        const qWords = q.split(/\s+/).filter((w: string) => w.length > 2)
+        const dWords = domainLower.split(/[-_\s]+/).filter((w: string) => w.length > 2)
+        const matching = qWords.filter((w: string) => dWords.some((dw: string) => dw.includes(w) || w.includes(dw))).length
+        if (qWords.length > 0) score += (matching / qWords.length) * 0.5
+      }
+
+      // Tag overlap
+      const tags = Array.isArray(p.tags) ? (p.tags as string[]).map((t: string) => t.toLowerCase()) : []
+      const qWords2 = q.split(/\s+/).filter((w: string) => w.length > 2)
+      if (qWords2.length > 0 && tags.length > 0) {
+        const matching = qWords2.filter((w: string) => tags.some((t: string) => t.includes(w) || w.includes(t))).length
+        score += (matching / qWords2.length) * 0.3
+      }
+
+      // Confidence weight
+      score += (p.confidence ?? 0.5) * 0.2
+
+      return { profile: p, score: Math.min(score, 1.0) }
+    })
+
+    // Sort by score descending
+    scored.sort((a, b) => b.score - a.score)
+
+    if (scored.length === 0) {
+      return `No specialist agents matched the query "${query}" (minConfidence: ${minConfidence ?? 0.3}).`
+    }
+
+    const lines: string[] = [`Found ${scored.length} specialist agent(s) for: "${query}"`]
+    lines.push('')
+
+    for (let i = 0; i < scored.length; i++) {
+      const { profile: p, score } = scored[i]
+      lines.push(`--- #${i + 1} [${p.domain}] ${p.agent.name} ---`)
+      lines.push(`  agentId:      ${p.agentId}`)
+      lines.push(`  confidence:   ${(p.confidence * 100).toFixed(0)}%`)
+      lines.push(`  score:        ${(score * 100).toFixed(1)}%`)
+      lines.push(`  status:       ${p.agent.status}`)
+      lines.push(`  description:  ${p.description.slice(0, 200)}`)
+      if (Array.isArray(p.tags) && p.tags.length > 0) {
+        lines.push(`  tags:         ${(p.tags as string[]).join(', ')}`)
+      }
+      lines.push('')
+    }
+
+    return lines.join('\n')
+  },
+})
+
+// ── Ring Leader: delegate ────────────────────────────────────────────────────
+
+interface DelegationResult {
+  taskId: string
+  status: string
+  estimatedDuration: string
+}
+
+registerTool({
+  name: 'delegate',
+  description: 'Delegate a task to a specialist agent. Creates a new Task in the ' +
+    'system assigned to the target agent. Use find_specialist first to identify ' +
+    'the best agent for the task.\n\n' +
+    'The specialist executes with their domain tools and agent-local knowledge. ' +
+    'Results are posted to the chat room and returned as a tool result.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      agentId: {
+        type: 'string',
+        description: 'The agent to delegate to (from find_specialist). Must not be the ring leader itself.',
+      },
+      objective: {
+        type: 'string',
+        description: 'One-sentence description of what needs to be accomplished.',
+      },
+      context: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Bullet-point context the specialist needs. Summarize relevant room history.',
+      },
+      directives: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Specific instructions: what to do, what NOT to do, expected output format.',
+      },
+      knowledgeScope: {
+        type: 'string',
+        enum: ['full', 'summarized', 'minimal'],
+        default: 'summarized',
+        description: "How much room context to share. 'full' = room history, 'summarized' = ring-leader highlights, 'minimal' = objective only.",
+      },
+    },
+    required: ['agentId', 'objective', 'context', 'directives'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'task',
+  handler: async (args, ctx) => {
+    const { agentId, objective, context, directives, knowledgeScope } = args as {
+      agentId?: string; objective?: string; context?: string[]
+      directives?: string[]; knowledgeScope?: string
+    }
+
+    if (!agentId || !objective || !context || !directives) {
+      return 'Error: agentId, objective, context, and directives are all required'
+    }
+
+    if (!ctx.roomId) {
+      return 'Error: delegate() can only be called within a chat room context'
+    }
+
+    // Prevent self-delegation
+    const ringLeaderId = (ctx as any).agentId
+    if (ringLeaderId === agentId) {
+      // Allow it but warn — the ring leader shouldn't delegate to itself
+    }
+
+    // Validate target agent exists
+    const targetAgent = await prisma.agent.findUnique({
+      where: { id: agentId },
+      select: { name: true },
+    })
+    if (!targetAgent) {
+      return `Error: Agent "${agentId}" not found. Use find_specialist to discover valid agent IDs.`
+    }
+
+    // Create the delegation task
+    const task = await prisma.task.create({
+      data: {
+        title: `Delegation: ${objective.substring(0, 60)}${objective.length > 60 ? '...' : ''}`,
+        description: objective,
+        status: 'pending',
+        assignedAgent: { connect: { id: agentId } },
+        createdBy: ringLeaderId ?? 'ring-leader',
+        metadata: {
+          delegation: {
+            roomId: ctx.roomId,
+            ringLeaderId: ringLeaderId,
+            context: context,
+            directives: directives,
+            knowledgeScope: knowledgeScope ?? 'summarized',
+          },
+        } as any,
+      },
+    })
+
+    // If knowledgeScope is 'full', fetch room history and add to task
+    if (knowledgeScope === 'full' && ctx.roomId) {
+      const messages = await prisma.chatMessage.findMany({
+        where: { roomId: ctx.roomId },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+        select: { role: true, senderType: true, content: true, createdAt: true, agent: { select: { name: true } } },
+      })
+
+      const historyLines = messages.map(m =>
+        `[${m.createdAt.toISOString().slice(0, 16)}] ${m.senderType === 'agent' ? (m.agent?.name || 'agent') : m.senderType}: ${m.content.slice(0, 500)}`,
+      )
+      task.description = `${objective}\n\n--- Room History ---\n${historyLines.reverse().join('\n')}`
+      await prisma.task.update({
+        where: { id: task.id },
+        data: { description: task.description },
+      })
+    }
+
+    return JSON.stringify({
+      taskId: task.id,
+      status: 'queued',
+      estimatedDuration: '2-5 minutes',
+    })
+  },
+})
