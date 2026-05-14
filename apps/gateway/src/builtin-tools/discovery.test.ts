@@ -3,7 +3,7 @@
  * Tests the find_specialist scoring algorithm.
  */
 
-import { describe, it, expect } from '@jest/globals'
+import { describe, it, expect } from 'vitest'
 
 function scoreProfile(
   query: string,
