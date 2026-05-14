@@ -102,13 +102,46 @@ export class HooksEngine {
       .catch(() => {})
   }
 
+  /**
+   * Allowed commands for hook execution (safelist).
+   * Only kubectl, helm, docker, and curl (cluster-internal only) are permitted.
+   */
+  private static readonly ALLOWED_COMMANDS = new Set(['kubectl', 'helm', 'docker', 'curl'])
+
+  /**
+   * Pattern for safe substitution values — kubernetes resource name characters only.
+   * Prevents shell injection via event payload values.
+   */
+  private static readonly SAFE_VALUE_PATTERN = /^[a-z0-9][a-z0-9\-\.\/\_]*$/i
+
   private async runShellCommand(template: string, event: HookEvent): Promise<string> {
-    // Replace placeholders in template with event payload values
-    const cmd = template.replace(
-      /{(\w+)}/g,
-      (_, key) => String((event.payload as any)[key] ?? ''),
-    )
-    const [command, ...args] = cmd.split(' ')
+    // Replace placeholders with event payload values, rejecting unsafe values
+    let substitutionError: string | null = null
+    const cmd = template.replace(/{(\w+)}/g, (match, key) => {
+      const raw = String((event.payload as any)[key] ?? '')
+      if (!HooksEngine.SAFE_VALUE_PATTERN.test(raw)) {
+        substitutionError = `Hook aborted: payload value for '${key}' contains unsafe characters: '${raw}'`
+        return match // leave placeholder to abort safely below
+      }
+      return raw
+    })
+
+    if (substitutionError) {
+      console.error(`[HooksEngine] ${substitutionError}`)
+      throw new Error(substitutionError)
+    }
+
+    // Split on whitespace (simple tokenization — quoted args not supported)
+    // Values are sanitized above so shell injection is prevented even without quoted-string parsing.
+    const [command, ...args] = cmd.trim().split(/\s+/)
+
+    // Safelist check: only allow known-safe commands
+    if (!command || !HooksEngine.ALLOWED_COMMANDS.has(command)) {
+      const msg = `Hook aborted: command '${command}' is not in the allowed command list (kubectl, helm, docker, curl)`
+      console.error(`[HooksEngine] ${msg}`)
+      throw new Error(msg)
+    }
+
     return new Promise((resolve, reject) => {
       execFile(command, args, { timeout: 30000 }, (err, stdout) => {
         if (err) reject(err)
