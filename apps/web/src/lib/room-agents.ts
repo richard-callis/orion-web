@@ -21,6 +21,7 @@ import { getToolsForContext, executeRegisteredTool } from './tool-registry'
 import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
 import { buildAgentContext, invalidateSnapshotCache } from './agent-context'
+import { getPrompt } from './system-prompts'
 import type { AgentGateway } from './agent-gateway'
 import type { GatewayTool } from './agent-runner/types'
 
@@ -402,22 +403,71 @@ export async function triggerRoomAgentReplies(
     .filter((a: any) => (a.metadata as Record<string, unknown> | null)?.archived !== true)
   if (agentMembers.length === 0) return
 
+  // ── Ring Leader routing ──────────────────────────────────────────────────────
+  // If the room has a ring leader configured and no @mention targets specific agents,
+  // only the ring leader auto-replies. The ring leader then decides whether to
+  // delegate to specialists or answer directly.
+  const roomMeta = (room?.metadata ?? {}) as Record<string, unknown>
+  const ringLeaderId = roomMeta?.ringLeaderAgentId as string | undefined
   const mentionedNames  = parseMentions(triggerContent)
   const isEveryone      = mentionedNames.some(n => n.toLowerCase() === 'everyone')
   const isDirect        = agentMembers.length === 1  // 1-on-1 room — always reply
-  const triggeredAgents = isEveryone
-    ? agentMembers  // @everyone pings all agents regardless of type
-    : mentionedNames.length > 0
-    ? agentMembers.filter((a: any) => mentionedNames.some(n => a.name.toLowerCase() === n.toLowerCase()))
-    : agentMembers.filter((a: any) => {
-        if (isDirect) return true  // In a 1-on-1 room the agent is always the conversation partner
-        // In group rooms, watcher agents (watchPrompt set) only speak when @mentioned —
-        // they coordinate on a schedule and shouldn't auto-reply to every message.
-        const cc = ((a.metadata ?? {}) as Record<string, unknown>).contextConfig as Record<string, unknown> | undefined
-        return !cc?.watchPrompt
-      })
+  const hasSpecificMention = mentionedNames.length > 0 && !isEveryone
+
+  let triggeredAgents: typeof agentMembers
+
+  // @everyone bypasses ring leader — targets all agents
+  if (isEveryone) {
+    triggeredAgents = agentMembers
+  } else if (!hasSpecificMention && ringLeaderId) {
+    // Ring leader mode — only the ring leader responds to non-mentioned messages
+    const ringLeader = agentMembers.find((a: any) => a.id === ringLeaderId)
+    triggeredAgents = ringLeader ? [ringLeader] : agentMembers.filter((a: any) => {
+      const cc = ((a.metadata ?? {}) as Record<string, unknown>).contextConfig as Record<string, unknown> | undefined
+      return !cc?.watchPrompt
+    })
+  } else if (hasSpecificMention) {
+    // @AgentName pings specific agents — always deliver, bypassing ring leader
+    triggeredAgents = agentMembers.filter((a: any) =>
+      mentionedNames.some(n => a.name.toLowerCase() === n.toLowerCase()),
+    )
+  } else if (isDirect) {
+    triggeredAgents = agentMembers
+  } else {
+    triggeredAgents = agentMembers.filter((a: any) => {
+      // In group rooms, watcher agents (watchPrompt set) only speak when @mentioned
+      const cc = ((a.metadata ?? {}) as Record<string, unknown>).contextConfig as Record<string, unknown> | undefined
+      return !cc?.watchPrompt
+    })
+  }
 
   if (triggeredAgents.length === 0) return
+
+  // Pre-fetch specialists list (for ring leader prompt)
+  const specialists = await prisma.agentProfile.findMany({
+    where: { active: true },
+    select: { agentId: true, agentName: true, domain: true, description: true, tags: true, confidence: true },
+  })
+
+  // Build ring leader context: specialists list + load ring-leader template
+  let ringLeaderContext = ''
+  if (ringLeaderId && specialists.length > 0) {
+    const specialistLines = specialists.map(s =>
+      `  • ${s.agentName} (${s.domain}) — ${s.description}${s.tags.length ? ` [${s.tags.join(', ')}]` : ''}`,
+    )
+    ringLeaderContext = `## Specialist Agents Available to You\n\nYou can delegate work to these specialist agents:\n\n${specialistLines.join('\n')}\n\nIf a question falls outside your expertise, delegate it using the \`delegate\` tool.`
+
+    try {
+      const ringLeaderTemplate = await getPrompt('system.ring-leader')
+      // Inject the specialists section
+      ringLeaderContext = ringLeaderTemplate.replace(
+        /## Specialist Agents Available to You\s*\n\nYou can delegate work to these specialist agents:\s*\n\n.*?(?=\n\n## How to Delegate)/s,
+        `## Specialist Agents Available to You\n\nYou can delegate work to these specialist agents:\n\n${specialistLines.join('\n')}\n\n`,
+      )
+    } catch { /* template not available — use built specialist lines */ }
+  } else if (ringLeaderId) {
+    ringLeaderContext = `\n\nNo specialist agents are currently registered. Handle all questions yourself without delegation.`
+  }
 
   let lastSavedReply: string | null = null
 
@@ -456,9 +506,14 @@ export async function triggerRoomAgentReplies(
       const toolsEnabled  = !!(contextConfig.tools)
 
       // Base persona description — identity constraint is added by buildSystemPrompt()
-      const personaPrompt = rawPrompt
+      let personaPrompt = rawPrompt
         ? `${agent.role ? `Role: ${agent.role}\n\n` : ''}${rawPrompt}`
         : `${agent.role ? `Role: ${agent.role}\n\n` : ''}${agent.description ?? ''}`
+
+      // Ring Leader context injection — append before agentContext so it appears early
+      if (agent.id === ringLeaderId && ringLeaderContext) {
+        personaPrompt += ringLeaderContext
+      }
 
       // Inject pre-fetched context (ORION snapshot + vector search) so agents arrive
       // pre-oriented and don't need to call orion_get_snapshot on every message.
