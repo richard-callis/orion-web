@@ -46,6 +46,8 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import { OrionClient, type McpToolConfig } from './orion-client.js'
 import { runTool } from './tool-runner.js'
+import { HooksEngine } from './hooks-engine.js'
+import { SkillLoader } from './skill-loader.js'
 import { kubernetesTools } from './builtin-tools/kubernetes.js'
 import { dockerTools } from './builtin-tools/docker.js'
 import { localhostTools } from './builtin-tools/localhost.js'
@@ -285,6 +287,8 @@ if (GATEWAY_TYPE === 'cluster' && process.env.ENABLE_DOCKER === 'true') register
 let orion: OrionClient              // initialised in start()
 let argoCdWatcher:  ArgoCDWatcher  | undefined
 let ingressWatcher: IngressWatcher | undefined
+let hooksEngine:  HooksEngine  | undefined
+let skillLoader:  SkillLoader | undefined
 
 // Tools currently active (refreshed from ORION on heartbeat)
 let activeTools: McpToolConfig[] = []
@@ -479,6 +483,13 @@ async function start() {
     console.log(`[gateway] Tool config refreshed: ${tools.length} tools`)
   }, 30_000, GATEWAY_VERSION)
 
+  // Start hooks engine and skill loader — poll ORION for Nebula config
+  hooksEngine = new HooksEngine(orion)
+  skillLoader = new SkillLoader()
+  await hooksEngine.start(ENVIRONMENT_ID)
+  await skillLoader.load(ENVIRONMENT_ID, orion)
+  console.log(`[gateway] Hooks engine and skill loader started for environment ${ENVIRONMENT_ID}`)
+
   // Start ArgoCD + Ingress watchers for K8s clusters
   if (GATEWAY_TYPE === 'cluster') {
     argoCdWatcher = new ArgoCDWatcher(
@@ -507,6 +518,7 @@ process.on('SIGTERM', () => {
   argoCdWatcher?.stop()
   ingressWatcher?.stop()
   orion.stopHeartbeat()
+  hooksEngine?.stop()
   process.exit(0)
 })
 

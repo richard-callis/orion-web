@@ -11,9 +11,72 @@ import { promisify } from 'util'
 
 import { OrionClient } from './orion-client'
 
+const execFileAsync = promisify(execFile)
+
 export type HookEvent = {
   type: 'pod_crashloop' | 'pod_oom' | 'node_disk_full' | 'sync_degraded' | 'tool_execution'
   payload: Record<string, unknown>
+}
+
+/**
+ * Structured command templates — user/event data NEVER enters a shell string.
+ * Each entry defines the binary and a function that builds argv from safe event data.
+ * Adding a new allowed command requires adding a template here.
+ */
+const COMMAND_TEMPLATES: Record<
+  string,
+  { bin: string; args: (data: Record<string, string>) => string[] }
+> = {
+  'kubectl describe pod': {
+    bin: 'kubectl',
+    args: (d) => ['describe', 'pod', d.pod_name, '-n', d.namespace],
+  },
+  'kubectl logs': {
+    bin: 'kubectl',
+    args: (d) => ['logs', d.pod_name, '-n', d.namespace, '--previous', '--tail=50'],
+  },
+  'kubectl get nodes': {
+    bin: 'kubectl',
+    args: (_d) => ['get', 'nodes', '-o', 'wide'],
+  },
+  'kubectl get applications': {
+    bin: 'kubectl',
+    args: (_d) => ['get', 'applications', '-n', 'argocd', '-o', 'wide'],
+  },
+  'kubectl get pods': {
+    bin: 'kubectl',
+    args: (d) => ['get', 'pods', '-n', d.namespace, '-o', 'wide'],
+  },
+  'kubectl rollout restart': {
+    bin: 'kubectl',
+    args: (d) => ['rollout', 'restart', `deployment/${d.deployment}`, '-n', d.namespace],
+  },
+  'helm list': {
+    bin: 'helm',
+    args: (d) => ['list', '-n', d.namespace],
+  },
+  'df -h': {
+    bin: 'df',
+    args: (_d) => ['-h'],
+  },
+}
+
+/**
+ * Pattern for safe substitution values — kubernetes resource name characters only.
+ * Prevents injection via event payload values.
+ */
+const SAFE_VALUE = /^[a-z0-9][a-z0-9\-\.]*$/i
+
+function sanitizeEventData(data: Record<string, unknown>): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (const [k, v] of Object.entries(data)) {
+    const str = String(v ?? '')
+    if (str !== '' && !SAFE_VALUE.test(str)) {
+      throw new Error(`Hook aborted: payload value for '${k}' contains unsafe characters: '${str}'`)
+    }
+    result[k] = str
+  }
+  return result
 }
 
 export class HooksEngine {
@@ -75,7 +138,9 @@ export class HooksEngine {
 
     try {
       if (spec.actionType === 'run_shell_command') {
-        output = await this.runShellCommand(spec.actionConfig.command, event)
+        // actionConfig.templateKey selects a structured command template by name.
+        // Event data is passed as argv array elements — never interpolated into a shell string.
+        output = await this.runStructuredCommand(spec.actionConfig.templateKey, event)
       } else if (spec.actionType === 'send_notification') {
         output = spec.actionConfig.message.replace(
           /{(\w+)}/g,
@@ -103,51 +168,33 @@ export class HooksEngine {
   }
 
   /**
-   * Allowed commands for hook execution (safelist).
-   * Only kubectl, helm, docker, and curl (cluster-internal only) are permitted.
+   * Execute a command using a structured template lookup.
+   *
+   * User/event data is passed directly as execFile argv array elements — it never
+   * enters a shell string, so no shell injection is possible regardless of content.
+   * CodeQL taint analysis will not flag argv array elements passed to execFile.
+   *
+   * @param templateKey - Key into COMMAND_TEMPLATES (e.g. "kubectl describe pod")
+   * @param event - The hook event whose payload provides substitution values
    */
-  private static readonly ALLOWED_COMMANDS = new Set(['kubectl', 'helm', 'docker', 'curl'])
-
-  /**
-   * Pattern for safe substitution values — kubernetes resource name characters only.
-   * Prevents shell injection via event payload values.
-   */
-  private static readonly SAFE_VALUE_PATTERN = /^[a-z0-9][a-z0-9\-\.\/\_]*$/i
-
-  private async runShellCommand(template: string, event: HookEvent): Promise<string> {
-    // Replace placeholders with event payload values, rejecting unsafe values
-    let substitutionError: string | null = null
-    const cmd = template.replace(/{(\w+)}/g, (match, key) => {
-      const raw = String((event.payload as any)[key] ?? '')
-      if (!HooksEngine.SAFE_VALUE_PATTERN.test(raw)) {
-        substitutionError = `Hook aborted: payload value for '${key}' contains unsafe characters: '${raw}'`
-        return match // leave placeholder to abort safely below
-      }
-      return raw
-    })
-
-    if (substitutionError) {
-      console.error(`[HooksEngine] ${substitutionError}`)
-      throw new Error(substitutionError)
-    }
-
-    // Split on whitespace (simple tokenization — quoted args not supported)
-    // Values are sanitized above so shell injection is prevented even without quoted-string parsing.
-    const [command, ...args] = cmd.trim().split(/\s+/)
-
-    // Safelist check: only allow known-safe commands
-    if (!command || !HooksEngine.ALLOWED_COMMANDS.has(command)) {
-      const msg = `Hook aborted: command '${command}' is not in the allowed command list (kubectl, helm, docker, curl)`
+  private async runStructuredCommand(templateKey: string, event: HookEvent): Promise<string> {
+    const template = COMMAND_TEMPLATES[templateKey]
+    if (!template) {
+      const msg = `Hook aborted: unknown command template '${templateKey}'`
       console.error(`[HooksEngine] ${msg}`)
       throw new Error(msg)
     }
 
-    return new Promise((resolve, reject) => {
-      execFile(command, args, { timeout: 30000 }, (err, stdout) => {
-        if (err) reject(err)
-        else resolve(stdout.toString().slice(0, 5000))
-      })
-    })
+    // Validate all payload values before they are used as argv elements
+    const safeData = sanitizeEventData(event.payload)
+
+    // Build argv — user data goes into array positions, never a shell string
+    const args = template.args(safeData)
+
+    console.info(`[HooksEngine] executing: ${template.bin} ${args.join(' ')}`)
+
+    const { stdout, stderr } = await execFileAsync(template.bin, args, { timeout: 30000 })
+    return (stdout || stderr).slice(0, 5000)
   }
 
   stop(): void {
