@@ -267,7 +267,7 @@ function registerBuiltins(tools: BuiltinTool[]) {
 }
 
 if (GATEWAY_TYPE === 'cluster')   { registerBuiltins(kubernetesTools); registerBuiltins(talosTools); registerBuiltins(knowledgeGraphTools); registerBuiltins(discoveryTools) }
-if (GATEWAY_TYPE === 'docker')    registerBuiltins(dockerTools); registerBuiltins(discoveryTools)
+if (GATEWAY_TYPE === 'docker')   { registerBuiltins(dockerTools); registerBuiltins(discoveryTools) }
 // localhost = the gateway co-located with ORION on the management host.
 // It can talk to the local cluster directly, so it gets the full cluster + talos toolset
 // plus docker/localhost tools for managing the host itself.

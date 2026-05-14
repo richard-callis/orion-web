@@ -445,15 +445,14 @@ export async function triggerRoomAgentReplies(
 
   // Pre-fetch specialists list (for ring leader prompt)
   const specialists = await prisma.agentProfile.findMany({
-    where: { active: true },
-    select: { agentId: true, agentName: true, domain: true, description: true, tags: true, confidence: true },
+    select: { agentId: true, domain: true, description: true, tags: true, confidence: true, agent: { select: { name: true } } },
   })
 
   // Build ring leader context: specialists list + load ring-leader template
   let ringLeaderContext = ''
   if (ringLeaderId && specialists.length > 0) {
     const specialistLines = specialists.map(s =>
-      `  • ${s.agentName} (${s.domain}) — ${s.description}${s.tags.length ? ` [${s.tags.join(', ')}]` : ''}`,
+      `  • ${s.agent.name} (${s.domain}) — ${s.description}${s.tags.length ? ` [${s.tags.join(', ')}]` : ''}`,
     )
     ringLeaderContext = `## Specialist Agents Available to You\n\nYou can delegate work to these specialist agents:\n\n${specialistLines.join('\n')}\n\nIf a question falls outside your expertise, delegate it using the \`delegate\` tool.`
 

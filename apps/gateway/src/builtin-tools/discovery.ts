@@ -122,15 +122,12 @@ export const discoveryTools = [
       }>
 
       try {
-        const result = await orionFetch(
-          `/api/environments/${env}/nebula/active`
-        )
-        // The API returns an array of nebula instances; we need AgentProfiles.
-        // Fall back to fetching all agents and their profiles.
-        const agentsResult = await orionFetch(`/api/agents?withProfiles=true`)
-        profiles = agentsResult as typeof profiles
+        // Query agent profiles directly; optionally filter by environment
+        const qs = env ? `?environmentId=${encodeURIComponent(env)}` : ''
+        const result = await orionFetch(`/api/agent-profiles${qs}`)
+        profiles = result as typeof profiles
       } catch {
-        // If the API endpoints don't exist yet, return a helpful message
+        // If the API endpoint doesn't exist yet, return a helpful message
         return `find_specialist: Unable to reach ORION API to fetch agent profiles. ` +
           `Ensure AgentProfile records exist and the ORION_URL is configured correctly. ` +
           `Agents are discovered via their AgentProfile records which store domain, tags, and confidence.`
