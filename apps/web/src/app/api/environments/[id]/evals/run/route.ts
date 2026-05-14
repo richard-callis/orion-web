@@ -186,6 +186,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     createdEvals.push(evalRecord)
   }
 
+  // Aggregate score across all created evals for use in AgentScore update
+  const scoreTotalPct = createdEvals.length > 0
+    ? createdEvals.reduce((sum, e) => sum + e.scoreTotal, 0) / createdEvals.length
+    : 0
+
   // 3. Update or create AgentScore for the target
   const existingScore = await prisma.agentScore.findUnique({
     where: {
@@ -213,7 +218,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
     }
 
-    const totalKeys = new Set()
+    const totalKeys = new Set<string>()
     for (const evalRec of allEvalsForTarget) {
       try {
         const parsed = JSON.parse(evalRec.scores)
@@ -256,6 +261,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         targetType,
         targetId,
         scoreTotal: scoreTotalPct,
+        accuracy: scoreTotalPct,
         safety: 0,
         completeness: 0,
         quality: 0,
