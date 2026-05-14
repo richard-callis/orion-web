@@ -50,17 +50,19 @@ export default function NebulaPage() {
 
   const loadInstances = async () => {
     try {
-      const res = await fetch(`/api/environments/${id}/nebula/instances`)
+      const res = await fetch(`/api/environments/${id}/nebula`)
       const data = await res.json()
-      setInstances(data.instances || [])
+      // GET /api/environments/[id]/nebula returns an array directly
+      setInstances(Array.isArray(data) ? data : (data.instances || []))
     } catch { /* ignore */ }
   }
 
   const loadNovaDefs = async () => {
     try {
-      const res = await fetch(`/api/environments/${id}/nebula/catalog`)
+      const res = await fetch(`/api/environments/${id}/nebula/discovery`)
       const data = await res.json()
-      setNovaDefs(data.definitions || [])
+      // GET /api/environments/[id]/nebula/discovery returns { defaults, installed, active }
+      setNovaDefs(data.defaults || data.definitions || [])
     } catch { /* ignore */ }
   }
 
