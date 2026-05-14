@@ -7,7 +7,7 @@
  */
 
 import { execFile } from 'child_process'
-import { promisify }
+import { promisify } from 'util'
 
 import { OrionClient } from './orion-client'
 
