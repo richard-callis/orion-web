@@ -1,9 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 
 export const dynamic = 'force-dynamic'
-export const streamTimeout = 0
+export const maxDuration = 300
 
-export function GET(request: NextRequest) {
+export async function GET(request: NextRequest): Promise<Response> {
   const { signal } = request
 
   const headers = {
@@ -51,5 +51,5 @@ export function GET(request: NextRequest) {
     },
   })
 
-  return new NextResponse(stream, { headers })
+  return new Response(stream, { headers })
 }
