@@ -2320,3 +2320,275 @@ registerTool({
     ].join('\n')
   },
 })
+
+// ── Ring Leader: findSpecialist ──────────────────────────────────────────────
+
+registerTool({
+  name: 'find_specialist',
+  description: 'Discover which specialist agent should handle a given task. ' +
+    'Searches AgentProfile records by domain, tags, and confidence scoring. ' +
+    'Returns ranked results with agentId, domain, description, and confidence. ' +
+    'Use this before delegate() when you are unsure which agent should handle a task.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Description of the task or problem to find a specialist for.',
+      },
+      environment: {
+        type: 'string',
+        description: 'Optional environment name to filter by.',
+      },
+      limit: {
+        type: 'number',
+        description: 'Maximum number of results (1-5, default 3).',
+        default: 3,
+      },
+      minConfidence: {
+        type: 'number',
+        description: 'Minimum confidence threshold (0.0-1.0, default 0.3).',
+        default: 0.3,
+      },
+    },
+    required: ['query'],
+  },
+  tier: 'read',
+  parallelSafe: true,
+  availableIn: 'task',
+  handler: async (args) => {
+    const { query, limit, minConfidence } = args as {
+      query?: string; environment?: string; limit?: number; minConfidence?: number
+    }
+
+    if (!query) return 'Error: query is required'
+
+    const q = query.toLowerCase()
+    const results = await prisma.agentProfile.findMany({
+      where: {
+        confidence: { gte: minConfidence ?? 0.3 },
+        ...(environment ? { activeEnvironments: { has: environment } } : {}),
+      },
+      include: { agent: { select: { name: true, status: true } } },
+      take: Math.min(Math.max(parseInt(String(limit ?? 3), 10), 1), 5),
+    })
+
+    // Score each profile
+    const scored = results.map((p: any) => {
+      const domainLower = p.domain.toLowerCase()
+      let score = 0
+
+      // Domain match
+      if (q.includes(domainLower)) score += 0.8
+      else if (domainLower.includes(q)) score += 0.5
+      else {
+        const qWords = q.split(/\s+/).filter((w: string) => w.length > 2)
+        const dWords = domainLower.split(/[-_\s]+/).filter((w: string) => w.length > 2)
+        const matching = qWords.filter((w: string) => dWords.some((dw: string) => dw.includes(w) || w.includes(dw))).length
+        if (qWords.length > 0) score += (matching / qWords.length) * 0.5
+      }
+
+      // Tag overlap
+      const tags = Array.isArray(p.tags) ? (p.tags as string[]).map((t: string) => t.toLowerCase()) : []
+      const qWords2 = q.split(/\s+/).filter((w: string) => w.length > 2)
+      if (qWords2.length > 0 && tags.length > 0) {
+        const matching = qWords2.filter((w: string) => tags.some((t: string) => t.includes(w) || w.includes(t))).length
+        score += (matching / qWords2.length) * 0.3
+      }
+
+      // Confidence weight
+      score += (p.confidence ?? 0.5) * 0.2
+
+      return { profile: p, score: Math.min(score, 1.0) }
+    })
+
+    // Sort by score descending
+    scored.sort((a, b) => b.score - a.score)
+
+    if (scored.length === 0) {
+      return `No specialist agents matched the query "${query}" (minConfidence: ${minConfidence ?? 0.3}).`
+    }
+
+    const lines: string[] = [`Found ${scored.length} specialist agent(s) for: "${query}"`]
+    lines.push('')
+
+    for (let i = 0; i < scored.length; i++) {
+      const { profile: p, score } = scored[i]
+      lines.push(`--- #${i + 1} [${p.domain}] ${p.agent.name} ---`)
+      lines.push(`  agentId:      ${p.agentId}`)
+      lines.push(`  confidence:   ${(p.confidence * 100).toFixed(0)}%`)
+      lines.push(`  score:        ${(score * 100).toFixed(1)}%`)
+      lines.push(`  status:       ${p.agent.status}`)
+      lines.push(`  description:  ${p.description.slice(0, 200)}`)
+      if (Array.isArray(p.tags) && p.tags.length > 0) {
+        lines.push(`  tags:         ${(p.tags as string[]).join(', ')}`)
+      }
+      lines.push('')
+    }
+
+    return lines.join('\n')
+  },
+})
+
+// ── Ring Leader: knowledge_write_room ────────────────────────────────────────
+
+registerTool({
+  name: 'knowledge_write_room',
+  description: 'Write a knowledge entry to the room-local knowledge base. ' +
+    'These entries are scoped to a single chat room and are searchable only within that room.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      title: { type: 'string', description: 'Entry title' },
+      content: { type: 'string', description: 'Entry content (markdown)' },
+      type: {
+        type: 'string',
+        enum: ['note', 'runbook', 'context', 'decision'],
+        description: 'Entry type (default "note")',
+        default: 'note',
+      },
+      tags: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Tags for categorization',
+      },
+    },
+    required: ['title', 'content'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'task',
+  handler: async (args, ctx) => {
+    const { title, content, type, tags } = args as {
+      title?: string; content?: string; type?: string; tags?: string[]
+    }
+    if (!title || !content) return 'Error: title and content are required'
+    if (!ctx.roomId) return 'Error: roomId is required for room knowledge writes'
+
+    const entry = await prisma.roomKnowledge.create({
+      data: {
+        roomId: ctx.roomId,
+        title,
+        content,
+        type: type ?? 'note',
+        tags: tags ?? [],
+      },
+    })
+    return `Room knowledge entry created: "${entry.title}" (id: ${entry.id})`
+  },
+})
+
+// ── Ring Leader: knowledge_write_agent ───────────────────────────────────────
+
+registerTool({
+  name: 'knowledge_write_agent',
+  description: 'Write a knowledge entry to your agent-local knowledge base. ' +
+    'These entries are scoped to this agent and retained between delegations.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      title: { type: 'string', description: 'Entry title' },
+      content: { type: 'string', description: 'Entry content (markdown)' },
+      type: {
+        type: 'string',
+        enum: ['note', 'runbook', 'context', 'lesson'],
+        description: 'Entry type (default "note")',
+        default: 'note',
+      },
+      tags: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Tags for categorization',
+      },
+    },
+    required: ['title', 'content'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'task',
+  handler: async (args, ctx) => {
+    const { title, content, type, tags } = args as {
+      title?: string; content?: string; type?: string; tags?: string[]
+    }
+    if (!title || !content) return 'Error: title and content are required'
+    if (!ctx.agentId) return 'Error: agent context required for agent knowledge writes'
+
+    const entry = await prisma.agentKnowledge.create({
+      data: {
+        agentId: ctx.agentId,
+        title,
+        content,
+        type: type ?? 'note',
+        tags: tags ?? [],
+      },
+    })
+    return `Agent knowledge entry created: "${entry.title}" (id: ${entry.id})`
+  },
+})
+
+// ── Ring Leader: knowledge_search_agent ──────────────────────────────────────
+
+registerTool({
+  name: 'knowledge_search_agent',
+  description: 'Search agent-local knowledge for a specific agent. ' +
+    'Returns lessons learned, debugging patterns, and context retained between delegations.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Search query',
+      },
+      agentId: {
+        type: 'string',
+        description: 'Agent ID to search within',
+      },
+      limit: {
+        type: 'number',
+        description: 'Max results (1-20, default 5)',
+        default: 5,
+      },
+    },
+    required: ['query', 'agentId'],
+  },
+  tier: 'read',
+  parallelSafe: true,
+  availableIn: 'both',
+  handler: async (args) => {
+    const { query, agentId, limit } = args as {
+      query?: string; agentId?: string; limit?: number
+    }
+
+    if (!query || !agentId) return 'Error: query and agentId are required'
+
+    const q = query.toLowerCase()
+    const entries = await prisma.agentKnowledge.findMany({
+      where: {
+        agentId,
+        OR: [
+          { title: { contains: q, mode: 'insensitive' } },
+          { content: { contains: q, mode: 'insensitive' } },
+        ],
+      },
+      take: Math.min(Math.max(parseInt(String(limit ?? 5), 10), 1), 20),
+      orderBy: { updatedAt: 'desc' },
+    })
+
+    if (entries.length === 0) {
+      return `No agent knowledge entries found for agent "${agentId}" matching "${query}".`
+    }
+
+    const lines: string[] = [`Found ${entries.length} agent knowledge entry(ies) for: "${query}"`]
+    lines.push('')
+
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i]
+      lines.push(`--- #${i + 1} [${e.type}] ${e.title} ---`)
+      lines.push(e.content.slice(0, 500))
+      if (e.content.length > 500) lines.push('... (truncated)')
+      lines.push('')
+    }
+
+    return lines.join('\n')
+  },
+})
