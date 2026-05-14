@@ -331,4 +331,132 @@ export const knowledgeGraphTools = [
       )
     },
   },
+
+  {
+    name: 'knowledge_write',
+    description: 'Create or update a note in the ORION knowledge base. ' +
+      'Embeds the note automatically. Use for documentation, runbooks, ' +
+      'and reference material.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: {
+          type: 'string',
+          description: 'Note title',
+        },
+        content: {
+          type: 'string',
+          description: 'Note content (markdown)',
+        },
+        folder: {
+          type: 'string',
+          description: 'Folder name (default "General")',
+          default: 'General',
+        },
+        type: {
+          type: 'string',
+          enum: ['note', 'wiki', 'runbook', 'llm-context', 'decision'],
+          description: 'Note type (default "note")',
+          default: 'note',
+        },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Tags for categorization',
+          default: [],
+        },
+      },
+      required: ['title', 'content'],
+    },
+    async execute(args: Record<string, unknown>) {
+      const result = await orionFetch('/api/notes', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: args.title,
+          content: args.content,
+          folder: args.folder ?? 'General',
+          type: args.type ?? 'note',
+          tags: args.tags ?? [],
+        }),
+      })
+      const r = result as { id: string; title: string }
+      return `Note created: "${r.title}" (${r.id})`
+    },
+  },
+
+  {
+    name: 'knowledge_search_room',
+    description: 'Search room-local knowledge for a specific room. ' +
+      'Returns notes, runbooks, and decisions stored at the room level.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query',
+        },
+        roomId: {
+          type: 'string',
+          description: 'Room ID to search within',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max results (default 5)',
+          default: 5,
+        },
+      },
+      required: ['query', 'roomId'],
+    },
+    async execute(args: Record<string, unknown>) {
+      const result = await orionFetch(
+        `/api/knowledge/room?query=${encodeURIComponent(String(args.query))}&roomId=${encodeURIComponent(String(args.roomId))}&limit=${args.limit ?? 5}`,
+        { method: 'GET' },
+      )
+      const r = result as Array<{ title: string; content: string; type: string; score?: number }>
+      if (r.length === 0) return `No room knowledge found for "${args.query}".`
+      const lines: string[] = [`Found ${r.length} room knowledge entries:`]
+      for (const item of r) {
+        lines.push(`  - [${item.type}] ${item.title}: ${item.content.slice(0, 200)}`)
+      }
+      return lines.join('\n')
+    },
+  },
+
+  {
+    name: 'knowledge_search_agent',
+    description: 'Search agent-local knowledge for a specific agent. ' +
+      'Returns lessons learned, debugging patterns, and context retained between delegations.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query',
+        },
+        agentId: {
+          type: 'string',
+          description: 'Agent ID to search within',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max results (default 5)',
+          default: 5,
+        },
+      },
+      required: ['query', 'agentId'],
+    },
+    async execute(args: Record<string, unknown>) {
+      const result = await orionFetch(
+        `/api/knowledge/agent?query=${encodeURIComponent(String(args.query))}&agentId=${encodeURIComponent(String(args.agentId))}&limit=${args.limit ?? 5}`,
+        { method: 'GET' },
+      )
+      const r = result as Array<{ title: string; content: string; type: string; score?: number }>
+      if (r.length === 0) return `No agent knowledge found for agent "${args.agentId}".`
+      const lines: string[] = [`Found ${r.length} agent knowledge entries:`]
+      for (const item of r) {
+        lines.push(`  - [${item.type}] ${item.title}: ${item.content.slice(0, 200)}`)
+      }
+      return lines.join('\n')
+    },
+  },
 ]

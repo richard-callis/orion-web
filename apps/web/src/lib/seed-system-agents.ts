@@ -707,6 +707,65 @@ export async function ensureSystemAgents(): Promise<void> {
       }).catch(() => {})
     }
   }
+
+  // Seed AgentProfile records for system agents (ring leader delegation)
+  const PROFILE_DEFS: Array<{ agentName: string; domain: string; description: string; tags: string[] }> = [
+    {
+      agentName: 'Alpha',
+      domain: 'system-coordinator',
+      description: 'Team coordination, task assignment, escalation management, and workflow orchestration.',
+      tags: ['task-assignment', 'escalation', 'workflow', 'coordination'],
+    },
+    {
+      agentName: 'Veritas',
+      domain: 'qa-validation',
+      description: 'Testing, code review, deployment validation, and quality assurance gates.',
+      tags: ['testing', 'code-review', 'deployment-validation', 'quality-assurance'],
+    },
+    {
+      agentName: 'Planner',
+      domain: 'planning',
+      description: 'Architecture design, project planning, task breakdown, and milestone tracking.',
+      tags: ['architecture', 'project-planning', 'task-breakdown', 'milestones'],
+    },
+    {
+      agentName: 'Atlas',
+      domain: 'environment-management',
+      description: 'Environment management, connectors, bootstrap, and infrastructure provisioning.',
+      tags: ['environments', 'connectors', 'bootstrap', 'infrastructure'],
+    },
+    {
+      agentName: 'Pulse',
+      domain: 'cluster-health',
+      description: 'Cluster monitoring, ingress management, SSL certificates, and health checks.',
+      tags: ['monitoring', 'ingress', 'ssl', 'health-checks'],
+    },
+    {
+      agentName: 'Mentor',
+      domain: 'agent-coaching',
+      description: 'Prompt engineering, agent performance optimization, training, and coaching.',
+      tags: ['prompt-improvement', 'agent-performance', 'training', 'coaching'],
+    },
+  ]
+
+  for (const pd of PROFILE_DEFS) {
+    const agent = await prisma.agent.findUnique({ where: { name: pd.agentName }, select: { id: true } })
+    if (!agent) continue
+
+    await prisma.agentProfile.upsert({
+      where: { agentId: agent.id },
+      update: {},
+      create: {
+        agentId:     agent.id,
+        domain:      pd.domain,
+        description: pd.description,
+        tags:        pd.tags,
+        confidence:  0.5,
+      },
+    }).catch(() => {})
+
+    console.log(`[seed] AgentProfile: ${pd.agentName} → ${pd.domain}`)
+  }
 }
 
 // ── Planner lookup helper ──────────────────────────────────────────────────────
