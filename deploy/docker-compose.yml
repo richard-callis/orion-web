@@ -59,8 +59,6 @@ services:
       # ArgoCD — bootstrap uses this to register clusters and create apps
       ARGOCD_SERVER: http://host.docker.internal:8083
       ARGOCD_AUTH_TOKEN: ${ARGOCD_ADMIN_PASSWORD:-}
-      ARGOCD_SERVER: http://host.docker.internal:8083
-      ARGOCD_AUTH_TOKEN: ${ARGOCD_ADMIN_PASSWORD:-}
       # Claude Code sidecar URL (for OAuth bootstrap and credential status)
       ORION_CLAUDE_URL: ${ORION_CLAUDE_URL:-http://orion-claude:3100}
       # MCP service token — shared with orion-claude so Claude can call ORION tools via MCP
