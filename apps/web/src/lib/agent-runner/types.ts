@@ -32,6 +32,7 @@ export interface TaskRunContext {
     definitions: ManagementToolDef[]
     execute: (name: string, argsRaw: string) => Promise<string>
   }
+  nebula?: { environmentId: string; traceId: string }  // Nebula observability context
 }
 
 export type AgentEvent =

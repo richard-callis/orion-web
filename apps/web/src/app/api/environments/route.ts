@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { Prisma } from '@prisma/client'
 import { getDefaultTools } from '@/lib/default-tools'
+import { seedNovaDefinitions } from '@/lib/default-novas'
 import { getCurrentUser, requireAdmin } from '@/lib/auth'
 import { CreateEnvironmentSchema } from '@/lib/validate'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
@@ -72,6 +73,27 @@ export async function POST(req: NextRequest) {
       skipDuplicates: true,
     })
   }
+
+  // Phase 5: Auto-install default Nebula entries (NovaDefinitions where category is 'skill' or 'hook')
+  seedNovaDefinitions(prisma)
+    .then(async () => {
+      const definitions = await prisma.novaDefinition.findMany({
+        where: { category: { in: ['skill', 'hook'] } },
+      })
+      if (definitions.length > 0) {
+        await prisma.nebulaInstance.createMany({
+          data: definitions.map((def: any) => ({
+            environmentId: env.id,
+            name: def.name,
+            category: def.category,
+            spec: def.spec,
+            sourceNovaId: def.id,
+          })),
+          skipDuplicates: true,
+        })
+      }
+    })
+    .catch(() => {}) // Silently fail — non-blocking
 
   const envWithTools = await prisma.environment.findUnique({
     where: { id: env.id },

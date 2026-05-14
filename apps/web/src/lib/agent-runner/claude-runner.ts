@@ -36,6 +36,7 @@ export const claudeRunner: AgentRunner = {
           model:        modelName,
           agentId:      ctx.agentId,
           maxTurns:     20,
+          ...(ctx.nebula && { nebula: ctx.nebula }),
         }),
         signal: AbortSignal.timeout(300_000),
       })
