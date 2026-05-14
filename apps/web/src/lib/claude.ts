@@ -148,6 +148,12 @@ export interface AgentContextConfig {
   allowedTools?: string[]  // default [] (no tools) for agent chats
   summarizeAfter?: number  // summarize conversation after this many messages (default 15, was 20)
   llm?: string             // "claude:<model-id>" | "ollama:<model-id>" | "gemini:<model-id>" | "ext:<cuid>" — defaults to Claude Sonnet
+
+  // Ring Leader delegation fields
+  discoverable?: boolean           // when true, this agent can be discovered by findSpecialist
+  maxParallelDelegations?: number  // default 3
+  canWriteKnowledge?: boolean      // default false
+  knowledgeScope?: "global" | "room" | "agent-local"  // default "global"
 }
 
 // ── Permission check ─────────────────────────────────────────────────────────
