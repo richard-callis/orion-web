@@ -81,6 +81,8 @@ model Agent {
   novaDeployments NovaDeployment[]
   chatRoomMembers ChatRoomMember[]
   chatMessages    ChatMessage[]
+  profiles        AgentProfile[]
+  knowledge       AgentKnowledge[]
 }
 
 model Environment {
@@ -750,6 +752,8 @@ model ChatRoom {
 
   members       ChatRoomMember[]
   messages      ChatMessage[]
+  metadata      Json?    // { ringLeaderAgentId?: string, knowledgeScope: "global" | "room" | "mixed" }
+  roomKnowledge RoomKnowledge[]
 
   @@unique([featureId])
   @@map("chat_rooms")
@@ -840,4 +844,84 @@ model ManagedSecret {
 
   @@index([environmentId])
   @@map("managed_secrets")
+}
+
+// ─── Ring Leader: Agent Profiles ──────────────────────────────────────────────
+// Specialist domain registry — powers findSpecialist discovery.
+// Each system or user-created persistent agent can have one profile.
+
+model AgentProfile {
+  /// Each system agent or user-created persistent agent gets one profile.
+  id              String   @id @default(cuid())
+  agentId         String
+  agent           Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  /// Machine-readable domain label, e.g. "kubernetes-sre", "database-admin", "networking"
+  domain          String
+
+  /// Human-readable description of what this agent handles
+  description     String   @db.Text
+
+  /// Tags derived from agent behavior (e.g. "pod-debugging", "node-management")
+  tags            String[]  @default([])
+
+  /// Which environments this agent is active in
+  activeEnvironments String[] @default([])
+
+  /// Confidence score 0.0-1.0 — updated by Dream Mode based on successful delegations
+  confidence      Float     @default(0.5)
+
+  /// Last time Dream Mode verified this agent's domain
+  verifiedAt      DateTime?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([agentId])
+  @@index([domain])
+  @@index([tags])
+  @@map("agent_profiles")
+}
+
+// ─── Ring Leader: Room-Local Knowledge ────────────────────────────────────────
+// Knowledge entries scoped to a single chat room.
+
+model RoomKnowledge {
+  id            String   @id @default(cuid())
+  roomId        String
+  room          ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  title         String
+  content       String   @db.Text
+  type          String   @default("note") // "note" | "runbook" | "context" | "decision"
+  tags          Json?    // string[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([roomId])
+  @@index([tags])
+  @@map("room_knowledge")
+}
+
+// ─── Ring Leader: Agent-Local Knowledge ────────────────────────────────────────
+// Knowledge entries scoped to a specific agent. Used for lessons learned,
+// debugging patterns, and context the agent retains between delegations.
+
+model AgentKnowledge {
+  id            String   @id @default(cuid())
+  agentId       String
+  agent         Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  title         String
+  content       String   @db.Text
+  type          String   @default("note") // "note" | "runbook" | "context" | "lesson"
+  tags          Json?    // string[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([agentId])
+  @@index([tags])
+  @@map("agent_knowledge")
 }
