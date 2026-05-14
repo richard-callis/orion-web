@@ -21,7 +21,8 @@ export async function GET(request: Request) {
   if (typeof acknowledged === 'boolean') where.acknowledged = acknowledged
 
   const cutoff = new Date(Date.now() - minutes * 60 * 1000)
-  ;(where as any).createdAt = { ...where.createdAt, gte: cutoff }
+  const existingCreatedAt = (where.createdAt ?? {}) as Record<string, unknown>
+  where.createdAt = { ...existingCreatedAt, gte: cutoff }
 
   const [events, total] = await Promise.all([
     prisma.securityEvent.findMany({
