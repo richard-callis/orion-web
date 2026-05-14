@@ -100,10 +100,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             notes = hasResults ? 'Has tool results' : 'No tool results found'
           } else if (criterion.type === 'response_quality') {
             // Heuristic: quality based on response length and token usage
-            const totalOutputTokens = conversation.invocations.reduce((sum, i) => sum + (i.outputTokens || 0), 0)
+            const totalTokens = conversation.invocations.reduce((sum, i) => sum + (i.tokensUsed || 0), 0)
             const hasContent = conversation.messages.some((m) => m.content.length > 10)
-            rawScore = hasContent ? Math.min(maxScore, Math.floor(totalOutputTokens / 100)) : 0
-            notes = `Output tokens: ${totalOutputTokens}`
+            rawScore = hasContent ? Math.min(maxScore, Math.floor(totalTokens / 100)) : 0
+            notes = `Tokens used: ${totalTokens}`
           }
         } else if (targetType === 'task') {
           const task = await prisma.task.findUnique({ where: { id: targetId } })
