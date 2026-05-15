@@ -645,16 +645,27 @@ async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Pr
     }
 
     const policy = (env.policyConfig ?? {}) as { overrides?: Record<string, string>; reviewAll?: boolean }
+
+    // Enforce repo path convention — prepend repoPath if agent omitted it
+    const repoPath = (env as Record<string, unknown>).repoPath as string | undefined
+    const normalizedChanges = repoPath
+      ? changes.map(c => ({
+          ...c,
+          path: c.path.startsWith(`${repoPath}/`) ? c.path : `${repoPath}/${c.path}`,
+        }))
+      : changes
+
     const result = await proposeChange({
       owner: env.gitOwner,
       repo: env.gitRepo,
       title,
       reasoning,
       operationDescription: operation_description,
-      changes,
+      changes: normalizedChanges,
       policy,
     })
 
+    const vaultPathPrefix = (env as Record<string, unknown>).vaultPathPrefix as string | undefined
     const action = result.merged
       ? `auto-merged (${result.classification.reason})`
       : `opened for review — ${result.classification.reason}`
@@ -676,7 +687,12 @@ async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Pr
     }).catch(() => {}) // non-fatal — PR already exists in Gitea even if DB write fails
 
     await auditLog(ctx.agentId ?? ctx.userId, `🔀 GitOps PR #${result.prNumber} ${action} — **${title}**`)
-    return `PR #${result.prNumber} ${action}. URL: ${result.prUrl}`
+    const conventions = [
+      repoPath        ? `Manifest paths must be under: ${repoPath}/` : null,
+      vaultPathPrefix ? `Vault secrets must be under: secret/${vaultPathPrefix}/<service>` : null,
+    ].filter(Boolean)
+    const conventionNote = conventions.length ? `\n\nEnvironment conventions:\n${conventions.map(c => `  • ${c}`).join('\n')}` : ''
+    return `PR #${result.prNumber} ${action}. URL: ${result.prUrl}${conventionNote}`
   } catch (e) {
     return `Error proposing GitOps change: ${e instanceof Error ? e.message : String(e)}`
   }
@@ -1429,7 +1445,7 @@ registerTool({
 
 registerTool({
   name: 'orion_propose_gitops',
-  description: 'IMPORTANT: If any manifest uses a non-standard apiVersion (anything outside v1, apps/v1, batch/v1, networking.k8s.io/v1, rbac.authorization.k8s.io/v1), you MUST call validate_manifest first to confirm those CRDs exist in the cluster. Proposing manifests with non-existent CRDs causes ArgoCD sync failures and crash loops. \n\nPropose a GitOps change for a cluster environment. Creates a branch, commits manifests, opens a PR, and auto-merges if the change matches policy (e.g. scaling, patch image tags). Use this for ALL infrastructure work — deploying services, creating configmaps/secrets, updating ingresses, etc.\n\nREQUIRED: you must know the target environment. Ask the Atlas in the feature room, or check orion_list_agents for the Atlas. If you have no way to get the environment designation, use environment_id: "localhost" as a fallback.\n\nRules:\n- Always include a clear reasoning field explaining why the change is needed\n- Provide operation_description for policy classification (e.g. "deploy new service", "update image tag")\n- Write manifests with namespace, proper labels, and correct resource types\n- For deployments: include namespace selector, resource limits if appropriate\n- For services: use ClusterIP unless ingress is explicitly needed',
+  description: 'Propose a GitOps change for a cluster environment. Creates a branch, commits manifests, opens a PR, and auto-merges if the change matches policy (e.g. scaling, patch image tags). Use this for ALL infrastructure work — deploying services, creating configmaps/secrets, updating ingresses, etc.\n\nPath conventions are enforced automatically — pass service-relative paths (e.g. "nginx/deployment.yaml") and the tool will place them under the correct ArgoCD-watched directory. The tool will also return the Vault path prefix for this environment in its response — use that prefix for any ExternalSecret remoteRef keys.\n\nIMPORTANT: If any manifest uses a non-standard apiVersion (anything outside v1, apps/v1, batch/v1, networking.k8s.io/v1, rbac.authorization.k8s.io/v1), call validate_manifest first to confirm those CRDs exist. Proposing manifests with non-existent CRDs causes ArgoCD sync failures.\n\nREQUIRED: you must know the target environment. Ask the Atlas in the feature room, or check orion_list_agents for the Atlas. If you have no way to get the environment designation, use environment_id: "localhost" as a fallback.\n\nRules:\n- Always include a clear reasoning field explaining why the change is needed\n- Provide operation_description for policy classification (e.g. "deploy new service", "update image tag")\n- Write manifests with namespace, proper labels, and correct resource types\n- For deployments: include namespace selector, resource limits if appropriate\n- For services: use ClusterIP unless ingress is explicitly needed',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1443,7 +1459,7 @@ registerTool({
         items: {
           type: 'object',
           properties: {
-            path:    { type: 'string', description: 'Repo-relative file path, e.g. deployments/nginx/deployment.yaml' },
+            path:    { type: 'string', description: 'Service-relative file path — do NOT include the repo root directory. E.g. "nginx/deployment.yaml", not "deployments/nginx/deployment.yaml". The tool automatically places it under the correct ArgoCD-watched directory.' },
             content: { type: 'string', description: 'Full file content as YAML/JSON' },
           },
           required: ['path', 'content'],
@@ -1576,15 +1592,22 @@ registerTool({
         where: { OR: [{ id: environment_id }, { name: { equals: environment_id, mode: 'insensitive' } }] },
       })
       if (!env) return `Error: environment "${environment_id}" not found`
+      const e = env as Record<string, unknown>
       return JSON.stringify({
-        id:          env.id,
-        name:        env.name,
-        type:        env.type,
-        status:      env.status,
-        gatewayUrl:  env.gatewayUrl,
-        kubeconfig:  env.kubeconfig ? '••••' : null,
-        gitOwner:  env.gitOwner,
-        gitRepo:   env.gitRepo,
+        id:               env.id,
+        name:             env.name,
+        type:             env.type,
+        status:           env.status,
+        gatewayUrl:       env.gatewayUrl,
+        kubeconfig:       env.kubeconfig ? '••••' : null,
+        gitOwner:         env.gitOwner,
+        gitRepo:          env.gitRepo,
+        repoPath:         e.repoPath        ?? null,
+        vaultPathPrefix:  e.vaultPathPrefix ?? null,
+        _conventions: {
+          manifests:    e.repoPath        ? `Files go in: ${e.repoPath}/<service>/` : 'not set — ask a human',
+          vaultSecrets: e.vaultPathPrefix ? `Secrets go at: secret/${e.vaultPathPrefix}/<service>` : 'not set — ask a human',
+        },
       }, null, 2)
     } catch (e) {
       return `Error: ${e instanceof Error ? e.message : String(e)}`
@@ -1613,7 +1636,7 @@ registerTool({
       if (!environment_id) return 'Error: environment_id is required'
       if (!body || typeof body !== 'object') return 'Error: body must be an object'
 
-      const ALLOWED = ['kubeconfig', 'gatewayUrl', 'gitOwner', 'gitRepo', 'description']
+      const ALLOWED = ['kubeconfig', 'gatewayUrl', 'gitOwner', 'gitRepo', 'description', 'repoPath', 'vaultPathPrefix']
       const update: Record<string, unknown> = {}
       for (const key of ALLOWED) {
         if (key in body) update[key] = body[key]
