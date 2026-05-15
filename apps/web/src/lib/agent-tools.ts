@@ -387,17 +387,14 @@ export const TOOLS_SYSTEM_ADDENDUM = `
 
 ## Your ORION Tools
 
-You have access to these tools. Use them — do not pretend to perform an action when you can call a tool instead.
+You have access to ORION management tools. Use them — do not pretend to perform an action when you can call a tool instead.
 
-**Read ORION state:**
-- **orion_get_tasks**: List tasks, optionally filtered by status or assigned agent.
-- **orion_get_agents**: List all active agents and their roles.
+**IMPORTANT — Tool Discovery:**
+Never guess or invent tool names. Use the discovery tools first:
+- Call **list_tools** with a category to see real tool names (categories: tasks, agents, rooms, features, gitops, knowledge, environment, secrets, tools).
+- Call **describe_tool** with a name to get full parameter details before calling it.
+- If a tool doesn't exist, call **orion_request_tool** to request its creation or check registered Novas.
 
-**Write ORION state:**
-- **create_task**: Log a new task on the board (title, description, priority, status).
-- **update_task**: Update an existing task by ID (status, title, description, priority).
-- **orion_manage_task**: Assign a task to an agent, change status, or append a feed note.
-- **create_agent**: Create a new AI agent and invite it to this chat room.
-- **write_secret**: Scaffold an External Secret in ORION backed by Vault — writes PLACEHOLDER values so the human can fill in real values via the ORION UI.
+Example workflow: "I need to create a task" → call list_tools(category: "tasks") → see orion_create_task → call describe_tool(name: "orion_create_task") → call orion_create_task with correct params.
 
 When you use a tool, report the result back clearly (e.g. "Done — PR #42 opened: 'feat: deploy Tailscale Operator'").`
