@@ -243,12 +243,19 @@ async function callOpenAIChat(
   // Names of ORION-native tools for dispatch routing (registry + legacy)
   const orionToolNames: Set<string> = new Set([...registryToolNames, ...legacyToolNames])
 
+  // Qwen3 models generate <think>…</think> tokens by default in Ollama. These thinking
+  // tokens interfere with structured tool_calls output — the model occasionally narrates
+  // the tool call as prose instead of emitting a proper tool_calls JSON block. Disabling
+  // thinking mode via think:false fixes the inconsistency without removing reasoning ability.
+  const isQwen3 = /qwen3/i.test(model)
+
   // Tool-call loop — keep going until the model produces a text reply
   const maxToolRoundsSetting = await prisma.systemSetting.findUnique({ where: { key: 'agent.chat.maxToolRounds' } })
   const MAX_TOOL_ROUNDS = parseInt(String(maxToolRoundsSetting?.value ?? '15'), 10) || 15
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const body: Record<string, unknown> = { model, stream: false, messages }
     if (allTools) body.tools = allTools
+    if (isQwen3) body.think = false
 
     const res = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: 'POST',
@@ -331,6 +338,7 @@ async function callOpenAIChat(
   // so the agent always replies with what it learned, never silently disappears.
   console.warn(`[room-agents] ${agentName} hit MAX_TOOL_ROUNDS — forcing final response turn`)
   const finalBody: Record<string, unknown> = { model, stream: false, messages }
+  if (isQwen3) finalBody.think = false
   // Omit tools entirely so the model must produce a text reply
   const finalRes = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: 'POST',
