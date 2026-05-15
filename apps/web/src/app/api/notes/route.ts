@@ -9,7 +9,8 @@ export const { GET, POST } = makeCrudRoutes({
   orderBy:      [{ pinned: 'desc' }, { updatedAt: 'desc' }],
   afterCreate:  async (record) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ok = await embedNote(record as any).catch(err => { console.error('[embed] failed for new note:', err); return false })
-    if (ok) computeSemanticEdges(record.id).catch(() => {})
+    const r = record as any
+    const ok = await embedNote(r).catch(err => { console.error('[embed] failed for new note:', err); return false })
+    if (ok) computeSemanticEdges(r.id).catch(() => {})
   },
 })
