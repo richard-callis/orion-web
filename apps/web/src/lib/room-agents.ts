@@ -537,6 +537,12 @@ export async function triggerRoomAgentReplies(
       const gateway = toolsEnabled ? await resolveAgentGateway(agent.id) : null
       const gatewayTools = gateway ? await gateway.client.listTools().catch(() => []) : []
 
+      // Warn the agent if tools are enabled but no environment is linked — gateway tools (kubectl, shell, etc.)
+      // will be invisible and the agent would otherwise burn turns requesting them via orion_request_tool.
+      if (toolsEnabled && !gateway) {
+        personaPrompt += `\n\n⚠️ WARNING: You have tools enabled but are not linked to any environment. Built-in gateway tools (kubectl_logs, kubectl_get, shell_exec, docker_ps, etc.) are unavailable until an admin links this agent to an environment. Do not request these tools — instead, inform the user that you need to be linked to an environment first.`
+      }
+
       console.log(`[room-agents] ${agent.name} (${llm}${toolsEnabled ? ', tools' : ''}${gateway ? ', gateway' : ''}) → replying to room ${roomId}`)
 
       let reply: string | null = null
