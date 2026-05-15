@@ -197,18 +197,23 @@ export function classifyManifest(manifest: string): OperationType {
 export function classifyOperation(description: string): OperationType {
   const d = description.toLowerCase()
 
-  if (d.includes('scale') || d.includes('replicas')) return 'scale'
-  if (d.includes('restart') || d.includes('rollout')) return 'rolling-restart'
-  if (d.includes('configmap') && !d.includes('secret')) return 'configmap-update'
-  if (d.includes('resource') && (d.includes('limit') || d.includes('request'))) return 'resource-limits'
+  // Check TIER 2 (review-required) structural changes FIRST
+  // These take precedence over operational changes to avoid false positives
+  if (d.includes('delete') || d.includes('destroy') || d.includes('remove all')) return 'destructive'
+  if (d.includes('new deployment') || d.includes('deploy ') || d.includes('create deployment')) return 'new-deployment'
+  if (d.includes('new service') || d.includes('create service')) return 'new-service'
   if (d.includes('ingress')) return 'ingress-change'
   if (d.includes('rbac') || d.includes('clusterrole') || d.includes('rolebinding')) return 'rbac-change'
   if (d.includes('networkpolicy') || d.includes('network policy')) return 'network-policy'
   if (d.includes('namespace')) return 'new-namespace'
   if (d.includes('secret') || d.includes('externalsecret') || d.includes('vault')) return 'secret-change'
-  if (d.includes('delete') || d.includes('destroy') || d.includes('remove all')) return 'destructive'
-  if (d.includes('new deployment') || d.includes('deploy ') || d.includes('create deployment')) return 'new-deployment'
-  if (d.includes('new service') || d.includes('create service')) return 'new-service'
+
+  // Check TIER 1 (auto-merge safe) operational changes
+  // Only checked if no structural change keywords were found
+  if (d.includes('scale') || d.includes('replicas')) return 'scale'
+  if (d.includes('restart') || d.includes('rollout')) return 'rolling-restart'
+  if (d.includes('configmap') && !d.includes('secret')) return 'configmap-update'
+  if (d.includes('resource') && (d.includes('limit') || d.includes('request'))) return 'resource-limits'
   if (d.includes('image') || d.includes('tag') || d.includes('upgrade')) {
     if (d.includes('major')) return 'image-update-major'
     if (d.includes('minor')) return 'image-update-minor'
