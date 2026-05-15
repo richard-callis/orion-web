@@ -28,6 +28,17 @@ const execAsync = promisify(exec)
 
 export type ToolTier = 'read' | 'write' | 'destructive'
 
+export type ToolCategory =
+  | 'tasks'        // task lifecycle: create, assign, close, reopen, escalate, inspect
+  | 'agents'       // agent lifecycle: create, update, archive, spawn, find
+  | 'rooms'        // chat rooms and messaging
+  | 'features'     // feature planning and coordination
+  | 'gitops'       // GitOps: propose changes, validate manifests, deployment templates
+  | 'knowledge'    // knowledge base: search, write, graph
+  | 'environment'  // cluster environments: health, config, bootstrap
+  | 'secrets'      // secret management
+  | 'tools'        // meta: tool discovery, tool requests, nova lookup
+
 export interface ToolDefinition {
   name: string
   description: string
@@ -35,6 +46,7 @@ export interface ToolDefinition {
   tier: ToolTier
   parallelSafe: boolean  // can run concurrently with other read tools
   availableIn: 'task' | 'chat' | 'both'
+  category: ToolCategory
   handler: (args: unknown, context: ToolExecutionContext) => Promise<string>
 }
 
@@ -73,6 +85,16 @@ export function getAllTools(): ToolDefinition[] {
 
 export function getToolDefinition(name: string): ToolDefinition | undefined {
   return _registry.get(name)
+}
+
+export function getToolsByCategory(category: ToolCategory): ToolDefinition[] {
+  return Array.from(_registry.values()).filter(t => t.category === category)
+}
+
+export function getAllCategories(): ToolCategory[] {
+  const cats = new Set<ToolCategory>()
+  for (const t of _registry.values()) cats.add(t.category)
+  return Array.from(cats).sort()
 }
 
 export async function executeRegisteredTool(
@@ -1148,6 +1170,7 @@ registerTool({
   tier: 'read',
   parallelSafe: true,
   availableIn: 'both',
+  category: 'agents',
   handler: handleListAgents,
 })
 
@@ -1166,6 +1189,7 @@ registerTool({
   tier: 'read',
   parallelSafe: true,
   availableIn: 'both',
+  category: 'tasks',
   handler: handleListTasks,
 })
 
@@ -1183,6 +1207,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'tasks',
   handler: handleAssignTask,
 })
 
@@ -1205,6 +1230,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'agents',
   handler: handleCreateAgent,
 })
 
@@ -1226,6 +1252,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'agents',
   handler: handleUpdateAgent,
 })
 
@@ -1243,6 +1270,7 @@ registerTool({
   tier: 'destructive',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'agents',
   handler: handleArchiveAgent,
 })
 
@@ -1260,6 +1288,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'tasks',
   handler: handleEscalateTask,
 })
 
@@ -1277,6 +1306,7 @@ registerTool({
   tier: 'read',
   parallelSafe: true,
   availableIn: 'both',
+  category: 'tasks',
   handler: handleGetTaskEvents,
 })
 
@@ -1294,6 +1324,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'tasks',
   handler: handleCloseTask,
 })
 
@@ -1311,6 +1342,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'tasks',
   handler: handleReopenTask,
 })
 
@@ -1326,6 +1358,7 @@ registerTool({
   tier: 'read',
   parallelSafe: true,
   availableIn: 'both',
+  category: 'rooms',
   handler: handleListRooms,
 })
 
@@ -1343,6 +1376,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'rooms',
   handler: handleSendMessage,
 })
 
@@ -1361,6 +1395,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'features',
   handler: handleCreateFeature,
 })
 
@@ -1388,6 +1423,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'tasks',
   handler: handleCreateTask,
 })
 
@@ -1419,6 +1455,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'gitops',
   handler: handleProposeGitops,
 })
 
@@ -1433,6 +1470,7 @@ registerTool({
   tier: 'read',
   parallelSafe: true,
   availableIn: 'both',
+  category: 'gitops',
   handler: () => handleGetClusterApiResources(),
 })
 
@@ -1460,6 +1498,7 @@ registerTool({
   tier: 'read',
   parallelSafe: true,
   availableIn: 'both',
+  category: 'gitops',
   handler: handleValidateManifest,
 })
 
@@ -1477,6 +1516,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'tools',
   handler: handleRequestTool,
 })
 
@@ -1492,6 +1532,7 @@ registerTool({
   tier: 'read',
   parallelSafe: true,
   availableIn: 'both',
+  category: 'environment',
   handler: handleClusterHealth,
 })
 
@@ -1509,6 +1550,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'tools',
   handler: handleRequestToolGrant,
 })
 
@@ -1525,6 +1567,7 @@ registerTool({
   tier: 'read',
   parallelSafe: true,
   availableIn: 'chat',
+  category: 'environment',
   handler: async (args, ctx) => {
     try {
       const { environment_id } = parseArgs(args) as { environment_id?: string }
@@ -1563,6 +1606,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'chat',
+  category: 'environment',
   handler: async (args, ctx) => {
     try {
       const { environment_id, body } = parseArgs(args) as { environment_id?: string; body?: Record<string, unknown> }
@@ -1603,6 +1647,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'knowledge',
   handler: async (args, ctx) => {
     const { key, value, context: ctx2 } = parseArgs(args) as { key?: string; value?: string; context?: string }
     if (!key?.trim())   return 'Error: key is required'
@@ -1652,6 +1697,7 @@ registerTool({
   tier: 'destructive',
   parallelSafe: false,
   availableIn: 'chat',
+  category: 'environment',
   handler: async (args, ctx) => {
     try {
       const { environment_id } = parseArgs(args) as { environment_id?: string }
@@ -1738,6 +1784,7 @@ Guidelines:
   tier: 'write',
   parallelSafe: false,
   availableIn: 'task',
+  category: 'agents',
   handler: async (args, ctx) => {
     // Guard against recursive spawning
     const depth = ((ctx as any)[SUBAGENT_DEPTH_KEY] ?? 0) as number
@@ -1876,6 +1923,7 @@ For Docker Compose: use self-contained services (no host bind mounts for config 
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'gitops',
   handler: async (args) => {
     const { environment_id, title, reasoning, operation_description, changes } =
       args as { environment_id?: string; title?: string; reasoning?: string; operation_description?: string; changes?: Array<{ path: string; content: string }> }
@@ -1947,6 +1995,7 @@ registerTool({
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'tools',
   handler: async (args, ctx) => {
     const { name, description, inputSchema: schema, execType, execConfig, environment_id } =
       args as { name?: string; description?: string; inputSchema?: object; execType?: string; execConfig?: object; environment_id?: string }
@@ -1998,6 +2047,7 @@ registerTool({
   tier: 'read',
   parallelSafe: true,
   availableIn: 'both',
+  category: 'knowledge',
   handler: async (args) => {
     const { query, limit = 5, includeContent = true } =
       args as { query?: string; limit?: number; includeContent?: boolean }
@@ -2037,6 +2087,7 @@ registerTool({
   tier: 'read',
   parallelSafe: true,
   availableIn: 'both',
+  category: 'knowledge',
   handler: async (args) => {
     const { threshold = 0.5, includeContent = false } =
       args as { threshold?: number; includeContent?: boolean }
@@ -2126,6 +2177,7 @@ Use this after completing or investigating any task. Structure content for maxim
   tier: 'write',
   parallelSafe: false,
   availableIn: 'both',
+  category: 'knowledge',
   handler: async (args) => {
     const { title, content, folder = 'Agent Lessons', tags } =
       args as { title?: string; content?: string; folder?: string; tags?: string[] }
@@ -2242,6 +2294,7 @@ registerTool({
   tier: 'read',
   parallelSafe: true,
   availableIn: 'both',
+  category: 'secrets',
   handler: handleListSecrets,
 })
 
@@ -2263,6 +2316,7 @@ registerTool({
   tier: 'read',
   parallelSafe: true,
   availableIn: 'both',
+  category: 'gitops',
   handler: async (args) => {
     const a        = args as { category?: string }
     const filtered = a.category
@@ -2301,6 +2355,7 @@ registerTool({
   tier: 'read',
   parallelSafe: true,
   availableIn: 'both',
+  category: 'gitops',
   handler: async (args) => {
     const { name } = args as { name: string }
     const tmpl = getTemplate(name)
@@ -2356,6 +2411,7 @@ registerTool({
   tier: 'read',
   parallelSafe: true,
   availableIn: 'task',
+  category: 'agents',
   handler: async (args) => {
     const { query, environment, limit, minConfidence } = args as {
       query?: string; environment?: string; limit?: number; minConfidence?: number
@@ -2427,5 +2483,113 @@ registerTool({
     }
 
     return lines.join('\n')
+  },
+})
+
+// ── Tool discovery meta-tools ────────────────────────────────────────────────
+
+registerTool({
+  name: 'list_tools',
+  description: 'List available tools by category. Call this to discover what you can actually do before attempting an operation. Pass a category to narrow the results. If unsure which category applies, omit it to see all categories and their tool names.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      category: {
+        type: 'string',
+        description: 'Optional category filter: tasks, agents, rooms, features, gitops, knowledge, environment, secrets, tools. Omit to list all categories with their tool names.',
+      },
+    },
+  },
+  tier: 'read',
+  parallelSafe: true,
+  availableIn: 'both',
+  category: 'tools',
+  handler: async (args) => {
+    const { category } = (args as Record<string, unknown>) ?? {}
+
+    if (category && typeof category === 'string') {
+      const tools = getToolsByCategory(category as ToolCategory)
+      if (tools.length === 0) {
+        const all = getAllCategories()
+        return `No tools found for category "${category}". Available categories: ${all.join(', ')}`
+      }
+      return `Tools in category "${category}":\n` +
+        tools.map(t => `  - ${t.name}`).join('\n') +
+        `\n\nCall describe_tool(name) to get full details on any tool.`
+    }
+
+    // No category — list all categories with their tool names
+    const categories = getAllCategories()
+    const lines: string[] = ['Available tool categories:\n']
+    for (const cat of categories) {
+      const tools = getToolsByCategory(cat)
+      lines.push(`${cat}:`)
+      lines.push(tools.map(t => `  - ${t.name}`).join('\n'))
+      lines.push('')
+    }
+    lines.push('Call list_tools(category) to filter, or describe_tool(name) for full details.')
+    return lines.join('\n')
+  },
+})
+
+registerTool({
+  name: 'describe_tool',
+  description: 'Get the full description and input schema for a specific tool. Use this when list_tools gives you a tool name but you need to understand its parameters before calling it. If the tool is not found, this will also check registered Novas (custom tool bundles) and suggest next steps.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', description: 'Exact tool name to describe, e.g. "orion_close_task"' },
+    },
+    required: ['name'],
+  },
+  tier: 'read',
+  parallelSafe: true,
+  availableIn: 'both',
+  category: 'tools',
+  handler: async (args, ctx) => {
+    const { name } = (args as Record<string, unknown>) ?? {}
+    if (!name || typeof name !== 'string') return 'Error: name is required'
+
+    // 1. Check registered tools
+    const tool = getToolDefinition(name)
+    if (tool) {
+      return JSON.stringify({
+        name: tool.name,
+        category: tool.category,
+        tier: tool.tier,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      }, null, 2)
+    }
+
+    // 2. Not found in registry — search Novas
+    const novas = await ctx.prisma.nova.findMany({
+      select: { id: true, name: true },
+    })
+
+    const novaMatch = novas.find(n =>
+      n.name.toLowerCase().includes(name.toLowerCase()) ||
+      name.toLowerCase().includes(n.name.toLowerCase())
+    )
+
+    if (novaMatch) {
+      return [
+        `Tool "${name}" is not a built-in tool, but the Nova "${novaMatch.name}" (id: ${novaMatch.id}) may provide this capability.`,
+        `Novas are custom tool bundles installed per-environment.`,
+        `Check if this Nova is installed in your target environment, or ask a human to install it.`,
+      ].join('\n')
+    }
+
+    // 3. Nothing found — suggest options
+    const categories = getAllCategories()
+    return [
+      `Tool "${name}" does not exist in the registry and no matching Nova was found.`,
+      ``,
+      `Options:`,
+      `  1. You may have the wrong name — call list_tools(category) to see actual tool names.`,
+      `     Available categories: ${categories.join(', ')}`,
+      `  2. If a new tool is genuinely needed, call orion_request_tool with a description of what you need.`,
+      `  3. If this should be a Nova (a custom reusable tool bundle), inform a human to create one.`,
+    ].join('\n')
   },
 })
