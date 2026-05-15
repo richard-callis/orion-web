@@ -101,11 +101,13 @@ model Environment {
   updatedAt    DateTime           @updatedAt
 
   // GitOps fields
-  gitProvider  String?            // "gitea-bundled" | "gitea" | "github" | "gitlab" (inherits global if null)
-  gitOwner     String?            // org/user that owns this env's repo
-  gitRepo      String?            // repo name for this environment
-  argoCdUrl    String?            // ArgoCD URL (K8s clusters only)
-  policyConfig Json?              // PolicyConfig: { reviewAll?, overrides? }
+  gitProvider     String?            // "gitea-bundled" | "gitea" | "github" | "gitlab" (inherits global if null)
+  gitOwner        String?            // org/user that owns this env's repo
+  gitRepo         String?            // repo name for this environment
+  repoPath        String?            // ArgoCD-watched sub-directory in the repo, e.g. "deployments"
+  vaultPathPrefix String?            // Vault KV prefix for this env's secrets, e.g. "Talos Cluster" → secret/Talos Cluster/<service>
+  argoCdUrl       String?            // ArgoCD URL (K8s clusters only)
+  policyConfig    Json?              // PolicyConfig: { reviewAll?, overrides? }
   kubeconfig   String?            @db.Text // base64 kubeconfig (K8s clusters only)
 
   tools         McpTool[]
