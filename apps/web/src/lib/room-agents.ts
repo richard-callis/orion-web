@@ -142,9 +142,9 @@ async function callClaude(
       prompt,
       systemPrompt: sys,
       // MCP context: always enabled in rooms so Claude has the same tools as other agents.
-      // maxTurns: 5 when tools explicitly enabled on agent, 3 otherwise (conversational mode).
-      // Reduced from 10 → 5: Qwen/tool-using models burn turns on exploration; cap keeps them focused.
-      ...(useMcp ? { agentId, roomId, maxTurns: hasTools ? 5 : 3 } : { maxTurns: 1 }),
+      // maxTurns = maxToolRounds + 1 (the +1 guarantees a final response turn even if all tool rounds are used).
+      // The OpenAI-compat path enforces this via a forced final call; the Claude/MCP path relies on maxTurns headroom.
+      ...(useMcp ? { agentId, roomId, maxTurns: hasTools ? 6 : 3 } : { maxTurns: 1 }),
       ...(modelId ? { model: modelId } : {}),
     }),
     // MCP tool calls can take longer — allow 5 min for tool-using sessions
@@ -327,8 +327,21 @@ async function callOpenAIChat(
     }
   }
 
-  console.warn(`[room-agents] ${agentName} hit MAX_TOOL_ROUNDS without a text reply`)
-  return null
+  // Tool rounds exhausted — force one final response turn with no tools available
+  // so the agent always replies with what it learned, never silently disappears.
+  console.warn(`[room-agents] ${agentName} hit MAX_TOOL_ROUNDS — forcing final response turn`)
+  const finalBody: Record<string, unknown> = { model, stream: false, messages }
+  // Omit tools entirely so the model must produce a text reply
+  const finalRes = await fetch(`${baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(finalBody),
+    signal: AbortSignal.timeout(120_000),
+  }).catch(() => null)
+  if (!finalRes?.ok) return null
+  type Choice = { finish_reason: string; message: { role: string; content: string | null } }
+  const finalData = await finalRes.json() as { choices?: Choice[] }
+  return finalData.choices?.[0]?.message?.content?.trim() || null
 }
 
 /** Resolve a fallback Ollama base URL from configured ExternalModels */
