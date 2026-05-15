@@ -397,10 +397,9 @@ export async function triggerRoomAgentReplies(
     },
   })
 
-  const agentMembers = (room?.members ?? [])
-    .map((m: any) => m.agent!)
-    .filter(Boolean)
-    .filter((a: any) => (a.metadata as Record<string, unknown> | null)?.archived !== true)
+  const memberRecords = (room?.members ?? [])
+    .filter((m: any) => m.agent && (m.agent.metadata as Record<string, unknown> | null)?.archived !== true)
+  const agentMembers = memberRecords.map((m: any) => m.agent!)
   if (agentMembers.length === 0) return
 
   // ── Ring Leader routing ──────────────────────────────────────────────────────
@@ -434,8 +433,13 @@ export async function triggerRoomAgentReplies(
   } else if (isDirect) {
     triggeredAgents = agentMembers
   } else {
-    triggeredAgents = agentMembers.filter((a: any) => {
-      // In group rooms, watcher agents (watchPrompt set) only speak when @mentioned
+    // No explicit ring leader set — fall back to role='lead' (first agent added to room).
+    // This handles rooms created before ringLeaderAgentId was wired up.
+    const leadAgents = agentMembers.filter((a: any) => {
+      const member = memberRecords.find((m: any) => m.agentId === a.id)
+      return member?.role === 'lead'
+    })
+    triggeredAgents = leadAgents.length > 0 ? leadAgents : agentMembers.filter((a: any) => {
       const cc = ((a.metadata ?? {}) as Record<string, unknown>).contextConfig as Record<string, unknown> | undefined
       return !cc?.watchPrompt
     })

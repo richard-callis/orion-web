@@ -48,11 +48,28 @@ export async function POST(
     return NextResponse.json({ error: 'You must be a member of this room to invite others' }, { status: 403 })
   }
 
-  const roleValue = typeof body.role === 'string' ? body.role : 'member'
+  // If an explicit role is provided, use it. Otherwise, make the first agent
+  // added to a room the ring leader ('lead') — subsequent agents are 'member'.
+  const hasLeadAgent = agentId
+    ? room.members.some((m: any) => m.agentId && m.role === 'lead')
+    : false
+  const isNewRingLeader = agentId && !hasLeadAgent && typeof body.role !== 'string'
+  const roleValue = typeof body.role === 'string'
+    ? body.role
+    : isNewRingLeader ? 'lead' : 'member'
 
   await prisma.chatRoomMember.create({
     data: { roomId: id, userId, agentId, role: roleValue },
   })
+
+  // Write ringLeaderAgentId into room.metadata so the routing logic can find it
+  if (isNewRingLeader && agentId) {
+    const existingMeta = (room.metadata ?? {}) as Record<string, unknown>
+    await prisma.chatRoom.update({
+      where: { id },
+      data: { metadata: { ...existingMeta, ringLeaderAgentId: agentId } },
+    })
+  }
 
   const name = agentId
     ? (await prisma.agent.findUnique({ where: { id: agentId! }, select: { name: true } }))?.name || `Agent ${agentId}`
