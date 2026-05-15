@@ -1,29 +1,38 @@
 /**
  * Dream — memory consolidation for ORION.
  *
- * Two phases, run on separate schedules:
+ * Three phases, run on separate schedules:
  *
  * 1. EXTRACTION (every 2 hours)
  *    Scans recent chat messages and task events since the last run.
- *    Sends batches to an LLM to extract durable facts, lessons, and patterns.
- *    Writes each extracted item as a Note + immediately embeds it.
+ *    Passes existing note titles so the LLM can [[wikilink]] to related notes.
+ *    Writes each extracted item as a Note + immediately embeds it + computes edges.
  *
- * 2. PRUNING (every 24 hours)
+ * 2. SYNTHESIS (every 12 hours)
+ *    Groups all notes by folder/tag cluster.
+ *    Asks an LLM to identify missing mid-level "hub" notes that should connect
+ *    related specifics (e.g. "ESO Secret Sync Patterns" tying together multiple
+ *    Tailscale/Vault/cert-manager notes). Writes hub notes with [[wikilinks]] to
+ *    their members so the graph has structure beyond leaf-level facts.
+ *
+ * 3. PRUNING (every 24 hours)
  *    Reads all notes in the knowledge base.
  *    Sends each note to an LLM with recent system context.
  *    Deletes notes the LLM marks as stale or superseded.
  *
  * Last-run timestamps are stored in SystemSetting:
  *   dream.extractionLastRun  — unix ms
+ *   dream.synthesisLastRun   — unix ms
  *   dream.pruningLastRun     — unix ms
  */
 
 import { prisma } from './db'
-import { embedNote } from './embeddings'
+import { embedNote, computeSemanticEdges } from './embeddings'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const EXTRACTION_INTERVAL_MS = 2  * 60 * 60 * 1000  // 2 hours
+const SYNTHESIS_INTERVAL_MS  = 12 * 60 * 60 * 1000  // 12 hours
 const PRUNING_INTERVAL_MS    = 24 * 60 * 60 * 1000  // 24 hours
 const EXTRACTION_BATCH       = 80   // messages per LLM call
 const PRUNING_BATCH          = 20   // notes per pruning LLM call
@@ -176,6 +185,15 @@ export async function runExtraction(): Promise<void> {
     return
   }
 
+  // Fetch existing note titles so the LLM can wikilink to related notes
+  const existingNotes = await prisma.note.findMany({
+    select: { title: true, folder: true },
+    orderBy: { updatedAt: 'desc' },
+  })
+  const existingTitles = existingNotes
+    .map(n => `  - ${n.title} (${n.folder})`)
+    .join('\n')
+
   // Build text corpus for the LLM
   const messageLines = messages.map(m => {
     const who    = m.agent?.name ?? m.senderType
@@ -195,6 +213,9 @@ export async function runExtraction(): Promise<void> {
 
 Review the following recent agent messages and task events, then extract durable facts, lessons, and patterns worth remembering for future tasks.
 
+EXISTING KNOWLEDGE BASE NOTES:
+${existingTitles || '  (none yet)'}
+
 CONTENT:
 ${corpus}
 
@@ -203,12 +224,13 @@ Instructions:
 - Skip transient state: "pod is running now", "task assigned", routine status updates.
 - Skip anything too vague to be actionable.
 - Each memory must be self-contained and searchable.
+- In the content field, use [[Note Title]] wikilink syntax to reference related existing notes by their exact title. This builds the knowledge graph — link to any note above that is genuinely related.
 
 Respond with a JSON array (and nothing else). Each item:
 {
   "title": "short searchable title including domain/service name",
-  "content": "## Context\\n...\\n## Lesson\\n...\\n## Rules for Next Time\\n- ...",
-  "folder": "Success Patterns" | "Failure Patterns" | "Cluster Quirks" | "Tool Usage" | "Agent Lessons",
+  "content": "## Context\\n...\\n## Lesson\\n...\\n## Rules for Next Time\\n- ...\\n## Related\\n- [[Exact Title of Related Note]]",
+  "folder": "Success Patterns" | "Failure Patterns" | "Cluster Quirks" | "Tool Usage" | "Agent Lessons" | "Infrastructure",
   "tags": ["tag1", "tag2"]
 }
 
@@ -251,7 +273,8 @@ If nothing is worth remembering, return an empty array: []`
         })
       }
 
-      await embedNote(note).catch(() => {})
+      const embedded = await embedNote(note).catch(() => false)
+      if (embedded) await computeSemanticEdges(note.id).catch(() => {})
       written++
     } catch (e) {
       console.error('[dream] Failed to write memory:', item.title, e)
@@ -260,6 +283,110 @@ If nothing is worth remembering, return an empty array: []`
 
   await setSetting('dream.extractionLastRun', String(now.getTime()))
   console.log(`[dream] Extraction complete — wrote ${written}/${extracted.length} memories`)
+}
+
+// ── Synthesis ─────────────────────────────────────────────────────────────────
+
+/**
+ * Identify missing hub notes that should connect clusters of related specifics.
+ * Creates mid-level "Infrastructure", "Agent Patterns", and topic-level notes
+ * that [[wikilink]] to their members — giving the knowledge graph real structure.
+ * Called every SYNTHESIS_INTERVAL_MS.
+ */
+export async function runSynthesis(): Promise<void> {
+  const lastRunStr = await getSetting('dream.synthesisLastRun')
+  const lastRun    = lastRunStr ? new Date(parseInt(lastRunStr, 10)) : new Date(0)
+  const now        = new Date()
+
+  console.log(`[dream] Synthesis — last run ${lastRun.toISOString()}`)
+
+  const notes = await prisma.note.findMany({
+    select: { id: true, title: true, folder: true, tags: true, content: true },
+    orderBy: { updatedAt: 'desc' },
+  })
+
+  if (notes.length < 5) {
+    console.log('[dream] Synthesis — not enough notes yet, skipping')
+    await setSetting('dream.synthesisLastRun', String(now.getTime()))
+    return
+  }
+
+  const noteIndex = notes
+    .map(n => `  [${n.folder}] ${n.title}`)
+    .join('\n')
+
+  const synthesisPrompt = `You are a knowledge architect for an AI agent team managing a Kubernetes homelab cluster.
+
+Below is the current knowledge base — a flat list of specific notes extracted from agent activity. Your job is to identify missing "hub" notes that should exist to connect related specifics into a coherent knowledge graph.
+
+CURRENT NOTES:
+${noteIndex}
+
+Instructions:
+- Identify clusters of related notes (e.g. multiple notes about ESO, Vault, Tailscale, agent coordination, GitOps).
+- For each cluster that lacks a hub note, propose one hub note that:
+  - Has a broad topic title (e.g. "ESO & Vault Secret Management", "Agent Coordination Patterns", "Tailscale Operator Setup")
+  - Has content summarising what's known about that topic
+  - Uses [[Note Title]] wikilinks to connect to every specific note in the cluster (use exact titles from the list above)
+- Only create hubs where 2+ specific notes exist on the same topic.
+- Do NOT recreate notes that already exist as hubs (check the list above).
+- Do NOT create hubs for unrelated one-off notes.
+
+Respond with a JSON array (and nothing else). Each hub note:
+{
+  "title": "Topic-Level Hub Title",
+  "content": "## Overview\\n...summary of what is known...\\n\\n## Notes in this cluster\\n- [[Exact Note Title]]\\n- [[Exact Note Title]]",
+  "folder": "Infrastructure" | "Agent Patterns" | "GitOps" | "Security" | "Networking" | "Observability",
+  "tags": ["hub", "tag2"]
+}
+
+If no hubs are missing, return an empty array: []`
+
+  let hubs: Array<{ title: string; content: string; folder: string; tags: string[] }> = []
+  try {
+    const raw = await callLLM(synthesisPrompt)
+    const jsonMatch = raw.match(/\[[\s\S]*\]/)
+    if (jsonMatch) hubs = JSON.parse(jsonMatch[0])
+  } catch (e) {
+    console.error('[dream] Synthesis LLM/parse error:', e)
+  }
+
+  console.log(`[dream] Synthesis — writing ${hubs.length} hub notes`)
+
+  let written = 0
+  for (const hub of hubs) {
+    if (!hub.title?.trim() || !hub.content?.trim()) continue
+    try {
+      const existing = await prisma.note.findFirst({ where: { title: hub.title.trim() } })
+      if (existing) {
+        // Hub already exists — update content to reflect current cluster membership
+        const note = await prisma.note.update({
+          where: { id: existing.id },
+          data: { content: hub.content.trim(), updatedAt: new Date() },
+        })
+        const embedded = await embedNote(note).catch(() => false)
+        if (embedded) await computeSemanticEdges(note.id).catch(() => {})
+      } else {
+        const note = await prisma.note.create({
+          data: {
+            title:   hub.title.trim(),
+            content: hub.content.trim(),
+            folder:  hub.folder ?? 'Infrastructure',
+            type:    'note',
+            tags:    (hub.tags ?? []) as any,
+          },
+        })
+        const embedded = await embedNote(note).catch(() => false)
+        if (embedded) await computeSemanticEdges(note.id).catch(() => {})
+      }
+      written++
+    } catch (e) {
+      console.error('[dream] Failed to write hub note:', hub.title, e)
+    }
+  }
+
+  await setSetting('dream.synthesisLastRun', String(now.getTime()))
+  console.log(`[dream] Synthesis complete — wrote ${written}/${hubs.length} hub notes`)
 }
 
 // ── Pruning ───────────────────────────────────────────────────────────────────
@@ -376,6 +503,7 @@ Rules:
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
 let extractionTimer: ReturnType<typeof setTimeout> | null = null
+let synthesisTimer:  ReturnType<typeof setTimeout> | null = null
 let pruningTimer:    ReturnType<typeof setTimeout> | null = null
 
 export function startDream(): void {
@@ -394,6 +522,19 @@ export function startDream(): void {
     }, delay)
   }
 
+  async function scheduleSynthesis() {
+    const lastRunStr = await getSetting('dream.synthesisLastRun').catch(() => null)
+    const lastRun    = lastRunStr ? parseInt(lastRunStr, 10) : 0
+    const nextRun    = lastRun + SYNTHESIS_INTERVAL_MS
+    const delay      = Math.max(0, nextRun - Date.now())
+
+    console.log(`[dream] Next synthesis in ${Math.round(delay / 60000)} min`)
+    synthesisTimer = setTimeout(async () => {
+      await runSynthesis().catch(e => console.error('[dream] Synthesis failed:', e))
+      scheduleSynthesis()
+    }, delay)
+  }
+
   async function schedulePruning() {
     const lastRunStr = await getSetting('dream.pruningLastRun').catch(() => null)
     const lastRun    = lastRunStr ? parseInt(lastRunStr, 10) : 0
@@ -408,10 +549,12 @@ export function startDream(): void {
   }
 
   scheduleExtraction()
+  scheduleSynthesis()
   schedulePruning()
 }
 
 export function stopDream(): void {
   if (extractionTimer) clearTimeout(extractionTimer)
+  if (synthesisTimer)  clearTimeout(synthesisTimer)
   if (pruningTimer)    clearTimeout(pruningTimer)
 }

@@ -206,7 +206,7 @@ export async function vectorSearch(
       n."type",
       n.folder,
       n.pinned,
-      (1 - (ne.embedding::vector <-> ${vecStr}::vector))::float AS score
+      (1 - (ne.embedding <-> ${vecStr}::vector))::float AS score
     FROM "note_embeddings" ne
     JOIN "Note" n ON n.id = ne."noteId"
     WHERE ne.embedding IS NOT NULL
@@ -238,7 +238,6 @@ export async function computeSemanticEdges(
   const target = await prisma.noteEmbedding.findUnique({ where: { noteId } })
   if (!target) return
 
-  // target.embedding is already stored as a JSON array string like [-0.1, 0.5, ...]
   const vecStr = target.embedding
 
   const similar = await prisma.$queryRaw<
@@ -246,7 +245,7 @@ export async function computeSemanticEdges(
   >`
     SELECT
       other."noteId" AS "targetNoteId",
-      (1 - (other.embedding::vector <-> ${vecStr}::vector))::float AS score
+      (1 - (other.embedding <-> ${vecStr}::vector))::float AS score
     FROM "note_embeddings" other
     WHERE other."noteId" != ${noteId}
       AND other.embedding IS NOT NULL
@@ -283,7 +282,7 @@ export async function computeSemanticEdges(
 export async function retrieveKnowledgeContext(
   query: string,
   topK = 3,
-  minScore = 0.4,
+  minScore = 0.2,
 ): Promise<string> {
   try {
     const result = await generateEmbedding(query.slice(0, 2000))

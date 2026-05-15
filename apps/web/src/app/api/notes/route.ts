@@ -1,6 +1,6 @@
 import { makeCrudRoutes } from '@/lib/crud-route-factory'
 import { CreateNoteSchema } from '@/lib/validate'
-import { embedNote } from '@/lib/embeddings'
+import { embedNote, computeSemanticEdges } from '@/lib/embeddings'
 
 export const { GET, POST } = makeCrudRoutes({
   model:        'note',
@@ -9,6 +9,7 @@ export const { GET, POST } = makeCrudRoutes({
   orderBy:      [{ pinned: 'desc' }, { updatedAt: 'desc' }],
   afterCreate:  async (record) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    embedNote(record as any).catch(err => console.error('[embed] failed for new note:', err))
+    const ok = await embedNote(record as any).catch(err => { console.error('[embed] failed for new note:', err); return false })
+    if (ok) computeSemanticEdges(record.id).catch(() => {})
   },
 })

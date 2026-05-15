@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { embedNote } from '@/lib/embeddings'
+import { embedNote, computeSemanticEdges } from '@/lib/embeddings'
 import { requireServiceAuth } from '@/lib/auth'
 import { parseBodyOrError, UpdateNoteSchema } from '@/lib/validate'
 
@@ -36,7 +36,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     // Re-fetch with fresh data (the update may have returned a truncated row)
     const updated = await prisma.note.findUnique({ where: { id: params.id } })
     if (updated) {
-      embedNote(updated).catch(err => console.error('[embed] failed for updated note:', err))
+      const ok = await embedNote(updated).catch(err => { console.error('[embed] failed for updated note:', err); return false })
+      if (ok) computeSemanticEdges(updated.id).catch(() => {})
     }
   }
 
