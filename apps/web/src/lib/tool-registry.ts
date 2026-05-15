@@ -845,6 +845,39 @@ async function handleRequestTool(args: unknown, ctx: ToolExecutionContext): Prom
   if (!tool_description) return 'Error: tool_description is required'
 
   const name = tool_name || tool_description.slice(0, 50)
+
+  // Check if this is actually a built-in gateway tool the agent can't see
+  // because it has no environment linked — surface the real problem immediately.
+  const { KUBERNETES_DEFAULT_TOOLS, TALOS_DEFAULT_TOOLS, DOCKER_DEFAULT_TOOLS, LOCALHOST_DEFAULT_TOOLS } = await import('./default-tools')
+  const allGatewayTools = [
+    ...KUBERNETES_DEFAULT_TOOLS,
+    ...TALOS_DEFAULT_TOOLS,
+    ...DOCKER_DEFAULT_TOOLS,
+    ...LOCALHOST_DEFAULT_TOOLS,
+  ]
+  const gatewayMatch = allGatewayTools.find(t =>
+    t.name === name ||
+    tool_description.toLowerCase().includes(t.name.toLowerCase())
+  )
+
+  if (gatewayMatch) {
+    // Check whether this agent has an environment linked
+    const envLink = ctx.agentId
+      ? await ctx.prisma.agentEnvironment.findFirst({ where: { agentId: ctx.agentId } })
+      : null
+
+    if (!envLink) {
+      const msg = `⚠️ Agent requested built-in gateway tool **${gatewayMatch.name}** but has no environment linked — tool is invisible to agent`
+      await auditLog(ctx.agentId ?? ctx.userId, msg)
+      return [
+        `"${gatewayMatch.name}" is a built-in gateway tool — it already exists but is not visible to you because this agent is not linked to an environment.`,
+        ``,
+        `An admin needs to link this agent to an environment (e.g. "Talos Cluster") via the ORION UI or orion_patch_environment.`,
+        `Once linked, "${gatewayMatch.name}" and all other gateway tools will be available automatically — no tool request needed.`,
+      ].join('\n')
+    }
+  }
+
   const msg = `🔧 Tool request **${name}** — ${tool_description.slice(0, 300)}`
   await auditLog(ctx.agentId ?? ctx.userId, msg)
 
