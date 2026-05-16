@@ -757,6 +757,8 @@ model ChatRoom {
   createdBy     String
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
+  tokenCount    Int                @default(0)   // rolling prompt_tokens from last LLM turn
+  tokenLimit    Int?                             // override context limit; null = auto-discover from model
 
   members       ChatRoomMember[]
   messages      ChatMessage[]

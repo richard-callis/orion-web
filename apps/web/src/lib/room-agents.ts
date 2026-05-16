@@ -20,7 +20,8 @@ import { buildToolDefinitions, TOOLS_SYSTEM_ADDENDUM, executeTool } from './agen
 import { getToolsForContext, executeRegisteredTool } from './tool-registry'
 import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
-import { buildAgentContext, invalidateSnapshotCache } from './agent-context'
+import { buildAgentContext, invalidateSnapshotCache, getModelContextLimit } from './agent-context'
+import { compactRoom, publishCompactionWarning } from './compaction'
 import { getPrompt } from './system-prompts'
 import type { AgentGateway } from './agent-gateway'
 import type { GatewayTool } from './agent-runner/types'
@@ -216,6 +217,8 @@ async function callOllamaChat(
 type OpenAIMessage = { role: string; content: string | null; tool_calls?: ToolCall[]; tool_call_id?: string; name?: string }
 type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } }
 
+type OpenAICallResult = { reply: string | null; tokensUsed: number; contextLimit: number }
+
 /** OpenAI-compatible /v1/chat/completions endpoint — supports tool calling */
 async function callOpenAIChat(
   agentName: string,
@@ -229,13 +232,16 @@ async function callOpenAIChat(
   toolContext?: { roomId: string; agentId: string; llm: string },
   gateway?: AgentGateway | null,
   gatewayTools?: GatewayTool[],
-): Promise<string | null> {
+): Promise<OpenAICallResult> {
   const hasTools = !!toolContext
   const gatewayCategorySummary = gatewayTools ? buildGatewayCategorySummary(gatewayTools) : ''
   const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools, true, gatewayCategorySummary)
   const chatMsgs = buildChatMessages(history, latestMessage)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+
+  // Discover context window size for this endpoint (cached after first call)
+  const contextLimit = await getModelContextLimit(baseUrl)
 
   const messages: OpenAIMessage[] = [{ role: 'system', content: sys }, ...chatMsgs]
 
@@ -274,6 +280,11 @@ async function callOpenAIChat(
   // thinking mode via think:false fixes the inconsistency without removing reasoning ability.
   const isQwen3 = /qwen3/i.test(model)
 
+  type Choice = { finish_reason: string; message: { role: string; content: string | null; tool_calls?: ToolCall[] } }
+  type OpenAIResponse = { choices?: Choice[]; usage?: { prompt_tokens?: number } }
+
+  let tokensUsed = 0
+
   // Tool-call loop — keep going until the model produces a text reply
   const maxToolRoundsSetting = await prisma.systemSetting.findUnique({ where: { key: 'agent.chat.maxToolRounds' } })
   const MAX_TOOL_ROUNDS = parseInt(String(maxToolRoundsSetting?.value ?? '15'), 10) || 15
@@ -290,17 +301,17 @@ async function callOpenAIChat(
     })
     if (!res.ok) {
       console.error(`[room-agents] OpenAI-compat ${baseUrl} returned HTTP ${res.status}`)
-      return null
+      return { reply: null, tokensUsed, contextLimit }
     }
 
-    type Choice = { finish_reason: string; message: { role: string; content: string | null; tool_calls?: ToolCall[] } }
-    const data = await res.json() as { choices?: Choice[] }
+    const data = await res.json() as OpenAIResponse
+    tokensUsed = data.usage?.prompt_tokens ?? tokensUsed
     const choice = data.choices?.[0]
-    if (!choice) return null
+    if (!choice) return { reply: null, tokensUsed, contextLimit }
 
     // Plain text reply — done
     if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
-      return choice.message.content?.trim() || null
+      return { reply: choice.message.content?.trim() || null, tokensUsed, contextLimit }
     }
 
     // Tool calls — execute each and feed results back
@@ -375,10 +386,10 @@ async function callOpenAIChat(
     body: JSON.stringify(finalBody),
     signal: AbortSignal.timeout(120_000),
   }).catch(() => null)
-  if (!finalRes?.ok) return null
-  type Choice = { finish_reason: string; message: { role: string; content: string | null } }
-  const finalData = await finalRes.json() as { choices?: Choice[] }
-  return finalData.choices?.[0]?.message?.content?.trim() || null
+  if (!finalRes?.ok) return { reply: null, tokensUsed, contextLimit }
+  const finalData = await finalRes.json() as OpenAIResponse
+  tokensUsed = finalData.usage?.prompt_tokens ?? tokensUsed
+  return { reply: finalData.choices?.[0]?.message?.content?.trim() || null, tokensUsed, contextLimit }
 }
 
 /** Resolve a fallback Ollama base URL from configured ExternalModels */
@@ -522,15 +533,36 @@ export async function triggerRoomAgentReplies(
     ringLeaderContext = `\n\nNo specialist agents are currently registered. Handle all questions yourself without delegation.`
   }
 
+  // ── Pre-loop context setup ────────────────────────────────────────────────────
+  // Find the last compaction boundary and read settings once — shared across all agents.
+  const lastCompaction = await prisma.chatMessage.findFirst({
+    where: { roomId, senderType: 'compaction' },
+    orderBy: { createdAt: 'desc' },
+  })
+  const histLimitSetting = await prisma.systemSetting.findUnique({ where: { key: 'chat.historyLimit' } })
+  const histTake = Math.max(parseInt(String(histLimitSetting?.value ?? '50'), 10) || 50, 10)
+
+  // Track token count across agents in this turn; start from room's stored value
+  let currentTokenCount = room?.tokenCount ?? 0
+  const roomTokenLimit: number | null = room?.tokenLimit ?? null
+  // Once compaction fires for this room in this turn, skip token writes for subsequent agents
+  // (their prompt_tokens reflect pre-compaction context and would re-trigger the threshold)
+  let compactedThisTurn = false
+
   let lastSavedReply: string | null = null
 
   for (const agent of triggeredAgents) {
     try {
-      // Re-fetch history each iteration so each agent sees the previous agent's reply
+      // Re-fetch history each iteration so each agent sees the previous agent's reply.
+      // Start from the most recent compaction boundary if one exists — this keeps the
+      // LLM context bounded and ensures the compaction summary is always included.
       const recentMessages = await prisma.chatMessage.findMany({
-        where: { roomId },
+        where: {
+          roomId,
+          ...(lastCompaction ? { createdAt: { gte: lastCompaction.createdAt } } : {}),
+        },
         orderBy: { createdAt: 'desc' },
-        take: 21,
+        take: histTake,
         include: {
           agent: { select: { id: true, name: true } },
           user:  { select: { username: true, name: true } },
@@ -545,9 +577,10 @@ export async function triggerRoomAgentReplies(
       const lastSender  = lastMsg?.agent?.name ?? lastMsg?.user?.name ?? lastMsg?.user?.username ?? 'User'
       const latestTurn  = lastMsg ? `${lastSender}: ${lastMsg.content}` : triggerContent
 
-      // Build structured history with isSelf flag so LLMs can use proper role assignments
+      // Build structured history with isSelf flag so LLMs can use proper role assignments.
+      // Compaction messages appear as [Summary] — they are the summarised prior context.
       const history: HistoryEntry[] = historyMsgs.map((m: any) => ({
-        name:   m.agent?.name ?? m.user?.name ?? m.user?.username ?? 'User',
+        name:   m.senderType === 'compaction' ? '[Summary]' : (m.agent?.name ?? m.user?.name ?? m.user?.username ?? 'User'),
         content: m.content,
         isSelf: m.agentId === agent.id,
       }))
@@ -596,6 +629,8 @@ export async function triggerRoomAgentReplies(
       console.log(`[room-agents] ${agent.name} (${llm}${toolsEnabled ? ', tools' : ''}${gateway ? ', gateway' : ''}) → replying to room ${roomId}`)
 
       let reply: string | null = null
+      let tokensUsed = 0
+      let discoveredContextLimit = 0
 
       setTyping(roomId, agent.name)
       try {
@@ -610,8 +645,11 @@ export async function triggerRoomAgentReplies(
           if (extModel.provider === 'ollama') {
             reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, !!toolContext)
           } else {
-            // openai / custom — OpenAI-compatible (supports tool calling)
-            reply = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey, toolContext, gateway, gatewayTools)
+            // openai / custom — OpenAI-compatible (supports tool calling + token tracking)
+            const result = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey, toolContext, gateway, gatewayTools)
+            reply = result.reply
+            tokensUsed = result.tokensUsed
+            discoveredContextLimit = result.contextLimit
           }
         } else if (llm.startsWith('ollama:')) {
           const model   = llm.slice('ollama:'.length)
@@ -687,6 +725,48 @@ export async function triggerRoomAgentReplies(
 
       console.log(`[room-agents] ${agent.name} replied (${reply.length} chars)`)
       lastSavedReply = reply
+
+      // ── Token tracking + compaction threshold checks ──────────────────────────
+      // Only update when we have actual token usage (OpenAI-compat ext: models).
+      // Skip if compaction already fired this turn — subsequent agents' prompt_tokens
+      // reflect pre-compaction context and would incorrectly re-trigger the threshold.
+      if (tokensUsed > 0 && !compactedThisTurn) {
+        currentTokenCount = tokensUsed  // prompt_tokens is cumulative context size for this turn
+        const effectiveLimit = roomTokenLimit ?? (discoveredContextLimit > 0 ? discoveredContextLimit : 0)
+        await prisma.chatRoom.update({
+          where: { id: roomId },
+          data: { tokenCount: currentTokenCount, updatedAt: new Date() },
+        })
+        if (effectiveLimit > 0) {
+          const pct = currentTokenCount / effectiveLimit
+          console.log(`[room-agents] room ${roomId}: ${currentTokenCount}/${effectiveLimit} tokens (${Math.round(pct * 100)}%)`)
+          if (pct >= 0.9) {
+            console.warn(`[room-agents] room ${roomId}: context at ${Math.round(pct * 100)}% — auto-compacting`)
+            try {
+              await compactRoom(roomId)
+              currentTokenCount = 0
+              compactedThisTurn = true
+              await prisma.chatRoom.update({
+                where: { id: roomId },
+                data: { tokenCount: 0, updatedAt: new Date() },
+              })
+            } catch (err) {
+              console.error(`[room-agents] auto-compact failed: ${err instanceof Error ? err.message : String(err)}`)
+              // tokenCount stays at the high value so the threshold re-triggers next turn
+            }
+          } else if (pct >= 0.7) {
+            // Only warn once per 70% crossing — check if last system message is already a warning
+            const lastSystemMsg = await prisma.chatMessage.findFirst({
+              where: { roomId, senderType: 'system' },
+              orderBy: { createdAt: 'desc' },
+            })
+            const lastAtt = lastSystemMsg?.attachments as Record<string, unknown> | null
+            if (typeof lastAtt?.type !== 'string' || lastAtt.type !== 'compaction-warning') {
+              await publishCompactionWarning(roomId, pct, currentTokenCount, effectiveLimit).catch(() => null)
+            }
+          }
+        }
+      }
     } catch (e) {
       console.error(`[room-agents] ${agent.name} failed: ${e instanceof Error ? e.message : String(e)}`)
     }
