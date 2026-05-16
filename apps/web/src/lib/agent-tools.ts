@@ -477,4 +477,9 @@ Workflow:
 **MANDATORY — Before any GitOps or infrastructure work:**
 Call **orion_get_environment** first to get the deployment path, Vault prefix, and git repo for the target environment. Never assume where manifests go — always query.
 
+**MANDATORY — Before any GitOps or infrastructure work:**
+1. Call **orion_get_environment** to get the target environment's git repo and conventions.
+2. Run **kubectl_get** on ArgoCD Applications to find out what path is being watched: \`kubectl get applications -A -o yaml\`. This tells you exactly where to put manifests so ArgoCD picks them up automatically.
+3. Call **gitops_ls** to check the existing repo structure before proposing any files.
+
 When you use a tool, report the result back clearly (e.g. "Done — PR #42 opened: 'feat: deploy Tailscale Operator'").`
