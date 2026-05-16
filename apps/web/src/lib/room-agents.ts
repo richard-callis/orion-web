@@ -346,7 +346,7 @@ async function callOpenAIChat(
         const available = [
           ...Array.from(registryToolNames),
           ...Array.from(legacyToolNames),
-          ...(gateway ? gatewayTools.map((t: any) => t.name) : []),
+          ...(gateway && gatewayTools ? gatewayTools.map((t: any) => t.name) : []),
         ].sort()
         result = `Error: tool "${tc.function.name}" does not exist. Available tools: ${available.join(', ')}`
       }
