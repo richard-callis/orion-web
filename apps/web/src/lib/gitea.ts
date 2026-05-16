@@ -217,6 +217,29 @@ export async function getFile(
   }
 }
 
+/**
+ * List files and directories under a path in the repo (shallow, one level).
+ * Returns an array of { name, path, type } where type is 'file' or 'dir'.
+ */
+export async function listDir(
+  owner: string,
+  repo: string,
+  path: string = '',
+  ref?: string,
+): Promise<Array<{ name: string; path: string; type: 'file' | 'dir' }>> {
+  const query = ref ? `?ref=${encodeURIComponent(ref)}` : ''
+  const url = path
+    ? `/repos/${owner}/${repo}/contents/${path}${query}`
+    : `/repos/${owner}/${repo}/contents${query}`
+  try {
+    const entries = await giteaFetch<Array<{ name: string; path: string; type: string }>>(url)
+    return entries.map(e => ({ name: e.name, path: e.path, type: e.type === 'dir' ? 'dir' : 'file' }))
+  } catch (err) {
+    if (err instanceof GiteaError && err.status === 404) return []
+    throw err
+  }
+}
+
 export async function getFileContent(
   owner: string,
   repo: string,
