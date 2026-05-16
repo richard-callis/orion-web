@@ -12,6 +12,9 @@
  *   orion_get_tasks     — list tasks (server-side Prisma, no HTTP round-trip)
  *   orion_get_agents    — list agents (server-side Prisma, no HTTP round-trip)
  *   orion_manage_task   — assign, update status, or post feed message for a task
+ *   write_secret        — scaffold a new Vault-backed ExternalSecret
+ *   update_secret       — patch namespace/description/keys on an existing secret
+ *   delete_secret       — remove an ORION secret record (not the Vault secret)
  */
 
 import { prisma } from './db'
@@ -138,6 +141,41 @@ export const ORION_TOOL_DEFINITIONS = [
           refreshInterval:  { type: 'string', description: 'ESO sync interval, e.g. "1h", "15m" (default: "1h")' },
         },
         required: ['environmentName', 'name', 'vaultPath', 'keyNames'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'update_secret',
+      description: 'Update metadata on an existing ORION-managed secret — namespace, description, key names, or Vault path. Use this to correct a secret that was created with the wrong namespace or other wrong values. Get the secret id from orion_list_secrets.',
+      parameters: {
+        type: 'object',
+        properties: {
+          secretId:         { type: 'string', description: 'The ORION secret id (from orion_list_secrets)' },
+          namespace:        { type: 'string', description: 'New Kubernetes namespace' },
+          description:      { type: 'string', description: 'New description' },
+          vaultPath:        { type: 'string', description: 'New Vault KV v2 path (no "secret/data/" prefix)' },
+          keyNames:         { type: 'array', items: { type: 'string' }, description: 'Replace the list of secret key names' },
+          targetSecretName: { type: 'string', description: 'New K8s Secret name' },
+          refreshInterval:  { type: 'string', description: 'New ESO sync interval (e.g. "1h")' },
+        },
+        required: ['secretId'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'delete_secret',
+      description: 'Delete an ORION-managed secret record. Only deletes the ORION metadata — does NOT delete the Vault secret or the K8s Secret. Use when a secret was created with wrong parameters and needs to be recreated, or when it is genuinely no longer needed. Get the secret id from orion_list_secrets.',
+      parameters: {
+        type: 'object',
+        properties: {
+          secretId: { type: 'string', description: 'The ORION secret id (from orion_list_secrets)' },
+          reason:   { type: 'string', description: 'Why this secret is being deleted (for the audit log)' },
+        },
+        required: ['secretId'],
       },
     },
   },
@@ -371,6 +409,45 @@ export async function executeTool(
           ``,
           `Next step: open Infrastructure > External Secrets in environment "${environmentName}", find "${name}", and click the pencil icon to enter the real values. ORION will write them to Vault and mark the secret as applied.`,
         ].join('\n')
+      }
+
+      case 'update_secret': {
+        const secretId = String(args.secretId ?? '').trim()
+        if (!secretId) return 'Error: secretId is required'
+
+        const existing = await prisma.managedSecret.findUnique({ where: { id: secretId } })
+        if (!existing) return `Error: secret "${secretId}" not found. Use orion_list_secrets to find the correct id.`
+
+        const data: Record<string, unknown> = {}
+        if (args.namespace        != null) data.namespace        = String(args.namespace).trim()
+        if (args.description      != null) data.description      = String(args.description).trim() || null
+        if (args.vaultPath        != null) data.remoteRef        = String(args.vaultPath).trim()
+        if (args.targetSecretName != null) data.targetSecretName = String(args.targetSecretName).trim() || null
+        if (args.refreshInterval  != null) data.refreshInterval  = String(args.refreshInterval).trim() || '1h'
+        if (Array.isArray(args.keyNames)) {
+          const keys = (args.keyNames as unknown[]).map(String).filter(Boolean)
+          if (keys.length > 0) data.dataKeys = keys.map(k => ({ remoteKey: k, secretKey: k }))
+        }
+
+        if (Object.keys(data).length === 0) return 'Error: no fields to update — provide at least one of: namespace, description, vaultPath, keyNames, targetSecretName, refreshInterval'
+
+        const updated = await prisma.managedSecret.update({ where: { id: secretId }, data })
+        return [
+          `Secret "${updated.name}" (${secretId}) updated:`,
+          ...Object.keys(data).map(k => `  ${k}: ${JSON.stringify((updated as any)[k])}`),
+        ].join('\n')
+      }
+
+      case 'delete_secret': {
+        const secretId = String(args.secretId ?? '').trim()
+        if (!secretId) return 'Error: secretId is required'
+
+        const existing = await prisma.managedSecret.findUnique({ where: { id: secretId } })
+        if (!existing) return `Error: secret "${secretId}" not found. Use orion_list_secrets to find the correct id.`
+
+        await prisma.managedSecret.delete({ where: { id: secretId } })
+        const reason = args.reason ? ` Reason: ${String(args.reason)}` : ''
+        return `Deleted ORION secret record "${existing.name}" (${secretId}) from namespace "${existing.namespace}".${reason}\nNote: Vault secret and K8s Secret (if applied) were NOT deleted — only the ORION metadata record.`
       }
 
       default:
