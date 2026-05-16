@@ -73,7 +73,7 @@ function scoreProfile(query: string, profile: {
   return Math.min(domainScore + tagScore + profileConfidence, 1.0)
 }
 
-export const discoveryTools = [
+export const discoveryTools = ([
   {
     name: 'find_specialist',
     description: 'Discover which specialist agent should handle a given task. ' +
@@ -172,4 +172,4 @@ export const discoveryTools = [
       return lines.join('\n')
     },
   },
-]
+] as const).map(t => ({ ...t, category: 'discovery' as const }))

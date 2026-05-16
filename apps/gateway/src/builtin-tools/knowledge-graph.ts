@@ -39,7 +39,7 @@ async function orionFetch(path: string, options?: RequestInit): Promise<unknown>
   return res.json()
 }
 
-export const knowledgeGraphTools = [
+export const knowledgeGraphTools = ([
   {
     name: 'knowledge_search',
     description: 'Semantically search the ORION knowledge base (notes, wikis, runbooks). ' +
@@ -331,4 +331,4 @@ export const knowledgeGraphTools = [
       )
     },
   },
-]
+] as const).map(t => ({ ...t, category: 'knowledge' as const }))

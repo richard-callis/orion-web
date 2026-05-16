@@ -54,7 +54,7 @@ async function sh(cmd: string, args: string[], timeoutMs = 30_000): Promise<stri
   return stdout || stderr
 }
 
-export const localhostTools = [
+export const localhostTools = ([
   {
     name: 'shell_exec',
     description: 'Run a shell command on the ORION management host',
@@ -151,4 +151,4 @@ export const localhostTools = [
       return lines.join('\n')
     },
   },
-]
+] as const).map(t => ({ ...t, category: 'localhost' as const }))

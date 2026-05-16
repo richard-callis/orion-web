@@ -14,7 +14,7 @@ async function helm(args: string[]): Promise<string> {
   return stdout || stderr
 }
 
-export const kubernetesTools = [
+export const kubernetesTools = ([
   {
     name: 'kubectl_get_pods',
     description: 'List pods in a namespace (or all namespaces)',
@@ -409,4 +409,4 @@ export const kubernetesTools = [
       return helm(cmdArgs)
     },
   },
-]
+] as const).map(t => ({ ...t, category: 'cluster-ops' as const }))

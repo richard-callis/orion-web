@@ -40,7 +40,7 @@ async function crowdsecGet(endpoint: string, params: Record<string, string> = {}
   return jsonStr(JSON.parse(await res.text()))
 }
 
-export const securityTools = [
+export const securityTools = ([
   {
     name: 'crowdsec_blocks',
     description: 'Get blocked IPs / requests from CrowdSec LAPI',
@@ -356,4 +356,4 @@ export const securityTools = [
       return jsonStr(data)
     },
   },
-]
+] as const).map(t => ({ ...t, category: 'security' as const }))

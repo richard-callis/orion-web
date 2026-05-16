@@ -8,7 +8,7 @@ async function docker(args: string[]): Promise<string> {
   return stdout || stderr
 }
 
-export const dockerTools = [
+export const dockerTools = ([
   {
     name: 'docker_ps',
     description: 'List running containers on this node',
@@ -121,4 +121,4 @@ export const dockerTools = [
       return docker(cmdArgs)
     },
   },
-]
+] as const).map(t => ({ ...t, category: 'docker' as const }))

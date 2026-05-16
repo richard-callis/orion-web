@@ -30,7 +30,7 @@ function withConfig(talosConfigB64: string, args: string[]): string[] {
   return ['--talosconfig', tmpFile, ...args]
 }
 
-export const talosTools = [
+export const talosTools = ([
   {
     name: 'talos_get_version',
     description: 'Get Talos version info for a node',
@@ -180,4 +180,4 @@ export const talosTools = [
       }
     },
   },
-]
+] as const).map(t => ({ ...t, category: 'talos' as const }))

@@ -59,6 +59,7 @@ export interface ToolExecutionContext {
   prisma: typeof prisma
   gateway?: {
     executeTool: (name: string, args: Record<string, unknown>) => Promise<string>
+    listTools?: () => Promise<Array<{ name: string; description: string; category?: string; inputSchema: Record<string, unknown> }>>
   }
   // Legacy: conversationId used in chat path for propose_tool
   conversationId?: string
@@ -2546,13 +2547,13 @@ registerTool({
 
 registerTool({
   name: 'list_tools',
-  description: 'List available tools by category. Call this to discover what you can actually do before attempting an operation. Pass a category to narrow the results. If unsure which category applies, omit it to see all categories and their tool names.',
+  description: 'List available tools by category. Call this to discover what you can actually do before attempting an operation. Pass a category to narrow the results. ORION categories: tasks, agents, rooms, features, gitops, knowledge, environment, secrets, tools. Gateway categories (when linked): cluster-ops, docker, talos, localhost, security, discovery. Omit category to list everything.',
   inputSchema: {
     type: 'object',
     properties: {
       category: {
         type: 'string',
-        description: 'Optional category filter: tasks, agents, rooms, features, gitops, knowledge, environment, secrets, tools. Omit to list all categories with their tool names.',
+        description: 'Optional category filter. ORION: tasks, agents, rooms, features, gitops, knowledge, environment, secrets, tools. Gateway: cluster-ops, docker, talos, localhost, security, discovery. Omit to list all.',
       },
     },
   },
@@ -2560,30 +2561,50 @@ registerTool({
   parallelSafe: true,
   availableIn: 'both',
   category: 'tools',
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const { category } = (args as Record<string, unknown>) ?? {}
 
-    if (category && typeof category === 'string') {
-      const tools = getToolsByCategory(category as ToolCategory)
-      if (tools.length === 0) {
-        const all = getAllCategories()
-        return `No tools found for category "${category}". Available categories: ${all.join(', ')}`
-      }
-      return `Tools in category "${category}":\n` +
-        tools.map(t => `  - ${t.name}`).join('\n') +
-        `\n\nCall describe_tool(name) to get full details on any tool.`
+    // Fetch gateway tools if available
+    const gatewayTools = ctx.gateway?.listTools ? await ctx.gateway.listTools().catch(() => []) : []
+    const gatewayByCategory = new Map<string, string[]>()
+    for (const t of gatewayTools) {
+      const cat = t.category ?? 'general'
+      if (!gatewayByCategory.has(cat)) gatewayByCategory.set(cat, [])
+      gatewayByCategory.get(cat)!.push(t.name)
     }
 
-    // No category — list all categories with their tool names
-    const categories = getAllCategories()
-    const lines: string[] = ['Available tool categories:\n']
-    for (const cat of categories) {
-      const tools = getToolsByCategory(cat)
-      lines.push(`${cat}:`)
-      lines.push(tools.map(t => `  - ${t.name}`).join('\n'))
-      lines.push('')
+    if (category && typeof category === 'string') {
+      // Check ORION registry first
+      const orionTools = getToolsByCategory(category as ToolCategory)
+      // Then gateway
+      const gwTools = gatewayByCategory.get(category) ?? []
+
+      if (orionTools.length === 0 && gwTools.length === 0) {
+        const allOrion = getAllCategories()
+        const allGw = [...gatewayByCategory.keys()]
+        return `No tools found for category "${category}". ORION categories: ${allOrion.join(', ')}${allGw.length ? `. Gateway categories: ${allGw.join(', ')}` : ''}`
+      }
+
+      const lines: string[] = [`Tools in category "${category}":`]
+      if (orionTools.length > 0) lines.push(...orionTools.map(t => `  - ${t.name}`))
+      if (gwTools.length > 0) lines.push(...gwTools.map(n => `  - ${n}`))
+      lines.push('\nCall describe_tool(name) to get full details on any tool.')
+      return lines.join('\n')
     }
-    lines.push('Call list_tools(category) to filter, or describe_tool(name) for full details.')
+
+    // No category — list all
+    const lines: string[] = ['Available tool categories:\n', '## ORION tools']
+    for (const cat of getAllCategories()) {
+      const tools = getToolsByCategory(cat)
+      lines.push(`${cat} (${tools.length}): ${tools.map(t => t.name).join(', ')}`)
+    }
+    if (gatewayByCategory.size > 0) {
+      lines.push('\n## Gateway tools')
+      for (const [cat, names] of gatewayByCategory) {
+        lines.push(`${cat} (${names.length}): ${names.join(', ')}`)
+      }
+    }
+    lines.push('\nCall list_tools(category) to filter, or describe_tool(name) for full details.')
     return lines.join('\n')
   },
 })
