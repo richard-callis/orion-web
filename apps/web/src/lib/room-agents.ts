@@ -343,7 +343,12 @@ async function callOpenAIChat(
       } else if (gateway) {
         result = await gateway.client.executeTool(tc.function.name, args)
       } else {
-        result = `Error: tool "${tc.function.name}" is not available`
+        const available = [
+          ...Array.from(registryToolNames),
+          ...Array.from(legacyToolNames),
+          ...(gateway ? gatewayTools.map((t: any) => t.name) : []),
+        ].sort()
+        result = `Error: tool "${tc.function.name}" does not exist. Available tools: ${available.join(', ')}`
       }
 
       console.log(`[room-agents] tool result: ${result}`)
