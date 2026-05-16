@@ -259,6 +259,7 @@ async function persistCredentials(): Promise<void> {
 type BuiltinTool = {
   name: string
   description: string
+  category: string
   inputSchema: Record<string, unknown>
   execute: (args: Record<string, unknown>) => Promise<string>
 }
@@ -378,6 +379,7 @@ app.get('/tools', requireAuth, (_req: Request, res: Response) => {
   res.json(activeTools.map(t => ({
     name:        t.name,
     description: t.description,
+    category:    (t as BuiltinTool).category ?? 'general',
     inputSchema: t.inputSchema,
   })))
 })

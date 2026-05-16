@@ -49,6 +49,7 @@ export interface AgentRunner {
 export interface GatewayTool {
   name: string
   description: string
+  category?: string
   inputSchema: {
     type: string
     properties?: Record<string, SchemaProperty>

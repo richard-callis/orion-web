@@ -49,14 +49,35 @@ type ChatMsg = { role: 'system' | 'user' | 'assistant'; content: string }
  */
 const LOCAL_MODEL_PLAN_FIRST = `
 
-## Plan Before You Act
+## Tool Use Discipline
 
-Before calling any tool:
-1. State what you already know
-2. State what you still need
-3. List the exact sequence of tool calls you will make
+Before calling any tool, check: do you already have this information from an earlier result in this conversation? If yes, use it — do not re-fetch.
 
-Then execute that plan — one tool at a time, in order. Do not call the same tool twice. Do not improvise mid-plan. If a step fails, report it and stop — do not retry or chain to a different tool hoping for a better result.`
+When you do call tools:
+1. State what you know and what you still need
+2. Call one tool, read the result, then decide the next step
+3. After gathering what you need, ACT — write the manifest, apply the change, or give your answer
+
+When stuck: write what you know, what's blocking you, and ask the user — do not call more tools hoping for a better result.
+Call list_tools(category) to discover what tools are available in a category.`
+
+/**
+ * Build a compact gateway tool category summary for injection into system prompts.
+ * Shows category names and counts only — agents call list_tools(category) to drill in.
+ */
+function buildGatewayCategorySummary(gatewayTools: GatewayTool[]): string {
+  if (gatewayTools.length === 0) return ''
+  const byCategory = new Map<string, number>()
+  for (const t of gatewayTools) {
+    const cat = t.category ?? 'general'
+    byCategory.set(cat, (byCategory.get(cat) ?? 0) + 1)
+  }
+  const lines = ['\n\n## Gateway Tool Categories', 'Use list_tools(category) to see tool names in any category.']
+  for (const [cat, count] of byCategory) {
+    lines.push(`- **${cat}** (${count} tools)`)
+  }
+  return lines.join('\n')
+}
 
 function buildSystemPrompt(
   agentName: string,
@@ -65,6 +86,8 @@ function buildSystemPrompt(
   hasTools: boolean | 'legacy' | 'mcp' = false,
   /** True for non-Claude (Ollama/OpenAI-compat) models — injects plan-first constraint */
   localModel = false,
+  /** Compact category summary built from gateway tools — injected when tools are enabled */
+  gatewayCategorySummary = '',
 ): string {
   const othersLine = otherParticipants.length > 0
     ? `Other participants in this chat: ${otherParticipants.join(', ')}`
@@ -91,7 +114,7 @@ Rules you must follow without exception:
 7. If the conversation has naturally concluded or you have nothing meaningful to add, reply with exactly the single word: SILENT
 
 ---
-${agentBasePrompt}${toolAddendum}${planFirst}`
+${agentBasePrompt}${toolAddendum}${gatewayCategorySummary}${planFirst}`
 }
 
 /**
@@ -168,8 +191,9 @@ async function callOllamaChat(
   model: string,
   baseUrl: string,
   hasTools = false,
+  gatewayCategorySummary = '',
 ): Promise<string | null> {
-  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools, true)
+  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools, true, gatewayCategorySummary)
   const chatMsgs = buildChatMessages(history, latestMessage)
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: 'POST',
@@ -207,7 +231,8 @@ async function callOpenAIChat(
   gatewayTools?: GatewayTool[],
 ): Promise<string | null> {
   const hasTools = !!toolContext
-  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools, true)
+  const gatewayCategorySummary = gatewayTools ? buildGatewayCategorySummary(gatewayTools) : ''
+  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools, true, gatewayCategorySummary)
   const chatMsgs = buildChatMessages(history, latestMessage)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
@@ -292,6 +317,10 @@ async function callOpenAIChat(
         result = await executeRegisteredTool(tc.function.name, args, {
           agentId: toolContext!.agentId,
           prisma,
+          gateway: gateway ? {
+            executeTool: (n, a) => gateway.client.executeTool(n, a),
+            listTools: () => gateway.client.listTools(),
+          } : undefined,
         })
       } else if (legacyToolNames.has(tc.function.name)) {
         // Legacy agent-tools (create_task, orion_manage_task, etc.)
@@ -590,7 +619,7 @@ export async function triggerRoomAgentReplies(
           if (toolsEnabled) {
             console.warn(`[room-agents] ${agent.name} has tools enabled but ${llm} route does not support function calling — scope awareness injected but tool invocation unavailable`)
           }
-          reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl, !!toolContext)
+          reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl, !!toolContext, buildGatewayCategorySummary(gatewayTools))
         } else {
           // claude / claude:<model> — routed through orion-claude sidecar.
           // When tools are enabled, the sidecar writes a per-request .mcp.json so Claude
