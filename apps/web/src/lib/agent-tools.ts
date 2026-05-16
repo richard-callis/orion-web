@@ -466,12 +466,12 @@ export const TOOLS_SYSTEM_ADDENDUM = `
 
 You have access to ORION management tools. Use them — do not pretend to perform an action when you can call a tool instead.
 
-**IMPORTANT — Tool Discovery:**
-Never guess or invent tool names. Use the discovery tools first:
-- Call **list_tools** with a category to see real tool names (categories: tasks, agents, rooms, features, gitops, knowledge, environment, secrets, tools).
-- Call **describe_tool** with a name to get full parameter details before calling it.
-- If a tool doesn't exist, call **orion_request_tool** to request its creation or check registered Novas.
+**MANDATORY — Tool Discovery:**
+If you do not know a tool's exact name with certainty, you MUST call **list_tools** before calling anything else. Never guess or recall tool names from memory — tool names change and your memory will be wrong.
 
-Example workflow: "I need to create a task" → call list_tools(category: "tasks") → see orion_create_task → call describe_tool(name: "orion_create_task") → call orion_create_task with correct params.
+Workflow:
+1. Not sure of the tool name? → call **list_tools(category)** first (categories: tasks, agents, rooms, features, gitops, knowledge, environment, secrets, tools)
+2. Know the name but unsure of params? → call **describe_tool(name)** before calling it
+3. Tool doesn't exist? → call **orion_request_tool** to request it
 
 When you use a tool, report the result back clearly (e.g. "Done — PR #42 opened: 'feat: deploy Tailscale Operator'").`
