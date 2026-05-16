@@ -102,6 +102,40 @@ export function invalidateSnapshotCache(): void {
   invalidate('snapshot')
 }
 
+// ── Dynamic context limit discovery ──────────────────────────────────────────
+// Hits the llama.cpp /props endpoint to discover n_ctx for OpenAI-compat
+// endpoints. Cached per baseUrl with a 10-minute TTL so transient network
+// failures don't permanently lock a model to the 8192 fallback.
+
+const CONTEXT_LIMIT_TTL_MS = 10 * 60 * 1000  // 10 minutes
+const contextLimitCache = new Map<string, { value: number; expiresAt: number }>()
+
+/**
+ * Discover the context window size for an OpenAI-compatible model endpoint.
+ * Uses llama.cpp's GET /props (returns { n_ctx: number, ... }).
+ * Result is cached per baseUrl for 10 minutes; falls back to 8192.
+ */
+export async function getModelContextLimit(baseUrl: string): Promise<number> {
+  const cached = contextLimitCache.get(baseUrl)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/props`, {
+      signal: AbortSignal.timeout(5_000),
+    })
+    if (res.ok) {
+      const data = await res.json() as Record<string, unknown>
+      const n_ctx = typeof data.n_ctx === 'number' ? data.n_ctx : 8192
+      contextLimitCache.set(baseUrl, { value: n_ctx, expiresAt: Date.now() + CONTEXT_LIMIT_TTL_MS })
+      return n_ctx
+    }
+  } catch { /* ignore — not llama.cpp or unreachable */ }
+
+  // Cache the fallback too, but with a shorter TTL so we retry sooner
+  contextLimitCache.set(baseUrl, { value: 8192, expiresAt: Date.now() + 60_000 })
+  return 8192
+}
+
 export async function buildAgentLocalContext(agentId: string): Promise<string> {
   try {
     const knowledge = await prisma.agentKnowledge.findMany({
