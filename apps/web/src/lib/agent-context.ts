@@ -53,7 +53,6 @@ async function fetchSnapshot(): Promise<string> {
     const eventLines = events
       .map((e: any) => `  [${e.taskId}] ${e.task?.title ?? '?'}: ${e.eventType}`)
       .join('\n')
-
     return [
       `## ORION State (cached ${new Date().toISOString()})`,
       `**Agents (${activeAgents.length}):**`,
