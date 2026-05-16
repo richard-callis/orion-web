@@ -647,9 +647,30 @@ async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Pr
 
     const policy = (env.policyConfig ?? {}) as { overrides?: Record<string, string>; reviewAll?: boolean }
 
-    // Enforce repo path convention — prepend repoPath if agent omitted it, then hard-reject
+    // Live ArgoCD path discovery — query the cluster for the Application watching this repo.
+    // This is the authoritative source of truth; DB repoPath is a fallback only.
+    let liveWatchedPath: string | undefined
+    try {
+      const { customApi } = await import('./k8s')
+      const apps = await customApi.listClusterCustomObject('argoproj.io', 'v1alpha1', 'applications')
+      const items: any[] = apps?.body?.items ?? []
+      const matchingApp = items.find((app: any) => {
+        const src = app?.spec?.source
+        if (!src) return false
+        const repoUrl: string = src.repoURL ?? ''
+        return repoUrl.includes(env.gitRepo!) || repoUrl.endsWith(`/${env.gitRepo}`)
+      })
+      if (matchingApp?.spec?.source?.path) {
+        liveWatchedPath = (matchingApp.spec.source.path as string).replace(/\/$/, '')
+      }
+    } catch {
+      // Cluster unreachable or ArgoCD not installed — fall through to DB repoPath
+    }
+
+    // Enforce repo path convention — prepend watched path if agent omitted it, then hard-reject
     // any path that still escapes the watched directory (e.g. absolute paths, ../traversal)
-    const repoPath = (env as Record<string, unknown>).repoPath as string | undefined
+    // Live ArgoCD path takes precedence over DB repoPath.
+    const repoPath = liveWatchedPath ?? ((env as Record<string, unknown>).repoPath as string | undefined)
     const normalizedChanges = repoPath
       ? changes.map(c => ({
           ...c,
@@ -660,7 +681,8 @@ async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Pr
     if (repoPath) {
       const escaping = normalizedChanges.filter(c => !c.path.startsWith(`${repoPath}/`))
       if (escaping.length > 0) {
-        return `Error: the following paths fall outside the watched directory "${repoPath}/". All manifests must live under ${repoPath}/<service>/. Pass service-relative paths only (e.g. "tailscale/deployment.yaml", not "/tailscale/deployment.yaml"):\n${escaping.map(c => `  - ${c.path}`).join('\n')}\n\nCall gitops_ls first to check existing structure before proposing files.`
+        const source = liveWatchedPath ? 'live ArgoCD Application' : 'environment config'
+        return `Error: the following paths fall outside the watched directory "${repoPath}/" (from ${source}). All manifests must live under ${repoPath}/<service>/. Pass service-relative paths only (e.g. "tailscale/deployment.yaml", not "/tailscale/deployment.yaml"):\n${escaping.map(c => `  - ${c.path}`).join('\n')}\n\nCall gitops_ls to see the existing structure before proposing files.`
       }
     }
 
@@ -696,8 +718,9 @@ async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Pr
     }).catch(() => {}) // non-fatal — PR already exists in Gitea even if DB write fails
 
     await auditLog(ctx.agentId ?? ctx.userId, `🔀 GitOps PR #${result.prNumber} ${action} — **${title}**`)
+    const pathSource = liveWatchedPath ? ' (live ArgoCD)' : ' (env config)'
     const conventions = [
-      repoPath        ? `Manifest paths must be under: ${repoPath}/` : null,
+      repoPath        ? `Manifest paths must be under: ${repoPath}/${pathSource}` : null,
       vaultPathPrefix ? `Vault secrets must be under: secret/${vaultPathPrefix}/<service>` : null,
     ].filter(Boolean)
     const conventionNote = conventions.length ? `\n\nEnvironment conventions:\n${conventions.map(c => `  • ${c}`).join('\n')}` : ''
@@ -709,12 +732,12 @@ async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Pr
 
 registerTool({
   name: 'gitops_ls',
-  description: 'List files and directories in the GitOps repo for an environment. Call this BEFORE gitops_propose to check what paths already exist so you place new files consistently with the existing structure. Returns a tree of names and types (file/dir) under the given path.',
+  description: 'List files and directories in the GitOps repo for an environment. Call this BEFORE gitops_propose to check what paths already exist so you place new files consistently with the existing structure. Defaults to the environment\'s watched directory (e.g. "deployments/") — pass a sub-path to drill in (e.g. "deployments/tailscale").',
   inputSchema: {
     type: 'object',
     properties: {
       environment_id: { type: 'string', description: 'Environment ID or name' },
-      path:           { type: 'string', description: 'Directory path to list. Omit or pass "" for the repo root. To list an existing service dir, pass e.g. "deployments/tailscale".' },
+      path:           { type: 'string', description: 'Directory path to list. Omit to list the watched directory root (e.g. "deployments/"). Pass a sub-path to drill in, e.g. "deployments/tailscale".' },
     },
     required: ['environment_id'],
   },
@@ -723,7 +746,7 @@ registerTool({
   availableIn: 'both',
   category: 'gitops',
   handler: async (args, ctx) => {
-    const { environment_id, path: listPath = '' } = args as { environment_id?: string; path?: string }
+    const { environment_id, path: listPath } = args as { environment_id?: string; path?: string }
     if (!environment_id) return 'Error: environment_id is required'
 
     const env = await ctx.prisma.environment.findFirst({
@@ -732,13 +755,32 @@ registerTool({
     if (!env) return `Error: environment "${environment_id}" not found`
     if (!env.gitOwner || !env.gitRepo) return 'Error: environment has no git repo configured'
 
-    const { listDir } = await import('./gitea')
-    const entries = await listDir(env.gitOwner, env.gitRepo, listPath)
-    if (entries.length === 0) return listPath ? `No files found at "${listPath}"` : 'Repository is empty'
+    // Live ArgoCD path discovery — prefer cluster truth over DB
+    let liveWatchedPath: string | undefined
+    try {
+      const { customApi } = await import('./k8s')
+      const apps = await customApi.listClusterCustomObject('argoproj.io', 'v1alpha1', 'applications')
+      const items: any[] = apps?.body?.items ?? []
+      const matchingApp = items.find((app: any) => {
+        const repoUrl: string = app?.spec?.source?.repoURL ?? ''
+        return repoUrl.includes(env.gitRepo!) || repoUrl.endsWith(`/${env.gitRepo}`)
+      })
+      if (matchingApp?.spec?.source?.path) {
+        liveWatchedPath = (matchingApp.spec.source.path as string).replace(/\/$/, '')
+      }
+    } catch { /* cluster unreachable — fall through */ }
 
-    const repoPath = (env as Record<string, unknown>).repoPath as string | undefined
+    const repoPath = liveWatchedPath ?? ((env as Record<string, unknown>).repoPath as string | undefined)
+    // Default to the watched directory so agents never accidentally browse the repo root
+    const effectivePath = listPath || repoPath || ''
+
+    const { listDir } = await import('./gitea')
+    const entries = await listDir(env.gitOwner, env.gitRepo, effectivePath)
+    if (entries.length === 0) return `No files found at "${effectivePath}"`
+
     const lines = entries.map(e => `  ${e.type === 'dir' ? '📁' : '📄'} ${e.path}`)
-    const header = listPath ? `Contents of "${listPath}":` : `Repo root (manifests must go under "${repoPath ?? '?'}/"):`
+    const source = liveWatchedPath ? ' (live ArgoCD watched path)' : ''
+    const header = `Contents of "${effectivePath}"${source} — all manifests must live under this directory:`
     return [header, ...lines].join('\n')
   },
 })
