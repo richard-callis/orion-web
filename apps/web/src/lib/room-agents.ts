@@ -539,8 +539,9 @@ export async function triggerRoomAgentReplies(
     where: { roomId, senderType: 'compaction' },
     orderBy: { createdAt: 'desc' },
   })
-  const histLimitSetting = await prisma.systemSetting.findUnique({ where: { key: 'chat.historyLimit' } })
-  const histTake = Math.max(parseInt(String(histLimitSetting?.value ?? '50'), 10) || 50, 10)
+  // Safety cap for the DB query — compaction is the real context limit, not message count.
+  // At ~200-500 tokens/message and a 256K context window, compaction fires well before 1000 messages.
+  const histTake = 1000
 
   // Track token count across agents in this turn; start from room's stored value
   let currentTokenCount = room?.tokenCount ?? 0
