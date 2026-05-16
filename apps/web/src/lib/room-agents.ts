@@ -343,12 +343,17 @@ async function callOpenAIChat(
       } else if (gateway) {
         result = await gateway.client.executeTool(tc.function.name, args)
       } else {
-        const available = [
-          ...Array.from(registryToolNames),
-          ...Array.from(legacyToolNames),
-          ...(gateway && gatewayTools ? gatewayTools.map((t: any) => t.name) : []),
-        ].sort()
-        result = `Error: tool "${tc.function.name}" does not exist. Available tools: ${available.join(', ')}`
+        // Auto-run list_tools so the model gets the real categorised tool list
+        // and can self-correct on the next turn without an extra round trip.
+        const toolList = await executeRegisteredTool('list_tools', {}, {
+          agentId: toolContext!.agentId,
+          prisma,
+          gateway: gateway ? {
+            executeTool: (n, a) => gateway.client.executeTool(n, a),
+            listTools:   () => gateway.client.listTools(),
+          } : undefined,
+        }).catch(() => '')
+        result = `Error: tool "${tc.function.name}" does not exist. Call list_tools to find the correct name.\n\n${toolList}`
       }
 
       console.log(`[room-agents] tool result: ${result}`)
@@ -639,6 +644,7 @@ export async function triggerRoomAgentReplies(
       if (toolsEnabled && !gateway) {
         personaPrompt += `\n\n⚠️ WARNING: You have tools enabled but are not linked to any environment. Built-in gateway tools (kubectl_logs, kubectl_get, shell_exec, docker_ps, etc.) are unavailable until an admin links this agent to an environment. Do not request these tools — instead, inform the user that you need to be linked to an environment first.`
       }
+
 
       console.log(`[room-agents] ${agent.name} (${llm}${toolsEnabled ? ', tools' : ''}${gateway ? ', gateway' : ''}) → replying to room ${roomId}`)
 
