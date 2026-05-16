@@ -948,6 +948,7 @@ model RoomKnowledge {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  @@unique([roomId, title])
   @@index([roomId])
   @@index([tags])
   @@map("room_knowledge")
@@ -970,6 +971,7 @@ model AgentKnowledge {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  @@unique([agentId, title])
   @@index([agentId])
   @@index([tags])
   @@map("agent_knowledge")
