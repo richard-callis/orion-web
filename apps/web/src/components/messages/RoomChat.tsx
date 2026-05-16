@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Users, Bot, User as UserIcon,
-  Hash, Send, X, Loader2, Plus, LogOut, AtSign, BookmarkCheck, Terminal,
+  Hash, Send, X, Loader2, Plus, LogOut, AtSign, BookmarkCheck, Terminal, Layers,
 } from 'lucide-react'
 
 /** Render message content with @mention highlighting */
@@ -442,6 +442,15 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
               >
                 {msg.senderType === 'system' ? (
                   <div className="text-[10px] text-text-muted py-1">{msg.content}</div>
+                ) : msg.senderType === 'compaction' ? (
+                  <div className="w-full rounded-lg border border-status-warning/30 bg-status-warning/5 text-xs overflow-hidden">
+                    <div className="flex items-center gap-2 px-3 py-1.5 border-b border-status-warning/20 bg-status-warning/10">
+                      <Layers size={12} className="text-status-warning" />
+                      <span className="font-mono text-status-warning">context compacted</span>
+                      <span className="ml-auto text-[9px] text-status-warning/60 font-sans">{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                    <div className="px-3 py-2 font-mono text-text-muted whitespace-pre-wrap max-h-48 overflow-y-auto">{msg.content}</div>
+                  </div>
                 ) : msg.senderType === 'tool_call' ? (
                   (() => {
                     const tc = msg.attachments as ToolCallAttachment
