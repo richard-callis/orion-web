@@ -870,11 +870,11 @@ async function handleValidateManifest(args: unknown): Promise<string> {
 
     lines.push('')
     if (failed === 0) {
-      return `✅ All ${passed} documents validated successfully against cluster API resources.\nSafe to call orion_propose_gitops.`
+      return `✅ All ${passed} documents validated successfully against cluster API resources.\nSafe to call gitops_propose.`
     }
 
     lines.push(`Summary: ${passed} passed, ${failed} failed`)
-    lines.push('❌ DO NOT call orion_propose_gitops until all failures are resolved.')
+    lines.push('❌ DO NOT call gitops_propose until all failures are resolved.')
     return lines.join('\n')
   } catch (e) {
     return `Error validating manifests: ${e instanceof Error ? e.message : String(e)}`
@@ -1521,37 +1521,7 @@ registerTool({
   handler: handleCreateTask,
 })
 
-registerTool({
-  name: 'orion_propose_gitops',
-  description: 'Propose a GitOps change for a cluster environment. Creates a branch, commits manifests, opens a PR, and auto-merges if the change matches policy (e.g. scaling, patch image tags). Use this for ALL infrastructure work — deploying services, creating configmaps/secrets, updating ingresses, etc.\n\nBEFORE proposing: call gitops_ls to check what paths already exist in the repo so you match the existing structure exactly.\n\nPath conventions: pass service-relative paths (e.g. "tailscale/deployment.yaml") — the tool automatically prepends the correct watched directory (e.g. "deployments/"). Paths that escape the watched directory are REJECTED. The tool returns the Vault path prefix in its response — use that prefix for any ExternalSecret remoteRef keys.\n\nIMPORTANT: If any manifest uses a non-standard apiVersion (anything outside v1, apps/v1, batch/v1, networking.k8s.io/v1, rbac.authorization.k8s.io/v1), call validate_manifest first to confirm those CRDs exist. Proposing manifests with non-existent CRDs causes ArgoCD sync failures.\n\nREQUIRED: you must know the target environment. Ask the Atlas in the feature room, or check orion_list_agents for the Atlas. If you have no way to get the environment designation, use environment_id: "localhost" as a fallback.\n\nRules:\n- Always call gitops_ls first to check existing paths for the service\n- Always include a clear reasoning field explaining why the change is needed\n- Provide operation_description for policy classification (e.g. "deploy new service", "update image tag")\n- Write manifests with namespace, proper labels, and correct resource types\n- For deployments: include namespace selector, resource limits if appropriate\n- For services: use ClusterIP unless ingress is explicitly needed',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      environment_id:      { type: 'string', description: 'Environment ID or name (e.g. "localhost", "production", or the CUID of the environment)' },
-      title:               { type: 'string', description: 'Short PR title, e.g. "feat: add nginx reverse proxy"' },
-      reasoning:           { type: 'string', description: 'Why this change is needed' },
-      operation_description: { type: 'string', description: 'One-line description for policy classification, e.g. "add new service"' },
-      changes: {
-        type: 'array',
-        description: 'Manifest files to create or update.',
-        items: {
-          type: 'object',
-          properties: {
-            path:    { type: 'string', description: 'Service-relative file path — do NOT include the repo root directory. E.g. "nginx/deployment.yaml", not "deployments/nginx/deployment.yaml". The tool automatically places it under the correct ArgoCD-watched directory.' },
-            content: { type: 'string', description: 'Full file content as YAML/JSON' },
-          },
-          required: ['path', 'content'],
-        },
-      },
-    },
-    required: ['environment_id', 'title', 'reasoning', 'operation_description', 'changes'],
-  },
-  tier: 'write',
-  parallelSafe: false,
-  availableIn: 'both',
-  category: 'gitops',
-  handler: handleProposeGitops,
-})
+// orion_propose_gitops removed — use gitops_propose (the canonical tool with path normalization and guard)
 
 registerTool({
   name: 'get_cluster_api_resources',
@@ -1570,7 +1540,7 @@ registerTool({
 
 registerTool({
   name: 'validate_manifest',
-  description: 'Validate Kubernetes manifest files against the cluster\'s actual API resources. Checks each document\'s apiVersion/kind against built-in Kubernetes resources and installed CRDs. Returns a pass/fail report. Call this before orion_propose_gitops whenever manifests use non-standard apiVersions.',
+  description: 'Validate Kubernetes manifest files against the cluster\'s actual API resources. Checks each document\'s apiVersion/kind against built-in Kubernetes resources and installed CRDs. Returns a pass/fail report. Call this before gitops_propose whenever manifests use non-standard apiVersions.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1993,6 +1963,10 @@ registerTool({
   name: 'gitops_propose',
   description: `Propose a GitOps change. Creates a branch, commits files, opens a PR in the environment's git repo, and auto-merges if policy allows. Use this for ALL cluster/infrastructure changes — never apply kubectl manifests directly.
 
+BEFORE proposing: call gitops_ls to check what paths already exist so you match the existing structure exactly.
+
+Path conventions: pass service-relative paths (e.g. "tailscale/deployment.yaml") — the tool automatically prepends the correct watched directory (e.g. "deployments/"). Paths that escape the watched directory are REJECTED.
+
 For Kubernetes manifests: always include namespace, use pinned image tags, include CrowdSec + Authentik middleware on all public ingresses.
 For Docker Compose: use self-contained services (no host bind mounts for config files).`,
   inputSchema: {
@@ -2007,7 +1981,7 @@ For Docker Compose: use self-contained services (no host bind mounts for config 
         items: {
           type: 'object',
           properties: {
-            path:    { type: 'string', description: 'Repo-relative file path' },
+            path:    { type: 'string', description: 'Service-relative file path — do NOT include the watched directory prefix. E.g. "tailscale/deployment.yaml", not "deployments/tailscale/deployment.yaml". The tool places it under the correct directory automatically.' },
             content: { type: 'string', description: 'Full file content' },
           },
           required: ['path', 'content'],
@@ -2035,6 +2009,22 @@ For Docker Compose: use self-contained services (no host bind mounts for config 
       if (!env) return `Error: environment "${environment_id}" not found`
       if (!env.gitOwner || !env.gitRepo) return 'Error: environment has no git repo configured — run bootstrap first'
 
+      // Enforce repoPath convention — prepend if agent passed service-relative paths
+      const repoPath = (env as Record<string, unknown>).repoPath as string | undefined
+      const normalizedChanges = repoPath
+        ? changes.map(c => ({
+            ...c,
+            path: c.path.startsWith(`${repoPath}/`) ? c.path : `${repoPath}/${c.path}`,
+          }))
+        : changes
+
+      if (repoPath) {
+        const escaping = normalizedChanges.filter(c => !c.path.startsWith(`${repoPath}/`))
+        if (escaping.length > 0) {
+          return `Error: the following paths fall outside the watched directory "${repoPath}/". Pass service-relative paths only (e.g. "tailscale/deployment.yaml"):\n${escaping.map(c => `  - ${c.path}`).join('\n')}\n\nCall gitops_ls first to check existing structure.`
+        }
+      }
+
       const policy = (env.policyConfig ?? {}) as import('@/lib/gitops-policy').PolicyConfig
       const result = await proposeChange({
         owner: env.gitOwner,
@@ -2042,7 +2032,7 @@ For Docker Compose: use self-contained services (no host bind mounts for config 
         title,
         reasoning,
         operationDescription: operation_description,
-        changes,
+        changes: normalizedChanges,
         policy,
       })
 
