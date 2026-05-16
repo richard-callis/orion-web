@@ -647,7 +647,8 @@ async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Pr
 
     const policy = (env.policyConfig ?? {}) as { overrides?: Record<string, string>; reviewAll?: boolean }
 
-    // Enforce repo path convention — prepend repoPath if agent omitted it
+    // Enforce repo path convention — prepend repoPath if agent omitted it, then hard-reject
+    // any path that still escapes the watched directory (e.g. absolute paths, ../traversal)
     const repoPath = (env as Record<string, unknown>).repoPath as string | undefined
     const normalizedChanges = repoPath
       ? changes.map(c => ({
@@ -655,6 +656,13 @@ async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Pr
           path: c.path.startsWith(`${repoPath}/`) ? c.path : `${repoPath}/${c.path}`,
         }))
       : changes
+
+    if (repoPath) {
+      const escaping = normalizedChanges.filter(c => !c.path.startsWith(`${repoPath}/`))
+      if (escaping.length > 0) {
+        return `Error: the following paths fall outside the watched directory "${repoPath}/". All manifests must live under ${repoPath}/<service>/. Pass service-relative paths only (e.g. "tailscale/deployment.yaml", not "/tailscale/deployment.yaml"):\n${escaping.map(c => `  - ${c.path}`).join('\n')}\n\nCall gitops_ls first to check existing structure before proposing files.`
+      }
+    }
 
     const result = await proposeChange({
       owner: env.gitOwner,
@@ -698,6 +706,42 @@ async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Pr
     return `Error proposing GitOps change: ${e instanceof Error ? e.message : String(e)}`
   }
 }
+
+registerTool({
+  name: 'gitops_ls',
+  description: 'List files and directories in the GitOps repo for an environment. Call this BEFORE gitops_propose to check what paths already exist so you place new files consistently with the existing structure. Returns a tree of names and types (file/dir) under the given path.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      environment_id: { type: 'string', description: 'Environment ID or name' },
+      path:           { type: 'string', description: 'Directory path to list. Omit or pass "" for the repo root. To list an existing service dir, pass e.g. "deployments/tailscale".' },
+    },
+    required: ['environment_id'],
+  },
+  tier: 'read',
+  parallelSafe: true,
+  availableIn: 'both',
+  category: 'gitops',
+  handler: async (args, ctx) => {
+    const { environment_id, path: listPath = '' } = args as { environment_id?: string; path?: string }
+    if (!environment_id) return 'Error: environment_id is required'
+
+    const env = await ctx.prisma.environment.findFirst({
+      where: { OR: [{ id: environment_id }, { name: { equals: environment_id, mode: 'insensitive' } }] },
+    })
+    if (!env) return `Error: environment "${environment_id}" not found`
+    if (!env.gitOwner || !env.gitRepo) return 'Error: environment has no git repo configured'
+
+    const { listDir } = await import('./gitea')
+    const entries = await listDir(env.gitOwner, env.gitRepo, listPath)
+    if (entries.length === 0) return listPath ? `No files found at "${listPath}"` : 'Repository is empty'
+
+    const repoPath = (env as Record<string, unknown>).repoPath as string | undefined
+    const lines = entries.map(e => `  ${e.type === 'dir' ? '📁' : '📄'} ${e.path}`)
+    const header = listPath ? `Contents of "${listPath}":` : `Repo root (manifests must go under "${repoPath ?? '?'}/"):`
+    return [header, ...lines].join('\n')
+  },
+})
 
 async function handleGetClusterApiResources(): Promise<string> {
   try {
@@ -1479,7 +1523,7 @@ registerTool({
 
 registerTool({
   name: 'orion_propose_gitops',
-  description: 'Propose a GitOps change for a cluster environment. Creates a branch, commits manifests, opens a PR, and auto-merges if the change matches policy (e.g. scaling, patch image tags). Use this for ALL infrastructure work — deploying services, creating configmaps/secrets, updating ingresses, etc.\n\nPath conventions are enforced automatically — pass service-relative paths (e.g. "nginx/deployment.yaml") and the tool will place them under the correct ArgoCD-watched directory. The tool will also return the Vault path prefix for this environment in its response — use that prefix for any ExternalSecret remoteRef keys.\n\nIMPORTANT: If any manifest uses a non-standard apiVersion (anything outside v1, apps/v1, batch/v1, networking.k8s.io/v1, rbac.authorization.k8s.io/v1), call validate_manifest first to confirm those CRDs exist. Proposing manifests with non-existent CRDs causes ArgoCD sync failures.\n\nREQUIRED: you must know the target environment. Ask the Atlas in the feature room, or check orion_list_agents for the Atlas. If you have no way to get the environment designation, use environment_id: "localhost" as a fallback.\n\nRules:\n- Always include a clear reasoning field explaining why the change is needed\n- Provide operation_description for policy classification (e.g. "deploy new service", "update image tag")\n- Write manifests with namespace, proper labels, and correct resource types\n- For deployments: include namespace selector, resource limits if appropriate\n- For services: use ClusterIP unless ingress is explicitly needed',
+  description: 'Propose a GitOps change for a cluster environment. Creates a branch, commits manifests, opens a PR, and auto-merges if the change matches policy (e.g. scaling, patch image tags). Use this for ALL infrastructure work — deploying services, creating configmaps/secrets, updating ingresses, etc.\n\nBEFORE proposing: call gitops_ls to check what paths already exist in the repo so you match the existing structure exactly.\n\nPath conventions: pass service-relative paths (e.g. "tailscale/deployment.yaml") — the tool automatically prepends the correct watched directory (e.g. "deployments/"). Paths that escape the watched directory are REJECTED. The tool returns the Vault path prefix in its response — use that prefix for any ExternalSecret remoteRef keys.\n\nIMPORTANT: If any manifest uses a non-standard apiVersion (anything outside v1, apps/v1, batch/v1, networking.k8s.io/v1, rbac.authorization.k8s.io/v1), call validate_manifest first to confirm those CRDs exist. Proposing manifests with non-existent CRDs causes ArgoCD sync failures.\n\nREQUIRED: you must know the target environment. Ask the Atlas in the feature room, or check orion_list_agents for the Atlas. If you have no way to get the environment designation, use environment_id: "localhost" as a fallback.\n\nRules:\n- Always call gitops_ls first to check existing paths for the service\n- Always include a clear reasoning field explaining why the change is needed\n- Provide operation_description for policy classification (e.g. "deploy new service", "update image tag")\n- Write manifests with namespace, proper labels, and correct resource types\n- For deployments: include namespace selector, resource limits if appropriate\n- For services: use ClusterIP unless ingress is explicitly needed',
   inputSchema: {
     type: 'object',
     properties: {
