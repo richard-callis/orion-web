@@ -474,4 +474,9 @@ Never guess or invent tool names. Use the discovery tools first:
 
 Example workflow: "I need to create a task" → call list_tools(category: "tasks") → see orion_create_task → call describe_tool(name: "orion_create_task") → call orion_create_task with correct params.
 
+**MANDATORY — Before any GitOps or infrastructure work:**
+1. Call **orion_get_environment** to get the target environment's git repo and conventions.
+2. Run **kubectl_get** on ArgoCD Applications to find out what path is being watched: \`kubectl get applications -A -o yaml\`. This tells you exactly where to put manifests so ArgoCD picks them up automatically.
+3. Call **gitops_ls** to check the existing repo structure before proposing any files.
+
 When you use a tool, report the result back clearly (e.g. "Done — PR #42 opened: 'feat: deploy Tailscale Operator'").`
