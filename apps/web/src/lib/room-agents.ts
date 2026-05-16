@@ -49,14 +49,21 @@ type ChatMsg = { role: 'system' | 'user' | 'assistant'; content: string }
  */
 const LOCAL_MODEL_PLAN_FIRST = `
 
-## Plan Before You Act
+## STRICT Tool Use Rules — Violations waste your budget and frustrate the user
 
-Before calling any tool:
-1. State what you already know
-2. State what you still need
-3. List the exact sequence of tool calls you will make
+**BEFORE your first tool call**, write out:
+1. What you already know (from the conversation history — do NOT re-fetch this)
+2. The single next action you will take
+3. What you will do AFTER that result comes back
 
-Then execute that plan — one tool at a time, in order. Do not call the same tool twice. Do not improvise mid-plan. If a step fails, report it and stop — do not retry or chain to a different tool hoping for a better result.`
+**HARD LIMITS — violating these ends your turn immediately:**
+- NEVER call a tool you have already called in this conversation with the same arguments
+- NEVER call kubectl_get, kubectl_get_pods, orion_list_secrets, or orion_get_environment more than once per reply
+- NEVER gather state you already have — read your previous tool results in the message history
+- If you have enough information to act, ACT NOW — do not re-read state first
+- Maximum 3 consecutive tool calls before you must write a reply and stop
+
+**When you get stuck:** Write what you know, what's blocking you, and ask the user — do NOT call more tools hoping for a different result.`
 
 function buildSystemPrompt(
   agentName: string,
@@ -251,7 +258,8 @@ async function callOpenAIChat(
 
   // Tool-call loop — keep going until the model produces a text reply
   const maxToolRoundsSetting = await prisma.systemSetting.findUnique({ where: { key: 'agent.chat.maxToolRounds' } })
-  const MAX_TOOL_ROUNDS = parseInt(String(maxToolRoundsSetting?.value ?? '15'), 10) || 15
+  // Cap at 12 regardless of DB setting to prevent runaway loops (Qwen3 especially)
+  const MAX_TOOL_ROUNDS = Math.min(parseInt(String(maxToolRoundsSetting?.value ?? '12'), 10) || 12, 12)
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const body: Record<string, unknown> = { model, stream: false, messages }
     if (allTools) body.tools = allTools
