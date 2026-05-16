@@ -464,7 +464,7 @@ export const TOOLS_SYSTEM_ADDENDUM = `
 
 ## Your ORION Tools
 
-You have access to ORION management tools. Use them — do not pretend to perform an action when you can call a tool instead.
+You have access to ORION management tools. Use them — do not pretend to perform an action when you can call a tool instead. Do NOT call tools in response to conversational messages, greetings, or check-ins — just reply directly.
 
 **IMPORTANT — Tool Discovery:**
 Never guess or invent tool names. Use the discovery tools first:
