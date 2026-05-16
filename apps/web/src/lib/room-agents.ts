@@ -20,7 +20,7 @@ import { buildToolDefinitions, TOOLS_SYSTEM_ADDENDUM, executeTool } from './agen
 import { getToolsForContext, executeRegisteredTool } from './tool-registry'
 import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
-import { buildAgentContext, invalidateSnapshotCache, getModelContextLimit } from './agent-context'
+import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, invalidateSnapshotCache, getModelContextLimit } from './agent-context'
 import { compactRoom, publishCompactionWarning } from './compaction'
 import { getPrompt } from './system-prompts'
 import type { AgentGateway } from './agent-gateway'
@@ -604,8 +604,16 @@ export async function triggerRoomAgentReplies(
 
       // Inject pre-fetched context (ORION snapshot + vector search) so agents arrive
       // pre-oriented and don't need to call orion_get_snapshot on every message.
-      const agentContext = await buildAgentContext(latestTurn)
-      const agentBasePrompt = agentContext ? personaPrompt + agentContext : personaPrompt
+      const [agentContext, agentLocalContext, roomLocalContext] = await Promise.all([
+        buildAgentContext(latestTurn),
+        buildAgentLocalContext(agent.id),
+        buildRoomLocalContext(roomId),
+      ])
+      const contextParts = [personaPrompt]
+      if (agentContext)      contextParts.push(agentContext)
+      if (agentLocalContext) contextParts.push(agentLocalContext)
+      if (roomLocalContext)  contextParts.push(roomLocalContext)
+      const agentBasePrompt = contextParts.join('\n\n')
 
       // Names of other agents/users in the room so the model can @mention them
       const otherParticipants = agentMembers
