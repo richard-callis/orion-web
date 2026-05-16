@@ -379,7 +379,7 @@ app.get('/tools', requireAuth, (_req: Request, res: Response) => {
   res.json(activeTools.map(t => ({
     name:        t.name,
     description: t.description,
-    category:    (t as BuiltinTool).category ?? 'general',
+    category:    BUILTIN_REGISTRY[t.name]?.category ?? 'general',
     inputSchema: t.inputSchema,
   })))
 })
