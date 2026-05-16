@@ -125,7 +125,12 @@ export async function getModelContextLimit(baseUrl: string): Promise<number> {
     })
     if (res.ok) {
       const data = await res.json() as Record<string, unknown>
-      const n_ctx = typeof data.n_ctx === 'number' ? data.n_ctx : 8192
+      // llama.cpp /props: n_ctx is at data.default_generation_settings.n_ctx
+      // Fall back to top-level data.n_ctx for other implementations, then 8192
+      const dgs = data.default_generation_settings as Record<string, unknown> | undefined
+      const n_ctx = typeof dgs?.n_ctx === 'number' ? dgs.n_ctx
+                  : typeof data.n_ctx === 'number'  ? data.n_ctx
+                  : 8192
       contextLimitCache.set(baseUrl, { value: n_ctx, expiresAt: Date.now() + CONTEXT_LIMIT_TTL_MS })
       return n_ctx
     }
