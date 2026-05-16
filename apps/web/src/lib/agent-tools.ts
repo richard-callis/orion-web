@@ -474,4 +474,7 @@ Workflow:
 2. Know the name but unsure of params? → call **describe_tool(name)** before calling it
 3. Tool doesn't exist? → call **orion_request_tool** to request it
 
+**MANDATORY — Before any GitOps or infrastructure work:**
+Call **orion_get_environment** first to get the deployment path, Vault prefix, and git repo for the target environment. Never assume where manifests go — always query.
+
 When you use a tool, report the result back clearly (e.g. "Done — PR #42 opened: 'feat: deploy Tailscale Operator'").`
