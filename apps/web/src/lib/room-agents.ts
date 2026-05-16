@@ -348,10 +348,7 @@ async function callOpenAIChat(
         const toolList = await executeRegisteredTool('list_tools', {}, {
           agentId: toolContext!.agentId,
           prisma,
-          gateway: gateway ? {
-            executeTool: (n, a) => gateway.client.executeTool(n, a),
-            listTools:   () => gateway.client.listTools(),
-          } : undefined,
+          gateway: undefined,
         }).catch(() => '')
         result = `Error: tool "${tc.function.name}" does not exist. Call list_tools to find the correct name.\n\n${toolList}`
       }
