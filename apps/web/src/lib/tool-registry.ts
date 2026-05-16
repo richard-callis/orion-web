@@ -1691,11 +1691,11 @@ registerTool({
 
 registerTool({
   name: 'knowledge_remember',
-  description: 'Save an important fact, insight, or learned pattern to persistent memory for future tasks to reference',
+  description: 'Save an important fact, decision, or learned pattern to your persistent agent memory. It will be injected into your context on every future turn so you can recall it without tool calls. Use for: namespace locations, cluster quirks, decisions made, operator configurations, etc.',
   inputSchema: {
     type: 'object' as const,
     properties: {
-      key:     { type: 'string', description: 'Short category label (e.g. "deployment-pattern", "cluster-quirk")' },
+      key:     { type: 'string', description: 'Short descriptive title (e.g. "tailscale-operator-namespace", "cluster-quirk-no-gpu")' },
       value:   { type: 'string', description: 'The fact or insight to remember' },
       context: { type: 'string', description: 'Why this is important (optional)' },
     },
@@ -1710,34 +1710,29 @@ registerTool({
     if (!key?.trim())   return 'Error: key is required'
     if (!value?.trim()) return 'Error: value is required'
 
-    // Find the conversation linked to this task
-    let conversationId: string | null = null
-    if (ctx.taskId) {
-      const conv = await ctx.prisma.conversation.findFirst({
-        where: { metadata: { path: ['taskId'], equals: ctx.taskId } },
-        select: { id: true },
-        orderBy: { createdAt: 'desc' },
+    // Prefer agent-scoped knowledge (surfaced on every turn via buildAgentLocalContext)
+    if (ctx.agentId) {
+      const content = ctx2 ? `${value.trim()}\n\nContext: ${ctx2}` : value.trim()
+      await ctx.prisma.agentKnowledge.upsert({
+        where:  { agentId_title: { agentId: ctx.agentId, title: key.trim() } },
+        update: { content, updatedAt: new Date() },
+        create: { agentId: ctx.agentId, title: key.trim(), content, type: 'note' },
       })
-      conversationId = conv?.id ?? null
+      return `Remembered: [${key.trim()}] ${value.trim()}`
     }
 
-    if (!conversationId) {
-      // No linked conversation — fall back to a shared "agent-memory" conversation
-      const fallback = await ctx.prisma.conversation.upsert({
-        where:  { id: 'agent-memory-global' },
-        update: {},
-        create: { id: 'agent-memory-global', title: 'Agent Memory (global)', metadata: { system: true } as any },
+    // Fallback: room-scoped knowledge when no agentId (shouldn't happen in normal room chat)
+    if (ctx.roomId) {
+      const content = ctx2 ? `${value.trim()}\n\nContext: ${ctx2}` : value.trim()
+      await ctx.prisma.roomKnowledge.upsert({
+        where:  { roomId_title: { roomId: ctx.roomId, title: key.trim() } },
+        update: { content, updatedAt: new Date() },
+        create: { roomId: ctx.roomId, title: key.trim(), content, type: 'note' },
       })
-      conversationId = fallback.id
+      return `Remembered (room-scoped): [${key.trim()}] ${value.trim()}`
     }
 
-    await ctx.prisma.memory.upsert({
-      where:  { conversationId_key: { conversationId, key: key.trim() } },
-      update: { value: value.trim(), context: ctx2 ?? null },
-      create: { conversationId, key: key.trim(), value: value.trim(), context: ctx2 ?? null },
-    })
-
-    return `Remembered: [${key.trim()}] ${value.trim()}`
+    return 'Error: no agentId or roomId in context — cannot persist memory.'
   },
 })
 
