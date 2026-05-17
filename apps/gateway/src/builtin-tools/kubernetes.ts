@@ -352,6 +352,72 @@ export const kubernetesTools = ([
   },
 
   {
+    name: 'storage_stats',
+    description: 'Get storage capacity stats for the cluster. Auto-detects Longhorn or Rook-Ceph and returns total/used/free bytes per node.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+    async execute(_args: Record<string, unknown>) {
+      // Helper: check if a namespace exists
+      async function nsExists(ns: string): Promise<boolean> {
+        try { await kubectl(['get', 'namespace', ns, '--ignore-not-found']); return true } catch { return false }
+      }
+
+      const [hasLonghorn, hasCeph] = await Promise.all([
+        nsExists('longhorn-system'),
+        nsExists('rook-ceph'),
+      ])
+
+      if (hasLonghorn) {
+        const json = await kubectl(['get', 'nodes.longhorn.io', '-n', 'longhorn-system', '-o', 'json'])
+        const list = JSON.parse(json) as { items?: unknown[] }
+        const items = list.items ?? []
+        const nodes: Array<{ name: string; totalGiB: number; usedGiB: number; freeGiB: number }> = []
+        let clusterTotal = 0, clusterFree = 0
+        for (const node of items as any[]) {
+          const diskStatus = node.status?.diskStatus ?? {}
+          let total = 0, free = 0
+          for (const disk of Object.values(diskStatus) as any[]) {
+            total += disk.storageMaximum   ?? 0
+            free  += disk.storageAvailable ?? 0
+          }
+          if (total > 0) {
+            const toGiB = (b: number) => Math.round(b / 1073741824 * 10) / 10
+            nodes.push({ name: node.metadata?.name ?? 'unknown', totalGiB: toGiB(total), usedGiB: toGiB(total - free), freeGiB: toGiB(free) })
+            clusterTotal += total
+            clusterFree  += free
+          }
+        }
+        const toGiB = (b: number) => Math.round(b / 1073741824 * 10) / 10
+        const usedPct = clusterTotal > 0 ? Math.round((clusterTotal - clusterFree) / clusterTotal * 100) : 0
+        const lines = [
+          `Storage provider: Longhorn`,
+          `Cluster: ${toGiB(clusterTotal)} GiB total, ${toGiB(clusterTotal - clusterFree)} GiB used (${usedPct}%), ${toGiB(clusterFree)} GiB free`,
+          '',
+          'Per-node breakdown:',
+          ...nodes.map(n => `  ${n.name}: ${n.totalGiB} GiB total, ${n.usedGiB} GiB used, ${n.freeGiB} GiB free`),
+        ]
+        return lines.join('\n')
+      }
+
+      if (hasCeph) {
+        const json = await kubectl(['get', 'cephcluster', 'rook-ceph', '-n', 'rook-ceph', '-o', 'json'])
+        const cluster = JSON.parse(json) as any
+        const cap = cluster.status?.ceph?.capacity ?? {}
+        const toGiB = (b: number) => Math.round(b / 1073741824 * 10) / 10
+        const total = cap.bytesTotal     ?? 0
+        const used  = cap.bytesUsed      ?? 0
+        const free  = cap.bytesAvailable ?? 0
+        const usedPct = total > 0 ? Math.round(used / total * 100) : 0
+        return `Storage provider: Rook-Ceph\nCluster: ${toGiB(total)} GiB total, ${toGiB(used)} GiB used (${usedPct}%), ${toGiB(free)} GiB free`
+      }
+
+      return 'No storage provider detected (checked: longhorn-system, rook-ceph namespaces)'
+    },
+  },
+
+  {
     name: 'helm_upgrade_install',
     description: 'Install or upgrade a Helm chart (helm upgrade --install)',
     inputSchema: {
