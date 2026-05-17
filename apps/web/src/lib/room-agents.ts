@@ -26,6 +26,45 @@ import { getPrompt } from './system-prompts'
 import type { AgentGateway } from './agent-gateway'
 import type { GatewayTool } from './agent-runner/types'
 
+// ── Tool name fuzzy resolution ────────────────────────────────────────────────
+
+/**
+ * Attempt to resolve a hallucinated tool name to the closest real tool.
+ * Uses word-overlap scoring: split both names on underscores and count matching
+ * words (minimum 3 chars). High confidence = 2+ matching words; low = 1.
+ *
+ * Examples:
+ *   "list_secrets"       → "orion_list_secrets"   (high: "list", "secrets")
+ *   "gitops_list_files"  → "gitops_ls"             (low:  "gitops")
+ *   "deploy_app"         → null                    (no clear winner)
+ */
+function resolveToolName(
+  hallucinated: string,
+  validNames: string[],
+): { name: string; confidence: 'high' | 'low' } | null {
+  if (validNames.length === 0) return null
+  const hayWords = hallucinated.toLowerCase().split(/[_\-\s]+/).filter(w => w.length >= 3)
+  if (hayWords.length === 0) return null
+
+  const scored = validNames.map(name => {
+    const needleWords = name.toLowerCase().split(/[_\-\s]+/).filter(w => w.length >= 3)
+    const overlap = hayWords.filter(hw =>
+      needleWords.some(nw => nw === hw || nw.includes(hw) || hw.includes(nw)),
+    ).length
+    return { name, overlap }
+  }).sort((a, b) => b.overlap - a.overlap)
+
+  const best = scored[0]
+  if (best.overlap === 0) return null
+  // Require the top score to be unambiguous (no tie at same overlap with a different name)
+  const tied = scored.filter(s => s.overlap === best.overlap)
+  if (tied.length > 1) {
+    // Multiple equally-plausible matches — not safe to auto-correct
+    return { name: best.name, confidence: 'low' }
+  }
+  return { name: best.name, confidence: best.overlap >= 2 ? 'high' : 'low' }
+}
+
 // ── Mention parsing ───────────────────────────────────────────────────────────
 
 /** Extract @Name tokens from a message. */
@@ -274,6 +313,12 @@ async function callOpenAIChat(
   // Names of ORION-native tools for dispatch routing (registry + legacy)
   const orionToolNames: Set<string> = new Set([...registryToolNames, ...legacyToolNames])
 
+  // Gateway tool names — used to distinguish known gateway tools from hallucinated names.
+  // Without this set, any hallucinated name silently falls through to the gateway client
+  // and produces an opaque error instead of a useful "tool not found" message.
+  const gatewayToolNames: Set<string> = new Set(gatewayTools?.map(t => t.name) ?? [])
+  const allKnownToolNames: string[] = [...orionToolNames, ...gatewayToolNames]
+
   // Qwen3 models generate <think>…</think> tokens by default in Ollama. These thinking
   // tokens interfere with structured tool_calls output — the model occasionally narrates
   // the tool call as prose instead of emitting a proper tool_calls JSON block. Disabling
@@ -340,17 +385,46 @@ async function callOpenAIChat(
           callerAgentId: toolContext!.agentId,
           callerLlm:     toolContext!.llm,
         })
-      } else if (gateway) {
+      } else if (gateway && gatewayToolNames.has(tc.function.name)) {
+        // Known gateway tool
         result = await gateway.client.executeTool(tc.function.name, args)
       } else {
-        // Auto-run list_tools so the model gets the real categorised tool list
-        // and can self-correct on the next turn without an extra round trip.
-        const toolList = await executeRegisteredTool('list_tools', {}, {
-          agentId: toolContext!.agentId,
-          prisma,
-          gateway: undefined,
-        }).catch(() => '')
-        result = `Error: tool "${tc.function.name}" does not exist. Call list_tools to find the correct name.\n\n${toolList}`
+        // Hallucinated or unknown tool name — attempt fuzzy resolution before giving up.
+        const resolved = resolveToolName(tc.function.name, allKnownToolNames)
+        if (resolved?.confidence === 'high') {
+          // Auto-correct: call the real tool without burning a round trip
+          console.warn(`[room-agents] ${agentName}: auto-correcting hallucinated tool "${tc.function.name}" → "${resolved.name}"`)
+          if (registryToolNames.has(resolved.name)) {
+            result = await executeRegisteredTool(resolved.name, args, {
+              agentId: toolContext!.agentId,
+              prisma,
+              gateway: gateway ? {
+                executeTool: (n, a) => gateway.client.executeTool(n, a),
+                listTools:   () => gateway.client.listTools(),
+              } : undefined,
+            })
+          } else if (legacyToolNames.has(resolved.name)) {
+            result = await executeTool(resolved.name, args, {
+              roomId:        toolContext!.roomId,
+              callerAgentId: toolContext!.agentId,
+              callerLlm:     toolContext!.llm,
+            })
+          } else if (gateway) {
+            result = await gateway.client.executeTool(resolved.name, args)
+          } else {
+            result = `[Auto-corrected "${tc.function.name}" → "${resolved.name}" but still could not execute]`
+          }
+          result = `[Note: corrected "${tc.function.name}" → "${resolved.name}"]\n${result}`
+        } else {
+          // Can't resolve — return the full tool list so the model can self-correct
+          const toolList = await executeRegisteredTool('list_tools', {}, {
+            agentId: toolContext!.agentId,
+            prisma,
+            gateway: undefined,
+          }).catch(() => '')
+          const suggestion = resolved ? ` Did you mean "${resolved.name}"?` : ''
+          result = `Error: tool "${tc.function.name}" does not exist.${suggestion} Use the exact name from the list below — never guess.\n\n${toolList}`
+        }
       }
 
       console.log(`[room-agents] tool result: ${result}`)
