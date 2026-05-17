@@ -599,16 +599,12 @@ function SSOBootstrapModal({
   )
 }
 
-// ── Middleware bootstrap (CrowdSec, Fail2Ban) ────────────────────────────────
+// ── Middleware bootstrap (CrowdSec) ───────────────────────────────────────────
 
 const MIDDLEWARE_BOOTSTRAP_TYPES = [
   {
     value: 'crowdsec',  label: 'CrowdSec',        icon: Shield, description: 'Behavioral IPS with Traefik bouncer for automated IP banning',
     fields: ['namespace','clusterIssuer'],
-  },
-  {
-    value: 'fail2ban',  label: 'Fail2Ban',        icon: Bot, description: 'Intrusion prevention via log monitoring (deployed as DaemonSet)',
-    fields: ['namespace'],
   },
 ]
 
