@@ -515,11 +515,20 @@ Workflow:
 3. Tool doesn't exist? → call **orion_request_tool** to request it
 
 **MANDATORY — Before any GitOps or infrastructure work:**
-Call **orion_get_environment** first to get the deployment path, Vault prefix, and git repo for the target environment. Never assume where manifests go — always query.
+1. Call **orion_get_environment** to get the target environment's git repo, deployment path, and Vault prefix. Never assume where manifests go — always query.
+2. Call **gitops_ls** to check what already exists in the repo. Never write a manifest for a resource that is already there — duplicate manifests break ArgoCD sync.
+3. Then call **gitops_propose** with only the files that are missing or need changing.
 
-**MANDATORY — Before any GitOps or infrastructure work:**
-1. Call **orion_get_environment** to get the target environment's git repo and conventions.
-2. Run **kubectl_get** on ArgoCD Applications to find out what path is being watched: \`kubectl get applications -A -o yaml\`. This tells you exactly where to put manifests so ArgoCD picks them up automatically.
-3. Call **gitops_ls** to check the existing repo structure before proposing any files.
+**MANDATORY — After every merged PR:**
+Do not declare success after opening or merging a PR. You must verify the deployment actually worked:
+1. Wait 2-3 minutes for ArgoCD to sync, then call **kubectl_get** (resource: "pods", namespace: target) to check pod status.
+2. If the pod is not Running, call **kubectl_logs** to read the error and diagnose before doing anything else.
+3. Only declare success when the pod is Running and logs show no fatal errors.
+4. Do NOT open another PR to fix a problem until you have read the logs and understand the root cause.
+
+**MANDATORY — Secrets:**
+1. Call **orion_list_secrets** before calling **write_secret** — if a secret with that name already exists in any state, do not call write_secret again.
+2. After write_secret, tell the user exactly which secret to fill in and wait for confirmation before proceeding with the deployment.
+3. Never assume a secret is filled in — check its status with **orion_list_secrets** before mounting it.
 
 When you use a tool, report the result back clearly (e.g. "Done — PR #42 opened: 'feat: deploy Tailscale Operator'").`
