@@ -938,54 +938,6 @@ async function handleValidateManifest(args: unknown): Promise<string> {
   }
 }
 
-async function handleRequestTool(args: unknown, ctx: ToolExecutionContext): Promise<string> {
-  const { tool_description, tool_name } = parseArgs(args) as {
-    tool_description?: string
-    tool_name?: string
-  }
-
-  if (!tool_description) return 'Error: tool_description is required'
-
-  const name = tool_name || tool_description.slice(0, 50)
-
-  // Check if this is actually a built-in gateway tool the agent can't see
-  // because it has no environment linked — surface the real problem immediately.
-  const { KUBERNETES_DEFAULT_TOOLS, TALOS_DEFAULT_TOOLS, DOCKER_DEFAULT_TOOLS, LOCALHOST_DEFAULT_TOOLS } = await import('./default-tools')
-  const allGatewayTools = [
-    ...KUBERNETES_DEFAULT_TOOLS,
-    ...TALOS_DEFAULT_TOOLS,
-    ...DOCKER_DEFAULT_TOOLS,
-    ...LOCALHOST_DEFAULT_TOOLS,
-  ]
-  const gatewayMatch = allGatewayTools.find(t =>
-    t.name === name ||
-    tool_description.toLowerCase().includes(t.name.toLowerCase())
-  )
-
-  if (gatewayMatch) {
-    // Check whether this agent has an environment linked
-    const envLink = ctx.agentId
-      ? await ctx.prisma.agentEnvironment.findFirst({ where: { agentId: ctx.agentId } })
-      : null
-
-    if (!envLink) {
-      const msg = `⚠️ Agent requested built-in gateway tool **${gatewayMatch.name}** but has no environment linked — tool is invisible to agent`
-      await auditLog(ctx.agentId ?? ctx.userId, msg)
-      return [
-        `"${gatewayMatch.name}" is a built-in gateway tool — it already exists but is not visible to you because this agent is not linked to an environment.`,
-        ``,
-        `An admin needs to link this agent to an environment (e.g. "Talos Cluster") via the ORION UI or orion_patch_environment.`,
-        `Once linked, "${gatewayMatch.name}" and all other gateway tools will be available automatically — no tool request needed.`,
-      ].join('\n')
-    }
-  }
-
-  const msg = `🔧 Tool request **${name}** — ${tool_description.slice(0, 300)}`
-  await auditLog(ctx.agentId ?? ctx.userId, msg)
-
-  return `Tool request submitted: "${name}"\n\nAlpha will review this request during the next watcher cycle. Description: ${tool_description}`
-}
-
 async function handleRequestToolGrant(args: unknown, ctx: ToolExecutionContext): Promise<string> {
   const { tool_name, reason } = parseArgs(args) as {
     tool_name?: string
@@ -1623,23 +1575,6 @@ registerTool({
   handler: handleValidateManifest,
 })
 
-registerTool({
-  name: 'orion_request_tool',
-  description: 'Request a new tool type or capability. Use this when the task requires a capability that is not currently available (e.g. file writing, docker commands, curl). This creates a tool request that Alpha will review and either grant or explain why it cannot be provided.\n\nOnly request tools that are genuinely needed — do not request alternatives that already exist. If you only need read-only kubectl access, you already have it.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      tool_description: { type: 'string', description: 'Description of the tool/capability needed and why it is needed for the current task' },
-      tool_name:        { type: 'string', description: 'Suggested tool name (e.g. "file_write", "docker_run")' },
-    },
-    required: ['tool_description'],
-  },
-  tier: 'write',
-  parallelSafe: false,
-  availableIn: 'both',
-  category: 'tools',
-  handler: handleRequestTool,
-})
 
 registerTool({
   name: 'orion_cluster_health',
@@ -2751,7 +2686,7 @@ registerTool({
       `Options:`,
       `  1. You may have the wrong name — call list_tools(category) to see actual tool names.`,
       `     Available categories: ${categories.join(', ')}`,
-      `  2. If a new tool is genuinely needed, call orion_request_tool with a description of what you need.`,
+      `  2. If a new tool is genuinely needed, call propose_tool with a name, description, and inputSchema.`,
       `  3. If this should be a Nova (a custom reusable tool bundle), inform a human to create one.`,
     ].join('\n')
   },
