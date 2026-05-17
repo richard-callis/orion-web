@@ -62,6 +62,38 @@ const stateColor = (s: string) =>
   s === 'attached' ? 'text-status-healthy' :
   s === 'detached' ? 'text-text-muted' : 'text-status-warning'
 
+interface StorageStats {
+  provider: 'longhorn' | 'ceph' | null
+  totalBytes: number
+  usedBytes:  number
+  freeBytes:  number
+  nodes: Array<{ name: string; totalBytes: number; usedBytes: number; freeBytes: number }>
+}
+
+function formatStorageBytes(bytes: number): string {
+  if (!bytes) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(1024))
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
+}
+
+function CapacityBar({ total, used, free }: { total: number; used: number; free: number }) {
+  const usedPct = total > 0 ? (used / total) * 100 : 0
+  const color = usedPct > 85 ? 'bg-status-error' : usedPct > 65 ? 'bg-status-warning' : 'bg-status-healthy'
+  return (
+    <div className="space-y-1.5">
+      <div className="h-2 w-full rounded-full bg-bg-raised overflow-hidden">
+        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${usedPct.toFixed(1)}%` }} />
+      </div>
+      <div className="flex justify-between text-[10px] font-mono text-text-muted">
+        <span className="text-status-error">{formatStorageBytes(used)} used</span>
+        <span>{usedPct.toFixed(1)}%</span>
+        <span className="text-status-healthy">{formatStorageBytes(free)} free</span>
+      </div>
+    </div>
+  )
+}
+
 function StorageTab({ envId, loading, setLoading, error, setError }: {
   envId: string
   loading: boolean
@@ -70,21 +102,29 @@ function StorageTab({ envId, loading, setLoading, error, setError }: {
   setError: (v: string | null) => void
 }) {
   const [volumes, setVolumes] = useState<LonghornVolume[]>([])
+  const [stats, setStats] = useState<StorageStats | null>(null)
 
   const load = useCallback(async () => {
     if (!envId) return
     setLoading(true); setError(null)
     try {
-      const res = await fetch(`/api/environments/${envId}/storage`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      setVolumes(data.volumes ?? [])
+      const [volRes, statsRes] = await Promise.all([
+        fetch(`/api/environments/${envId}/storage`),
+        fetch(`/api/environments/${envId}/storage-stats`),
+      ])
+      if (!volRes.ok) throw new Error(`HTTP ${volRes.status}`)
+      const volData = await volRes.json()
+      setVolumes(volData.volumes ?? [])
+      if (statsRes.ok) {
+        const s = await statsRes.json() as StorageStats
+        setStats(s)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
-  }, [envId, setLoading])
+  }, [envId, setLoading, setError])
 
   useEffect(() => { load() }, [load])
 
@@ -93,10 +133,24 @@ function StorageTab({ envId, loading, setLoading, error, setError }: {
   const faulted = volumes.filter(v => v.status?.robustness === 'faulted').length
   const unknown = volumes.length - healthy - degraded - faulted
 
+  if (!envId) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-text-muted">
+        <HardDrive size={32} className="mb-3 opacity-30" />
+        <p className="text-sm">Select a cluster environment using the selector above</p>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-text-primary">Longhorn Volumes</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-text-primary">Longhorn Volumes</h2>
+          {stats?.provider && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded border border-accent/30 bg-accent/5 text-accent font-mono capitalize">{stats.provider}</span>
+          )}
+        </div>
         <button onClick={load} disabled={loading} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-text-muted hover:text-text-primary border border-border-subtle hover:border-accent/50 disabled:opacity-50 transition-colors">
           <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
           Refresh
@@ -107,6 +161,37 @@ function StorageTab({ envId, loading, setLoading, error, setError }: {
         <div className="flex items-center gap-2 rounded-lg border border-status-error/30 bg-status-error/10 px-4 py-3 text-sm text-status-error">
           <ServerCrash size={14} />
           <span>{error}</span>
+        </div>
+      )}
+
+      {/* Capacity stats */}
+      {stats?.provider && stats.totalBytes > 0 && (
+        <div className="rounded-lg border border-border-subtle bg-bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-medium text-text-secondary">Cluster Capacity</span>
+            <span className="font-mono text-text-primary">{formatStorageBytes(stats.totalBytes)} total</span>
+          </div>
+          <CapacityBar total={stats.totalBytes} used={stats.usedBytes} free={stats.freeBytes} />
+          {stats.nodes.length > 0 && (
+            <div className="pt-2 border-t border-border-subtle space-y-2">
+              <p className="text-[10px] text-text-muted font-medium">Per node</p>
+              {stats.nodes.map(n => {
+                const pct = n.totalBytes > 0 ? (n.usedBytes / n.totalBytes) * 100 : 0
+                const color = pct > 85 ? 'bg-status-error' : pct > 65 ? 'bg-status-warning' : 'bg-accent'
+                return (
+                  <div key={n.name} className="space-y-0.5">
+                    <div className="flex justify-between text-[10px] font-mono">
+                      <span className="text-text-primary">{n.name}</span>
+                      <span className="text-text-muted">{formatStorageBytes(n.totalBytes)}</span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-bg-raised overflow-hidden">
+                      <div className={`h-full rounded-full ${color}`} style={{ width: `${pct.toFixed(1)}%` }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -885,8 +970,8 @@ export function InfrastructureTabs() {
         ))}
       </div>
 
-      {/* Toolbar — only show on overview tab */}
-      {activeTab === 'overview' && (
+      {/* Toolbar — show env selector on overview and storage tabs */}
+      {(activeTab === 'overview' || activeTab === 'storage' || activeTab === 'secrets') && (
         <>
           <div className="flex items-center gap-2">
             <select
