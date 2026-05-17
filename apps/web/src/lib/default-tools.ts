@@ -200,6 +200,17 @@ export const KUBERNETES_DEFAULT_TOOLS: DefaultTool[] = [
     builtIn: true,
   },
   {
+    name: 'storage_stats',
+    description: 'Get storage capacity stats for the cluster. Auto-detects Longhorn or Rook-Ceph and returns total/used/free bytes per node.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+    execType: 'builtin',
+    execConfig: { fn: 'storage_stats' },
+    builtIn: true,
+  },
+  {
     name: 'helm_upgrade_install',
     description: 'Install or upgrade a Helm chart (helm upgrade --install)',
     inputSchema: {

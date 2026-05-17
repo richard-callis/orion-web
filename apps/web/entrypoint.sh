@@ -6,6 +6,7 @@ set -e
 # the migration file was updated (e.g. IF NOT EXISTS added after the fact).
 echo "Checking for failed migrations to resolve..."
 node /app/node_modules/prisma/build/index.js migrate resolve --rolled-back 10_nebula_table 2>/dev/null || true
+node /app/node_modules/prisma/build/index.js migrate resolve --rolled-back 11_seed_storage_stats_tool 2>/dev/null || true
 
 echo "Running database migrations..."
 for i in 1 2 3 4 5 6 7 8; do
