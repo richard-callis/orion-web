@@ -645,6 +645,21 @@ async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Pr
       return 'Error: environment has no git repo — run bootstrap first'
     }
 
+    // Deduplication guard — if there's already an open PR for this environment with a similar
+    // title, return it instead of creating another one. This prevents agents from spamming PRs
+    // when they retry the same deployment step multiple times.
+    const existingPR = await ctx.prisma.gitOpsPR.findFirst({
+      where: {
+        environmentId: env.id,
+        status: 'open',
+        title: { contains: title!.slice(0, 30), mode: 'insensitive' },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+    if (existingPR) {
+      return `PR #${existingPR.prNumber} already exists for this deployment: "${existingPR.title}". URL: ${existingPR.prUrl}\n\nDo not create another PR — wait for this one to be reviewed and merged, or check ArgoCD sync status.`
+    }
+
     const policy = (env.policyConfig ?? {}) as { overrides?: Record<string, string>; reviewAll?: boolean }
 
     // Live ArgoCD path discovery — query the cluster for the Application watching this repo.
