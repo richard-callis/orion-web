@@ -369,7 +369,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   )
 
   return (
-    <>
+    <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border-subtle flex-shrink-0">
         <button onClick={onMobileBack} className="md:hidden p-1 rounded hover:bg-bg-raised"><Hash size={16} className="text-text-muted" /></button>
@@ -670,6 +670,6 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
           </div>
         </div>
       )}
-    </>
+    </div>
   )
 }
