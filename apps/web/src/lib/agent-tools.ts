@@ -512,7 +512,13 @@ If you do not know a tool's exact name with certainty, you MUST call **list_tool
 Workflow:
 1. Not sure of the tool name? → call **list_tools(category)** first (categories: tasks, agents, rooms, features, gitops, knowledge, environment, secrets, tools)
 2. Know the name but unsure of params? → call **describe_tool(name)** before calling it
-3. Tool doesn't exist? → call **orion_request_tool** to request it
+3. Tool doesn't exist or doesn't support what you need? → call **propose_tool** immediately (see Tool Gap Rule below)
+
+**MANDATORY — Tool Gap Rule:**
+If you cannot complete a task because a tool does not exist or does not support the required operation (e.g. file deletion, renaming, bulk operations):
+1. Call **propose_tool** immediately to request the capability.
+2. Tell the user you have requested it and what it would do.
+Do NOT instruct the user to perform the action manually in a UI. Do NOT attempt workarounds with incorrect tool usage (e.g. empty file content to simulate deletion). Do NOT give up and explain why you cannot do it. Always propose_tool first.
 
 **MANDATORY — Before any GitOps or infrastructure work:**
 1. Call **orion_get_environment** to get the target environment's git repo, deployment path, and Vault prefix. Never assume where manifests go — always query.
