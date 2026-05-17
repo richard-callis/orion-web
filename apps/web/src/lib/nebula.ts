@@ -58,7 +58,7 @@ export interface Nova {
   description: string | null
   category: NovaCategory
   version: string
-  source: 'bundled' | 'remote' | 'user-created'
+  source: 'bundled' | 'remote' | 'user-created' | 'nebula'
   config: NovaConfig
   tags: string[]
   createdAt: string

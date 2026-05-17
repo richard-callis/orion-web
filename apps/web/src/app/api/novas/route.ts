@@ -16,17 +16,18 @@ export async function GET(req: NextRequest) {
   const category = searchParams.get('category')
   const type = searchParams.get('type')
   const source = searchParams.get('source')
+  const tag = searchParams.get('tag')
   const q = searchParams.get('q')
 
-  // Get database-stored Novas (user-created)
+  // Get database-stored Novas (user-created + nebula-sourced)
   const dbNovae = await prisma.nova.findMany({
     orderBy: { name: 'asc' },
   })
 
-  // Build response
+  // Build response — start from bundled + remote Novas
   let result = await getAllNovae()
 
-  // Add user-created Novas from DB
+  // Add DB Novas (user-created and nebula-sourced) that aren't already in the list
   for (const dbNova of dbNovae) {
     const existing = result.find(n => n.name === dbNova.name)
     if (!existing) {
@@ -52,6 +53,9 @@ export async function GET(req: NextRequest) {
   }
   if (source) {
     result = result.filter(n => n.source === source)
+  }
+  if (tag) {
+    result = result.filter(n => n.tags?.includes(tag))
   }
   if (q) {
     const query = q.toLowerCase()

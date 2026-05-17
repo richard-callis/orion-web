@@ -156,6 +156,29 @@ export class GitLabGitProvider implements GitProvider {
     }
   }
 
+  // ── File reading (Nebula) ──────────────────────────────────────────────────
+
+  async readFile(owner: string, repo: string, path: string, ref: string): Promise<string> {
+    const url = `${this.url}/api/v4/projects/${this.projectPath(owner, repo)}/repository/files/${encodeURIComponent(path)}/raw?ref=${encodeURIComponent(ref)}`
+    const res = await fetch(url, {
+      headers: { 'PRIVATE-TOKEN': this.token },
+    })
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      throw new Error(`GitLab GET raw ${path} → ${res.status}: ${detail}`)
+    }
+    return res.text()
+  }
+
+  async listFiles(owner: string, repo: string, path: string, ref: string): Promise<string[]> {
+    const items = await this.fetch<Array<{ name: string; type: string; path: string }>>(
+      `/projects/${this.projectPath(owner, repo)}/repository/tree?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}&recursive=false`,
+    )
+    return (items ?? [])
+      .filter(f => f.type === 'blob' && f.name.endsWith('.yaml'))
+      .map(f => f.path)
+  }
+
   // ── PRs (GitLab: "merge requests") ─────────────────────────────────────────
 
   async createPR(opts: CreatePROptions): Promise<GitPR> {

@@ -175,6 +175,31 @@ export class GiteaGitProvider implements GitProvider {
     }
   }
 
+  // ── File reading (Nebula) ──────────────────────────────────────────────────
+
+  async readFile(owner: string, repo: string, path: string, ref: string): Promise<string> {
+    const encodedPath = path.split('/').map(encodeURIComponent).join('/')
+    const url = `${this.url}/api/v1/repos/${owner}/${repo}/raw/${encodedPath}?ref=${encodeURIComponent(ref)}`
+    const res = await fetch(url, {
+      headers: { Authorization: `token ${this.token}` },
+    })
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      throw new Error(`Gitea GET raw ${path} → ${res.status}: ${detail}`)
+    }
+    return res.text()
+  }
+
+  async listFiles(owner: string, repo: string, path: string, ref: string): Promise<string[]> {
+    const encodedPath = path.split('/').map(encodeURIComponent).join('/')
+    const items = await this.fetch<Array<{ name: string; type: string; path: string }>>(
+      `/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`,
+    )
+    return (items ?? [])
+      .filter(f => f.type === 'file' && f.name.endsWith('.yaml'))
+      .map(f => f.path)
+  }
+
   // ── PRs ────────────────────────────────────────────────────────────────────
 
   async createPR(opts: CreatePROptions): Promise<GitPR> {
