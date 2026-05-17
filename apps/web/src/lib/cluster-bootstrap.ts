@@ -137,6 +137,7 @@ async function argocdConfigureApp(token: string, envName: string, repoUrl: strin
         repoURL: repoUrl,
         targetRevision: 'main',
         path: 'deployments',
+        directory: { recurse: true },
       },
       destination: {
         server: clusterServer,
