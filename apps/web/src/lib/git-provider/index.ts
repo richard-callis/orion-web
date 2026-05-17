@@ -85,6 +85,10 @@ export interface GitProvider {
   getPR(owner: string, repo: string, prNumber: number): Promise<GitPR>
   listOpenPRs(owner: string, repo: string): Promise<GitPR[]>
 
+  // File reading (for Nebula Nova loading)
+  readFile(owner: string, repo: string, path: string, ref: string): Promise<string>
+  listFiles(owner: string, repo: string, path: string, ref: string): Promise<string[]>
+
   // Webhooks
   ensureWebhook(owner: string, repo: string, callbackUrl: string, secret: string): Promise<void>
 
@@ -182,4 +186,16 @@ export async function getGitProvider(): Promise<GitProvider> {
 
 export function invalidateGitProviderCache(): void {
   _cached = null
+}
+
+/**
+ * Returns the raw git provider configuration stored in SystemSetting,
+ * or null if the git provider has not been configured yet.
+ */
+export async function getGitProviderConfig(): Promise<GitProviderConfig | null> {
+  const setting = await prisma.systemSetting.findUnique({
+    where: { key: 'git.provider.config' },
+  })
+  if (!setting) return null
+  return decryptJson<GitProviderConfig>(setting.value)
 }

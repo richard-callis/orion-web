@@ -1102,6 +1102,27 @@ model Ruleset {
   @@index([name])
 }
 
+// ─── Nebula — Git-backed Nova catalogs ────────────────────────────────────────
+// A Nebula is a git repository that acts as a catalog of Nova YAML definitions.
+// ORION reads Novas from Nebula repos and merges them with bundled Novas.
+// The system Nebula is seeded automatically after the git provider is configured.
+
+model Nebula {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  displayName String
+  description String?   @db.Text
+  gitUrl      String
+  branch      String    @default("main")
+  path        String    @default("novas")
+  isSystem    Boolean   @default(false)
+  lastSyncAt  DateTime?
+  syncStatus  String    @default("pending")
+  syncError   String?   @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
 model AgentScore {
   id            String         @id @default(cuid())
   environmentId String

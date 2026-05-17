@@ -14,6 +14,22 @@ import { startJob, type JobLogger } from '@/lib/job-runner'
 import { GatewayClient } from '@/lib/agent-runner/gateway-client'
 import { requireAdmin } from '@/lib/auth'
 
+// Nova config shape for Nebula-sourced middleware
+interface MiddlewareNovaConfig {
+  name: string
+  displayName: string
+  namespaceLabels?: Record<string, Record<string, string>>
+  helm?: {
+    chart: string
+    repo?: string
+    namespace: string
+    createNamespace?: boolean
+    values?: { raw: string }
+  }
+  manifests?: string[]
+  setupNote?: string
+}
+
 export async function POST(
   _req: NextRequest,
   { params }: { params: { id: string } },
@@ -35,14 +51,15 @@ export async function POST(
 
   const env = point.environment
   const body = await _req.json().catch(() => ({}))
-  const middlewareType = String(body.middlewareType ?? 'crowdsec')
+  // Accept novaName (new) or middlewareType (backwards compat)
+  const novaName = String(body.novaName ?? body.middlewareType ?? 'crowdsec')
 
-  if (middlewareType !== 'crowdsec' && middlewareType !== 'fail2ban') {
-    return NextResponse.json({ error: 'Invalid middleware type' }, { status: 422 })
+  if (!novaName) {
+    return NextResponse.json({ error: 'novaName is required' }, { status: 422 })
   }
 
   if (env.type === 'docker') {
-    return NextResponse.json({ error: 'CrowdSec and Fail2Ban require a Kubernetes environment' }, { status: 422 })
+    return NextResponse.json({ error: 'Middleware bootstrap requires a Kubernetes environment' }, { status: 422 })
   }
 
   // Determine execution mode: gateway first, fallback to local kubeconfig
@@ -78,17 +95,17 @@ export async function POST(
 
   const jobId = await startJob(
     'bootstrap-middleware',
-    `Bootstrap middleware (${middlewareType})`,
-    { environmentId: env.id, metadata: { middlewareType, useGateway, useLocal } },
+    `Bootstrap middleware (${novaName})`,
+    { environmentId: env.id, metadata: { novaName, useGateway, useLocal } },
     async log => {
       if (useGateway) {
         await log(`Using gateway at ${gwUrl} for cluster operations`)
         const gc = new GatewayClient(gwUrl!, gwToken!)
-        await bootstrapMiddleware(gwExecFn(gc), log, { type: middlewareType })
+        await bootstrapMiddleware(gwExecFn(gc), log, { novaName })
       } else {
         await log(`Using local kubectl (stored kubeconfig) for cluster operations`)
         const localKubectl = makeKubectlRunner(env.kubeconfig!)
-        await bootstrapMiddleware(localKubectl, log, { type: middlewareType })
+        await bootstrapMiddleware(localKubectl, log, { novaName })
       }
     },
   )
@@ -103,15 +120,70 @@ function gwExecFn(gc: GatewayClient) {
 async function bootstrapMiddleware(
   gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
   log: JobLogger,
-  cfg: { type: string },
+  cfg: { novaName: string },
 ): Promise<void> {
-  await log(`Deploying ${cfg.type} infrastructure middleware`)
+  await log(`Deploying middleware: ${cfg.novaName}`)
 
-  switch (cfg.type) {
-    case 'crowdsec':     await deployCrowdSec(gx, log); break
-    case 'fail2ban':     await deployFail2Ban(gx, log); break
-    default:
-      throw new Error(`Unknown middleware type: ${cfg.type}`)
+  // crowdsec retains its existing dedicated implementation for backwards compat
+  if (cfg.novaName === 'crowdsec') {
+    await deployCrowdSec(gx, log)
+    return
+  }
+
+  // All other Novas: look up config from DB and deploy generically
+  const nova = await prisma.nova.findUnique({ where: { name: cfg.novaName } })
+  if (!nova) throw new Error(`Nova "${cfg.novaName}" not found in catalog`)
+
+  await deployFromNovaConfig(gx, log, nova.config as unknown as MiddlewareNovaConfig)
+}
+
+async function deployFromNovaConfig(
+  gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
+  log: JobLogger,
+  config: MiddlewareNovaConfig,
+): Promise<void> {
+  const { name, displayName, namespaceLabels, helm, manifests, setupNote } = config
+
+  // Apply namespace labels
+  if (namespaceLabels) {
+    for (const [ns, labels] of Object.entries(namespaceLabels)) {
+      await log(`Ensuring namespace ${ns} with required labels…`)
+      const labelLines = Object.entries(labels).map(([k, v]) => `    ${k}: "${v}"`).join('\n')
+      await gx('kubectl_apply_manifest', {
+        manifest: `apiVersion: v1\nkind: Namespace\nmetadata:\n  name: ${ns}\n  labels:\n${labelLines}`,
+      })
+      await log(`  Namespace ${ns} ready ✓`)
+    }
+  }
+
+  // Helm install
+  if (helm) {
+    await log(`Installing ${displayName ?? name} via Helm…`)
+    await gx('helm_upgrade_install', {
+      release: name,
+      chart: helm.chart,
+      repo: helm.repo,
+      namespace: helm.namespace,
+      createNamespace: helm.createNamespace ?? false,
+      // Pass raw YAML values string through valuesFile param
+      valuesFile: helm.values?.raw,
+      wait: false,
+      timeout: '300s',
+    })
+    await log(`  Helm release installed ✓`)
+  }
+
+  // Post-install manifests
+  if (manifests?.length) {
+    await log('Applying post-install manifests…')
+    for (const manifest of manifests) {
+      await gx('kubectl_apply_manifest', { manifest })
+    }
+    await log('  Manifests applied ✓')
+  }
+
+  if (setupNote) {
+    await log(`\nSetup note:\n${setupNote}`)
   }
 }
 
@@ -139,38 +211,38 @@ async function deployCrowdSec(gx: (tool: string, args: Record<string, unknown>) 
     }
   } catch { /* not installed yet */ }
 
-  // Ensure namespace has PodSecurity bypass annotation (Talos defaults to restricted policy)
-  // Always apply — updates annotations even if namespace already exists
+  // Ensure namespace exists with PodSecurity labels set to privileged.
+  // Talos enforces baseline by default — agents need hostPath volumes so require privileged.
+  // Must use labels (not annotations) — PodSecurity admission reads labels only.
   await gx('kubectl_apply_manifest', {
     manifest: `apiVersion: v1
 kind: Namespace
 metadata:
   name: crowdsec
-  annotations:
+  labels:
     pod-security.kubernetes.io/enforce: "privileged"
     pod-security.kubernetes.io/audit: "privileged"
     pod-security.kubernetes.io/warn: "privileged"`,
   })
+  await log('  Namespace crowdsec ready with privileged PodSecurity labels ✓')
 
   const valuesFile = `agent:
   acquisition:
-    - namespace: ".+"
+    - namespace: kube-system
       podName: ".*"
-      program: "containerlog"
-      poll_without_inotify: true
-  image:
-    repository: docker.io/crowdsec/crowdsec
-crowdsec:
-  config:
-    piers:
-      - storage:
-          type: sqlite
-traefik:
-  enabled: "true"
-  image:
-    repository: docker.io/traefik/mb
-metrics:
-  enabled: "true"
+      program: containerlog
+    - namespace: apps
+      podName: ".*"
+      program: containerlog
+    - namespace: security
+      podName: ".*"
+      program: containerlog
+    - namespace: management
+      podName: ".*"
+      program: containerlog
+lapi:
+  dashboard:
+    enabled: false
 `
 
   await log('Installing CrowdSec via Helm...')
@@ -178,17 +250,17 @@ metrics:
     release: 'crowdsec', chart: 'crowdsec', repo: 'https://crowdsecurity.github.io/helm-charts',
     namespace: 'crowdsec', createNamespace: false, valuesFile, wait: false, timeout: '300s',
   })
-  await log('  CrowdSec installed ✓')
+  await log('  CrowdSec Helm release installed ✓')
 
-  await log('Creating Traefik bouncer...')
+  // Generate a bouncer API key via cscli inside the LAPI pod, then deploy the bouncer
+  await log('Registering Traefik bouncer API key with CrowdSec LAPI...')
+  await log('  NOTE: Run the following after pods are ready to get the API key:')
+  await log('  kubectl exec -n crowdsec deploy/crowdsec-lapi -- cscli bouncers add traefik-bouncer -o raw')
+  await log('  Then patch: kubectl create secret generic crowdsec-traefik-bouncer -n crowdsec --from-literal=api_key=<KEY> --dry-run=client -o yaml | kubectl apply -f -')
+
+  await log('Deploying Traefik bouncer...')
   await gx('kubectl_apply_manifest', {
-    manifest: `apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: crowdsec-traefik-bouncer
-  namespace: crowdsec
----
-apiVersion: apps/v1
+    manifest: `apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: crowdsec-traefik-bouncer
@@ -203,7 +275,6 @@ spec:
       labels:
         app: crowdsec-traefik-bouncer
     spec:
-      serviceAccountName: crowdsec-traefik-bouncer
       containers:
         - name: bouncer
           image: docker.io/fbonalair/traefik-crowdsec-bouncer:latest
@@ -213,6 +284,8 @@ spec:
                 secretKeyRef:
                   name: crowdsec-traefik-bouncer
                   key: api_key
+            - name: CROWDSEC_AGENT_HOST
+              value: crowdsec-service.crowdsec.svc.cluster.local:8080
           ports:
             - containerPort: 8068
 ---
@@ -229,99 +302,18 @@ spec:
       port: 8068
       targetPort: 8068
 ---
-apiVersion: v1
-kind: Secret
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
 metadata:
-  name: crowdsec-traefik-bouncer
-  namespace: crowdsec
-type: Opaque
-stringData:
-  api_key: ""`,
+  name: crowdsec-bouncer
+  namespace: security
+spec:
+  forwardAuth:
+    address: http://crowdsec-traefik-bouncer.crowdsec.svc.cluster.local:8068/api/v1/forwardAuth
+    trustForwardHeader: true`,
   })
   await log('  Traefik bouncer deployed ✓')
-}
-
-async function deployFail2Ban(gx: (tool: string, args: Record<string, unknown>) => Promise<string>, log: JobLogger): Promise<void> {
-  if (await kubectlExists(gx, 'daemonset', 'fail2ban', 'kube-system')) {
-    await log('  Fail2Ban already installed ✓')
-    return
-  }
-
-  await log('Deploying Fail2Ban DaemonSet for Kubernetes...')
-
-  await gx('kubectl_apply_manifest', {
-    manifest: `apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: fail2ban
-  namespace: kube-system
-spec:
-  selector:
-    matchLabels:
-      app: fail2ban
-  template:
-    metadata:
-      labels:
-        app: fail2ban
-    spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
-      containers:
-        - name: fail2ban
-          image: ghcr.io/anthonyfue/fail2ban-k8s:latest
-          securityContext:
-            privileged: true
-            capabilities:
-              add:
-                - NET_ADMIN
-                - NET_RAW
-                - SYS_ADMIN
-              drop:
-                - ALL
-          volumeMounts:
-            - name: fail2ban-config
-              mountPath: /etc/fail2ban
-            - name: fail2ban-data
-              mountPath: /var/lib/fail2ban
-            - name: var-log
-              mountPath: /var/log
-              readOnly: true
-            - name: run-nft
-              mountPath: /run/nftables
-      volumes:
-        - name: fail2ban-config
-          configMap:
-            name: fail2ban-config
-        - name: fail2ban-data
-          emptyDir: {}
-        - name: var-log
-          hostPath:
-            path: /var/log
-            type: DirectoryOrCreate
-        - name: run-nft
-          emptyDir: {}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: fail2ban-config
-  namespace: kube-system
-data:
-  fail2ban.local: |
-    [DEFAULT]
-    ignoreip = 127.0.0.1/8 ::1
-    bantime  = 3600
-    findtime = 600
-    maxretry = 5
-    backend = auto
-  jail.local: |
-    [traefik]
-    enabled = true
-    filter = traefik
-    logpath = /var/log/kern.log
-    maxretry = 5`,
-  })
-  await log('  Fail2Ban DaemonSet deployed ✓')
+  await log('  Middleware security-crowdsec-bouncer@kubernetescrd created ✓')
 }
 
 // ── Local kubectl runner (fallback when gateway unavailable) ──────────────────

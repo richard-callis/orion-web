@@ -25,6 +25,7 @@ import { createProvider, invalidateGitProviderCache, type GitProviderConfig, typ
 import { GiteaGitProvider } from '@/lib/git-provider/gitea-provider'
 import { encryptJson } from '@/lib/encryption'
 import { randomBytes } from 'crypto'
+import { seedSystemNebula } from '@/lib/seed-system-nebula'
 
 export async function POST(req: NextRequest) {
   if (!await requireWizardSession(req)) {
@@ -117,6 +118,9 @@ export async function POST(req: NextRequest) {
 
   // Invalidate the in-process provider cache so the new config is picked up immediately
   invalidateGitProviderCache()
+
+  // Seed system Nebula in background (don't block the response)
+  seedSystemNebula().catch(err => console.error('[Nebula] System nebula seed failed:', err))
 
   return NextResponse.json({ ok: true })
 }

@@ -161,6 +161,27 @@ export class GitHubGitProvider implements GitProvider {
     })
   }
 
+  // ── File reading (Nebula) ──────────────────────────────────────────────────
+
+  async readFile(owner: string, repo: string, path: string, ref: string): Promise<string> {
+    const data = await this.fetch<{ content: string; encoding: string }>(
+      `/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`,
+    )
+    if (data.encoding === 'base64') {
+      return Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf8')
+    }
+    return data.content
+  }
+
+  async listFiles(owner: string, repo: string, path: string, ref: string): Promise<string[]> {
+    const items = await this.fetch<Array<{ name: string; type: string; path: string }>>(
+      `/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`,
+    )
+    return (items ?? [])
+      .filter(f => f.type === 'file' && f.name.endsWith('.yaml'))
+      .map(f => f.path)
+  }
+
   // ── PRs ────────────────────────────────────────────────────────────────────
 
   async createPR(opts: CreatePROptions): Promise<GitPR> {
