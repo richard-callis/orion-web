@@ -19,6 +19,7 @@ const SOURCE_COLORS: Record<Nova['source'], string> = {
   'bundled': 'bg-blue-500/15 text-blue-300 text-[10px] px-1.5 py-0.5 rounded',
   'remote': 'bg-purple-500/15 text-purple-300 text-[10px] px-1.5 py-0.5 rounded',
   'user-created': 'bg-amber-500/15 text-amber-300 text-[10px] px-1.5 py-0.5 rounded',
+  'nebula': 'bg-violet-500/15 text-violet-300 text-[10px] px-1.5 py-0.5 rounded',
 }
 
 export default function NovaPage() {

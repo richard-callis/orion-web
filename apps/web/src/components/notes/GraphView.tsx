@@ -4,12 +4,21 @@ import ForceGraph2D from 'react-force-graph-2d'
 import { Search, X, ArrowLeft } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
+interface HoverTooltip {
+  node: GraphNode
+  x: number
+  y: number
+}
+
 interface GraphNode {
   id: string
   title: string
   type: string
   folder: string
   pinned: boolean
+  // Injected at runtime by react-force-graph
+  x?: number
+  y?: number
 }
 
 interface GraphLink {
@@ -45,7 +54,9 @@ export function GraphView() {
   const [highlightedLinks, setHighlightedLinks] = useState<Set<string>>(new Set())
   const [showSemantic, setShowSemantic] = useState(true)
   const [showWikilinks, setShowWikilinks] = useState(true)
+  const [hoverTooltip, setHoverTooltip] = useState<HoverTooltip | null>(null)
   const fgRef = useRef<any>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   // Fetch graph data on mount
   useEffect(() => {
@@ -95,11 +106,12 @@ export function GraphView() {
     }
   }, [visibleLinks])
 
-  // Handle node hover
-  const handleNodeHover = useCallback((node: GraphNode | null) => {
+  // Handle node hover — highlights + tooltip
+  const handleNodeHover = useCallback((node: GraphNode | null, _prevNode: GraphNode | null, event?: MouseEvent) => {
     if (!node) {
       setHighlightedNodes(new Set())
       setHighlightedLinks(new Set())
+      setHoverTooltip(null)
       return
     }
 
@@ -118,6 +130,15 @@ export function GraphView() {
 
     setHighlightedNodes(nodes)
     setHighlightedLinks(links)
+
+    if (event && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect()
+      setHoverTooltip({
+        node,
+        x: event.clientX - rect.left + 12,
+        y: event.clientY - rect.top + 12,
+      })
+    }
   }, [visibleLinks])
 
   // Zoom to node on click
@@ -144,6 +165,40 @@ export function GraphView() {
     if (highlightedLinks.size > 0 && !highlightedLinks.has(linkKey(link))) return 0.5
     return link.type === 'semantic' ? 1.2 : 1.5
   }
+
+  // Connection count for a node (used in tooltip)
+  const connectionCount = useCallback((nodeId: string) => {
+    if (!data) return 0
+    return data.links.filter(l => l.source === nodeId || l.target === nodeId).length
+  }, [data])
+
+  // Canvas painter — dot + title label
+  const paintNode = useCallback((node: GraphNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
+    const radius = 4
+    const color = highlightedNodes.size > 0 && !highlightedNodes.has(node.id)
+      ? '#334155'
+      : (CATEGORY_COLORS[node.type] || CATEGORY_COLORS.note)
+
+    // Draw circle
+    ctx.beginPath()
+    ctx.arc(node.x ?? 0, node.y ?? 0, radius, 0, 2 * Math.PI)
+    ctx.fillStyle = color
+    ctx.fill()
+
+    // Draw label — only when zoomed in enough to be readable
+    if (globalScale >= 0.6) {
+      const label = node.title.length > 28 ? node.title.slice(0, 26) + '…' : node.title
+      const fontSize = Math.max(10 / globalScale, 3)
+      ctx.font = `${fontSize}px Inter, sans-serif`
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'middle'
+      const alpha = Math.min(1, (globalScale - 0.6) / 0.4)
+      ctx.fillStyle = highlightedNodes.size > 0 && !highlightedNodes.has(node.id)
+        ? `rgba(100, 116, 139, ${alpha * 0.5})`
+        : `rgba(226, 232, 240, ${alpha})`
+      ctx.fillText(label, (node.x ?? 0) + radius + 2, node.y ?? 0)
+    }
+  }, [highlightedNodes])
 
   // Build link info (for display)
   const getLinkInfo = useCallback((link: GraphLink): { label: string; score?: number } | null => {
@@ -181,7 +236,7 @@ export function GraphView() {
   return (
     <div className="absolute inset-0 flex">
       {/* Graph canvas */}
-      <div className="flex-1 relative bg-[#0f172a]">
+      <div ref={containerRef} className="flex-1 relative bg-[#0f172a]">
         {loading ? (
           <div className="flex items-center justify-center h-full text-text-muted text-sm">
             Loading knowledge graph...
@@ -192,14 +247,38 @@ export function GraphView() {
             graphData={data || { nodes: [], links: [] }}
             nodeColor={nodeColor}
             nodeRelSize={4}
-            nodeLabel={(node: GraphNode) => `${node.title} (${node.type})`}
+            nodeLabel={() => ''}
+            nodeCanvasObject={paintNode}
+            nodeCanvasObjectMode={() => 'replace'}
             onNodeClick={handleNodeClick}
-            onNodeHover={handleNodeHover}
+            onNodeHover={handleNodeHover as any}
             linkColor={linkColor}
             linkWidth={linkWidth}
             backgroundColor="#0f172a"
             cooldownTicks={100}
           />
+        )}
+
+        {/* Hover tooltip */}
+        {hoverTooltip && (
+          <div
+            className="pointer-events-none absolute z-50 max-w-[200px] rounded bg-slate-800 border border-slate-600 px-3 py-2 shadow-lg text-xs"
+            style={{ left: hoverTooltip.x, top: hoverTooltip.y }}
+          >
+            <div className="font-semibold text-text-primary leading-snug mb-1 break-words">
+              {hoverTooltip.node.title}
+            </div>
+            <div className="space-y-0.5 text-text-muted">
+              <div><span className="text-slate-500">type</span> · <span className="text-text-secondary capitalize">{hoverTooltip.node.type}</span></div>
+              {hoverTooltip.node.folder && (
+                <div><span className="text-slate-500">folder</span> · <span className="text-text-secondary">{hoverTooltip.node.folder}</span></div>
+              )}
+              <div><span className="text-slate-500">links</span> · <span className="text-text-secondary">{connectionCount(hoverTooltip.node.id)}</span></div>
+              {hoverTooltip.node.pinned && (
+                <div className="text-amber-400/80">📌 pinned</div>
+              )}
+            </div>
+          </div>
         )}
 
         {/* Search overlay */}
