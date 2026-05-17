@@ -109,8 +109,8 @@ export class GitHubGitProvider implements GitProvider {
     )
     const baseTreeSha = commitData.tree.sha
 
-    // Create blobs
-    const treeItems = await Promise.all(
+    // Create blobs for upserts
+    const upsertItems = await Promise.all(
       opts.files.map(async (f) => {
         const blob = await this.fetch<{ sha: string }>(
           `/repos/${opts.owner}/${opts.repo}/git/blobs`,
@@ -126,11 +126,19 @@ export class GitHubGitProvider implements GitProvider {
       }),
     )
 
+    // Deletion tree items — sha: null removes the file
+    const deletionItems = (opts.deletions ?? []).map(path => ({
+      path,
+      mode: '100644' as const,
+      type: 'blob' as const,
+      sha: null,
+    }))
+
     const tree = await this.fetch<{ sha: string }>(
       `/repos/${opts.owner}/${opts.repo}/git/trees`,
       {
         method: 'POST',
-        body: JSON.stringify({ base_tree: baseTreeSha, tree: treeItems }),
+        body: JSON.stringify({ base_tree: baseTreeSha, tree: [...upsertItems, ...deletionItems] }),
       },
     )
 

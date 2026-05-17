@@ -49,6 +49,8 @@ export interface CommitFilesOptions {
   repo: string
   branch: string
   files: Array<{ path: string; content: string }>
+  /** Repo-relative paths to delete in the same commit */
+  deletions?: string[]
   message: string
 }
 
