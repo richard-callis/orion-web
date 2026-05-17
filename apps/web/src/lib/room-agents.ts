@@ -99,7 +99,13 @@ When you do call tools:
 3. After gathering what you need, ACT — write the manifest, apply the change, or give your answer
 
 When stuck: write what you know, what's blocking you, and ask the user — do not call more tools hoping for a better result.
-Call list_tools(category) to discover what tools are available in a category.`
+Call list_tools(category) to discover what tools are available in a category.
+
+## Critical Tool Call Rules
+
+- **NEVER write a tool name or XML function tag in your text reply.** You MUST use the JSON tool_calls mechanism. Any tool name written as prose (e.g. "kubectl_get_pods") or XML (e.g. \`<function=kubectl_get>\`) will be ignored and treated as a hallucination.
+- **Do NOT call tools in response to conversational messages**, greetings, or acknowledgements ("hello", "yes", "thanks", "it worked"). Only call tools when you need real data to complete a concrete task. If the message is conversational, reply in text only.
+- **Do NOT repeat a tool call** you already made with the same arguments in this session. Cached results will be returned automatically — do not re-fetch unless explicitly asked.`
 
 /**
  * Build a compact gateway tool category summary for injection into system prompts.
@@ -258,6 +264,60 @@ type ToolCall = { id: string; type: 'function'; function: { name: string; argume
 
 type OpenAICallResult = { reply: string | null; tokensUsed: number; contextLimit: number }
 
+// ── Tool result cache ─────────────────────────────────────────────────────────
+
+/**
+ * Per-call tool result cache with TTL.
+ * Prevents the model from re-fetching identical data within a single response session.
+ *
+ * TTL by category:
+ *   kubectl_* (get, logs, pods)  — 30s  cluster state changes fast during deploys
+ *   gitops_ls / gitops_read      — 60s  changes only on PR merge
+ *   orion_get_environment        — 120s static config, rarely changes mid-session
+ *   get_deployment_template      — ∞    templates are static, cache for full session
+ *   write ops (propose, write)   — no cache, always execute
+ */
+const TOOL_CACHE_TTLS: Record<string, number> = {
+  kubectl_get:          30_000,
+  kubectl_get_pods:     30_000,
+  kubectl_logs:         30_000,
+  gitops_ls:            60_000,
+  gitops_read:          60_000,
+  orion_get_environment: 120_000,
+  get_deployment_template: Infinity,
+  list_tools:           Infinity,
+}
+
+/** Tools that are write operations — never cache, always execute */
+const NO_CACHE_TOOLS = new Set([
+  'gitops_propose', 'knowledge_write', 'propose_tool',
+  'orion_create_agent', 'orion_update_agent', 'orion_archive_agent',
+])
+
+interface CacheEntry { result: string; expiresAt: number }
+
+function makeToolCacheKey(name: string, args: Record<string, unknown>): string {
+  return `${name}::${JSON.stringify(args, Object.keys(args).sort())}`
+}
+
+/**
+ * Patterns that indicate the model wrote a tool call as prose instead of using
+ * the JSON tool_calls mechanism. These replies must be discarded and the model
+ * prompted to produce a real text response.
+ */
+const FAKE_TOOL_CALL_PATTERNS = [
+  /^[a-z][a-z0-9]*(?:_[a-z0-9]+){1,4}$/,           // bare snake_case tool name only
+  /<function\s*=\s*\w+/i,                             // <function=kubectl_get> XML style
+  /<tool_call>/i,                                     // <tool_call> XML block
+  /^\s*\{?\s*"?function"?\s*:/i,                      // JSON function object as text
+]
+
+function isFakeToolCall(text: string): boolean {
+  const t = text.trim()
+  if (t.length > 200) return false  // real replies are longer
+  return FAKE_TOOL_CALL_PATTERNS.some(p => p.test(t))
+}
+
 /** OpenAI-compatible /v1/chat/completions endpoint — supports tool calling */
 async function callOpenAIChat(
   agentName: string,
@@ -330,6 +390,9 @@ async function callOpenAIChat(
 
   let tokensUsed = 0
 
+  // Per-session tool result cache — keyed by (toolName, args), evicted by TTL
+  const toolCache = new Map<string, CacheEntry>()
+
   // Tool-call loop — keep going until the model produces a text reply
   const maxToolRoundsSetting = await prisma.systemSetting.findUnique({ where: { key: 'agent.chat.maxToolRounds' } })
   const MAX_TOOL_ROUNDS = parseInt(String(maxToolRoundsSetting?.value ?? '15'), 10) || 15
@@ -354,9 +417,22 @@ async function callOpenAIChat(
     const choice = data.choices?.[0]
     if (!choice) return { reply: null, tokensUsed, contextLimit }
 
-    // Plain text reply — done
+    // Plain text reply — check for fake tool calls before accepting
     if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
-      return { reply: choice.message.content?.trim() || null, tokensUsed, contextLimit }
+      const replyText = choice.message.content?.trim() || null
+      // Fix #1: detect when the model wrote a tool call as prose instead of using tool_calls
+      if (replyText && isFakeToolCall(replyText)) {
+        console.warn(`[room-agents] ${agentName}: detected fake tool call in text reply: "${replyText}" — injecting correction`)
+        messages.push({ role: 'assistant', content: replyText })
+        messages.push({
+          role: 'user',
+          content: `Your last reply looked like a tool call written as plain text ("${replyText}"). ` +
+            `Do NOT write tool names in your reply text. ` +
+            `Use the JSON tool_calls mechanism to call tools, or write a real text reply if you have an answer.`,
+        })
+        continue  // burn a round to get a real response
+      }
+      return { reply: replyText, tokensUsed, contextLimit }
     }
 
     // Tool calls — execute each and feed results back
@@ -365,65 +441,86 @@ async function callOpenAIChat(
     for (const tc of choice.message.tool_calls) {
       let args: Record<string, unknown> = {}
       try { args = JSON.parse(tc.function.arguments) } catch { /* ignore */ }
-      console.log(`[room-agents] ${agentName} calling tool: ${tc.function.name}`, args)
 
+      // Fix #2: check tool cache before executing (skip write ops)
       let result: string
-      if (registryToolNames.has(tc.function.name)) {
-        // Registry tool — single source of truth, consistent across all contexts
-        result = await executeRegisteredTool(tc.function.name, args, {
-          agentId: toolContext!.agentId,
-          prisma,
-          gateway: gateway ? {
-            executeTool: (n, a) => gateway.client.executeTool(n, a),
-            listTools: () => gateway.client.listTools(),
-          } : undefined,
-        })
-      } else if (legacyToolNames.has(tc.function.name)) {
-        // Legacy agent-tools (create_task, orion_manage_task, etc.)
-        result = await executeTool(tc.function.name, args, {
-          roomId:        toolContext!.roomId,
-          callerAgentId: toolContext!.agentId,
-          callerLlm:     toolContext!.llm,
-        })
-      } else if (gateway && gatewayToolNames.has(tc.function.name)) {
-        // Known gateway tool
-        result = await gateway.client.executeTool(tc.function.name, args)
+      const cacheKey = makeToolCacheKey(tc.function.name, args)
+      const ttl = TOOL_CACHE_TTLS[tc.function.name]
+      const cached = !NO_CACHE_TOOLS.has(tc.function.name) && ttl !== undefined
+        ? toolCache.get(cacheKey)
+        : undefined
+
+      if (cached && Date.now() < cached.expiresAt) {
+        console.log(`[room-agents] ${agentName} tool cache hit: ${tc.function.name} (expires in ${Math.round((cached.expiresAt - Date.now()) / 1000)}s)`)
+        result = `[Cached result — fetched earlier this session]\n${cached.result}`
       } else {
-        // Hallucinated or unknown tool name — attempt fuzzy resolution before giving up.
-        const resolved = resolveToolName(tc.function.name, allKnownToolNames)
-        if (resolved?.confidence === 'high') {
-          // Auto-correct: call the real tool without burning a round trip
-          console.warn(`[room-agents] ${agentName}: auto-correcting hallucinated tool "${tc.function.name}" → "${resolved.name}"`)
-          if (registryToolNames.has(resolved.name)) {
-            result = await executeRegisteredTool(resolved.name, args, {
-              agentId: toolContext!.agentId,
-              prisma,
-              gateway: gateway ? {
-                executeTool: (n, a) => gateway.client.executeTool(n, a),
-                listTools:   () => gateway.client.listTools(),
-              } : undefined,
-            })
-          } else if (legacyToolNames.has(resolved.name)) {
-            result = await executeTool(resolved.name, args, {
-              roomId:        toolContext!.roomId,
-              callerAgentId: toolContext!.agentId,
-              callerLlm:     toolContext!.llm,
-            })
-          } else if (gateway) {
-            result = await gateway.client.executeTool(resolved.name, args)
-          } else {
-            result = `[Auto-corrected "${tc.function.name}" → "${resolved.name}" but still could not execute]`
-          }
-          result = `[Note: corrected "${tc.function.name}" → "${resolved.name}"]\n${result}`
-        } else {
-          // Can't resolve — return the full tool list so the model can self-correct
-          const toolList = await executeRegisteredTool('list_tools', {}, {
+        console.log(`[room-agents] ${agentName} calling tool: ${tc.function.name}`, args)
+
+        if (registryToolNames.has(tc.function.name)) {
+          // Registry tool — single source of truth, consistent across all contexts
+          result = await executeRegisteredTool(tc.function.name, args, {
             agentId: toolContext!.agentId,
             prisma,
-            gateway: undefined,
-          }).catch(() => '')
-          const suggestion = resolved ? ` Did you mean "${resolved.name}"?` : ''
-          result = `Error: tool "${tc.function.name}" does not exist.${suggestion} Use the exact name from the list below — never guess.\n\n${toolList}`
+            gateway: gateway ? {
+              executeTool: (n, a) => gateway.client.executeTool(n, a),
+              listTools: () => gateway.client.listTools(),
+            } : undefined,
+          })
+        } else if (legacyToolNames.has(tc.function.name)) {
+          // Legacy agent-tools (create_task, orion_manage_task, etc.)
+          result = await executeTool(tc.function.name, args, {
+            roomId:        toolContext!.roomId,
+            callerAgentId: toolContext!.agentId,
+            callerLlm:     toolContext!.llm,
+          })
+        } else if (gateway && gatewayToolNames.has(tc.function.name)) {
+          // Known gateway tool
+          result = await gateway.client.executeTool(tc.function.name, args)
+        } else {
+          // Hallucinated or unknown tool name — attempt fuzzy resolution before giving up.
+          const resolved = resolveToolName(tc.function.name, allKnownToolNames)
+          if (resolved?.confidence === 'high') {
+            // Auto-correct: call the real tool without burning a round trip
+            console.warn(`[room-agents] ${agentName}: auto-correcting hallucinated tool "${tc.function.name}" → "${resolved.name}"`)
+            if (registryToolNames.has(resolved.name)) {
+              result = await executeRegisteredTool(resolved.name, args, {
+                agentId: toolContext!.agentId,
+                prisma,
+                gateway: gateway ? {
+                  executeTool: (n, a) => gateway.client.executeTool(n, a),
+                  listTools:   () => gateway.client.listTools(),
+                } : undefined,
+              })
+            } else if (legacyToolNames.has(resolved.name)) {
+              result = await executeTool(resolved.name, args, {
+                roomId:        toolContext!.roomId,
+                callerAgentId: toolContext!.agentId,
+                callerLlm:     toolContext!.llm,
+              })
+            } else if (gateway) {
+              result = await gateway.client.executeTool(resolved.name, args)
+            } else {
+              result = `[Auto-corrected "${tc.function.name}" → "${resolved.name}" but still could not execute]`
+            }
+            result = `[Note: corrected "${tc.function.name}" → "${resolved.name}"]\n${result}`
+          } else {
+            // Can't resolve — return the full tool list so the model can self-correct
+            const toolList = await executeRegisteredTool('list_tools', {}, {
+              agentId: toolContext!.agentId,
+              prisma,
+              gateway: undefined,
+            }).catch(() => '')
+            const suggestion = resolved ? ` Did you mean "${resolved.name}"?` : ''
+            result = `Error: tool "${tc.function.name}" does not exist.${suggestion} Use the exact name from the list below — never guess.\n\n${toolList}`
+          }
+        }
+
+        // Store in cache if this tool has a TTL
+        if (ttl !== undefined && !NO_CACHE_TOOLS.has(tc.function.name)) {
+          toolCache.set(cacheKey, {
+            result,
+            expiresAt: isFinite(ttl) ? Date.now() + ttl : Infinity,
+          })
         }
       }
 
