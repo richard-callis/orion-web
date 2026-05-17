@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "Nebula" (
+CREATE TABLE IF NOT EXISTS "Nebula" (
   "id"          TEXT NOT NULL,
   "name"        TEXT NOT NULL,
   "displayName" TEXT NOT NULL,
@@ -17,4 +17,4 @@ CREATE TABLE "Nebula" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Nebula_name_key" ON "Nebula"("name");
+CREATE UNIQUE INDEX IF NOT EXISTS "Nebula_name_key" ON "Nebula"("name");
