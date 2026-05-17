@@ -118,9 +118,8 @@ export class GitLabGitProvider implements GitProvider {
 
   async commitFiles(opts: CommitFilesOptions): Promise<void> {
     // GitLab's commits API supports multiple file actions in one request
-    const actions = await Promise.all(
+    const upsertActions = await Promise.all(
       opts.files.map(async (f) => {
-        // Determine if file exists to decide create vs update
         const exists = await this.fileExists(opts.owner, opts.repo, f.path, opts.branch)
         return {
           action: exists ? 'update' : 'create',
@@ -131,12 +130,17 @@ export class GitLabGitProvider implements GitProvider {
       }),
     )
 
+    const deleteActions = (opts.deletions ?? []).map(path => ({
+      action: 'delete',
+      file_path: path,
+    }))
+
     await this.fetch(`/projects/${this.projectPath(opts.owner, opts.repo)}/repository/commits`, {
       method: 'POST',
       body: JSON.stringify({
         branch: opts.branch,
         commit_message: opts.message,
-        actions,
+        actions: [...upsertActions, ...deleteActions],
       }),
     })
   }

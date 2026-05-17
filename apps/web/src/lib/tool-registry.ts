@@ -1959,6 +1959,8 @@ BEFORE proposing: call gitops_ls to check what paths already exist so you match 
 
 Path conventions: pass service-relative paths (e.g. "tailscale/deployment.yaml") — the tool automatically prepends the correct watched directory (e.g. "deployments/"). Paths that escape the watched directory are REJECTED.
 
+To delete files: set delete: true on the change item and omit content. You can mix deletions and upserts in a single PR (e.g. remove an old service and add a replacement atomically).
+
 For Kubernetes manifests: always include namespace, use pinned image tags, include CrowdSec + Authentik middleware on all public ingresses.
 For Docker Compose: use self-contained services (no host bind mounts for config files).`,
   inputSchema: {
@@ -1974,9 +1976,10 @@ For Docker Compose: use self-contained services (no host bind mounts for config 
           type: 'object',
           properties: {
             path:    { type: 'string', description: 'Service-relative file path — do NOT include the watched directory prefix. E.g. "tailscale/deployment.yaml", not "deployments/tailscale/deployment.yaml". The tool places it under the correct directory automatically.' },
-            content: { type: 'string', description: 'Full file content' },
+            content: { type: 'string', description: 'Full file content. Required unless delete is true.' },
+            delete:  { type: 'boolean', description: 'Set to true to delete this file from the repo. Omit content when deleting.' },
           },
-          required: ['path', 'content'],
+          required: ['path'],
         },
       },
     },
@@ -1988,10 +1991,14 @@ For Docker Compose: use self-contained services (no host bind mounts for config 
   category: 'gitops',
   handler: async (args) => {
     const { environment_id, title, reasoning, operation_description, changes } =
-      args as { environment_id?: string; title?: string; reasoning?: string; operation_description?: string; changes?: Array<{ path: string; content: string }> }
+      args as { environment_id?: string; title?: string; reasoning?: string; operation_description?: string; changes?: Array<{ path: string; content?: string; delete?: boolean }> }
 
     if (!environment_id || !title || !reasoning || !operation_description || !changes?.length) {
       return 'Error: environment_id, title, reasoning, operation_description, and changes are all required'
+    }
+    const invalid = changes.filter(c => !c.delete && !c.content)
+    if (invalid.length > 0) {
+      return `Error: the following changes are missing content (set delete: true to delete a file, or provide content to upsert):\n${invalid.map(c => `  - ${c.path}`).join('\n')}`
     }
     try {
       const { proposeChange } = await import('@/lib/gitops')
@@ -2008,7 +2015,7 @@ For Docker Compose: use self-contained services (no host bind mounts for config 
             ...c,
             path: c.path.startsWith(`${repoPath}/`) ? c.path : `${repoPath}/${c.path}`,
           }))
-        : changes
+        : changes as Array<{ path: string; content?: string; delete?: boolean }>
 
       if (repoPath) {
         const escaping = normalizedChanges.filter(c => !c.path.startsWith(`${repoPath}/`))

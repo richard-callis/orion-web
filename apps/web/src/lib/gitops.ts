@@ -29,7 +29,10 @@ import {
 export interface ManifestChange {
   /** Repo-relative path, e.g. 'deployments/nginx/deployment.yaml' */
   path: string
-  content: string
+  /** File content — omit when delete is true */
+  content?: string
+  /** When true, the file is deleted from the repo instead of created/updated */
+  delete?: boolean
 }
 
 export interface GitOpsChangeOptions {
@@ -96,11 +99,14 @@ export async function proposeChangeWithProvider(
   await provider.createBranch(opts.owner, opts.repo, branch, 'main')
 
   // 2. Commit all changed files in one atomic commit
+  const upserts = opts.changes.filter(c => !c.delete && c.content !== undefined) as Array<{ path: string; content: string }>
+  const deletions = opts.changes.filter(c => c.delete).map(c => c.path)
   await provider.commitFiles({
     owner: opts.owner,
     repo: opts.repo,
     branch,
-    files: opts.changes,
+    files: upserts,
+    deletions,
     message: opts.title,
   })
 
