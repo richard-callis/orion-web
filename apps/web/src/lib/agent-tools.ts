@@ -364,17 +364,55 @@ export async function executeTool(
           return `Error: environment "${environmentName}" not found. Available environments: ${names || 'none'}.`
         }
 
-        const namespace       = String(args.namespace       ?? 'default').trim() || 'default'
-        const description     = args.description     ? String(args.description).trim()     : null
+        // Enforce vault path convention: must be under the environment's vaultPathPrefix
+        const envMeta = env as Record<string, unknown>
+        const prefix = envMeta.vaultPathPrefix as string | undefined
+        const normalizedPath = vaultPath.replace(/^secret\/data\//, '')
+        if (prefix) {
+          const normalizedPrefix = prefix.replace(/\/$/, '')
+          if (!normalizedPath.startsWith(normalizedPrefix + '/') && normalizedPath !== normalizedPrefix) {
+            return `Error: vaultPath "${vaultPath}" is outside this environment's allowed prefix "${normalizedPrefix}/". Use a path like "${normalizedPrefix}/<service-name>".`
+          }
+        }
+
+        // Idempotency guard: refuse to overwrite an already-applied secret
+        const existing = await prisma.managedSecret.findFirst({
+          where: { environmentId: env.id, name },
+          orderBy: { createdAt: 'desc' },
+        })
+        if (existing) {
+          if (existing.status === 'applied') {
+            return [
+              `Secret "${name}" already exists and is applied (id: ${existing.id}).`,
+              `  Vault path: secret/data/${existing.remoteRef}`,
+              `  Keys:       ${(existing.dataKeys as Array<{ secretKey: string }>).map(k => k.secretKey).join(', ')}`,
+              `  Applied at: ${existing.appliedAt?.toISOString() ?? 'unknown'}`,
+              ``,
+              `DO NOT call write_secret again — real values are already in Vault and calling this tool will overwrite them with PLACEHOLDER.`,
+              `If the ExternalSecret is failing, diagnose with kubectl_get or kubectl_logs. Do not recreate the secret.`,
+            ].join('\n')
+          }
+          // Draft already exists — return it rather than creating a duplicate
+          return [
+            `Secret "${name}" already exists in draft state (id: ${existing.id}) — not creating a duplicate.`,
+            `  Vault path: secret/data/${existing.remoteRef}`,
+            `  Status:    draft (waiting for real values)`,
+            ``,
+            `Next step: open Infrastructure > External Secrets in environment "${environmentName}", find "${name}", and click the pencil icon to enter the real values.`,
+          ].join('\n')
+        }
+
+        const namespace        = String(args.namespace        ?? 'default').trim() || 'default'
+        const description      = args.description      ? String(args.description).trim()      : null
         const targetSecretName = args.targetSecretName ? String(args.targetSecretName).trim() || null : null
-        const refreshInterval  = String(args.refreshInterval ?? '1h').trim() || '1h'
+        const refreshInterval  = String(args.refreshInterval  ?? '1h').trim() || '1h'
 
         // Write PLACEHOLDER values to Vault for each key
         const placeholderData: Record<string, string> = {}
         for (const key of keyNames) placeholderData[key] = 'PLACEHOLDER'
 
         try {
-          await writeVaultSecret(vaultPath, placeholderData)
+          await writeVaultSecret(normalizedPath, placeholderData)
         } catch (e) {
           return `Error: failed to write placeholder to Vault: ${e instanceof Error ? e.message : String(e)}`
         }
@@ -384,13 +422,13 @@ export async function executeTool(
         const secret = await prisma.managedSecret.create({
           data: {
             environmentId:    env.id,
-            createdBy:        null,  // callerAgentId is an Agent ID, not a User ID
+            createdBy:        null,
             name,
             namespace,
             description,
             secretStore:      'vault-backend',
             secretStoreKind:  'ClusterSecretStore',
-            remoteRef:        vaultPath,
+            remoteRef:        normalizedPath,
             targetSecretName,
             refreshInterval,
             dataKeys,
@@ -402,12 +440,14 @@ export async function executeTool(
         return [
           `Secret shell created (id: ${secret.id}):`,
           `  Name:      ${secret.name}`,
-          `  Vault path: secret/data/${vaultPath}`,
+          `  Vault path: secret/data/${normalizedPath}`,
           `  Keys:      ${keyNames.join(', ')}`,
           `  Namespace: ${namespace}`,
           `  Status:    draft (PLACEHOLDER values written — real values needed)`,
           ``,
           `Next step: open Infrastructure > External Secrets in environment "${environmentName}", find "${name}", and click the pencil icon to enter the real values. ORION will write them to Vault and mark the secret as applied.`,
+          ``,
+          `IMPORTANT: Do NOT call write_secret again for this secret — once the user enters real values the status becomes "applied" and further calls are blocked to protect the credentials.`,
         ].join('\n')
       }
 
