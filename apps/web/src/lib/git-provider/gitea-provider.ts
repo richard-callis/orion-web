@@ -154,6 +154,25 @@ export class GiteaGitProvider implements GitProvider {
         body: JSON.stringify(body),
       })
     }
+
+    // Delete files
+    for (const path of opts.deletions ?? []) {
+      const encodedPath = path.split('/').map(encodeURIComponent).join('/')
+      let sha: string | undefined
+      try {
+        const existing = await this.fetch<{ sha: string }>(
+          `/repos/${opts.owner}/${opts.repo}/contents/${encodedPath}?ref=${encodeURIComponent(opts.branch)}`,
+        )
+        sha = existing.sha
+      } catch (err: unknown) {
+        if (isNotFound(err)) continue // already gone — skip
+        throw err
+      }
+      await this.fetch(`/repos/${opts.owner}/${opts.repo}/contents/${encodedPath}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ message: opts.message, sha, branch: opts.branch }),
+      })
+    }
   }
 
   // ── PRs ────────────────────────────────────────────────────────────────────
