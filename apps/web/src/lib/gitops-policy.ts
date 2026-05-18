@@ -231,7 +231,7 @@ export function classifyOperation(description: string): OperationType {
     // Registry or repository changes, or non-deterministic tags — always review
     if (d.includes('registry') || d.includes('repository') || d.includes('source') || d.includes('latest') || d.includes('develop') || d.includes('nightly')) return 'unknown'
     // Only classify as patch if a semver-style bump is explicitly described
-    if (d.includes('patch') || /\d+\.\d+\.\d+/.test(d)) return 'image-update-patch'
+    if (d.includes('patch') || /\d{1,10}\.\d{1,10}\.\d{1,10}/.test(d)) return 'image-update-patch'
     // Ambiguous image change — require review
     return 'unknown'
   }
