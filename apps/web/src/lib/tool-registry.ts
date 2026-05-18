@@ -540,6 +540,40 @@ async function handleSendMessage(args: unknown, ctx: ToolExecutionContext): Prom
   return `Message posted to room "${room.name}" (${room_id})`
 }
 
+async function handleSetGoal(args: unknown, ctx: ToolExecutionContext): Promise<string> {
+  const { room_id, goal } = parseArgs(args) as { room_id?: string; goal?: string }
+  if (!room_id) return 'Error: room_id is required'
+  if (!goal?.trim()) return 'Error: goal is required'
+
+  const room = await ctx.prisma.chatRoom.findUnique({ where: { id: room_id } })
+  if (!room) return `Error: room ${room_id} not found`
+
+  const meta = (room.metadata ?? {}) as Record<string, unknown>
+  await ctx.prisma.chatRoom.update({
+    where: { id: room_id },
+    data: { metadata: { ...meta, activeGoal: goal.trim() } },
+  })
+
+  return `Goal set in room "${room.name}": ${goal.trim()}`
+}
+
+async function handleCompleteGoal(args: unknown, ctx: ToolExecutionContext): Promise<string> {
+  const { room_id } = parseArgs(args) as { room_id?: string }
+  if (!room_id) return 'Error: room_id is required'
+
+  const room = await ctx.prisma.chatRoom.findUnique({ where: { id: room_id } })
+  if (!room) return `Error: room ${room_id} not found`
+
+  const meta = (room.metadata ?? {}) as Record<string, unknown>
+  const { activeGoal, ...rest } = meta
+  await ctx.prisma.chatRoom.update({
+    where: { id: room_id },
+    data: { metadata: rest as Record<string, unknown> & object },
+  })
+
+  return `Goal "${activeGoal ?? '(none)'}" marked complete and cleared from room "${room.name}"`
+}
+
 async function handleCreateFeature(args: unknown, ctx: ToolExecutionContext): Promise<string> {
   const { epicId, title, description } = parseArgs(args) as {
     epicId?: string
@@ -1481,6 +1515,41 @@ registerTool({
   availableIn: 'both',
   category: 'rooms',
   handler: handleSendMessage,
+})
+
+registerTool({
+  name: 'orion_set_goal',
+  description: 'Set an active goal for a chat room. While a goal is active, agents in the room must respond with progress rather than going silent. Use this when you want an agent to keep working until a task is explicitly done.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      room_id: { type: 'string', description: 'Chat room ID to set the goal in' },
+      goal:    { type: 'string', description: 'Clear description of what must be accomplished' },
+    },
+    required: ['room_id', 'goal'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'both',
+  category: 'rooms',
+  handler: handleSetGoal,
+})
+
+registerTool({
+  name: 'orion_complete_goal',
+  description: 'Mark the active goal in a chat room as complete and clear it. Call this when the goal has been accomplished so agents can return to normal SILENT behavior.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      room_id: { type: 'string', description: 'Chat room ID to clear the goal from' },
+    },
+    required: ['room_id'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'both',
+  category: 'rooms',
+  handler: handleCompleteGoal,
 })
 
 registerTool({
