@@ -558,8 +558,11 @@ async function handleSetGoal(args: unknown, ctx: ToolExecutionContext): Promise<
 }
 
 async function handleCompleteGoal(args: unknown, ctx: ToolExecutionContext): Promise<string> {
-  const { room_id } = parseArgs(args) as { room_id?: string }
+  const { room_id, verification_summary } = parseArgs(args) as { room_id?: string; verification_summary?: string }
   if (!room_id) return 'Error: room_id is required'
+  if (!verification_summary?.trim()) return 'Error: verification_summary is required — describe what you actually checked to confirm the goal is complete (pod status, endpoint tests, etc.)'
+  // Reject summaries that are too vague to be meaningful
+  if (verification_summary.trim().length < 20) return 'Error: verification_summary is too vague — describe the specific checks you ran and what they showed'
 
   const room = await ctx.prisma.chatRoom.findUnique({ where: { id: room_id } })
   if (!room) return `Error: room ${room_id} not found`
@@ -571,7 +574,8 @@ async function handleCompleteGoal(args: unknown, ctx: ToolExecutionContext): Pro
     data: { metadata: rest as Record<string, unknown> & object },
   })
 
-  return `Goal "${activeGoal ?? '(none)'}" marked complete and cleared from room "${room.name}"`
+  if (ctx.agentId) await auditLog(ctx.agentId, `✅ Goal complete in room **${room.name}**: ${activeGoal ?? '(unknown)'} — Verification: ${verification_summary.trim()}`)
+  return `Goal "${activeGoal ?? '(none)'}" marked complete. Verification: ${verification_summary.trim()}`
 }
 
 async function handleCreateFeature(args: unknown, ctx: ToolExecutionContext): Promise<string> {
@@ -1537,13 +1541,14 @@ registerTool({
 
 registerTool({
   name: 'orion_complete_goal',
-  description: 'Mark the active goal in a chat room as complete and clear it. Call this when the goal has been accomplished so agents can return to normal SILENT behavior.',
+  description: 'Mark the active goal in a chat room as complete and clear it. GUARD: Only call this after you have VERIFIED the goal is actually done — check pod status, test endpoints, confirm resources are healthy. Do NOT call this just because a PR was merged, a command was issued, or you believe the work should be done. You must have observed real evidence of success (e.g. kubectl_get_pods showing Running, HTTP 200 from the endpoint). Provide a verification_summary describing exactly what you checked.',
   inputSchema: {
     type: 'object',
     properties: {
-      room_id: { type: 'string', description: 'Chat room ID to clear the goal from' },
+      room_id:              { type: 'string', description: 'Chat room ID to clear the goal from' },
+      verification_summary: { type: 'string', description: 'What you actually checked to confirm the goal is complete. E.g. "kubectl_get_pods shows all 7 arr-stack pods Running; curl sonarr.khalisio.com returns 200". Required — vague answers will be rejected.' },
     },
-    required: ['room_id'],
+    required: ['room_id', 'verification_summary'],
   },
   tier: 'write',
   parallelSafe: false,
