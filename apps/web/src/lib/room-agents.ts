@@ -130,10 +130,10 @@ function buildSystemPrompt(
   agentBasePrompt: string,
   otherParticipants: string[],
   hasTools: boolean | 'legacy' | 'mcp' = false,
-  /** True for non-Claude (Ollama/OpenAI-compat) models — injects plan-first constraint */
-  localModel = false,
   /** Compact category summary built from gateway tools — injected when tools are enabled */
   gatewayCategorySummary = '',
+  /** Active room goal — when set, agent must respond with progress rather than going SILENT */
+  activeGoal?: string,
 ): string {
   const othersLine = otherParticipants.length > 0
     ? `Other participants in this chat: ${otherParticipants.join(', ')}`
@@ -145,7 +145,13 @@ function buildSystemPrompt(
     hasTools === 'mcp'              ? '\n\n## ORION Tools\nYou have ORION management tools available via MCP. Use them — do not describe hypothetical actions when you can call a tool to get real data.' :
     hasTools === 'legacy' || hasTools === true ? TOOLS_SYSTEM_ADDENDUM :
     ''
-  const planFirst = localModel && hasTools ? LOCAL_MODEL_PLAN_FIRST : ''
+  const planFirst = LOCAL_MODEL_PLAN_FIRST
+  const silentRule = activeGoal
+    ? `7. There is an ACTIVE GOAL in this room (see below). You MUST respond with progress or a status update. Do NOT reply SILENT while a goal is active.`
+    : `7. If the conversation has naturally concluded or you have nothing meaningful to add, reply with exactly the single word: SILENT`
+  const goalBlock = activeGoal
+    ? `\n\n## Active Goal\n${activeGoal}\nYou must keep working toward this goal and report progress. Only stop when the goal is explicitly marked complete.`
+    : ''
   return `IMPORTANT — YOUR ROLE:
 You are ${agentName}. You are ONE participant in a group chat.
 ${othersLine}
@@ -157,10 +163,10 @@ Rules you must follow without exception:
 4. Do NOT write scripts, screenplays, or simulated multi-turn exchanges.
 5. Do NOT invent what other participants might say next.
 6. ${mentionHint}
-7. If the conversation has naturally concluded or you have nothing meaningful to add, reply with exactly the single word: SILENT
+${silentRule}
 
 ---
-${agentBasePrompt}${toolAddendum}${gatewayCategorySummary}${planFirst}`
+${agentBasePrompt}${toolAddendum}${gatewayCategorySummary}${planFirst}${goalBlock}`
 }
 
 /**
@@ -194,12 +200,13 @@ async function callClaude(
   hasTools = false,
   agentId?: string,
   roomId?: string,
+  activeGoal?: string,
 ): Promise<string | null> {
   // Always enable MCP when in a room context — Claude should have the same tool access
   // as OpenAI-compatible agents. maxTurns controls depth; hasTools controls prompt framing.
   const useMcp = !!agentId && !!roomId
   const toolMode: false | 'legacy' | 'mcp' = useMcp ? 'mcp' : hasTools ? 'legacy' : false
-  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, toolMode)
+  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, toolMode, '', activeGoal)
   const historyBlock = history.length
     ? history.map(e => `${e.name}: ${e.content}`).join('\n') + '\n\n'
     : ''
@@ -238,8 +245,9 @@ async function callOllamaChat(
   baseUrl: string,
   hasTools = false,
   gatewayCategorySummary = '',
+  activeGoal?: string,
 ): Promise<string | null> {
-  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools, true, gatewayCategorySummary)
+  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools, gatewayCategorySummary, activeGoal)
   const chatMsgs = buildChatMessages(history, latestMessage)
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: 'POST',
@@ -331,10 +339,11 @@ async function callOpenAIChat(
   toolContext?: { roomId: string; agentId: string; llm: string },
   gateway?: AgentGateway | null,
   gatewayTools?: GatewayTool[],
+  activeGoal?: string,
 ): Promise<OpenAICallResult> {
   const hasTools = !!toolContext
   const gatewayCategorySummary = gatewayTools ? buildGatewayCategorySummary(gatewayTools) : ''
-  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools, true, gatewayCategorySummary)
+  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools, gatewayCategorySummary, activeGoal)
   const chatMsgs = buildChatMessages(history, latestMessage)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
@@ -647,6 +656,7 @@ export async function triggerRoomAgentReplies(
   // delegate to specialists or answer directly.
   const roomMeta = (room?.metadata ?? {}) as Record<string, unknown>
   const ringLeaderId = roomMeta?.ringLeaderAgentId as string | undefined
+  const activeGoal   = (roomMeta?.activeGoal as string | undefined) || undefined
   const mentionedNames  = parseMentions(triggerContent)
   const isEveryone      = mentionedNames.some(n => n.toLowerCase() === 'everyone')
   const isDirect        = agentMembers.length === 1  // 1-on-1 room — always reply
@@ -831,10 +841,10 @@ export async function triggerRoomAgentReplies(
           }
           const baseUrl = extModel.baseUrl ?? 'http://localhost:11434'
           if (extModel.provider === 'ollama') {
-            reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, !!toolContext)
+            reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, !!toolContext, '', activeGoal)
           } else {
             // openai / custom — OpenAI-compatible (supports tool calling + token tracking)
-            const result = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey, toolContext, gateway, gatewayTools)
+            const result = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey, toolContext, gateway, gatewayTools, activeGoal)
             reply = result.reply
             tokensUsed = result.tokensUsed
             discoveredContextLimit = result.contextLimit
@@ -845,13 +855,13 @@ export async function triggerRoomAgentReplies(
           if (toolsEnabled) {
             console.warn(`[room-agents] ${agent.name} has tools enabled but ${llm} route does not support function calling — scope awareness injected but tool invocation unavailable`)
           }
-          reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl, !!toolContext, buildGatewayCategorySummary(gatewayTools))
+          reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl, !!toolContext, buildGatewayCategorySummary(gatewayTools), activeGoal)
         } else {
           // claude / claude:<model> — routed through orion-claude sidecar.
           // When tools are enabled, the sidecar writes a per-request .mcp.json so Claude
           // calls ORION tools natively via MCP (ORION is the harness, Claude is the brain).
           const claudeModel = llm.startsWith('claude:') ? llm.slice('claude:'.length) : undefined
-          reply = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel, !!toolContext, agent.id, roomId)
+          reply = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel, !!toolContext, agent.id, roomId, activeGoal)
           if (reply === null) {
             // Claude is unavailable — post a message on the agent's behalf rather than silently skipping
             console.warn(`[room-agents] ${agent.name}: Claude unavailable, posting unavailability notice`)
@@ -882,8 +892,15 @@ export async function triggerRoomAgentReplies(
         continue
       }
       if (reply.trim().toUpperCase() === 'SILENT') {
-        console.log(`[room-agents] ${agent.name} chose not to respond`)
-        continue
+        if (activeGoal) {
+          // Goal is active — SILENT is not allowed. Post a status nudge so the user
+          // knows the agent is still on the hook, then keep the goal visible.
+          console.warn(`[room-agents] ${agent.name} tried SILENT with active goal — forcing status reply`)
+          reply = `Still working on the goal: "${activeGoal}" — what's the current status?`
+        } else {
+          console.log(`[room-agents] ${agent.name} chose not to respond`)
+          continue
+        }
       }
 
       const message = await prisma.chatMessage.create({
