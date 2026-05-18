@@ -183,9 +183,20 @@ export function classifyManifest(manifest: string): OperationType {
   // Resource limits
   if (/\b(requests|limits):/i.test(manifest) && /\b(cpu|memory):/i.test(manifest)) return 'resource-limits'
 
-  // Image update — try to detect semver bump type
-  const imageMatch = manifest.match(/image:\s*\S+:(\d+)\.(\d+)\.(\d+)/i)
-  if (imageMatch) return 'image-update-patch' // conservative default for image changes
+  // Image update — only auto-classify if the tag is a proper semver string.
+  // Non-deterministic tags (latest, develop, nightly, edge, etc.) require review
+  // because you don't know what version you're actually pulling.
+  const imageMatch = manifest.match(/image:\s*\S+:(\S+)/i)
+  if (imageMatch) {
+    const tag = imageMatch[1].toLowerCase()
+    const nonDeterministicTags = /^(latest|develop|nightly|edge|unstable|main|master|snapshot|canary|beta|alpha|rc)$/
+    if (nonDeterministicTags.test(tag)) return 'unknown'
+    // Only classify as a versioned bump if the tag is semver-like
+    const semverMatch = tag.match(/^(\d+)\.(\d+)\.(\d+)/)
+    if (semverMatch) return 'image-update-patch'
+    // Unknown tag format — require review
+    return 'unknown'
+  }
 
   return 'unknown'
 }
@@ -217,7 +228,12 @@ export function classifyOperation(description: string): OperationType {
   if (d.includes('image') || d.includes('tag') || d.includes('upgrade')) {
     if (d.includes('major')) return 'image-update-major'
     if (d.includes('minor')) return 'image-update-minor'
-    return 'image-update-patch'
+    // Registry or repository changes, or non-deterministic tags — always review
+    if (d.includes('registry') || d.includes('repository') || d.includes('source') || d.includes('latest') || d.includes('develop') || d.includes('nightly')) return 'unknown'
+    // Only classify as patch if a semver-style bump is explicitly described
+    if (d.includes('patch') || /\d+\.\d+\.\d+/.test(d)) return 'image-update-patch'
+    // Ambiguous image change — require review
+    return 'unknown'
   }
 
   return 'unknown'
