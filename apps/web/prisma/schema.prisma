@@ -764,9 +764,27 @@ model ChatRoom {
   messages      ChatMessage[]
   metadata      Json?    // { ringLeaderAgentId?: string, knowledgeScope: "global" | "room" | "mixed" }
   roomKnowledge RoomKnowledge[]
+  goals         RoomGoal[]
 
   @@unique([featureId])
   @@map("chat_rooms")
+}
+
+model RoomGoal {
+  id                String    @id @default(cuid())
+  roomId            String
+  room              ChatRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  text              String    @db.Text
+  status            String    @default("active")  // "active" | "completed" | "abandoned"
+  completionSummary String?   @db.Text
+  startMessageId    String?   // ID of the "goal set" system ChatMessage — for future jump-to
+  setBy             String?   // userId or agentId that created this goal
+  createdAt         DateTime  @default(now())
+  completedAt       DateTime?
+
+  @@index([roomId, status])
+  @@index([roomId, createdAt])
+  @@map("room_goals")
 }
 
 model ChatRoomMember {
