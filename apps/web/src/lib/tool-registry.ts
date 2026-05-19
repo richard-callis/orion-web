@@ -482,6 +482,35 @@ async function handleReopenTask(args: unknown, ctx: ToolExecutionContext): Promi
   return `Reopened task "${task?.title}" — ${reason ?? 'validation failed'}`
 }
 
+async function handleClosePR(args: unknown, ctx: ToolExecutionContext): Promise<string> {
+  const { environment_id, pr_number, reason } = parseArgs(args) as {
+    environment_id?: string
+    pr_number?: number
+    reason?: string
+  }
+  if (!environment_id) return 'Error: environment_id is required'
+  if (!pr_number) return 'Error: pr_number is required'
+
+  const env = await ctx.prisma.environment.findFirst({
+    where: { OR: [{ id: environment_id }, { name: { equals: environment_id, mode: 'insensitive' } }] },
+  })
+  if (!env) return `Error: environment "${environment_id}" not found`
+  if (!env.gitOwner || !env.gitRepo) return 'Error: environment has no git repo'
+
+  const { closePR } = await import('./gitea')
+  await closePR(env.gitOwner, env.gitRepo, pr_number)
+
+  // Update DB record if it exists
+  await ctx.prisma.gitOpsPR.updateMany({
+    where: { environmentId: env.id, prNumber: pr_number },
+    data: { status: 'closed' },
+  }).catch(() => {})
+
+  const msg = `🚫 Closed PR #${pr_number} in ${env.gitOwner}/${env.gitRepo}${reason ? ` — ${reason}` : ''}`
+  await auditLog(ctx.agentId ?? ctx.userId, msg)
+  return `Closed PR #${pr_number}${reason ? ` — ${reason}` : ''}`
+}
+
 async function handleListRooms(args: unknown, ctx: ToolExecutionContext): Promise<string> {
   const { feature_id } = parseArgs(args) as { feature_id?: string }
 
@@ -2132,6 +2161,27 @@ For Docker Compose: use self-contained services (no host bind mounts for config 
       return `Error proposing GitOps change: ${e instanceof Error ? e.message : String(e)}`
     }
   },
+})
+
+// ── gitea_close_pr ────────────────────────────────────────────────────────────
+
+registerTool({
+  name: 'gitea_close_pr',
+  description: 'Close an open Gitea pull request without merging it. Use this to clean up duplicate, superseded, or unwanted PRs.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      environment_id: { type: 'string', description: 'Environment ID or name (e.g. "Talos Cluster")' },
+      pr_number:      { type: 'number', description: 'The PR number to close' },
+      reason:         { type: 'string', description: 'Short reason for closing (e.g. "superseded by PR #95")' },
+    },
+    required: ['environment_id', 'pr_number'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'both',
+  category: 'gitops',
+  handler: handleClosePR,
 })
 
 // ── propose_tool ──────────────────────────────────────────────────────────────
