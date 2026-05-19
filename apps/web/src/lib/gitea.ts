@@ -376,6 +376,13 @@ export async function mergePR(opts: MergePROptions): Promise<void> {
   })
 }
 
+export async function closePR(owner: string, repo: string, index: number): Promise<void> {
+  await giteaFetch<void>(`/repos/${owner}/${repo}/pulls/${index}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ state: 'closed' }),
+  })
+}
+
 /** Create a PR and immediately merge it (auto-merge flow). */
 export async function createAndMergePR(opts: CreatePROptions & { mergeMessage?: string }): Promise<GiteaPR> {
   const pr = await createPR(opts)
