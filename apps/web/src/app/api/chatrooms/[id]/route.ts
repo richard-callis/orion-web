@@ -19,7 +19,7 @@ export async function GET(
   const { searchParams } = new URL(_req.url)
   const messageLimit = Math.min(parseInt(searchParams.get('messages') ?? '50') || 50, 200)
 
-  const [room, totalMessages] = await Promise.all([
+  const [room, totalMessages, activeGoal] = await Promise.all([
     prisma.chatRoom.findUnique({
       where: { id },
       include: {
@@ -45,6 +45,11 @@ export async function GET(
       },
     }),
     prisma.chatMessage.count({ where: { roomId: id } }),
+    prisma.roomGoal.findFirst({
+      where: { roomId: id, status: 'active' },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, text: true, status: true, createdAt: true },
+    }),
   ])
 
   if (!room) {
@@ -75,6 +80,9 @@ export async function GET(
     updatedAt: room.updatedAt.toISOString(),
     members, messages,
     totalMessages,
+    activeGoal: activeGoal
+      ? { ...activeGoal, createdAt: activeGoal.createdAt.toISOString() }
+      : null,
   })
 }
 
