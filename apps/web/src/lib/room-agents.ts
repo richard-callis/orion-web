@@ -9,7 +9,7 @@
  *
  * Supported LLM routes (same as streamAgentChat):
  *   claude / claude:<model>   — Claude Code SDK (OAuth credentials)
- *   ollama:<model>            — Ollama /api/chat
+ *   ollama:<model>            — Ollama /v1/chat/completions (OpenAI-compat, supports tool_calls)
  *   ext:<id>                  — ExternalModel lookup → Ollama or OpenAI-compatible
  *   gemini:<model>            — falls back to Claude for now
  */
@@ -852,10 +852,13 @@ export async function triggerRoomAgentReplies(
         } else if (llm.startsWith('ollama:')) {
           const model   = llm.slice('ollama:'.length)
           const baseUrl = await resolveOllamaBaseUrl()
-          if (toolsEnabled) {
-            console.warn(`[room-agents] ${agent.name} has tools enabled but ${llm} route does not support function calling — scope awareness injected but tool invocation unavailable`)
-          }
-          reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl, !!toolContext, buildGatewayCategorySummary(gatewayTools), activeGoal)
+          // Route through OpenAI-compat endpoint (/v1/chat/completions) so tool_calls
+          // JSON is supported. Ollama's /api/chat has no tools array — agents on that
+          // path can only hallucinate tool names as prose.
+          const result = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl, null, toolContext, gateway, gatewayTools, activeGoal)
+          reply = result.reply
+          tokensUsed = result.tokensUsed
+          discoveredContextLimit = result.contextLimit
         } else {
           // claude / claude:<model> — routed through orion-claude sidecar.
           // When tools are enabled, the sidecar writes a per-request .mcp.json so Claude
