@@ -577,10 +577,29 @@ async function handleSetGoal(args: unknown, ctx: ToolExecutionContext): Promise<
   const room = await ctx.prisma.chatRoom.findUnique({ where: { id: room_id } })
   if (!room) return `Error: room ${room_id} not found`
 
-  const meta = (room.metadata ?? {}) as Record<string, unknown>
-  await ctx.prisma.chatRoom.update({
-    where: { id: room_id },
-    data: { metadata: { ...meta, activeGoal: goal.trim() } },
+  // Abandon any existing active goal
+  await ctx.prisma.roomGoal.updateMany({
+    where: { roomId: room_id, status: 'active' },
+    data: { status: 'abandoned', completedAt: new Date() },
+  })
+
+  // Create new goal record
+  const newGoal = await ctx.prisma.roomGoal.create({
+    data: {
+      roomId: room_id,
+      text: goal.trim(),
+      status: 'active',
+      setBy: ctx.agentId ?? ctx.userId ?? null,
+    },
+  })
+
+  // Post system message and capture its ID
+  const msg = await ctx.prisma.chatMessage.create({
+    data: { roomId: room_id, senderType: 'system', content: `🎯 Goal set: ${goal.trim()}` },
+  })
+  await ctx.prisma.roomGoal.update({
+    where: { id: newGoal.id },
+    data: { startMessageId: msg.id },
   })
 
   return `Goal set in room "${room.name}": ${goal.trim()}`
@@ -596,15 +615,27 @@ async function handleCompleteGoal(args: unknown, ctx: ToolExecutionContext): Pro
   const room = await ctx.prisma.chatRoom.findUnique({ where: { id: room_id } })
   if (!room) return `Error: room ${room_id} not found`
 
-  const meta = (room.metadata ?? {}) as Record<string, unknown>
-  const { activeGoal, ...rest } = meta
-  await ctx.prisma.chatRoom.update({
-    where: { id: room_id },
-    data: { metadata: rest as Record<string, unknown> & object },
+  const activeGoalRecord = await ctx.prisma.roomGoal.findFirst({
+    where: { roomId: room_id, status: 'active' },
+    orderBy: { createdAt: 'desc' },
+  })
+  if (!activeGoalRecord) return `Error: no active goal found in room ${room_id}`
+
+  await ctx.prisma.roomGoal.update({
+    where: { id: activeGoalRecord.id },
+    data: {
+      status: 'completed',
+      completionSummary: verification_summary.trim(),
+      completedAt: new Date(),
+    },
   })
 
-  if (ctx.agentId) await auditLog(ctx.agentId, `✅ Goal complete in room **${room.name}**: ${activeGoal ?? '(unknown)'} — Verification: ${verification_summary.trim()}`)
-  return `Goal "${activeGoal ?? '(none)'}" marked complete. Verification: ${verification_summary.trim()}`
+  await ctx.prisma.chatMessage.create({
+    data: { roomId: room_id, senderType: 'system', content: `✓ Goal completed: ${verification_summary.trim()}` },
+  })
+
+  if (ctx.agentId) await auditLog(ctx.agentId, `✅ Goal complete in room **${room.name}**: ${activeGoalRecord.text} — Verification: ${verification_summary.trim()}`)
+  return `Goal "${activeGoalRecord.text}" marked complete. Verification: ${verification_summary.trim()}`
 }
 
 async function handleCreateFeature(args: unknown, ctx: ToolExecutionContext): Promise<string> {
