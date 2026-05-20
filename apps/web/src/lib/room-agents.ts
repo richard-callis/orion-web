@@ -656,7 +656,12 @@ export async function triggerRoomAgentReplies(
   // delegate to specialists or answer directly.
   const roomMeta = (room?.metadata ?? {}) as Record<string, unknown>
   const ringLeaderId = roomMeta?.ringLeaderAgentId as string | undefined
-  const activeGoal   = (roomMeta?.activeGoal as string | undefined) || undefined
+  // TODO: remove metadata.activeGoal fallback — deprecated in favour of RoomGoal table
+  const activeGoalRecord = await prisma.roomGoal.findFirst({
+    where: { roomId, status: 'active' },
+    orderBy: { createdAt: 'desc' },
+  })
+  const activeGoal = activeGoalRecord?.text
   const mentionedNames  = parseMentions(triggerContent)
   const isEveryone      = mentionedNames.some(n => n.toLowerCase() === 'everyone')
   const isDirect        = agentMembers.length === 1  // 1-on-1 room — always reply
