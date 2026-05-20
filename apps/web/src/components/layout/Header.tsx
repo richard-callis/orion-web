@@ -15,7 +15,7 @@ export function Header() {
     fetch('/api/admin/settings')
       .then(r => r.json())
       .then(d => { if (d['app.name']) setAppName(d['app.name'] as string) })
-      .catch(() => {})
+      .catch((e) => console.error("[fetch]", e))
   }, [])
 
   useEffect(() => {
