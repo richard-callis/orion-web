@@ -93,7 +93,7 @@ export default function ClaudeOAuthPage() {
   }
 
   const cancelLogin = async () => {
-    await fetch('/api/admin/claude/oauth?action=cancel', { method: 'POST' }).catch(() => {})
+    await fetch('/api/admin/claude/oauth?action=cancel', { method: 'POST' }).catch((e) => console.error("[fetch]", e))
     setPoll(null)
     setCode('')
   }

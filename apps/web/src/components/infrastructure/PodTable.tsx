@@ -152,7 +152,7 @@ export function PodTable({ pods, nodeFilter }: { pods: CachedPod[]; nodeFilter?:
   const [models, setModels] = useState<AppModel[]>([])
 
   useEffect(() => {
-    fetch('/api/models').then(r => r.json()).then(setModels).catch(() => {})
+    fetch('/api/models').then(r => r.json()).then(setModels).catch((e) => console.error("[fetch]", e))
   }, [])
 
   const namespaces = useMemo(() =>

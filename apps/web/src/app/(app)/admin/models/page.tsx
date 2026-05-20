@@ -425,7 +425,7 @@ export default function ModelsPage() {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ modelId: newDefault }),
-    }).catch(() => {})
+    }).catch((e) => console.error("[fetch]", e))
     setDefaultModelId(newDefault)
     setSettingDefault(null)
   }

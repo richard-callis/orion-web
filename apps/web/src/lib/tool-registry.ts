@@ -471,6 +471,13 @@ async function handleCloseTask(args: unknown, ctx: ToolExecutionContext): Promis
 async function handleReopenTask(args: unknown, ctx: ToolExecutionContext): Promise<string> {
   const { task_id, reason } = parseArgs(args) as { task_id?: string; reason?: string }
   if (!task_id) return 'Error: task_id is required'
+  if (!reason?.trim()) return 'Error: reason is required'
+
+  const existing = await ctx.prisma.task.findUnique({ where: { id: task_id }, select: { status: true } })
+  if (!existing) return `Error: task ${task_id} not found`
+  if (existing.status !== 'pending_validation') {
+    return `Error: task is "${existing.status}" — orion_reopen_task only operates on pending_validation tasks`
+  }
 
   await ctx.prisma.task.update({
     where: { id: task_id },
@@ -504,7 +511,7 @@ async function handleClosePR(args: unknown, ctx: ToolExecutionContext): Promise<
   await ctx.prisma.gitOpsPR.updateMany({
     where: { environmentId: env.id, prNumber: pr_number },
     data: { status: 'closed' },
-  }).catch(() => {})
+  }).catch((e) => console.error(`[gitea_close_pr] DB update failed for PR #${pr_number}:`, e))
 
   const msg = `🚫 Closed PR #${pr_number} in ${env.gitOwner}/${env.gitRepo}${reason ? ` — ${reason}` : ''}`
   await auditLog(ctx.agentId ?? ctx.userId, msg)
@@ -1500,7 +1507,7 @@ registerTool({
 
 registerTool({
   name: 'orion_reopen_task',
-  description: 'Reopen a pending_validation, done, or failed task back to pending. Use when validation reveals the task was not actually completed — e.g. agent self-reported done with zero tool calls.',
+  description: 'Reopen a pending_validation task back to pending. Use when validation reveals the task was not actually completed — e.g. agent self-reported done with zero tool calls.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -2092,7 +2099,7 @@ For Docker Compose: use self-contained services (no host bind mounts for config 
   parallelSafe: false,
   availableIn: 'both',
   category: 'gitops',
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const { environment_id, title, reasoning, operation_description, changes } =
       args as { environment_id?: string; title?: string; reasoning?: string; operation_description?: string; changes?: Array<{ path: string; content?: string; delete?: boolean }> }
 
@@ -2156,6 +2163,7 @@ For Docker Compose: use self-contained services (no host bind mounts for config 
       const action = result.merged
         ? `auto-merged (${result.classification.reason})`
         : `opened for review — ${result.classification.reason}`
+      await auditLog(ctx.agentId ?? ctx.userId, `📦 GitOps PR #${result.prNumber} ${action} in ${env.gitOwner}/${env.gitRepo}: "${title}"`)
       return `PR #${result.prNumber} ${action}. URL: ${result.prUrl}`
     } catch (e) {
       return `Error proposing GitOps change: ${e instanceof Error ? e.message : String(e)}`

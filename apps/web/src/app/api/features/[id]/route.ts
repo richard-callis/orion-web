@@ -33,7 +33,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (validatedData.description !== undefined) data.description = validatedData.description
   if (validatedData.plan        !== undefined) data.plan        = validatedData.plan
   if (validatedData.status      !== undefined) data.status      = validatedData.status
-  if (validatedData.epicId      !== undefined) data.epicId      = validatedData.epicId
+  if (validatedData.epicId          !== undefined) data.epicId          = validatedData.epicId
+  if (validatedData.planApprovedBy  !== undefined) data.planApprovedBy  = validatedData.planApprovedBy
+  if (validatedData.planApprovedAt  !== undefined) data.planApprovedAt  = validatedData.planApprovedAt ? new Date(validatedData.planApprovedAt) : null
   const feature = await prisma.feature.update({ where: { id: params.id }, data })
   return NextResponse.json(feature)
 }

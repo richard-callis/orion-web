@@ -32,7 +32,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (validatedData.title       !== undefined) data.title       = validatedData.title
   if (validatedData.description !== undefined) data.description = validatedData.description
   if (validatedData.plan        !== undefined) data.plan        = validatedData.plan
-  if (validatedData.status      !== undefined) data.status      = validatedData.status
+  if (validatedData.status          !== undefined) data.status          = validatedData.status
+  if (validatedData.planApprovedBy  !== undefined) data.planApprovedBy  = validatedData.planApprovedBy
+  if (validatedData.planApprovedAt  !== undefined) data.planApprovedAt  = validatedData.planApprovedAt ? new Date(validatedData.planApprovedAt) : null
   const epic = await prisma.epic.update({ where: { id: params.id }, data })
   return NextResponse.json(epic)
 }
