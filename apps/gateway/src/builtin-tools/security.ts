@@ -40,7 +40,7 @@ async function crowdsecGet(endpoint: string, params: Record<string, string> = {}
   return jsonStr(JSON.parse(await res.text()))
 }
 
-export const securityTools = ([
+const readToolDefs = ([
   {
     name: 'crowdsec_blocks',
     description: 'Get blocked IPs / requests from CrowdSec LAPI',
@@ -357,3 +357,162 @@ export const securityTools = ([
     },
   },
 ] as const).map(t => ({ ...t, category: 'security' as const }))
+
+// ── Write tools (action-oriented) ──────────────────────────────────────────────
+
+const writeToolDefs = ([
+  // ── 11. crowdsec_decision_create (ban IP) ────────────────────────────────
+
+  {
+    name: 'crowdsec_decision_create',
+    description: 'Add a ban/block to CrowdSec threat intelligence (create a decision)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ip:       { type: 'string', description: 'IP address to ban' },
+        scope:    { type: 'string', description: 'Scope to ban (e.g. "ip", "os", "fqdn"). Defaults to "ip".' },
+        duration: { type: 'string', description: 'Ban duration (e.g. "24h", "7d", "infinite"). Defaults to "24h".' },
+        reason:   { type: 'string', description: 'Human-readable reason for the ban' },
+      },
+      required: ['ip'],
+    },
+    async execute(args: Record<string, unknown>) {
+      const api = process.env.CROWDSEC_API
+      if (!api) return 'CROWDSEC_API environment variable not configured'
+      const key = process.env.CROWDSEC_API_KEY ?? ''
+      const ip = String(args.ip)
+      const scope = String(args.scope ?? 'ip')
+      const duration = String(args.duration ?? '24h')
+      const reason = String(args.reason ?? 'blocked by security tool')
+      const url = `${api.replace(/\/+$/, '')}/api/v1/decisions`
+      const body = { scope, value: ip, duration, reason }
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          'X-Api-Key': key,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (!res.ok) return `CrowdSec error HTTP ${res.status}: ${await res.text()}`
+      return jsonStr({ success: true, ip, scope, duration, reason })
+    },
+  },
+
+  // ── 12. crowdsec_decision_delete (unban IP) ─────────────────────────────
+
+  {
+    name: 'crowdsec_decision_delete',
+    description: 'Remove a ban/block from CrowdSec threat intelligence (delete a decision)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ip:    { type: 'string', description: 'IP address to unban' },
+        scope: { type: 'string', description: 'Scope to remove (e.g. "ip"). Defaults to "ip".' },
+      },
+      required: ['ip'],
+    },
+    async execute(args: Record<string, unknown>) {
+      const api = process.env.CROWDSEC_API
+      if (!api) return 'CROWDSEC_API environment variable not configured'
+      const key = process.env.CROWDSEC_API_KEY ?? ''
+      const ip = String(args.ip)
+      const scope = String(args.scope ?? 'ip')
+      const url = `${api.replace(/\/+$/, '')}/api/v1/decisions?type=${scope}&value=${encodeURIComponent(ip)}`
+      const res = await fetch(url.toString(), {
+        method: 'DELETE',
+        headers: {
+          'X-Api-Key': key,
+          'Content-Type': 'application/json',
+        },
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (!res.ok) return `CrowdSec error HTTP ${res.status}: ${await res.text()}`
+      return jsonStr({ success: true, ip, scope, action: 'deleted' })
+    },
+  },
+
+  // ── 13. wazuh_active_response ────────────────────────────────────────────
+
+  {
+    name: 'wazuh_active_response',
+    description: 'Send an active response command to a Wazuh agent (e.g. block IP, restart agent)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent:    { type: 'string', description: 'Wazuh agent ID or name' },
+        command:  { type: 'string', description: 'Command to execute (e.g. "firewall-drop", "host-deny", "restart-wazuh")' },
+        args:     { type: 'object', description: 'Command arguments as key-value pairs' },
+      },
+      required: ['agent', 'command'],
+    },
+    async execute(args: Record<string, unknown>) {
+      const api = process.env.WAZUH_API
+      if (!api) return 'WAZUH_API environment variable not configured'
+      const user = process.env.WAZUH_USERNAME ?? ''
+      const pass = process.env.WAZUH_PASSWORD ?? ''
+      const agent = String(args.agent)
+      const command = String(args.command)
+      const wazuhArgs = args.args ?? {}
+      const url = `${api.replace(/\/+$/, '')}/active-response/run`
+      const body: Record<string, unknown> = {
+        cmd: command,
+        agent_id: agent,
+      }
+      if (typeof wazuhArgs === 'object' && wazuhArgs !== null) {
+        body.arguments = wazuhArgs
+      }
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${Buffer.from(`${user}:${pass}`).toString('base64')}`,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (!res.ok) return `Wazuh error HTTP ${res.status}: ${await res.text()}`
+      return jsonStr({ success: true, agent, command })
+    },
+  },
+
+  // ── 14. firewall_block (stub) ────────────────────────────────────────────
+
+  {
+    name: 'firewall_block',
+    description: 'Block a CIDR range via the firewall API (behind feature flag — stub for now)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        cidr:   { type: 'string', description: 'CIDR notation to block (e.g. "10.0.0.0/24")' },
+        reason: { type: 'string', description: 'Reason for the block' },
+      },
+      required: ['cidr'],
+    },
+    async execute(args: Record<string, unknown>) {
+      const fwApi = process.env.FIREWALL_API
+      if (!fwApi) return 'FIREWALL_API environment variable not configured — firewall_block is not configured'
+      const fwKey = process.env.FIREWALL_API_KEY ?? ''
+      const cidr = String(args.cidr)
+      const reason = String(args.reason ?? 'blocked by security tool')
+      const url = `${fwApi.replace(/\/+$/, '')}/blocks`
+      const body = { cidr, reason }
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${fwKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (!res.ok) return `Firewall API error HTTP ${res.status}: ${await res.text()}`
+      return jsonStr({ success: true, cidr, reason })
+    },
+  },
+] as const).map(t => ({ ...t, category: 'security' as const }))
+
+// ── Combined export ──────────────────────────────────────────────────────────
+
+export const securityTools = [...readToolDefs, ...writeToolDefs]
