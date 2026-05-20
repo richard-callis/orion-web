@@ -17,6 +17,8 @@ describe('Security Tools', () => {
     delete process.env.WAZUH_USERNAME
     delete process.env.WAZUH_PASSWORD
     delete process.env.VICTORIA_METRICS_URL
+    delete process.env.FIREWALL_API
+    delete process.env.FIREWALL_API_KEY
   })
 
   afterEach(() => {
@@ -24,8 +26,8 @@ describe('Security Tools', () => {
   })
 
   describe('Tool Definitions', () => {
-    it('exports exactly 10 tools', () => {
-      expect(securityTools).toHaveLength(10)
+    it('exports exactly 14 tools', () => {
+      expect(securityTools).toHaveLength(14)
     })
 
     it('has all expected tool names', () => {
@@ -41,6 +43,10 @@ describe('Security Tools', () => {
         'wazuh_rootcheck',
         'prometheus_query',
         'prometheus_query_range',
+        'crowdsec_decision_create',
+        'crowdsec_decision_delete',
+        'wazuh_active_response',
+        'firewall_block',
       ]
       expect(names).toEqual(expected)
     })
@@ -470,6 +476,199 @@ describe('Security Tools', () => {
       const tool = securityTools[8]
       const result = await tool.execute({ query: 'up' })
       expect(result).toContain('VictoriaMetrics error HTTP 503')
+    })
+  })
+
+  // ── Write tool tests ──────────────────────────────────────────────────────
+
+  describe('crowdsec_decision_create', () => {
+    it('returns error when CROWDSEC_API is not set', async () => {
+      const tool = securityTools[10]
+      const result = await tool.execute({})
+      expect(result).toBe('CROWDSEC_API environment variable not configured')
+    })
+
+    it('POSTs to CrowdSec decisions API', async () => {
+      process.env.CROWDSEC_API = 'http://localhost:8080'
+      process.env.CROWDSEC_API_KEY = 'test-key'
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({})),
+      })
+
+      const tool = securityTools[10]
+      const result = await tool.execute({ ip: '1.2.3.4', reason: 'brute force' })
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:8080/api/v1/decisions',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({ 'X-Api-Key': 'test-key' }),
+          body: JSON.stringify({ scope: 'ip', value: '1.2.3.4', duration: '24h', reason: 'brute force' }),
+        }),
+      )
+      expect(result).toContain('1.2.3.4')
+    })
+
+    it('uses custom scope and duration', async () => {
+      process.env.CROWDSEC_API = 'http://localhost:8080'
+      process.env.CROWDSEC_API_KEY = 'test-key'
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({})),
+      })
+
+      const tool = securityTools[10]
+      await tool.execute({ ip: '1.2.3.4', scope: 'os', duration: '7d' })
+
+      const body = JSON.parse((global.fetch as any).mock.calls[0][1].body)
+      expect(body.scope).toBe('os')
+      expect(body.duration).toBe('7d')
+    })
+
+    it('returns HTTP error from response', async () => {
+      process.env.CROWDSEC_API = 'http://localhost:8080'
+      process.env.CROWDSEC_API_KEY = 'test-key'
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        text: () => Promise.resolve('Forbidden'),
+      })
+
+      const tool = securityTools[10]
+      const result = await tool.execute({ ip: '1.2.3.4' })
+      expect(result).toContain('CrowdSec error HTTP 403')
+    })
+  })
+
+  describe('crowdsec_decision_delete', () => {
+    it('returns error when CROWDSEC_API is not set', async () => {
+      const tool = securityTools[11]
+      const result = await tool.execute({})
+      expect(result).toBe('CROWDSEC_API environment variable not configured')
+    })
+
+    it('DELETEs from CrowdSec decisions API', async () => {
+      process.env.CROWDSEC_API = 'http://localhost:8080'
+      process.env.CROWDSEC_API_KEY = 'test-key'
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({})),
+      })
+
+      const tool = securityTools[11]
+      const result = await tool.execute({ ip: '1.2.3.4' })
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:8080/api/v1/decisions?type=ip&value=1.2.3.4',
+        expect.objectContaining({ method: 'DELETE' }),
+      )
+      expect(result).toContain('deleted')
+    })
+  })
+
+  describe('wazuh_active_response', () => {
+    it('returns error when WAZUH_API is not set', async () => {
+      const tool = securityTools[12]
+      const result = await tool.execute({})
+      expect(result).toBe('WAZUH_API environment variable not configured')
+    })
+
+    it('POSTs to Wazuh active-response API', async () => {
+      process.env.WAZUH_API = 'http://localhost:55000'
+      process.env.WAZUH_USERNAME = 'admin'
+      process.env.WAZUH_PASSWORD = 'secret'
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({})),
+      })
+
+      const tool = securityTools[12]
+      const result = await tool.execute({ agent: '001', command: 'firewall-drop' })
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:55000/active-response/run',
+        expect.objectContaining({
+          method: 'POST',
+        }),
+      )
+      const body = JSON.parse((global.fetch as any).mock.calls[0][1].body)
+      expect(body.cmd).toBe('firewall-drop')
+      expect(body.agent_id).toBe('001')
+      expect(result).toContain('firewall-drop')
+    })
+
+    it('passes args as arguments', async () => {
+      process.env.WAZUH_API = 'http://localhost:55000'
+      process.env.WAZUH_USERNAME = 'admin'
+      process.env.WAZUH_PASSWORD = 'secret'
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({})),
+      })
+
+      const tool = securityTools[12]
+      await tool.execute({ agent: '001', command: 'firewall-drop', args: { source: '1.2.3.4' } })
+
+      const body = JSON.parse((global.fetch as any).mock.calls[0][1].body)
+      expect(body.arguments).toEqual({ source: '1.2.3.4' })
+    })
+
+    it('returns HTTP error from response', async () => {
+      process.env.WAZUH_API = 'http://localhost:55000'
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        text: () => Promise.resolve('Not found'),
+      })
+
+      const tool = securityTools[12]
+      const result = await tool.execute({ agent: '001', command: 'test' })
+      expect(result).toContain('Wazuh error HTTP 404')
+    })
+  })
+
+  describe('firewall_block', () => {
+    it('returns error when FIREWALL_API is not set', async () => {
+      const tool = securityTools[13]
+      const result = await tool.execute({})
+      expect(result).toContain('FIREWALL_API environment variable not configured')
+    })
+
+    it('POSTs to firewall API when configured', async () => {
+      process.env.FIREWALL_API = 'http://localhost:9000'
+      process.env.FIREWALL_API_KEY = 'fw-key'
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({})),
+      })
+
+      const tool = securityTools[13]
+      const result = await tool.execute({ cidr: '10.0.0.0/24', reason: 'blocked' })
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:9000/blocks',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({ Authorization: 'Bearer fw-key' }),
+          body: JSON.stringify({ cidr: '10.0.0.0/24', reason: 'blocked' }),
+        }),
+      )
+      expect(result).toContain('10.0.0.0/24')
+    })
+
+    it('returns HTTP error from response', async () => {
+      process.env.FIREWALL_API = 'http://localhost:9000'
+      process.env.FIREWALL_API_KEY = 'fw-key'
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('Internal error'),
+      })
+
+      const tool = securityTools[13]
+      const result = await tool.execute({ cidr: '10.0.0.0/24' })
+      expect(result).toContain('Firewall API error HTTP 500')
     })
   })
 })
