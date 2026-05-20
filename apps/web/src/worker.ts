@@ -105,11 +105,19 @@ function isTransientError(errorMessage: string): boolean {
 }
 
 async function recoverStuckTasks() {
-  const stuckCutoff = new Date(Date.now() - 30 * 60 * 1000) // 30 minutes ago
+  // Allow overriding the 30-min default via SystemSetting (minutes)
+  const setting = await prisma.systemSetting.findUnique({ where: { key: 'worker.stuckTaskMinutes' } }).catch(() => null)
+  const stuckMinutes = Math.max(10, parseInt(String(setting?.value ?? '30'), 10) || 30)
+  const stuckCutoff = new Date(Date.now() - stuckMinutes * 60 * 1000)
   const stuck = await prisma.task.findMany({
     where: { status: 'in_progress', updatedAt: { lt: stuckCutoff } }
   })
   for (const task of stuck) {
+    // Don't fail tasks that have a pending retry scheduled in the future
+    if (task.nextRetryAt && task.nextRetryAt > new Date()) {
+      console.log(`[recovery] Skipping task ${task.id} — retry scheduled at ${task.nextRetryAt.toISOString()}`)
+      continue
+    }
     await prisma.task.update({
       where: { id: task.id },
       data: { status: 'failed' }
@@ -118,11 +126,11 @@ async function recoverStuckTasks() {
       data: {
         taskId: task.id,
         eventType: 'system',
-        content: 'Task recovered from crashed worker — marked failed for safety. Use orion_reopen_task to retry if appropriate.',
+        content: `Task recovered from crashed worker after ${stuckMinutes}min inactivity — marked failed for safety. Use orion_reopen_task to retry if appropriate.`,
         agentId: null
       }
     })
-    console.log(`[recovery] Recovered stuck task ${task.id} — marked failed`)
+    console.log(`[recovery] Recovered stuck task ${task.id} — marked failed (${stuckMinutes}min threshold)`)
   }
   if (stuck.length > 0) console.log(`[recovery] Recovered ${stuck.length} stuck task(s)`)
 }
@@ -135,6 +143,8 @@ function err(msg: string) { process.stderr.write(`[orchestrator] ERROR: ${msg}\n
 // ── Model resolution ──────────────────────────────────────────────────────────
 
 let cachedDefaultModel: string | null = null
+let cachedDefaultModelAt = 0
+const MODEL_CACHE_TTL_MS = 5 * 60 * 1000 // re-read from DB every 5 minutes
 
 /**
  * Resolve an agent's LLM setting to a concrete model ID.
@@ -150,11 +160,12 @@ async function resolveModelId(llm: unknown): Promise<string> {
   const useDefault = !llm || llm === true
 
   if (useDefault || typeof llm !== 'string') {
-    if (!cachedDefaultModel) {
+    if (!cachedDefaultModel || Date.now() - cachedDefaultModelAt > MODEL_CACHE_TTL_MS) {
       const setting = await prisma.systemSetting.findUnique({ where: { key: 'model.default' } })
       const value = setting?.value as string | undefined
       if (!value) throw new Error('No default LLM configured — set model.default in System Settings')
       cachedDefaultModel = value
+      cachedDefaultModelAt = Date.now()
     }
     return cachedDefaultModel
   }

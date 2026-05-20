@@ -224,7 +224,7 @@ export const CreateFeatureSchema = z.object({
   title: z.string().min(1).max(500),
   description: z.string().max(5000).optional(),
   plan: z.string().max(10000).optional(),
-  status: z.enum(['pending', 'in_progress', 'done', 'blocked']).default('pending'),
+  status: z.enum(['active', 'pending', 'in_progress', 'done', 'blocked']).default('pending'),
   epicId: z.string().optional(),
 })
 
@@ -232,7 +232,7 @@ export const UpdateFeatureSchema = z.object({
   title: z.string().min(1).max(500).optional(),
   description: z.string().max(5000).optional(),
   plan: z.string().max(10000).nullable().optional(),
-  status: z.enum(['pending', 'in_progress', 'done', 'blocked']).optional(),
+  status: z.enum(['active', 'pending', 'in_progress', 'done', 'blocked']).optional(),
   epicId: z.string().optional(),
   planApprovedBy: z.string().max(200).nullable().optional(),
   planApprovedAt: z.string().datetime().nullable().optional(),
@@ -242,14 +242,14 @@ export const CreateEpicSchema = z.object({
   title: z.string().min(1).max(500),
   description: z.string().max(5000).optional(),
   plan: z.string().max(10000).optional(),
-  status: z.enum(['pending', 'in_progress', 'done', 'blocked']).default('pending'),
+  status: z.enum(['active', 'pending', 'in_progress', 'done', 'blocked']).default('pending'),
 })
 
 export const UpdateEpicSchema = z.object({
   title: z.string().min(1).max(500).optional(),
   description: z.string().max(5000).optional(),
   plan: z.string().max(10000).nullable().optional(),
-  status: z.enum(['pending', 'in_progress', 'done', 'blocked']).optional(),
+  status: z.enum(['active', 'pending', 'in_progress', 'done', 'blocked']).optional(),
   planApprovedBy: z.string().max(200).nullable().optional(),
   planApprovedAt: z.string().datetime().nullable().optional(),
 })
