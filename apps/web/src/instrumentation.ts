@@ -12,5 +12,8 @@ export async function register() {
 
     const { ensureSystemEpic } = await import('./lib/seed-system-epic')
     await ensureSystemEpic()
+
+    const { ensureActionPolicies } = await import('./lib/seed-action-policies')
+    await ensureActionPolicies()
   }
 }
