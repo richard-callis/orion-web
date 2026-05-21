@@ -13,6 +13,7 @@ import { prisma } from '@/lib/db'
 import { type IncidentDraft } from '@/lib/security/types'
 import { correlateEvents } from '@/lib/security/rule-engine'
 import type { RuleParams } from '@/lib/security/rule-engine'
+import { getSystemRoomId } from '@/lib/seed-system-epic'
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -165,6 +166,25 @@ async function correlateEnvironment(
           },
         },
       })
+
+      // Notify Warden in the security room
+      const securityRoomId = await getSystemRoomId('system.room.security')
+      if (securityRoomId) {
+        await prisma.chatMessage.create({
+          data: {
+            roomId: securityRoomId,
+            senderType: 'system',
+            content: [
+              `Warden | New Incident [${new Date().toISOString()}]`,
+              `Incident: ${incident.rootCauseSummary || 'Untitled'}`,
+              `Severity: ${incident.severity}`,
+              `Attacker: ${incident.attackerKey || 'unknown'}`,
+              `Events linked: ${draft.eventIds.length}`,
+              `Warden is triaging...`,
+            ].join('\n'),
+          },
+        })
+      }
 
       // Update events to reference the new incident
       await prisma.securityEvent.updateMany({
