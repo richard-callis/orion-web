@@ -78,10 +78,20 @@ export async function decide(
 
 /**
  * Match a target string against a pattern.
- * Supports: literal match, wildcard (*), and CIDR subnet (operator: 'subnet').
+ * Supports: literal match, wildcard (*), CIDR subnet (operator: 'subnet'),
+ * and prefix length comparison (operator: 'prefix_lte').
+ *
+ * prefix_lte: checks if the target's prefix length is <= the pattern's prefix
+ * length (i.e. the target subnet is wider than or equal to the threshold).
+ * Used for firewall_block /24-or-wider escalation.
  */
 export function matchesPattern(target: string, pattern: string, operator?: string): boolean {
-  // CIDR subnet matching
+  // prefix_lte: target prefix length <= pattern prefix length (wider-or-equal)
+  if (operator === 'prefix_lte') {
+    return prefixLTE(target, pattern)
+  }
+
+  // CIDR subnet containment matching
   if (operator === 'subnet') {
     return matchesSubnet(target, pattern)
   }
@@ -150,6 +160,62 @@ export function ipInRange(ip: string, cidr: string): boolean {
   const mask = prefixLength > 0 ? (~0 << (32 - prefixLength)) >>> 0 : 0
 
   return (ipNum & mask) === (cidrNum & mask)
+}
+
+/**
+ * Check if target's prefix length is <= pattern's prefix length (wider-or-equal).
+ *
+ * Used for firewall_block escalation: "is this subnet /24-or-wider?"
+ *
+ * Handles:
+ * - IPv4: "10.0.0.0/8", "192.168.1.0/24", "/16" (prefix-only)
+ * - IPv6: "2001:db8::/32", "fe80::/10", "::/0" (full IPv6 range)
+ * - Defaults to `approve` (never `auto`) for unparseable inputs
+ */
+export function prefixLTE(target: string, pattern: string): boolean {
+  const targetLen = extractPrefixLength(target)
+  const patternLen = extractPrefixLength(pattern)
+
+  // If either is unparseable, default to approve (safe)
+  if (targetLen === null || patternLen === null) return false
+
+  return targetLen <= patternLen
+}
+
+/**
+ * Extract the prefix length from an IPv4 CIDR, IPv6 CIDR, or prefix-only string.
+ *
+ * Accepts: "10.0.0.0/8", "/8", "2001:db8::/32", "/32", "0.0.0.0/0"
+ * Returns null for unparseable inputs.
+ */
+export function extractPrefixLength(s: string): number | null {
+  // Strip leading slash for prefix-only notation (e.g. "/24")
+  let cleaned = s
+  if (cleaned.startsWith('/') && !cleaned.includes('.')) {
+    const n = parseInt(cleaned.slice(1), 10)
+    if (n >= 0 && n <= 128) return n
+    return null
+  }
+
+  // CIDR notation — split on last '/'
+  const slashIdx = cleaned.lastIndexOf('/')
+  if (slashIdx === -1) return null // no prefix length
+
+  const prefixStr = cleaned.slice(slashIdx + 1)
+  const prefix = parseInt(prefixStr, 10)
+  if (!Number.isFinite(prefix)) return null
+
+  // Validate range based on address family
+  const ipPart = cleaned.slice(0, slashIdx)
+  if (ipPart.includes(':')) {
+    // IPv6
+    if (prefix >= 0 && prefix <= 128) return prefix
+  } else {
+    // IPv4
+    if (prefix >= 0 && prefix <= 32) return prefix
+  }
+
+  return null
 }
 
 // ── Execution ─────────────────────────────────────────────────────────────────
