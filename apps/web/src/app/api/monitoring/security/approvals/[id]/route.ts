@@ -51,7 +51,7 @@ export async function POST(
     return NextResponse.json({ error: 'Approval not found' }, { status: 404 })
   }
 
-  if (audit.status !== 'denied') {
+  if (audit.status !== 'pending') {
     return NextResponse.json({ error: 'Action is not pending approval' }, { status: 409 })
   }
 
