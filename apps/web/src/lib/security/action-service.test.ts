@@ -15,6 +15,8 @@ import {
   isDestructiveAction,
   matchesPattern,
   ipInRange,
+  prefixLTE,
+  extractPrefixLength,
 } from './action-service'
 
 describe('action-service: isDestructiveAction', () => {
@@ -104,5 +106,114 @@ describe('action-service: matchesPattern', () => {
   it('handles subnet operator with IPv6 — fail-closed', () => {
     // R1 mitigation: IPv6 home-subnet override must engage.
     expect(matchesPattern('fe80::1', '10.0.0.0/8', 'subnet')).toBe(true)
+  })
+})
+
+// ── prefixLTE / prefix_lte ──────────────────────────────────────────────────
+
+describe('action-service: extractPrefixLength', () => {
+  it('parses IPv4 /8 through /32', () => {
+    for (let i = 0; i <= 32; i++) {
+      expect(extractPrefixLength(`10.0.0.0/${i}`)).toBe(i)
+    }
+  })
+
+  it('parses IPv6 /16 through /128', () => {
+    for (const p of [16, 32, 48, 64, 96, 112, 128]) {
+      expect(extractPrefixLength(`2001:db8::/${p}`)).toBe(p)
+    }
+  })
+
+  it('parses prefix-only notation', () => {
+    expect(extractPrefixLength('/8')).toBe(8)
+    expect(extractPrefixLength('/24')).toBe(24)
+    expect(extractPrefixLength('/64')).toBe(64)
+    expect(extractPrefixLength('/128')).toBe(128)
+  })
+
+  it('rejects out-of-range prefixes', () => {
+    expect(extractPrefixLength('10.0.0.0/33')).toBe(null)
+    expect(extractPrefixLength('::/129')).toBe(null)
+    expect(extractPrefixLength('/-1')).toBe(null)
+    expect(extractPrefixLength('/abc')).toBe(null)
+  })
+
+  it('rejects malformed input', () => {
+    expect(extractPrefixLength('not-a-cidr')).toBe(null)
+    expect(extractPrefixLength('10.0.0.1')).toBe(null) // no slash
+  })
+})
+
+describe('action-service: prefixLTE — prefix length comparison', () => {
+  // Core semantics: targetLen <= patternLen means target is wider-or-equal
+  it('firewall_block 0.0.0.0/0 matches /24 threshold', () => {
+    expect(prefixLTE('0.0.0.0/0', '/24')).toBe(true) // 0 <= 24
+  })
+
+  it('firewall_block 10.0.0.0/8 matches /24 threshold', () => {
+    expect(prefixLTE('10.0.0.0/8', '/24')).toBe(true) // 8 <= 24
+  })
+
+  it('firewall_block 10.0.0.0/16 matches /24 threshold', () => {
+    expect(prefixLTE('10.0.0.0/16', '/24')).toBe(true) // 16 <= 24
+  })
+
+  it('firewall_block 10.0.0.0/24 does NOT exceed /24 threshold (equal)', () => {
+    expect(prefixLTE('10.0.0.0/24', '/24')).toBe(true) // 24 <= 24 — equal counts
+  })
+
+  it('firewall_block 10.0.0.0/32 does NOT match /24 threshold', () => {
+    expect(prefixLTE('10.0.0.0/32', '/24')).toBe(false) // 32 > 24 — too narrow
+  })
+
+  it('handles IPv6 prefix comparison', () => {
+    expect(prefixLTE('2001:db8::/32', '/48')).toBe(true) // 32 <= 48
+    expect(prefixLTE('2001:db8::/48', '/64')).toBe(true) // 48 <= 64
+    expect(prefixLTE('2001:db8::/64', '/48')).toBe(false) // 64 > 48
+    expect(prefixLTE('::/0', '/16')).toBe(true) // 0 <= 16
+    expect(prefixLTE('fe80::/10', '/128')).toBe(true) // 10 <= 128
+    expect(prefixLTE('fe80::/128', '/16')).toBe(false) // 128 > 16
+  })
+
+  // Home-subnet inversion: a /32 inside the home subnet should NOT trigger
+  // escalation via prefix_lte, because 32 > 24 (it's narrower)
+  it('home-subnet /32 does NOT escalate via prefix_lte (narrower than /24)', () => {
+    const homeIP = '10.1.2.3'
+    const cidr = `${homeIP}/32`
+    expect(prefixLTE(cidr, '/24')).toBe(false) // 32 > 24 — narrow host, no escalation
+  })
+
+  // Unparseable inputs default to safe behavior
+  it('returns false for unparseable inputs (safe default)', () => {
+    expect(prefixLTE('not-a-cidr', '/24')).toBe(false)
+    expect(prefixLTE('10.0.0.0', '/24')).toBe(false) // no slash in target
+    expect(prefixLTE('10.0.0.0/8', 'not-a-pattern')).toBe(false)
+  })
+})
+
+describe('action-service: matchesPattern prefix_lte operator', () => {
+  it('escalates 0.0.0.0/0 against /24 (B5: the original dead-code path)', () => {
+    expect(
+      matchesPattern('0.0.0.0/0', '/24', 'prefix_lte')
+    ).toBe(true)
+  })
+
+  it('escalates 172.16.0.0/12 against /24', () => {
+    expect(
+      matchesPattern('172.16.0.0/12', '/24', 'prefix_lte')
+    ).toBe(true)
+  })
+
+  it('does NOT escalate 10.0.1.0/24 against /24 (equal)', () => {
+    // 24 <= 24 is true, so this DOES match (equal is wider-or-equal)
+    expect(
+      matchesPattern('10.0.1.0/24', '/24', 'prefix_lte')
+    ).toBe(true)
+  })
+
+  it('does NOT escalate 10.0.1.0/32 against /24 (host route)', () => {
+    expect(
+      matchesPattern('10.0.1.0/32', '/24', 'prefix_lte')
+    ).toBe(false)
   })
 })
