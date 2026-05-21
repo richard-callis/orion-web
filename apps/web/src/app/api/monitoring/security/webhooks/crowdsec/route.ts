@@ -12,7 +12,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { normalizedEventSchema } from '@/lib/security/types'
-import { verifyWebhookHmac, isWithinReplayWindow, wasAlreadyProcessed } from '@/lib/security/webhook-auth'
+import {
+  verifyWebhookHmac,
+  isWithinReplayWindow,
+  wasAlreadyProcessed,
+  isLoopbackWebhookRequest,
+  warnMissingWebhookSecret,
+} from '@/lib/security/webhook-auth'
 import { normalizeCrowdSecAlert, type CrowdSecAlert } from '@/lib/security/normalize/crowdsec'
 
 export const dynamic = 'force-dynamic'
@@ -30,9 +36,19 @@ export async function POST(req: NextRequest) {
 
   // 2. Verify HMAC signature
   if (!process.env.CROWDSEC_WEBHOOK_SECRET) {
-    // If no secret configured, accept from localhost only (dev mode)
-    const clientIp = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || ''
-    if (!clientIp.startsWith('127.') && !clientIp.startsWith('::1')) {
+    // No secret configured. Production must reject (misconfigured); dev
+    // accepts only loopback requests verified via the direct TCP source
+    // (or a WEBHOOK_TRUSTED_PROXY_IPS-allowlisted proxy hop). The previous
+    // implementation trusted unvalidated X-Forwarded-For, which any HTTP
+    // client could spoof. See `isLoopbackWebhookRequest` for the policy.
+    const refuse = warnMissingWebhookSecret('crowdsec', 'CROWDSEC_WEBHOOK_SECRET')
+    if (refuse) {
+      return NextResponse.json(
+        { error: 'Webhook secret not configured (server misconfigured)' },
+        { status: 500 }
+      )
+    }
+    if (!isLoopbackWebhookRequest(req)) {
       return NextResponse.json({ error: 'Webhook secret not configured' }, { status: 403 })
     }
   } else {
