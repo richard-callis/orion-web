@@ -15,5 +15,8 @@ export async function register() {
 
     const { ensureActionPolicies } = await import('./lib/seed-action-policies')
     await ensureActionPolicies()
+
+    const { ensureCorrelationRules } = await import('./lib/seed-correlation-rules')
+    await ensureCorrelationRules()
   }
 }

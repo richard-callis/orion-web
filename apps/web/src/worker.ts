@@ -17,6 +17,7 @@ import { getPrompt } from './lib/system-prompts'
 import { resolveAgentGateway } from './lib/agent-gateway'
 import { getAgentsMd } from './lib/agents-md'
 import { startDream } from './lib/dream'
+import { runCorrelator } from './workers/security-correlator'
 
 const POLL_INTERVAL_MS = 15_000
 const MAX_CONCURRENT   = 3
@@ -832,6 +833,11 @@ async function main() {
 
   // Dream — memory consolidation (extraction every 2h, pruning every 24h)
   startDream()
+
+  // Security correlator — poll for uncorrelated events every 30s
+  setInterval(() => {
+    runCorrelator().catch(e => err(`Security correlator failed: ${e}`))
+  }, 30_000)
 }
 
 main().catch(e => { err(`Fatal: ${e}`); process.exit(1) })
