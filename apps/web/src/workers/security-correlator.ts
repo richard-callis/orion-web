@@ -14,6 +14,23 @@ import { type IncidentDraft } from '@/lib/security/types'
 import { correlateEvents } from '@/lib/security/rule-engine'
 import type { RuleParams } from '@/lib/security/rule-engine'
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Select correlation rules that apply to a given environment.
+ *
+ * A rule applies when its `environmentId` matches the env id OR is `null`
+ * (a global rule). Exported for unit tests — the matching logic guards
+ * against a regression where global rules were silently excluded by a
+ * Prisma include that joined via `Environment.correlationRules`.
+ */
+export function rulesForEnvironment<R extends { environmentId: string | null }>(
+  rules: R[],
+  envId: string,
+): R[] {
+  return rules.filter(r => r.environmentId === envId || r.environmentId === null)
+}
+
 // ── Configuration ─────────────────────────────────────────────────────────────
 
 /** How far back to look for uncorrelated events (seconds). */
@@ -36,7 +53,7 @@ export async function runCorrelator(): Promise<CorrelationResult[]> {
   const results: CorrelationResult[] = []
   const startTime = Date.now()
 
-  // 1. Get environments with security events
+  // 1. Get environments with uncorrelated security events.
   const environments = await prisma.environment.findMany({
     where: {
       securityEvents: {
@@ -48,23 +65,37 @@ export async function runCorrelator(): Promise<CorrelationResult[]> {
         },
       },
     },
-    include: {
-      correlationRules: {
-        where: {
-          enabled: true,
-        },
-        select: {
-          name: true,
-          params: true,
-          severity: true,
-        },
-      },
+    select: { id: true },
+  })
+
+  // 2. Fetch correlation rules in a single query that includes BOTH
+  //    per-environment rules AND global rules (environmentId IS NULL).
+  //    A prior implementation joined rules via Environment.correlationRules,
+  //    which silently dropped global rules — meaning every default rule
+  //    (brute-force, port-scan, malware, suspicious-process) was missed.
+  const allRules = await prisma.correlationRule.findMany({
+    where: {
+      enabled: true,
+    },
+    select: {
+      name: true,
+      params: true,
+      severity: true,
+      environmentId: true,
     },
   })
 
   for (const env of environments) {
+    const envRules = rulesForEnvironment(allRules, env.id)
     try {
-      const envResult = await correlateEnvironment(env)
+      const envResult = await correlateEnvironment({
+        id: env.id,
+        correlationRules: envRules.map(r => ({
+          name: r.name,
+          params: r.params,
+          severity: r.severity,
+        })),
+      })
       results.push(envResult)
     } catch {
       results.push({

@@ -72,6 +72,39 @@ export async function correlateEvents(
   return drafts
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve a groupBy / field selector against a SecurityEvent row.
+ *
+ * Supports two forms:
+ *   - "source" — a top-level column on the SecurityEvent row
+ *   - "rawEvent.srcip" or "rawEvent.alert.srcip" — a dot-path into the rawEvent JSON
+ *
+ * Returns the string-coerced value, or `null` if the path doesn't resolve.
+ *
+ * Exported for unit tests; used by `runThresholdRule` to bucket events.
+ */
+export function extractGroupValue(event: unknown, field: string): string | null {
+  if (event === null || typeof event !== 'object') return null
+  const evt = event as Record<string, unknown>
+
+  // Top-level column access (no dot)
+  if (!field.includes('.')) {
+    const v = evt[field]
+    return v == null ? null : String(v)
+  }
+
+  // Dot-path traversal. First segment must be a top-level column.
+  const parts = field.split('.')
+  let cursor: unknown = evt[parts[0]]
+  for (let i = 1; i < parts.length; i++) {
+    if (cursor === null || typeof cursor !== 'object') return null
+    cursor = (cursor as Record<string, unknown>)[parts[i]]
+  }
+  return cursor == null ? null : String(cursor)
+}
+
 // ── Threshold rule ────────────────────────────────────────────────────────────
 
 /**
@@ -92,10 +125,19 @@ async function runThresholdRule(
     orderBy: { createdAt: 'desc' },
   })
 
-  // Group events by the specified fields
+  // Group events by the specified fields.
+  //
+  // A groupBy entry may name a top-level SecurityEvent column (e.g. "source")
+  // or a JSON path into the rawEvent payload using dot notation (e.g.
+  // "rawEvent.srcip", "rawEvent.alert.srcip"). This is required for the
+  // brute-force rule: the attacker IP lives in the raw payload, not in a
+  // first-class column — grouping by "source" would bucket every CrowdSec
+  // event together regardless of attacker.
   const grouped = new Map<string, typeof events>()
   for (const event of events) {
-    const groupKey = params.groupBy.map(f => (event as Record<string, unknown>)[f] ?? 'unknown').join(':')
+    const groupKey = params.groupBy
+      .map(f => extractGroupValue(event, f) ?? 'unknown')
+      .join(':')
     if (!grouped.has(groupKey)) grouped.set(groupKey, [])
     grouped.get(groupKey)!.push(event)
   }
