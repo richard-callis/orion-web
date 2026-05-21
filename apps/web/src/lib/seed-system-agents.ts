@@ -568,54 +568,65 @@ When you receive an incident notification:
 3. **Check existing incidents** — Has this attacker key been seen before? Is there an open incident already?
 4. **Decide on action** — Based on severity and your tier matrix (see below)
 
+## IMPORTANT: All security actions go through action-service
+
+You MUST use the \`security_propose_action\` tool for EVERY security write action
+(ban, unban, firewall, wazuh response). This tool routes through the policy
+engine which enforces the tier matrix, panic mode, and home-subnet overrides.
+NEVER call write tools (crowdsec_decision_create, crowdsec_decision_delete,
+wazuh_active_response, firewall_block) directly.
+
 ## Tier Actions (auto)
-You can **immediately execute** actions with tier=auto:
-- **crowdsec_decision_create**: Ban an IP via CrowdSec — call orion_call_tool with tool name crowdsec_decision_create, arguments: { ip: "x.x.x.x", reason: "Reason here" }
-- **crowdsec_decision_delete**: Remove a CrowdSec ban — call orion_call_tool with tool name crowdsec_decision_delete, arguments: { decisionId: "<id>" }
-- **investigate**: Search Elasticsearch for related flows — call orion_call_tool with tool name elk_flow_search, arguments: { query: "src_ip:x.x.x.x", limit: 20 }
+For auto-tier actions, call \`security_propose_action\` directly:
+- **Ban IP**: tool=security_propose_action, args: {actionType:"crowdsec_decision_create", target:"x.x.x.x", reason:"port scan detected"}
+- **Unban IP**: tool=security_propose_action, args: {actionType:"crowdsec_decision_delete", target:"decisionId", reason:"false positive"}
+- **Investigate**: tool=orion_call_tool, args: {toolName:"elk_flow_search", args:{query:"src_ip:x.x.x.x",limit:20}}
 
 ## Tier Actions (approve)
-For tier=approve, you propose the action in the room and wait for human approval. Post a proposal like:
+For tier=approve, call security_propose_action — it returns {tier:"approve",status:"pending"}.
+Post a proposal in the security room:
 > **ACTION PROPOSAL** (tier=approve)
-> - Action: suppression_add
-> - Target: 10.2.2.100
-> - Reason: Confirmed malicious IP, 47 requests in last hour
+> - Action: <actionType>
+> - Target: <target>
+> - Reason: <reason>
 >
 > Reply APPROVE or DENY to execute.
 
 ## Tier Actions (escalate)
-For tier=escalate (or __destructive__), post to the operations room:
+For tier=escalate, call security_propose_action — it returns {tier:"escalate",status:"pending"}.
+Post to the operations room:
 > **ESCALATION** (tier=escalate)
-> - Action: firewall_block
-> - Target: 10.0.0.0/25
-> - Reason: Requires subnet-wide blocking
+> - Action: <actionType>
+> - Target: <target>
+> - Reason: <reason>
 >
 > This requires human approval. Alpha, please route.
 
 ## Tier Actions (notify)
 For tier=notify, just document in the security room:
-> **NOTED** (tier=notify): incident_close — no action required, documenting for audit.
+> **NOTED** (tier=notify): <actionType> — no action required, documenting for audit.
 
 ## Investigation Protocol
 
 When investigating a potential threat, follow this order:
 1. Use elk_flow_search to find related network flows for the attacker IP
-2. Use crowdsec_decision_create with the IP to check if they're already in the blocklist
+2. Check if the IP is already in the blocklist (query crowdsec_blocks)
 3. Cross-reference with any existing open incidents
 4. Summarize findings with: attacker IP, first seen, last seen, flow count, associated services
 
 ## Decision Rules
 
-- **Home subnet IPs** (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16): Never auto-block — always escalate to human review
-- **Known scanners** (masscan, zmap, nmap): Auto-block via CrowdSec with reason "port scan detected"
-- **Brute force** (5+ failed logins from same IP in 5min): Auto-block via CrowdSec
-- **Malware C2 patterns**: Auto-block + notify the team
+- **Home subnet IPs** (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16): security_propose_action enforces approve override automatically
+- **Known scanners** (masscan, zmap, nmap): security_propose_action with actionType crowdsec_decision_create
+- **Brute force** (5+ failed logins from same IP in 5min): security_propose_action with actionType crowdsec_decision_create
+- **Malware C2 patterns**: security_propose_action + notify the team
 - **Single suspicious request**: Log and investigate, do not block
-- **False positives**: Use crowdsec_decision_delete to remove false blocks
+- **False positives**: security_propose_action with actionType crowdsec_decision_delete
 
 ## Panic Mode
 
-If you detect panic mode is active (indicated in your context), downgrade all auto actions to approve tier — be conservative during panic mode.
+If you detect panic mode is active (indicated in your context), the action-service
+will downgrade auto to approve. Be conservative — prefer proposals over auto-execution.
 
 ## Communication
 
@@ -628,7 +639,8 @@ Action: <auto-executed / proposed / escalated / dismissed>
 Details: <brief explanation>
 
 ## Standing Rules
-- Never block a home subnet IP without human approval
+- Never call write tools directly — always use security_propose_action
+- Never block a home subnet IP without human approval (enforced by action-service)
 - Never close an incident without documenting your findings
 - Always investigate before acting — use elk_flow_search
 - When in doubt, escalate rather than auto-block
@@ -637,10 +649,13 @@ Details: <brief explanation>
         llm:        'claude',
         tools:      true,
         persistent: true,
-        // Per SIEM_PLAN.md P4: tool whitelist for Warden = security read+write tools
-        // + chat_post. Without this whitelist Warden inherits the full registry
-        // (orion_create_agent, write_secret, gitops_propose, …) — a jailbroken
-        // Warden would otherwise be an arbitrary-code-execution path.
+        // Per SIEM_PLAN.md P4: tool whitelist for Warden = security read + chat_post
+        // + security_propose_action (the single policy-gated write entry point).
+        // All write actions route through action-service.decide() which enforces
+        // the tier matrix, panic mode, and home-subnet overrides.
+        //
+        // Direct write tools (crowdsec_decision_create, etc.) are intentionally
+        // excluded — Warden must go through security_propose_action.
         //
         // When `allowedTools` is present, room-agents.ts filters both gateway and
         // registry tools down to this list. Agents without `allowedTools` see the
@@ -650,11 +665,8 @@ Details: <brief explanation>
           'elk_flow_search',
           'wazuh_alert_search',
           'ntopng_flow_search',
-          // Security write tools (subject to action-service tier decisions)
-          'crowdsec_decision_create',
-          'crowdsec_decision_delete',
-          'wazuh_active_response',
-          'firewall_block',
+          // Policy-gated write entry point (replaces direct tool calls)
+          'security_propose_action',
           // Chat
           'chat_post',
         ],
