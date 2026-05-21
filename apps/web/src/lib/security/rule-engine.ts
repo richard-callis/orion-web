@@ -44,6 +44,88 @@ export interface CorrelationRunResult {
   erroredRules: string[]
 }
 
+// ── Per-rule rate limit (R4 / MAJOR-2) ────────────────────────────────────────
+
+/**
+ * In-memory per-rule rate-limit state. Keys are `<envId>:<ruleName>`. The
+ * tracker enforces the R4 risk-register requirement (SIEM_PLAN.md): a poison
+ * rule that produces many incidents in a short window is skipped for the
+ * remainder of the window so it cannot starve other rules, flood the
+ * incident table, or spin the correlator in a tight loop.
+ *
+ * Defaults are intentionally generous (per-rule cap higher than the
+ * worker's global `MAX_INCIDENTS_PER_RUN` cap of 10) so a healthy rule that
+ * happens to fire repeatedly across runs is not penalised. The cap is
+ * tunable via `SIEM_RULE_RATE_LIMIT_MAX` and `SIEM_RULE_RATE_LIMIT_WINDOW_MS`.
+ */
+const DEFAULT_RULE_MAX_INCIDENTS = 20
+const DEFAULT_RULE_WINDOW_MS = 5 * 60 * 1000 // 5 minutes
+
+interface RuleBucket {
+  count: number
+  windowStart: number
+}
+
+const ruleRateLimitState = new Map<string, RuleBucket>()
+
+function getRuleRateLimitConfig(): { max: number; windowMs: number } {
+  const maxRaw = Number(process.env.SIEM_RULE_RATE_LIMIT_MAX)
+  const windowRaw = Number(process.env.SIEM_RULE_RATE_LIMIT_WINDOW_MS)
+  return {
+    max: Number.isFinite(maxRaw) && maxRaw > 0 ? maxRaw : DEFAULT_RULE_MAX_INCIDENTS,
+    windowMs:
+      Number.isFinite(windowRaw) && windowRaw > 0
+        ? windowRaw
+        : DEFAULT_RULE_WINDOW_MS,
+  }
+}
+
+/**
+ * Returns true if the rule has exceeded its per-window incident cap and
+ * should be skipped this run. The bucket auto-resets once the window
+ * elapses. Exported for unit tests.
+ */
+export function shouldRateLimitRule(
+  envId: string,
+  ruleName: string,
+  now: number = Date.now(),
+): boolean {
+  const { max, windowMs } = getRuleRateLimitConfig()
+  const key = `${envId}:${ruleName}`
+  const bucket = ruleRateLimitState.get(key)
+  if (!bucket) return false
+  if (now - bucket.windowStart >= windowMs) {
+    ruleRateLimitState.delete(key)
+    return false
+  }
+  return bucket.count >= max
+}
+
+/**
+ * Record that a rule produced an incident, advancing its rate-limit bucket.
+ * Should be called by the correlator after each incident is persisted (not
+ * just drafted) so the cap reflects committed output. Exported for tests.
+ */
+export function recordRuleIncident(
+  envId: string,
+  ruleName: string,
+  now: number = Date.now(),
+): void {
+  const { windowMs } = getRuleRateLimitConfig()
+  const key = `${envId}:${ruleName}`
+  const bucket = ruleRateLimitState.get(key)
+  if (!bucket || now - bucket.windowStart >= windowMs) {
+    ruleRateLimitState.set(key, { count: 1, windowStart: now })
+    return
+  }
+  bucket.count += 1
+}
+
+/** Test helper: clear all rate-limit state. */
+export function _resetRuleRateLimitsForTests(): void {
+  ruleRateLimitState.clear()
+}
+
 function isNamedRuleArray(
   rules: ReadonlyArray<RuleParams | NamedRule>,
 ): rules is NamedRule[] {
@@ -84,6 +166,19 @@ export async function correlateEvents(
       }))
 
   for (const { name, params } of named) {
+    // R4 / MAJOR-2 — per-rule rate limit. A poison rule (e.g. one matching
+    // every event) is capped at SIEM_RULE_RATE_LIMIT_MAX incidents per
+    // window. The bucket is fed by `recordRuleIncident` from the worker
+    // after each persisted incident.
+    if (shouldRateLimitRule(envId, name)) {
+      const cfg = getRuleRateLimitConfig()
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[siem] correlation rule "${name}" rate-limited for env ${envId}: ` +
+          `exceeded ${cfg.max} incidents in the last ${cfg.windowMs}ms window. Skipping.`,
+      )
+      continue
+    }
     try {
       let result: IncidentDraft | null = null
       switch (params.type) {

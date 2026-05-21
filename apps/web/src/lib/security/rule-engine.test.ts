@@ -14,6 +14,9 @@ vi.mock('@/lib/db', () => ({
 import {
   extractGroupValue,
   correlateEvents,
+  shouldRateLimitRule,
+  recordRuleIncident,
+  _resetRuleRateLimitsForTests,
   type NamedRule,
 } from './rule-engine'
 
@@ -162,5 +165,98 @@ describe('correlateEvents — MAJOR-4 (silent rule errors are now logged + count
     ])
     // No rule name supplied → synthetic unnamed_pattern; no error path hit.
     expect(result.errorCount).toBe(0)
+  })
+})
+
+describe('per-rule rate limit — MAJOR-2 (R4: poison-rule cap)', () => {
+  const originalMax = process.env.SIEM_RULE_RATE_LIMIT_MAX
+  const originalWindow = process.env.SIEM_RULE_RATE_LIMIT_WINDOW_MS
+
+  beforeEach(() => {
+    findManyMock.mockReset()
+    _resetRuleRateLimitsForTests()
+  })
+  afterEach(() => {
+    if (originalMax === undefined) delete process.env.SIEM_RULE_RATE_LIMIT_MAX
+    else process.env.SIEM_RULE_RATE_LIMIT_MAX = originalMax
+    if (originalWindow === undefined) delete process.env.SIEM_RULE_RATE_LIMIT_WINDOW_MS
+    else process.env.SIEM_RULE_RATE_LIMIT_WINDOW_MS = originalWindow
+    _resetRuleRateLimitsForTests()
+  })
+
+  it('does not rate-limit a rule that has never produced an incident', () => {
+    expect(shouldRateLimitRule('env-1', 'brute_force')).toBe(false)
+  })
+
+  it('rate-limits a rule once it exceeds the per-window cap', () => {
+    process.env.SIEM_RULE_RATE_LIMIT_MAX = '3'
+    process.env.SIEM_RULE_RATE_LIMIT_WINDOW_MS = '60000'
+    const t0 = 1_000_000
+
+    recordRuleIncident('env-1', 'brute_force', t0)
+    recordRuleIncident('env-1', 'brute_force', t0 + 100)
+    expect(shouldRateLimitRule('env-1', 'brute_force', t0 + 200)).toBe(false)
+
+    recordRuleIncident('env-1', 'brute_force', t0 + 300)
+    // Now at 3 incidents within a 60s window → next check trips the cap.
+    expect(shouldRateLimitRule('env-1', 'brute_force', t0 + 400)).toBe(true)
+  })
+
+  it('isolates rate-limit buckets per (env, rule) pair', () => {
+    process.env.SIEM_RULE_RATE_LIMIT_MAX = '2'
+    process.env.SIEM_RULE_RATE_LIMIT_WINDOW_MS = '60000'
+    const t0 = 1_000_000
+
+    recordRuleIncident('env-1', 'brute_force', t0)
+    recordRuleIncident('env-1', 'brute_force', t0 + 100)
+    expect(shouldRateLimitRule('env-1', 'brute_force', t0 + 200)).toBe(true)
+
+    // Different rule on the same env — fresh bucket.
+    expect(shouldRateLimitRule('env-1', 'port_scan', t0 + 200)).toBe(false)
+    // Same rule on a different env — fresh bucket.
+    expect(shouldRateLimitRule('env-2', 'brute_force', t0 + 200)).toBe(false)
+  })
+
+  it('auto-resets the bucket once the window elapses', () => {
+    process.env.SIEM_RULE_RATE_LIMIT_MAX = '1'
+    process.env.SIEM_RULE_RATE_LIMIT_WINDOW_MS = '60000'
+    const t0 = 1_000_000
+
+    recordRuleIncident('env-1', 'noisy', t0)
+    expect(shouldRateLimitRule('env-1', 'noisy', t0 + 1000)).toBe(true)
+    // 61s later — window has elapsed; bucket clears on the next check.
+    expect(shouldRateLimitRule('env-1', 'noisy', t0 + 61_000)).toBe(false)
+  })
+
+  it('correlateEvents skips a rule already over its cap and logs a warning', async () => {
+    process.env.SIEM_RULE_RATE_LIMIT_MAX = '1'
+    process.env.SIEM_RULE_RATE_LIMIT_WINDOW_MS = '60000'
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    findManyMock.mockResolvedValue([])
+
+    // Pre-load the bucket so the rule is over its cap before the call.
+    recordRuleIncident('env-1', 'poison_rule')
+    recordRuleIncident('env-1', 'poison_rule')
+
+    const rules: NamedRule[] = [
+      {
+        name: 'poison_rule',
+        params: { type: 'pattern', regex: 'x', field: 'title', window: 60 },
+      },
+      {
+        name: 'healthy_rule',
+        params: { type: 'pattern', regex: 'y', field: 'title', window: 60 },
+      },
+    ]
+
+    const result = await correlateEvents('env-1', new Date(), rules)
+    // The poison rule was skipped (no findMany call for it); the healthy
+    // rule still ran (exactly one findMany call).
+    expect(findManyMock).toHaveBeenCalledTimes(1)
+    expect(result.errorCount).toBe(0)
+    const warned = String(warnSpy.mock.calls[0]?.[0] ?? '')
+    expect(warned).toContain('poison_rule')
+    expect(warned).toContain('rate-limited')
+    warnSpy.mockRestore()
   })
 })
