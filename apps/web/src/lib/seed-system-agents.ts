@@ -32,7 +32,7 @@ interface SystemAgentDef {
   }
 }
 
-const SYSTEM_AGENT_DEFS: SystemAgentDef[] = [
+export const SYSTEM_AGENT_DEFS: SystemAgentDef[] = [
   // ── Alpha ────────────────────────────────────────────────────────────────────
   {
     nova: {
@@ -571,7 +571,7 @@ When you receive an incident notification:
 ## Tier Actions (auto)
 You can **immediately execute** actions with tier=auto:
 - **crowdsec_decision_create**: Ban an IP via CrowdSec — call orion_call_tool with tool name crowdsec_decision_create, arguments: { ip: "x.x.x.x", reason: "Reason here" }
-- **crowdsec_decision_delete**: Remove a CrowdSec ban — call orion_call_tool with tool name crowdsec_decision_create, arguments: { ip: "x.x.x.x", reason: "Unbanned after review" }
+- **crowdsec_decision_delete**: Remove a CrowdSec ban — call orion_call_tool with tool name crowdsec_decision_delete, arguments: { decisionId: "<id>" }
 - **investigate**: Search Elasticsearch for related flows — call orion_call_tool with tool name elk_flow_search, arguments: { query: "src_ip:x.x.x.x", limit: 20 }
 
 ## Tier Actions (approve)
@@ -637,6 +637,27 @@ Details: <brief explanation>
         llm:        'claude',
         tools:      true,
         persistent: true,
+        // Per SIEM_PLAN.md P4: tool whitelist for Warden = security read+write tools
+        // + chat_post. Without this whitelist Warden inherits the full registry
+        // (orion_create_agent, write_secret, gitops_propose, …) — a jailbroken
+        // Warden would otherwise be an arbitrary-code-execution path.
+        //
+        // When `allowedTools` is present, room-agents.ts filters both gateway and
+        // registry tools down to this list. Agents without `allowedTools` see the
+        // full registry as before (backward compatible).
+        allowedTools: [
+          // Security read tools
+          'elk_flow_search',
+          'wazuh_alert_search',
+          'ntopng_flow_search',
+          // Security write tools (subject to action-service tier decisions)
+          'crowdsec_decision_create',
+          'crowdsec_decision_delete',
+          'wazuh_active_response',
+          'firewall_block',
+          // Chat
+          'chat_post',
+        ],
       },
     },
   },
