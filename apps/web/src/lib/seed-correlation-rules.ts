@@ -17,11 +17,17 @@ const DEFAULT_RULES = [
     ruleType: 'threshold',
     params: {
       type: 'threshold',
+      // Plan: "≥5 failed logins, same IP, 5min". The attacker IP lives in
+      // the rawEvent JSON payload (e.g. CrowdSec/Wazuh both expose `srcip`
+      // there), not as a top-level SecurityEvent column. Grouping by the
+      // ingestion source ("crowdsec", "wazuh") — as the original seed did —
+      // bucketed every event together regardless of attacker, producing
+      // false positives and missing distinct-IP grouping entirely.
       field: 'srcip',
       op: 'gte' as const,
       value: 5,
       window: 300, // 5 minutes
-      groupBy: ['source'],
+      groupBy: ['rawEvent.srcip'],
     },
     severity: 70,
     window: 300,
