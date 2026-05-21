@@ -250,7 +250,7 @@ const readToolDefs = ([
       const res = await fetch(url, {
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${Buffer.from(`${user}:${pass}`).toString('base64')}`,
+          Authorization: `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`,
         },
         signal: AbortSignal.timeout(30_000),
       })
@@ -286,7 +286,7 @@ const readToolDefs = ([
       const res = await fetch(url, {
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${Buffer.from(`${user}:${pass}`).toString('base64')}`,
+          Authorization: `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`,
         },
         signal: AbortSignal.timeout(30_000),
       })
@@ -467,7 +467,7 @@ const writeToolDefs = ([
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${Buffer.from(`${user}:${pass}`).toString('base64')}`,
+          Authorization: `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`,
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(30_000),
