@@ -80,7 +80,7 @@ export async function decide(
  * Match a target string against a pattern.
  * Supports: literal match, wildcard (*), and CIDR subnet (operator: 'subnet').
  */
-function matchesPattern(target: string, pattern: string, operator?: string): boolean {
+export function matchesPattern(target: string, pattern: string, operator?: string): boolean {
   // CIDR subnet matching
   if (operator === 'subnet') {
     return matchesSubnet(target, pattern)
@@ -116,10 +116,25 @@ function matchesSubnet(target: string, cidr: string): boolean {
 
 /**
  * Check if an IP is within a CIDR range.
- * Only handles common home subnet ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16).
+ *
+ * IPv4: full check against the provided CIDR.
+ * IPv6: fail CLOSED — if the target looks like IPv6 (contains ':') and the CIDR
+ *       is an IPv4 home subnet, we cannot prove the address is NOT a home
+ *       address, so we return true to force the home-subnet `approve` override.
+ *       This addresses R1 (locking out a legitimate home/LAN IP) for IPv6.
  */
-function ipInRange(ip: string, cidr: string): boolean {
-  if (!ip.includes('.') || !cidr.includes('/')) return false
+export function ipInRange(ip: string, cidr: string): boolean {
+  if (!cidr.includes('/')) return false
+
+  // IPv6 fail-closed: any IPv6 address is treated as potentially home/LAN
+  // for the home-subnet override path. The home-subnet rows are 10/8, 172.16/12,
+  // 192.168/16 — all IPv4 — so we can't compare numerically. The safer default
+  // is to engage the override (force `approve`) rather than auto-ban.
+  if (ip.includes(':')) {
+    return true
+  }
+
+  if (!ip.includes('.')) return false
 
   const [cidrIp, cidrPrefixStr] = cidr.split('/')
   const prefixLength = parseInt(cidrPrefixStr, 10)
@@ -152,7 +167,19 @@ export async function execute(
   const parsed = actionRequestSchema.parse(request)
   const parsedDecision = actionDecisionSchema.parse(decision)
 
-  // 1. Create ActionAudit with status='attempting' (R9: no data loss)
+  // 1. Create ActionAudit BEFORE invoking the gateway (R9: no data loss).
+  //    - auto / approved-approve     → 'attempting'  (gateway call about to fire)
+  //    - approve (awaiting approval) → 'pending'      (sits in approval queue)
+  //    - notify                       → 'attempting'  (no gateway call, but logged)
+  //    - escalate                     → 'pending'      (operator action required)
+  // 'denied' is reserved for actions the operator explicitly denied (terminal).
+  const initialStatus =
+    parsedDecision.tier === 'auto' ||
+    (parsedDecision.tier === 'approve' && parsedDecision.approvedBy) ||
+    parsedDecision.tier === 'notify'
+      ? 'attempting'
+      : 'pending'
+
   const audit = await prisma.actionAudit.create({
     data: {
       environmentId: null, // TODO: resolve from context
@@ -162,7 +189,7 @@ export async function execute(
       tier: parsedDecision.tier,
       proposedBy: request.incidentId ? 'warden' : 'system',
       approvedBy: parsedDecision.approvedBy ?? null,
-      status: 'denied',
+      status: initialStatus,
       payload: parsed.payload as any,
     },
   })
@@ -205,26 +232,41 @@ export async function execute(
     }
   }
 
-  // 4. Approve without approval: remain 'denied' (pending)
+  // 4. Approve without approval: remain 'pending' (awaiting operator)
   if (parsedDecision.tier === 'approve') {
-    return { auditId: audit.id, status: 'denied' }
+    return { auditId: audit.id, status: 'pending' }
   }
 
-  // 5. Escalate → denied, notify → succeeded (no execution needed)
-  const finalStatus = parsedDecision.tier === 'notify' ? 'succeeded' : 'denied'
-  return { auditId: audit.id, status: finalStatus }
+  // 5. Notify-tier: no gateway call, mark succeeded (audit-only).
+  //    Escalate-tier: stays 'pending' for the human escalation path.
+  if (parsedDecision.tier === 'notify') {
+    await prisma.actionAudit.update({
+      where: { id: audit.id },
+      data: { status: 'succeeded' },
+    })
+    return { auditId: audit.id, status: 'succeeded' }
+  }
+  return { auditId: audit.id, status: 'pending' }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function isDestructiveAction(actionType: string): boolean {
-  const destructivePatterns = [
+/**
+ * Detect destructive infra actions that MUST escalate.
+ *
+ * IMPORTANT: this is an explicit allowlist, not a substring heuristic.
+ * The previous substring match caught `crowdsec_decision_delete` (a legitimate
+ * `auto`-tier unban), inverting the tier matrix. Anything that should escalate
+ * must be added by name or via the `__destructive__` policy row.
+ */
+export function isDestructiveAction(actionType: string): boolean {
+  const destructiveActions = new Set<string>([
     '__destructive__',
-    'delete',
-    'destroy',
-    'purge',
-    'wipe',
-    'format',
-  ]
-  return destructivePatterns.some(p => actionType.includes(p))
+    'infra_destroy',
+    'infra_wipe',
+    'infra_format',
+    'volume_purge',
+    'cluster_delete',
+  ])
+  return destructiveActions.has(actionType)
 }
