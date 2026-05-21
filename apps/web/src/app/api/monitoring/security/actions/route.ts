@@ -85,11 +85,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields: actionType, target, reason' }, { status: 400 })
     }
 
-    // Check panic mode
+    // Check panic mode.
+    // The seed encodes DISABLED state as defaultTier='auto'. Any other value
+    // (operator flips the row in DB or via a future admin route) means panic
+    // mode is ENABLED. This avoids the previous bug where the check could
+    // never become true because the seed itself shipped with defaultTier='auto'.
     const panicModePolicy = await prisma.actionPolicy.findUnique({
       where: { actionType: '__panic_mode__' },
     })
-    const panicMode = panicModePolicy?.defaultTier === 'approve'
+    const panicMode = !!panicModePolicy && panicModePolicy.defaultTier !== 'auto'
 
     // Decide tier
     const decision = await decide(request, panicMode)
