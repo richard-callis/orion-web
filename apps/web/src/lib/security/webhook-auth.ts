@@ -5,7 +5,7 @@
  */
 
 import { prisma } from '@/lib/db'
-import { createHmac } from 'crypto'
+import { createHmac, timingSafeEqual } from 'crypto'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -24,17 +24,11 @@ type IdempotencyKey = { dedupKey: string; source: string }
 // ── HMAC Verification ─────────────────────────────────────────────────────────
 
 /**
- * Verify the HMAC signature of a webhook request.
- *
- * Computes HMAC-SHA256(secret, rawBody) and compares with the X-Signature header.
- * Returns false if the header is missing, the key is not configured, or signatures
- * don't match.
- */
-/**
  * Verify the HMAC-SHA256 signature of a webhook request.
  *
  * Computes HMAC-SHA256(secret, rawBody) and compares with the X-Signature header.
- * Signature format: `sha256=<hex>`
+ * Signature format: `sha256=<hex>`. Returns false on any mismatch (length, value,
+ * or missing header).
  */
 export function verifyWebhookHmac(
   secret: string,
@@ -45,28 +39,33 @@ export function verifyWebhookHmac(
 
   const expected = `sha256=${createHmac('sha256', secret).update(rawBody).digest('hex')}`
 
-  // Use timing-safe comparison when possible
+  // Timing-safe comparison: any mismatch in length (or value) returns false in
+  // constant time so we don't leak signature characters via response timing.
   return constantTimeCompare(signature, expected)
 }
 
 /**
- * Constant-time string comparison to prevent timing attacks.
- * Synchronous version compatible with Node.js createHmac.
+ * Constant-time string comparison backed by Node.js `crypto.timingSafeEqual`.
+ *
+ * Notes:
+ * - We require both buffers to be the same length BEFORE calling
+ *   `timingSafeEqual` because Node.js will throw on length mismatch (which
+ *   itself would be a timing side-channel via exception cost). We return
+ *   `false` immediately when lengths differ.
+ * - Inputs are encoded as UTF-8 bytes via `Buffer.from`. For our HMAC use
+ *   case both strings are ASCII hex with a fixed `sha256=` prefix, so the
+ *   byte length equals the string length.
+ * - The previous implementation attempted `crypto.subtle.timingSafeEqual`
+ *   which does not exist on the Web Crypto API; the cast always evaluated
+ *   to undefined and the fallback was plain `===`, which is bypassable
+ *   via a timing oracle. Fixed by routing through Node's `timingSafeEqual`.
  */
 function constantTimeCompare(a: string, b: string): boolean {
   if (a.length !== b.length) return false
-
-  // Use crypto.subtle timing-safe equal when available (Next.js on HTTPS)
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    const enc = new TextEncoder()
-    const subtle = (crypto.subtle as { timingSafeEqual?: (a: Uint8Array, b: Uint8Array) => boolean })
-    if (subtle.timingSafeEqual) {
-      return subtle.timingSafeEqual(enc.encode(a), enc.encode(b))
-    }
-  }
-
-  // Fallback: strict equality (acceptable for local dev)
-  return a === b
+  const bufA = Buffer.from(a, 'utf8')
+  const bufB = Buffer.from(b, 'utf8')
+  if (bufA.length !== bufB.length) return false
+  return timingSafeEqual(bufA, bufB)
 }
 
 // ── Replay Window ─────────────────────────────────────────────────────────────
