@@ -19,14 +19,14 @@
 
 import { prisma } from './db'
 
-interface ActionPolicyDef {
+export interface ActionPolicyDef {
   actionType: string
   defaultTier: string
   targetPatterns: unknown | null
   isPanicMode?: boolean
 }
 
-const DEFAULT_POLICIES: ActionPolicyDef[] = [
+export const DEFAULT_POLICIES: ActionPolicyDef[] = [
   {
     actionType: 'crowdsec_decision_create',
     defaultTier: 'auto',
@@ -51,13 +51,13 @@ const DEFAULT_POLICIES: ActionPolicyDef[] = [
   {
     actionType: 'firewall_block',
     defaultTier: 'approve',
+    // Plan: "escalate for subnets > /24" — a subnet *larger* than /24 covers more
+    // addresses, i.e. has a *shorter* CIDR prefix (e.g. /23, /16, /8, /0).
+    // Use a prefix_lte operator (prefix length <= 24) so the action-service will
+    // escalate dangerous wide blocks. Listing /0–/24 explicitly is unwieldy; the
+    // executor must interpret `operator: 'prefix_lte'` with the threshold prefix.
     targetPatterns: [
-      { pattern: '/25', tier: 'escalate', operator: 'subnet' as const },
-      { pattern: '/26', tier: 'escalate', operator: 'subnet' as const },
-      { pattern: '/27', tier: 'escalate', operator: 'subnet' as const },
-      { pattern: '/28', tier: 'escalate', operator: 'subnet' as const },
-      { pattern: '/29', tier: 'escalate', operator: 'subnet' as const },
-      { pattern: '/30', tier: 'escalate', operator: 'subnet' as const },
+      { pattern: '/24', tier: 'escalate', operator: 'prefix_lte' as const },
     ],
   },
   {
