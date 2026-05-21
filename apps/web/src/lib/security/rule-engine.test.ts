@@ -1,8 +1,21 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-vi.mock('@/lib/db', () => ({ prisma: {} }))
+// `rule-engine` calls `prisma.securityEvent.findMany` from each sub-runner.
+// We stub it so we can exercise the orchestration layer without a DB.
+const findManyMock = vi.fn()
+vi.mock('@/lib/db', () => ({
+  prisma: {
+    securityEvent: {
+      findMany: (...args: unknown[]) => findManyMock(...args),
+    },
+  },
+}))
 
-import { extractGroupValue } from './rule-engine'
+import {
+  extractGroupValue,
+  correlateEvents,
+  type NamedRule,
+} from './rule-engine'
 
 describe('extractGroupValue (BLOCK-1b regression — brute-force groups by attacker IP)', () => {
   describe('top-level column access', () => {
@@ -88,5 +101,66 @@ describe('extractGroupValue (BLOCK-1b regression — brute-force groups by attac
       expect(counts.get('203.0.113.7')).toBe(5) // ≥5 threshold met
       expect(counts.get('198.51.100.9')).toBe(1)
     })
+  })
+})
+
+describe('correlateEvents — MAJOR-4 (silent rule errors are now logged + counted)', () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    findManyMock.mockReset()
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+  afterEach(() => {
+    errorSpy.mockRestore()
+  })
+
+  it('logs the rule name and error when a rule throws, and keeps running others', async () => {
+    // First call (failing rule) — throw. Second call (healthy rule) — return [].
+    findManyMock
+      .mockRejectedValueOnce(new Error('boom: bad regex'))
+      .mockResolvedValueOnce([])
+
+    const rules: NamedRule[] = [
+      {
+        name: 'broken_pattern',
+        params: { type: 'pattern', regex: '(', field: 'title', window: 60 },
+      },
+      {
+        name: 'healthy_pattern',
+        params: { type: 'pattern', regex: 'foo', field: 'title', window: 60 },
+      },
+    ]
+
+    const result = await correlateEvents('env-1', new Date(), rules)
+    expect(result.errorCount).toBe(1)
+    expect(result.erroredRules).toEqual(['broken_pattern'])
+    // Healthy rule still ran (findMany called twice — once per rule).
+    expect(findManyMock).toHaveBeenCalledTimes(2)
+    // Error log mentions the rule name and env id.
+    const logged = String(errorSpy.mock.calls[0]?.[0] ?? '')
+    expect(logged).toContain('broken_pattern')
+    expect(logged).toContain('env-1')
+  })
+
+  it('reports zero errors and does not log when every rule succeeds', async () => {
+    findManyMock.mockResolvedValue([])
+    const result = await correlateEvents('env-1', new Date(), [
+      {
+        name: 'rule_a',
+        params: { type: 'pattern', regex: 'x', field: 'title', window: 60 },
+      },
+    ])
+    expect(result.errorCount).toBe(0)
+    expect(result.erroredRules).toEqual([])
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  it('still accepts the legacy bare-RuleParams[] shape (back-compat)', async () => {
+    findManyMock.mockResolvedValue([])
+    const result = await correlateEvents('env-1', new Date(), [
+      { type: 'pattern', regex: 'x', field: 'title', window: 60 },
+    ])
+    // No rule name supplied → synthetic unnamed_pattern; no error path hit.
+    expect(result.errorCount).toBe(0)
   })
 })
