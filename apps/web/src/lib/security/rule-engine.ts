@@ -24,52 +24,105 @@ export type RuleParams =
 // ── Correlation ───────────────────────────────────────────────────────────────
 
 /**
+ * Input to {@link correlateEvents}. Carries a rule name alongside the params
+ * so that downstream code can log which rule failed and attribute incidents
+ * to a named rule.
+ *
+ * `correlateEvents` also accepts the legacy bare-`RuleParams[]` shape for
+ * backward compatibility — those entries get an `unnamed_<type>` rule name.
+ */
+export interface NamedRule {
+  name: string
+  params: RuleParams
+}
+
+export interface CorrelationRunResult {
+  drafts: IncidentDraft[]
+  /** Number of rules that threw during execution (MAJOR-4). */
+  errorCount: number
+  /** Names of rules that errored (best-effort; may include `unnamed_<type>`). */
+  erroredRules: string[]
+}
+
+function isNamedRuleArray(
+  rules: ReadonlyArray<RuleParams | NamedRule>,
+): rules is NamedRule[] {
+  return rules.length === 0
+    ? false
+    : typeof (rules[0] as NamedRule).name === 'string' &&
+        (rules[0] as NamedRule).params !== undefined
+}
+
+/**
  * Run all enabled correlation rules against recent events.
  *
- * Returns a list of IncidentDrafts — one per rule match.
+ * Accepts either:
+ *  - `NamedRule[]` (preferred) — preserves rule names for logging and
+ *    incident attribution.
+ *  - `RuleParams[]` (legacy) — kept for backward compatibility; rules are
+ *    given a synthetic `unnamed_<type>` name.
+ *
+ * Returns `{ drafts, errorCount, erroredRules }`. Rule execution failures
+ * are still non-blocking — a single bad rule must not stop the worker — but
+ * they are now logged with the rule name (MAJOR-4) and counted so callers
+ * can surface a health signal. The previous implementation used a bare
+ * `catch {}` so a broken rule failed silently every 30s with no diagnostic.
  */
 export async function correlateEvents(
   envId: string,
   since: Date,
-  ruleParams: RuleParams[]
-): Promise<IncidentDraft[]> {
+  rules: ReadonlyArray<RuleParams | NamedRule>,
+): Promise<CorrelationRunResult> {
   const drafts: IncidentDraft[] = []
+  const erroredRules: string[] = []
 
-  for (const params of ruleParams) {
+  const named: NamedRule[] = isNamedRuleArray(rules)
+    ? rules
+    : (rules as RuleParams[]).map((p) => ({
+        name: `unnamed_${p.type}`,
+        params: p,
+      }))
+
+  for (const { name, params } of named) {
     try {
+      let result: IncidentDraft | null = null
       switch (params.type) {
-        case 'threshold': {
-          const result = await runThresholdRule(envId, params, since)
-          if (result) drafts.push(result)
+        case 'threshold':
+          result = await runThresholdRule(envId, params, since)
           break
-        }
-        case 'pattern': {
-          const result = await runPatternRule(envId, params, since)
-          if (result) drafts.push(result)
+        case 'pattern':
+          result = await runPatternRule(envId, params, since)
           break
-        }
-        case 'malware': {
-          const result = await runMalwareRule(envId, params, since)
-          if (result) drafts.push(result)
+        case 'malware':
+          result = await runMalwareRule(envId, params, since)
           break
-        }
-        case 'process': {
-          const result = await runProcessRule(envId, params, since)
-          if (result) drafts.push(result)
+        case 'process':
+          result = await runProcessRule(envId, params, since)
           break
-        }
-        case 'composite': {
-          const result = await runCompositeRule(envId, params, since)
-          if (result) drafts.push(result)
+        case 'composite':
+          result = await runCompositeRule(envId, params, since)
           break
-        }
       }
-    } catch {
-      // Rule execution failures are non-blocking
+      if (result) {
+        // Attribute to the rule name from the caller (overrides the
+        // synthetic ruleName some sub-runners build from regex / fields).
+        result.ruleName = name
+        drafts.push(result)
+      }
+    } catch (err) {
+      // MAJOR-4: previously this was a silent `catch {}` — a broken rule
+      // would fail every 30s with no signal. We now log with the rule name
+      // + error message and count the failure so callers can alert.
+      erroredRules.push(name)
+      // eslint-disable-next-line no-console
+      console.error(
+        `[siem] correlation rule "${name}" failed for env ${envId}:`,
+        err instanceof Error ? `${err.name}: ${err.message}` : err,
+      )
     }
   }
 
-  return drafts
+  return { drafts, errorCount: erroredRules.length, erroredRules }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

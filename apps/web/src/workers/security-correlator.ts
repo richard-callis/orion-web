@@ -12,7 +12,7 @@
 import { prisma } from '@/lib/db'
 import { type IncidentDraft } from '@/lib/security/types'
 import { correlateEvents } from '@/lib/security/rule-engine'
-import type { RuleParams } from '@/lib/security/rule-engine'
+import type { NamedRule, RuleParams } from '@/lib/security/rule-engine'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -148,15 +148,27 @@ async function correlateEnvironment(
     }
   }
 
-  // 2. Convert rule params from JSON to typed RuleParams
-  const typedRules: RuleParams[] = env.correlationRules.map(r => r.params as RuleParams)
+  // 2. Convert rule params from JSON to typed RuleParams, preserving
+  //    the rule name so the engine can log per-rule errors (MAJOR-4)
+  //    and attribute incidents to the correct rule.
+  const namedRules: NamedRule[] = env.correlationRules.map(r => ({
+    name: r.name,
+    params: r.params as RuleParams,
+  }))
 
   // 3. Run correlation
-  const drafts = await correlateEvents(
+  const { drafts, errorCount, erroredRules } = await correlateEvents(
     env.id,
     new Date(Date.now() - LOOKBACK_WINDOW_SEC * 1000),
-    typedRules
+    namedRules,
   )
+
+  if (errorCount > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[siem] correlator env=${env.id}: ${errorCount} rule(s) failed: ${erroredRules.join(', ')}`,
+    )
+  }
 
   // 4. Deduplicate: skip drafts that would create duplicates of open incidents
   const openIncidents = await prisma.incident.findMany({
@@ -210,8 +222,15 @@ async function correlateEnvironment(
       })
 
       incidentsCreated++
-    } catch {
-      // Non-blocking — individual incident creation failures
+    } catch (err) {
+      // MAJOR-4 mirror: log so a misbehaving DB or constraint violation
+      // is visible. Previously this was a silent catch, which made
+      // dropped incidents undetectable.
+      // eslint-disable-next-line no-console
+      console.error(
+        `[siem] correlator env=${env.id}: failed to create incident for rule "${draft.ruleName ?? 'unknown'}":`,
+        err instanceof Error ? `${err.name}: ${err.message}` : err,
+      )
     }
   }
 
