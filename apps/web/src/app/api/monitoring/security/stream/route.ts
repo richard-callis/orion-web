@@ -26,13 +26,36 @@ const encoder = new TextEncoder()
 
 type StreamChannel = 'incidents' | 'events' | 'approvals'
 
-interface NotifyMessage {
+/**
+ * Per R7 (SIEM_PLAN.md Risk Register), SSE frames carry ID-only payloads.
+ * Consumers fetch the full row via the REST endpoints (e.g. /incidents/[id]).
+ * This:
+ *   1. Sidesteps the 8 KB NOTIFY payload limit when this is wired to real LISTEN/NOTIFY.
+ *   2. Forces consumers through the read endpoints, where access control can filter
+ *      sensitive fields (`payload`, `rawEvent`, `attackerKey`) per session/role.
+ */
+export interface NotifyMessage {
   channel: StreamChannel
   payload: {
     id: string
     type: string // 'created' | 'updated' | 'deleted'
-    data: Record<string, unknown>
     timestamp: string
+  }
+}
+
+/**
+ * Build an ID-only SSE frame. Exported so tests can lock in the R7 invariant
+ * (frames must never embed row data — only the ID for the consumer to fetch).
+ */
+export function buildIdOnlyFrame(
+  channel: StreamChannel,
+  id: string,
+  type: 'created' | 'updated' | 'deleted' = 'created',
+  timestamp: string = new Date().toISOString()
+): NotifyMessage {
+  return {
+    channel,
+    payload: { id, type, timestamp },
   }
 }
 
@@ -89,11 +112,15 @@ export async function GET(request: NextRequest) {
         controller
       )
 
-      // Handle client disconnect
+      // Handle client disconnect.
+      // NOTE: streamClient is the shared Prisma singleton; do NOT call
+      // $disconnect() on it — that would drop the connection pool for the
+      // entire web process. When this is rewritten to use a dedicated NOTIFY
+      // client, that client (not the shared singleton) is what should be
+      // disconnected here.
       const cleanup = () => {
         clearInterval(heartbeatInterval)
         listener.dispose()
-        streamClient.$disconnect().catch(() => {})
         controller.close()
       }
 
@@ -125,31 +152,11 @@ async function getInitialEvents(
         where: since ? { createdAt: { gte: since } } : {},
         orderBy: { createdAt: 'desc' },
         take: 50,
-        select: {
-          id: true,
-          type: true,
-          source: true,
-          severity: true,
-          title: true,
-          createdAt: true,
-          acknowledged: true,
-        },
+        select: { id: true },
       })
       return events.map((e: any) => ({
         channel: 'events',
-        payload: {
-          id: e.id,
-          type: 'created',
-          data: {
-            type: e.type,
-            source: e.source,
-            severity: e.severity,
-            title: e.title,
-            acknowledged: e.acknowledged,
-            createdAt: e.createdAt,
-          },
-          timestamp: now,
-        },
+        payload: { id: e.id, type: 'created', timestamp: now },
       }))
     }
 
@@ -158,31 +165,11 @@ async function getInitialEvents(
         where: since ? { openedAt: { gte: since } } : {},
         orderBy: { openedAt: 'desc' },
         take: 50,
-        select: {
-          id: true,
-          status: true,
-          severity: true,
-          rootCauseSummary: true,
-          attackerKey: true,
-          hostKey: true,
-          openedAt: true,
-        },
+        select: { id: true },
       })
       return incidents.map((i: any) => ({
         channel: 'incidents',
-        payload: {
-          id: i.id,
-          type: 'created',
-          data: {
-            status: i.status,
-            severity: i.severity,
-            rootCauseSummary: i.rootCauseSummary,
-            attackerKey: i.attackerKey,
-            hostKey: i.hostKey,
-            openedAt: i.openedAt,
-          },
-          timestamp: now,
-        },
+        payload: { id: i.id, type: 'created', timestamp: now },
       }))
     }
 
@@ -190,37 +177,15 @@ async function getInitialEvents(
       const audits = await client.actionAudit.findMany({
         where: {
           tier: 'approve',
-          status: 'denied', // pending = denied
+          status: 'pending', // awaiting operator approval (distinct from terminal 'denied')
         },
         orderBy: { createdAt: 'desc' },
         take: 50,
-        select: {
-          id: true,
-          actionType: true,
-          target: true,
-          tier: true,
-          proposedBy: true,
-          incidentId: true,
-          payload: true,
-          createdAt: true,
-        },
+        select: { id: true },
       })
       return audits.map((a: any) => ({
         channel: 'approvals',
-        payload: {
-          id: a.id,
-          type: 'created',
-          data: {
-            actionType: a.actionType,
-            target: a.target,
-            tier: a.tier,
-            proposedBy: a.proposedBy,
-            incidentId: a.incidentId,
-            payload: a.payload,
-            createdAt: a.createdAt,
-          },
-          timestamp: now,
-        },
+        payload: { id: a.id, type: 'created', timestamp: now },
       }))
     }
   }
@@ -259,80 +224,40 @@ function createNotifyListener(
       switch (channel) {
         case 'events': {
           const newEvents = await client.securityEvent.findMany({
-            where: lastSeenId
-              ? { id: { gt: lastSeenId }, createdAt: { gt: lastSeenTime } }
-              : { createdAt: { gte: lastSeenTime } },
+            where: { createdAt: { gt: lastSeenTime } },
             orderBy: { createdAt: 'asc' },
             take: 20,
-            select: {
-              id: true,
-              type: true,
-              source: true,
-              severity: true,
-              title: true,
-              createdAt: true,
-              acknowledged: true,
-            },
+            select: { id: true, createdAt: true },
           })
+          const nowIso = new Date().toISOString()
           events = newEvents.map((e: any) => ({
             channel: 'events',
-            payload: {
-              id: e.id,
-              type: 'created',
-              data: {
-                type: e.type,
-                source: e.source,
-                severity: e.severity,
-                title: e.title,
-                acknowledged: e.acknowledged,
-                createdAt: e.createdAt,
-              },
-              timestamp: new Date().toISOString(),
-            },
+            payload: { id: e.id, type: 'created', timestamp: nowIso },
           }))
           if (newEvents.length > 0) {
+            // Advance watermark to the last row's createdAt (not "now") so that
+            // any row inserted with the same second isn't dropped next pass.
             lastSeenId = newEvents[newEvents.length - 1].id
-            lastSeenTime = new Date()
+            lastSeenTime = newEvents[newEvents.length - 1].createdAt
           }
           break
         }
 
         case 'incidents': {
           const newIncidents = await client.incident.findMany({
-            where: lastSeenId
-              ? { id: { gt: lastSeenId }, openedAt: { gt: lastSeenTime } }
-              : { openedAt: { gte: lastSeenTime } },
+            where: { openedAt: { gt: lastSeenTime } },
             orderBy: { openedAt: 'asc' },
             take: 20,
-            select: {
-              id: true,
-              status: true,
-              severity: true,
-              rootCauseSummary: true,
-              attackerKey: true,
-              hostKey: true,
-              openedAt: true,
-            },
+            select: { id: true, openedAt: true },
           })
+          const nowIso = new Date().toISOString()
           events = newIncidents.map((i: any) => ({
             channel: 'incidents',
-            payload: {
-              id: i.id,
-              type: 'created',
-              data: {
-                status: i.status,
-                severity: i.severity,
-                rootCauseSummary: i.rootCauseSummary,
-                attackerKey: i.attackerKey,
-                hostKey: i.hostKey,
-                openedAt: i.openedAt,
-              },
-              timestamp: new Date().toISOString(),
-            },
+            payload: { id: i.id, type: 'created', timestamp: nowIso },
           }))
           if (newIncidents.length > 0) {
             lastSeenId = newIncidents[newIncidents.length - 1].id
-            lastSeenTime = new Date()
+            lastSeenTime = newIncidents[newIncidents.length - 1].openedAt
           }
           break
         }
@@ -341,41 +266,20 @@ function createNotifyListener(
           const newAudits = await client.actionAudit.findMany({
             where: {
               tier: 'approve',
-              status: 'denied',
-              createdAt: { gte: lastSeenTime },
+              status: 'pending',
+              createdAt: { gt: lastSeenTime },
             },
             orderBy: { createdAt: 'asc' },
             take: 20,
-            select: {
-              id: true,
-              actionType: true,
-              target: true,
-              tier: true,
-              proposedBy: true,
-              incidentId: true,
-              payload: true,
-              createdAt: true,
-            },
+            select: { id: true, createdAt: true },
           })
+          const nowIso = new Date().toISOString()
           events = newAudits.map((a: any) => ({
             channel: 'approvals',
-            payload: {
-              id: a.id,
-              type: 'created',
-              data: {
-                actionType: a.actionType,
-                target: a.target,
-                tier: a.tier,
-                proposedBy: a.proposedBy,
-                incidentId: a.incidentId,
-                payload: a.payload,
-                createdAt: a.createdAt,
-              },
-              timestamp: new Date().toISOString(),
-            },
+            payload: { id: a.id, type: 'created', timestamp: nowIso },
           }))
           if (newAudits.length > 0) {
-            lastSeenTime = new Date()
+            lastSeenTime = newAudits[newAudits.length - 1].createdAt
           }
           break
         }
@@ -386,7 +290,8 @@ function createNotifyListener(
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'poll error'
-      controller.enqueue(encoder.encode(`data: {"error":"${msg}"}\n\n`))
+      // Properly JSON-stringify so quotes/newlines in the message don't break the frame (M10).
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`))
     }
   }, 2000) // Poll every 2s — fast enough for real-time feel
 
