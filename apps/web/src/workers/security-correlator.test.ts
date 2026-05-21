@@ -5,7 +5,10 @@ import { describe, it, expect, vi } from 'vitest'
 // whole — stub the import so vitest can resolve it without next.js path
 // aliasing.
 vi.mock('@/lib/db', () => ({ prisma: {} }))
-vi.mock('@/lib/security/rule-engine', () => ({ correlateEvents: vi.fn() }))
+vi.mock('@/lib/security/rule-engine', () => ({
+  correlateEvents: vi.fn(),
+  recordRuleIncident: vi.fn(),
+}))
 
 import { rulesForEnvironment } from './security-correlator'
 

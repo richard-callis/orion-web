@@ -11,7 +11,7 @@
 
 import { prisma } from '@/lib/db'
 import { type IncidentDraft } from '@/lib/security/types'
-import { correlateEvents } from '@/lib/security/rule-engine'
+import { correlateEvents, recordRuleIncident } from '@/lib/security/rule-engine'
 import type { NamedRule, RuleParams } from '@/lib/security/rule-engine'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -220,6 +220,11 @@ async function correlateEnvironment(
           lastSeen: new Date(),
         },
       })
+
+      // R4 / MAJOR-2 — feed the per-rule rate-limit bucket so a runaway
+      // rule is capped on subsequent runs. The cap is enforced inside
+      // `correlateEvents` before the rule runs again.
+      if (draft.ruleName) recordRuleIncident(env.id, draft.ruleName)
 
       incidentsCreated++
     } catch (err) {
