@@ -142,3 +142,96 @@ export async function getWebhookSecret(
 
   return config?.value ?? null
 }
+
+// ── Client-IP / Loopback Trust ────────────────────────────────────────────────
+
+/**
+ * Loopback IPv4/IPv6 prefixes. An address that starts with one of these is
+ * considered "from this host" and is the only case the webhook fallback
+ * (used when a webhook secret is not configured) should treat as trusted.
+ */
+const LOOPBACK_PREFIXES = ['127.', '::1', '::ffff:127.']
+
+function isLoopbackIp(ip: string): boolean {
+  if (!ip) return false
+  const trimmed = ip.trim()
+  if (!trimmed) return false
+  return LOOPBACK_PREFIXES.some((p) => trimmed.startsWith(p))
+}
+
+/**
+ * Determine whether the request originates from loopback for the secret-less
+ * dev-mode fallback.
+ *
+ * Hardening (MAJOR-1 follow-up):
+ * - The previous implementation read `X-Forwarded-For` / `X-Real-IP` directly,
+ *   which any HTTP client can spoof. With `CROWDSEC_WEBHOOK_SECRET` (or the
+ *   Wazuh equivalent) unset, spoofing `X-Forwarded-For: 127.0.0.1` was enough
+ *   to inject events.
+ * - We now prefer the direct TCP source (`req.ip`, populated by the runtime
+ *   from the connection). `X-Forwarded-For` is ONLY consulted when the
+ *   direct peer IP is itself an allow-listed reverse proxy
+ *   (`WEBHOOK_TRUSTED_PROXY_IPS`, comma-separated). When the peer IP is
+ *   missing AND no proxy allow-list is configured, we fall back to refusing
+ *   trust — the request must use the signed path.
+ *
+ * Returns `true` only when we are confident the request is from loopback.
+ */
+export function isLoopbackWebhookRequest(req: {
+  headers: Headers
+  ip?: string | null
+}): boolean {
+  const peerIp = req.ip ?? ''
+  if (isLoopbackIp(peerIp)) return true
+
+  const allowList = (process.env.WEBHOOK_TRUSTED_PROXY_IPS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+  if (allowList.length === 0) {
+    // No proxy allow-list configured. Do not trust XFF — it is spoofable.
+    return false
+  }
+
+  const peerTrusted = peerIp && allowList.includes(peerIp)
+  if (!peerTrusted) return false
+
+  // Peer is a known reverse proxy; X-Forwarded-For (left-most entry) is
+  // believable. X-Real-IP is single-valued and easier to forge upstream, but
+  // we accept it when the peer is also trusted.
+  const xff = req.headers.get('x-forwarded-for') ?? ''
+  const realIp = req.headers.get('x-real-ip') ?? ''
+  const clientIp = xff.split(',')[0]?.trim() || realIp.trim()
+  return isLoopbackIp(clientIp)
+}
+
+/**
+ * Warn loudly when a webhook endpoint is being served without a configured
+ * HMAC secret. In production this is a misconfiguration and the caller
+ * should reject the request; in dev/test we still log so the operator
+ * notices the loopback-only fallback is engaged.
+ *
+ * Returns `true` if the deployment should refuse to serve the request
+ * unauthenticated (i.e. NODE_ENV=production). The caller is expected to
+ * return HTTP 500 in that case.
+ */
+export function warnMissingWebhookSecret(source: string, envVarName: string): boolean {
+  const isProd = process.env.NODE_ENV === 'production'
+  const banner = `[siem] WEBHOOK MISCONFIGURED: ${envVarName} is not set for ${source} webhook.`
+
+  if (isProd) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `${banner} Refusing unauthenticated requests. Set ${envVarName} in the environment.`
+    )
+    return true
+  }
+
+  // eslint-disable-next-line no-console
+  console.warn(
+    `${banner} Falling back to loopback-only acceptance (dev mode). ` +
+      `Set ${envVarName} for any non-development deployment.`
+  )
+  return false
+}

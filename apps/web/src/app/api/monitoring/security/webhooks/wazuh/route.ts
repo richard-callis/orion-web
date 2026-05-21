@@ -12,7 +12,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { normalizedEventSchema } from '@/lib/security/types'
-import { verifyWebhookHmac, isWithinReplayWindow, wasAlreadyProcessed } from '@/lib/security/webhook-auth'
+import {
+  verifyWebhookHmac,
+  isWithinReplayWindow,
+  wasAlreadyProcessed,
+  isLoopbackWebhookRequest,
+  warnMissingWebhookSecret,
+} from '@/lib/security/webhook-auth'
 import { normalizeWazuhAlert, type WazuhAlert } from '@/lib/security/normalize/wazuh'
 
 export const dynamic = 'force-dynamic'
@@ -30,8 +36,17 @@ export async function POST(req: NextRequest) {
 
   // 2. Verify HMAC signature
   if (!process.env.WAZUH_WEBHOOK_SECRET) {
-    const clientIp = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || ''
-    if (!clientIp.startsWith('127.') && !clientIp.startsWith('::1')) {
+    // See crowdsec/route.ts for the rationale. Production refuses
+    // unauthenticated traffic; dev accepts loopback only and never trusts
+    // raw X-Forwarded-For.
+    const refuse = warnMissingWebhookSecret('wazuh', 'WAZUH_WEBHOOK_SECRET')
+    if (refuse) {
+      return NextResponse.json(
+        { error: 'Webhook secret not configured (server misconfigured)' },
+        { status: 500 }
+      )
+    }
+    if (!isLoopbackWebhookRequest(req)) {
       return NextResponse.json({ error: 'Webhook secret not configured' }, { status: 403 })
     }
   } else {
