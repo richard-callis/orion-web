@@ -93,8 +93,7 @@ export async function POST(req: NextRequest) {
       featureId,
       epicId,
       createdBy:   String(createdBy),
-      // metadata is not a Prisma field on ChatRoom — store planTarget via description
-      // or leave for caller to track. Feature/task relation covers structural linkage.
+      metadata:    planTarget ? { planTarget } : undefined,
     },
     include: {
       _count: { select: { messages: true, members: true } },

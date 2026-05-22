@@ -74,7 +74,7 @@ export default function StorageStatsPanel() {
         setEnvironments(clusters)
         if (clusters.length === 1) setEnvId(clusters[0].id)
       })
-      .catch(() => {})
+      .catch((e) => console.error("[fetch]", e))
   }, [])
 
   const fetchStats = useCallback(async (id: string) => {

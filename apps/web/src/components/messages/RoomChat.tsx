@@ -59,6 +59,7 @@ interface RoomDetail {
   totalMessages?: number
   members?: RoomMember[]
   messages?: RoomMessage[]
+  activeGoal?: { id: string; text: string; status: string; createdAt: string } | null
 }
 
 interface InviteOption {
@@ -101,6 +102,12 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   const [savedPlanMsgId, setSavedPlanMsgId] = useState<string | null>(null)
   const [planToast, setPlanToast] = useState<{ msgId: string; prevPlan: string | null } | null>(null)
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null)
+  const [showSetGoal, setShowSetGoal] = useState(false)
+  const [goalInput, setGoalInput] = useState('')
+  const [settingGoal, setSettingGoal] = useState(false)
+  const [showCompleteGoal, setShowCompleteGoal] = useState(false)
+  const [goalSummaryInput, setGoalSummaryInput] = useState('')
+  const [completingGoal, setCompletingGoal] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -200,6 +207,15 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
               totalMessages: (prev.totalMessages || 0) + 1,
             }
           })
+
+          // Reload room data when a goal system message arrives so banner updates
+          if (
+            message.senderType === 'system' &&
+            typeof message.content === 'string' &&
+            (message.content.startsWith('🎯') || message.content.startsWith('✓ Goal') || message.content.startsWith('✗ Goal'))
+          ) {
+            loadRoom()
+          }
         } catch (e) {
           console.error('[RoomChat] Error parsing SSE message:', e)
         }
@@ -360,6 +376,50 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     else onMobileBack()
   }, [roomId, onLeave, onMobileBack])
 
+  const handleSetGoal = useCallback(async () => {
+    if (!goalInput.trim() || settingGoal) return
+    setSettingGoal(true)
+    try {
+      await fetch(`/api/chatrooms/${roomId}/goals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: goalInput.trim() }),
+      })
+      setGoalInput('')
+      setShowSetGoal(false)
+      await loadRoom()
+    } catch { /* ignore */ }
+    setSettingGoal(false)
+  }, [roomId, goalInput, settingGoal, loadRoom])
+
+  const handleCompleteGoal = useCallback(async () => {
+    if (!room?.activeGoal || completingGoal) return
+    setCompletingGoal(true)
+    try {
+      await fetch(`/api/chatrooms/${roomId}/goals/${room.activeGoal.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'completed', completionSummary: goalSummaryInput.trim() || undefined }),
+      })
+      setGoalSummaryInput('')
+      setShowCompleteGoal(false)
+      await loadRoom()
+    } catch { /* ignore */ }
+    setCompletingGoal(false)
+  }, [room, roomId, goalSummaryInput, completingGoal, loadRoom])
+
+  const handleAbandonGoal = useCallback(async () => {
+    if (!room?.activeGoal) return
+    try {
+      await fetch(`/api/chatrooms/${roomId}/goals/${room.activeGoal.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'abandoned' }),
+      })
+      await loadRoom()
+    } catch { /* ignore */ }
+  }, [room, roomId, loadRoom])
+
   // Filter invite list by search
   const filteredUsers = inviteUsers.filter(u =>
     !inviteSearch || (u.name || u.username || '').toLowerCase().includes(inviteSearch.toLowerCase())
@@ -385,6 +445,14 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
           >
             <Plus size={14} />
           </button>
+          {/* Set Goal button */}
+          <button
+            onClick={() => { setShowSetGoal(v => !v); setGoalInput('') }}
+            className={`p-1.5 rounded hover:bg-bg-raised transition-colors ${room?.activeGoal ? 'text-accent' : 'text-text-muted hover:text-accent'}`}
+            title={room?.activeGoal ? `Active goal: ${room.activeGoal.text}` : 'Set goal'}
+          >
+            <BookmarkCheck size={14} />
+          </button>
           {/* Leave room button */}
           <button
             onClick={() => setShowLeaveConfirm(true)}
@@ -395,6 +463,30 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
           </button>
         </div>
       </div>
+
+      {/* Set Goal inline input */}
+      {showSetGoal && (
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-border-subtle flex-shrink-0 bg-bg-raised">
+          <input
+            autoFocus
+            value={goalInput}
+            onChange={e => setGoalInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleSetGoal(); if (e.key === 'Escape') setShowSetGoal(false) }}
+            placeholder="Describe the goal for this room…"
+            className="flex-1 text-xs bg-bg-sidebar border border-border-subtle rounded px-2.5 py-1.5 text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+          />
+          <button
+            onClick={handleSetGoal}
+            disabled={!goalInput.trim() || settingGoal}
+            className="text-xs px-3 py-1.5 rounded bg-accent/20 text-accent hover:bg-accent/30 disabled:opacity-40 transition-colors"
+          >
+            {settingGoal ? 'Setting…' : 'Set'}
+          </button>
+          <button onClick={() => setShowSetGoal(false)} className="p-1 text-text-muted hover:text-text-primary">
+            <X size={13} />
+          </button>
+        </div>
+      )}
 
       {/* Members bar */}
       {room?.members && room.members.length > 0 && (
@@ -407,6 +499,58 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
               {m.role === 'lead' && <span className="text-accent">.</span>}
             </span>
           ))}
+        </div>
+      )}
+
+      {/* Active goal banner */}
+      {room?.activeGoal && (
+        <div className="flex-shrink-0 border-b border-border-subtle">
+          <div className="flex items-center justify-between px-4 py-2 bg-accent/5">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-accent flex-shrink-0">🎯</span>
+              <span className="text-xs text-text-primary truncate">{room.activeGoal.text}</span>
+              <span className="text-xs text-text-muted flex-shrink-0">
+                · {Math.round((Date.now() - new Date(room.activeGoal.createdAt).getTime()) / 60000)}m ago
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+              <button
+                onClick={() => { setShowCompleteGoal(v => !v); setGoalSummaryInput('') }}
+                className="text-[11px] px-2 py-0.5 rounded bg-status-healthy/15 text-status-healthy hover:bg-status-healthy/25 transition-colors"
+              >
+                Complete ✓
+              </button>
+              <button
+                onClick={handleAbandonGoal}
+                className="text-[11px] px-2 py-0.5 rounded bg-status-error/10 text-status-error hover:bg-status-error/20 transition-colors"
+              >
+                Abandon ×
+              </button>
+            </div>
+          </div>
+          {/* Complete summary input */}
+          {showCompleteGoal && (
+            <div className="flex items-center gap-2 px-4 py-2 bg-bg-raised border-t border-border-subtle">
+              <input
+                autoFocus
+                value={goalSummaryInput}
+                onChange={e => setGoalSummaryInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleCompleteGoal(); if (e.key === 'Escape') setShowCompleteGoal(false) }}
+                placeholder="Optional: describe what was accomplished…"
+                className="flex-1 text-xs bg-bg-sidebar border border-border-subtle rounded px-2.5 py-1.5 text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+              />
+              <button
+                onClick={handleCompleteGoal}
+                disabled={completingGoal}
+                className="text-xs px-3 py-1.5 rounded bg-status-healthy/20 text-status-healthy hover:bg-status-healthy/30 disabled:opacity-40 transition-colors"
+              >
+                {completingGoal ? 'Saving…' : 'Confirm'}
+              </button>
+              <button onClick={() => setShowCompleteGoal(false)} className="p-1 text-text-muted hover:text-text-primary">
+                <X size={13} />
+              </button>
+            </div>
+          )}
         </div>
       )}
 
