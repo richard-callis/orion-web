@@ -68,6 +68,15 @@ if ! grep -q "^LOCALHOST_JOIN_TOKEN=" "$DEPLOY_DIR/.env" || \
   echo "Generated LOCALHOST_JOIN_TOKEN."
 fi
 
+# ── Auto-generate HOST_AGENT_WEBHOOK_SECRET if missing ──────────────────────
+if ! grep -q "^HOST_AGENT_WEBHOOK_SECRET=" "$DEPLOY_DIR/.env" || \
+   grep -q "^HOST_AGENT_WEBHOOK_SECRET=$" "$DEPLOY_DIR/.env"; then
+  TOKEN=$(openssl rand -hex 32)
+  sed -i '/^HOST_AGENT_WEBHOOK_SECRET=/d' "$DEPLOY_DIR/.env"
+  echo "HOST_AGENT_WEBHOOK_SECRET=${TOKEN}" >> "$DEPLOY_DIR/.env"
+  echo "Generated HOST_AGENT_WEBHOOK_SECRET."
+fi
+
 # ── Auto-generate NEXTAUTH_SECRET if placeholder ──────────────────────────────
 if grep -q "^NEXTAUTH_SECRET=change-me" "$DEPLOY_DIR/.env"; then
   SECRET=$(openssl rand -base64 32)
@@ -175,6 +184,45 @@ if [[ "${GIT_PROVIDER:-gitea-bundled}" == "gitea-bundled" ]]; then
     fi
   fi
 fi
+
+# ── Enable Vault file audit device (host-agent telemetry) ───────────────────
+# This creates the audit log at /vault/audit/audit.log which Vector reads.
+# Only runs if Vault is already unsealed and accessible.
+echo ""
+echo "Enabling Vault file audit device..."
+VAULT_ADDR="http://$(hostname -I | awk '{print $1}'):8200"
+
+# Wait for Vault to be ready
+for i in $(seq 1 12); do
+  VAULT_STATUS=$($COMPOSE exec -T vault vault status -format=json 2>/dev/null | grep -o '"sealed":[[:space:]]*"[^"]*"' || echo "sealed: true")
+  if echo "$VAULT_STATUS" | grep -q '"sealed": "false"'; then
+    echo "Vault is unsealed."
+    break
+  fi
+  sleep 3
+done
+
+# Enable file audit device if not already enabled
+AUDIT_ENABLED=$($COMPOSE exec -T vault vault audit list -format=json 2>/dev/null | grep -o '"file/"' || echo "")
+if [[ -z "$AUDIT_ENABLED" ]]; then
+  VAULT_TOKEN_VAL="${VAULT_TOKEN:-}"
+  if [[ -n "$VAULT_TOKEN_VAL" ]]; then
+    $COMPOSE exec -T vault vault auth "$VAULT_TOKEN_VAL" >/dev/null 2>&1 || true
+    $COMPOSE exec -T vault vault audit enable file file_path=/vault/audit/audit.log >/dev/null 2>&1 || {
+      echo "NOTE: Could not enable Vault file audit device (may already be enabled or Vault not unsealed)."
+    }
+  else
+    echo "NOTE: VAULT_TOKEN not set — skipping Vault audit device enable."
+    echo "  Manual: vault audit enable file file_path=/vault/audit/audit.log"
+  fi
+else
+  echo "Vault file audit device already enabled."
+fi
+
+# ── Start Vector shipper ────────────────────────────────────────────────────
+echo ""
+echo "Starting Vector host telemetry shipper..."
+$COMPOSE up -d vector 2>/dev/null || echo "NOTE: Vector service failed to start (check compose logs)."
 
 if [[ -n "${SETUP_TOKEN:-}" ]]; then
   echo ""
