@@ -100,7 +100,7 @@ export async function ensureActionPolicies(): Promise<void> {
         create: {
           actionType:     def.actionType,
           defaultTier:    def.defaultTier,
-          targetPatterns: def.targetPatterns,
+          targetPatterns: def.targetPatterns as any,
           updatedBy:      'system',
         },
       })
