@@ -46,6 +46,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import { OrionClient, type McpToolConfig } from './orion-client.js'
 import { runTool } from './tool-runner.js'
+import { emitGatewayAuditEvent, buildAuditEvent } from './gateway-audit.js'
 import { HooksEngine } from './hooks-engine.js'
 import { SkillLoader } from './skill-loader.js'
 import { kubernetesTools } from './builtin-tools/kubernetes.js'
@@ -322,16 +323,22 @@ server.setRequestHandler(CallToolRequestSchema, async (req: unknown) => {
   const tool = activeTools.find(t => t.name === name)
   if (!tool) return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true }
 
+  let result: string
   try {
-    let result: string
     if (tool.builtIn && BUILTIN_REGISTRY[name]) {
       result = await BUILTIN_REGISTRY[name].execute(args as Record<string, unknown>)
     } else {
       result = await runTool(tool, args as Record<string, unknown>)
     }
+    // Audit: fire-and-forget
+    emitGatewayAuditEvent(buildAuditEvent({ toolName: name, result, args, error: false }))
     return { content: [{ type: 'text', text: result }] }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    // Audit: fire-and-forget (error path too)
+    try {
+      emitGatewayAuditEvent(buildAuditEvent({ toolName: name, result: `Error: ${msg}`, args, error: true }))
+    } catch { /* ignored */ }
     console.error(`[gateway] Tool ${name} failed:`, msg)
     return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true }
   }
@@ -399,9 +406,15 @@ app.post('/tools/execute', requireAuth, async (req: Request, res: Response) => {
     } else {
       result = await runTool(tool!, args)
     }
+    // Audit: fire-and-forget
+    emitGatewayAuditEvent(buildAuditEvent({ toolName: name, result, args, error: false }))
     res.json({ result })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
+    // Audit: fire-and-forget (error path too)
+    try {
+      emitGatewayAuditEvent(buildAuditEvent({ toolName: name, result: `Error: ${msg}`, args, error: true }))
+    } catch { /* ignored */ }
     res.status(500).json({ error: msg })
   }
 })
