@@ -177,6 +177,7 @@ async function correlateEnvironment(
             content: [
               `Warden | New Incident [${new Date().toISOString()}]`,
               `Incident: ${incident.rootCauseSummary || 'Untitled'}`,
+              `incident.id: ${incident.id}`,
               `Severity: ${incident.severity}`,
               `Attacker: ${incident.attackerKey || 'unknown'}`,
               `Events linked: ${draft.eventIds.length}`,

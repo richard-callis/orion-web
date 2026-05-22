@@ -1,9 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Shield, AlertTriangle, Activity, Zap, CheckCircle2, Loader2 } from 'lucide-react'
+import Link from 'next/link'
 import AlertFeed from './AlertFeed'
 import FlowTable from './FlowTable'
+import SourceHealthPanel from './SourceHealthPanel'
 
 function RiskScoreGauge({ score }: { score: number }) {
   const getColor = (s: number) => {
@@ -53,18 +55,27 @@ function StatCard({ icon: Icon, label, value, color }: {
   )
 }
 
+type Tab = 'incidents' | 'alerts' | 'approvals' | 'flows' | 'sources' | 'settings'
+
 export default function SecurityDashboard() {
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [tab, setTab] = useState<'overview' | 'alerts' | 'flows'>('overview')
+  const [tab, setTab] = useState<Tab>('incidents')
 
-  useEffect(() => {
-    fetch('/api/monitoring/security/overview')
-      .then(r => r.json())
-      .then(d => { setData(d); setLoading(false) })
-      .catch(e => { setError(e.message); setLoading(false) })
+  const loadOverview = useCallback(async () => {
+    try {
+      const res = await fetch('/api/monitoring/security/overview')
+      const d = await res.json()
+      setData(d)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to load')
+    } finally {
+      setLoading(false)
+    }
   }, [])
+
+  useEffect(() => { loadOverview() }, [loadOverview])
 
   if (loading) {
     return (
@@ -82,6 +93,15 @@ export default function SecurityDashboard() {
     )
   }
 
+  const tabs: { key: Tab; label: string; badge?: number }[] = [
+    { key: 'incidents', label: 'Incidents', badge: data?.activeIncidents },
+    { key: 'alerts', label: 'Alerts' },
+    { key: 'approvals', label: 'Approvals', badge: data?.pendingApprovals },
+    { key: 'flows', label: 'Flows' },
+    { key: 'sources', label: 'Sources' },
+    { key: 'settings', label: 'Settings' },
+  ]
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -90,43 +110,111 @@ export default function SecurityDashboard() {
           Security Dashboard
         </h1>
         <div className="flex gap-1 bg-bg-raised rounded-lg p-0.5">
-          {(['overview', 'alerts', 'flows'] as const).map(t => (
+          {tabs.map(t => (
             <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                tab === t ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary'
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
+                tab === t.key ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary'
               }`}
             >
-              {t.charAt(0).toUpperCase() + t.slice(1)}
+              {t.label}
+              {t.badge ? (
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                  tab === t.key ? 'bg-white/20' : 'bg-bg-raised'
+                }`}>{t.badge}</span>
+              ) : null}
             </button>
           ))}
         </div>
       </div>
 
-      {tab === 'overview' && (
+      {tab === 'incidents' && (
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <RiskScoreGauge score={data?.riskScore ?? 0} />
-            <StatCard icon={AlertTriangle} label="Active Threats" value={data?.activeThreats ?? 0} color="text-status-warning" />
-            <StatCard icon={Activity} label="Blocks" value={data?.blockCount ?? 0} color="text-blue-400" />
+            <StatCard icon={AlertTriangle} label="Open Incidents" value={data?.activeIncidents ?? 0} color="text-status-warning" />
+            <StatCard icon={CheckCircle2} label="Blocks" value={data?.blockCount ?? 0} color="text-blue-400" />
             <StatCard icon={Zap} label="Anomalies" value={data?.anomalyCount ?? 0} color="text-purple-400" />
           </div>
-          <div className="bg-bg-surface border border-border-subtle rounded-xl">
-            <div className="px-4 py-3 border-b border-border-subtle">
-              <span className="text-sm font-medium text-text-primary">Recent Alerts</span>
+
+          {data?.recentIncidents?.length ? (
+            <div className="bg-bg-surface border border-border-subtle rounded-xl">
+              <div className="px-4 py-3 border-b border-border-subtle flex items-center justify-between">
+                <span className="text-sm font-medium text-text-primary">Recent Incidents</span>
+                <Link href="/security/incidents" className="text-xs text-accent hover:underline">
+                  View all
+                </Link>
+              </div>
+              <div className="divide-y divide-border-subtle">
+                {data.recentIncidents.map((inc: any) => (
+                  <Link
+                    key={inc.id}
+                    href={`/security/incidents/${inc.id}`}
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-bg-raised transition-colors"
+                  >
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                      inc.severity >= 80 ? 'bg-status-error/15 text-status-error' :
+                      inc.severity >= 50 ? 'bg-status-warning/15 text-status-warning' :
+                      'bg-bg-raised text-text-muted'
+                    }`}>
+                      {inc.severity}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-text-primary truncate">{inc.rootCauseSummary || 'Untitled'}</div>
+                      <div className="text-xs text-text-muted">{inc.attackerKey || 'unknown'} · {new Date(inc.openedAt).toLocaleDateString()}</div>
+                    </div>
+                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
+                      inc.status === 'open' ? 'bg-status-warning/15 text-status-warning' :
+                      inc.status === 'triaged' ? 'bg-blue-400/15 text-blue-400' :
+                      inc.status === 'contained' ? 'bg-status-healthy/15 text-status-healthy' :
+                      'bg-bg-raised text-text-muted'
+                    }`}>
+                      {inc.status}
+                    </span>
+                  </Link>
+                ))}
+              </div>
             </div>
-            <AlertFeed initialAlerts={data?.recentAlerts} compact />
-          </div>
+          ) : (
+            <div className="rounded-lg border border-border-subtle bg-bg-card px-4 py-12 text-center text-sm text-text-muted">
+              No incidents — security is clear.
+            </div>
+          )}
         </div>
       )}
 
       {tab === 'alerts' && (
         <div className="bg-bg-surface border border-border-subtle rounded-xl">
           <div className="px-4 py-3 border-b border-border-subtle">
-            <span className="text-sm font-medium text-text-primary">All Alerts</span>
+            <span className="text-sm font-medium text-text-primary">Recent Alerts</span>
           </div>
-          <AlertFeed />
+          <AlertFeed initialAlerts={data?.recentAlerts} compact />
+        </div>
+      )}
+
+      {tab === 'approvals' && (
+        <div className="bg-bg-surface border border-border-subtle rounded-xl">
+          <div className="px-4 py-3 border-b border-border-subtle flex items-center justify-between">
+            <span className="text-sm font-medium text-text-primary">Pending Approvals</span>
+            <Link href="/security/approvals" className="text-xs text-accent hover:underline">
+              Full queue
+            </Link>
+          </div>
+          <div className="divide-y divide-border-subtle">
+            {data?.pendingApprovalsList?.length ? data.pendingApprovalsList.slice(0, 5).map((a: any) => (
+              <div key={a.id} className="flex items-center gap-3 px-4 py-3">
+                <AlertTriangle size={14} className="text-status-warning shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-text-primary">{a.actionType}</div>
+                  <div className="text-xs text-text-muted truncate">Target: {String(a.target)}</div>
+                </div>
+                <span className="text-[10px] text-text-muted">{new Date(a.createdAt).toLocaleDateString()}</span>
+              </div>
+            )) : (
+              <div className="px-4 py-8 text-center text-sm text-text-muted">No pending approvals</div>
+            )}
+          </div>
         </div>
       )}
 
@@ -136,6 +224,21 @@ export default function SecurityDashboard() {
             <span className="text-sm font-medium text-text-primary">NetFlow Records</span>
           </div>
           <FlowTable />
+        </div>
+      )}
+
+      {tab === 'sources' && <SourceHealthPanel />}
+
+      {tab === 'settings' && (
+        <div className="bg-bg-surface border border-border-subtle rounded-xl">
+          <div className="px-4 py-3 border-b border-border-subtle">
+            <span className="text-sm font-medium text-text-primary">Security Settings</span>
+          </div>
+          <div className="p-4">
+            <a href="/security/settings" className="text-sm text-accent hover:underline">
+              Configure monitoring sources &rarr;
+            </a>
+          </div>
         </div>
       )}
     </div>
