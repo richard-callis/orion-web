@@ -9,6 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 import { z } from 'zod'
 
 export const dynamic = 'force-dynamic'
@@ -22,6 +23,16 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  // Approve/deny is a tier-elevation action — only admins. Without this check
+  // anyone reachable on the network can execute pending privileged actions.
+  let approver: { id: string; username: string }
+  try {
+    const user = await requireAdmin()
+    approver = { id: user.id, username: user.username }
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   const body = await req.json()
   const parsed = bodySchema.safeParse(body)
 
@@ -59,12 +70,15 @@ export async function POST(
     return NextResponse.json({ error: 'Action tier is not approvable' }, { status: 400 })
   }
 
-  // Update the audit row
+  // Update the audit row.
+  // approvedBy is the resolved admin username — never the literal 'operator',
+  // which would defeat the audit trail (M3/M8).
+  const approverLabel = approver.username
   const updated = await prisma.actionAudit.update({
     where: { id: auditId },
     data: {
       status: action === 'approve' ? 'attempting' : 'denied',
-      approvedBy: 'operator', // TODO: resolve from session
+      approvedBy: approverLabel,
     },
     include: {
       incident: {
