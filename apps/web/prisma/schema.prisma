@@ -869,7 +869,7 @@ model ManagedSecret {
 model SecurityEvent {
   id           String   @id @default(uuid())
   environmentId String?
-  environment  Environment? @relation(fields: [environmentId], references: [id])
+  environment  Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
   type         String   // 'crowdsec_block', 'ntopng_threat', 'wazuh_alert', 'anomaly', 'source_stale'
   source       String   // 'crowdsec', 'ntopng', 'wazuh', 'elk'
   severity     Int      // 0-100
@@ -898,7 +898,7 @@ model SecurityEvent {
 model SecurityConfig {
   id          String   @id @default(uuid())
   environmentId String?
-  environment  Environment? @relation(fields: [environmentId], references: [id])
+  environment  Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
   key         String
   value       String
   createdAt   DateTime @default(now())
@@ -921,6 +921,7 @@ model Incident {
   hostKey            String?  // Internal identifier for the affected host
   openedAt           DateTime @default(now())
   closedAt           DateTime?
+  updatedAt          DateTime @updatedAt
   events             SecurityEvent[]
   actionAudits       ActionAudit[]
 
