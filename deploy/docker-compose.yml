@@ -567,6 +567,8 @@ services:
         condition: service_healthy
     read_only: true
     user: "1000:1000"
+    group_add:
+      - "${DOCKER_GID:-999}"
     environment:
       HOST_AGENT_WEBHOOK_SECRET: "${HOST_AGENT_WEBHOOK_SECRET:-}"
       ORION_HOST_AGENT_WEBHOOK_URL: "http://orion:3000/api/monitoring/security/webhooks/host-agent"

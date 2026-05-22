@@ -75,6 +75,21 @@ if ! grep -q "^HOST_AGENT_WEBHOOK_SECRET=" "$DEPLOY_DIR/.env" || \
   sed -i '/^HOST_AGENT_WEBHOOK_SECRET=/d' "$DEPLOY_DIR/.env"
   echo "HOST_AGENT_WEBHOOK_SECRET=${TOKEN}" >> "$DEPLOY_DIR/.env"
   echo "Generated HOST_AGENT_WEBHOOK_SECRET."
+  # Write HOST_AGENT_WEBHOOK_SECRET to Vault KV for reference
+  if [[ -n "${VAULT_TOKEN:-}" ]]; then
+    $COMPOSE exec -T vault vault kv put secret/orion/host-agent \
+      webhook_secret="${TOKEN}" >/dev/null 2>&1 || \
+      echo "NOTE: Could not write host-agent secret to Vault (Vault may not be unsealed yet)."
+  fi
+  # Seed SecurityConfig row so the webhook endpoint can look up the secret
+  $COMPOSE exec -T orion npx tsx -e "
+const { prisma } = require('./src/lib/db');
+prisma.securityConfig.upsert({
+  where: { key: 'HOST_AGENT_WEBHOOK_SECRET' },
+  update: { value: process.env.HOST_AGENT_WEBHOOK_SECRET },
+  create: { key: 'HOST_AGENT_WEBHOOK_SECRET', value: process.env.HOST_AGENT_WEBHOOK_SECRET }
+}).then(() => process.exit(0)).catch(() => process.exit(1));
+" 2>/dev/null || echo "NOTE: Could not seed SecurityConfig (app may not be running yet — run bootstrap.sh again after first start)."
 fi
 
 # ── Auto-generate NEXTAUTH_SECRET if placeholder ──────────────────────────────
@@ -207,7 +222,7 @@ AUDIT_ENABLED=$($COMPOSE exec -T vault vault audit list -format=json 2>/dev/null
 if [[ -z "$AUDIT_ENABLED" ]]; then
   VAULT_TOKEN_VAL="${VAULT_TOKEN:-}"
   if [[ -n "$VAULT_TOKEN_VAL" ]]; then
-    $COMPOSE exec -T vault vault auth "$VAULT_TOKEN_VAL" >/dev/null 2>&1 || true
+    $COMPOSE exec -T vault vault login "$VAULT_TOKEN_VAL" >/dev/null 2>&1 || true
     $COMPOSE exec -T vault vault audit enable file file_path=/vault/audit/audit.log >/dev/null 2>&1 || {
       echo "NOTE: Could not enable Vault file audit device (may already be enabled or Vault not unsealed)."
     }
