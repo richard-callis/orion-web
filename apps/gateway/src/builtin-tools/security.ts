@@ -1,6 +1,7 @@
 import { promisify } from 'util'
 import { execFile } from 'child_process'
 import { redactSensitive } from '../lib/redact'
+import { verifyDecisionToken } from '../lib/decision-token'
 
 const exec = promisify(execFile)
 
@@ -433,6 +434,29 @@ const readToolDefs = ([
   },
 ] as const).map(t => ({ ...t, category: 'security' as const }))
 
+// ── Defense-in-depth: signed decision token guard ───────────────────────────
+//
+// The four mutating tools below require a fresh HMAC-signed `__decision_token`
+// minted by the action-service. The token is bound to the action type and the
+// target arg, so it cannot be replayed across tools or targets. The token is
+// intentionally NOT exposed in the tool's inputSchema — agents must not see or
+// forge it; only action-service can produce one.
+function checkDecisionToken(
+  args: Record<string, unknown>,
+  expected: { actionType: string; target: string },
+): string | null {
+  const token = args.__decision_token
+  if (typeof token !== 'string' || token.length === 0) {
+    return jsonStr({ error: 'security write tool requires __decision_token from action-service' })
+  }
+  try {
+    verifyDecisionToken(token, expected)
+    return null
+  } catch (e) {
+    return jsonStr({ error: `decision token rejected: ${e instanceof Error ? e.message : 'invalid'}` })
+  }
+}
+
 // ── Write tools (action-oriented) ──────────────────────────────────────────────
 
 const writeToolDefs = ([
@@ -452,6 +476,14 @@ const writeToolDefs = ([
       required: ['ip'],
     },
     async execute(args: Record<string, unknown>) {
+      // Defense-in-depth: gateway refuses direct write-tool calls without a
+      // fresh action-service-signed token bound to this actionType + target.
+      const tokenErr = checkDecisionToken(args, {
+        actionType: 'crowdsec_decision_create',
+        target: String(args.ip ?? ''),
+      })
+      if (tokenErr) return tokenErr
+
       const api = process.env.CROWDSEC_API
       if (!api) return 'CROWDSEC_API environment variable not configured'
       const key = process.env.CROWDSEC_API_KEY ?? ''
@@ -510,6 +542,20 @@ const writeToolDefs = ([
       required: ['ip'],
     },
     async execute(args: Record<string, unknown>) {
+      // Defense-in-depth: gateway refuses direct write-tool calls without a
+      // fresh action-service-signed token bound to this actionType + target.
+      //
+      // The action-service routes ActionRequest.target through as `decisionId`
+      // for this tool (see apps/web/.../security/actions/route.ts), so the
+      // token's `target` claim must match `decisionId`. The tool body itself
+      // continues to operate on `ip` for backward compatibility with the
+      // pre-existing CrowdSec LAPI shape.
+      const tokenErr = checkDecisionToken(args, {
+        actionType: 'crowdsec_decision_delete',
+        target: String(args.decisionId ?? ''),
+      })
+      if (tokenErr) return tokenErr
+
       const api = process.env.CROWDSEC_API
       if (!api) return 'CROWDSEC_API environment variable not configured'
       const key = process.env.CROWDSEC_API_KEY ?? ''
@@ -544,6 +590,14 @@ const writeToolDefs = ([
       required: ['agent', 'command'],
     },
     async execute(args: Record<string, unknown>) {
+      // Defense-in-depth: gateway refuses direct write-tool calls without a
+      // fresh action-service-signed token bound to this actionType + target.
+      const tokenErr = checkDecisionToken(args, {
+        actionType: 'wazuh_active_response',
+        target: String(args.agent ?? ''),
+      })
+      if (tokenErr) return tokenErr
+
       const api = process.env.WAZUH_API
       if (!api) return 'WAZUH_API environment variable not configured'
       const user = process.env.WAZUH_USERNAME ?? ''
@@ -601,6 +655,14 @@ const writeToolDefs = ([
       required: ['cidr'],
     },
     async execute(args: Record<string, unknown>) {
+      // Defense-in-depth: gateway refuses direct write-tool calls without a
+      // fresh action-service-signed token bound to this actionType + target.
+      const tokenErr = checkDecisionToken(args, {
+        actionType: 'firewall_block',
+        target: String(args.cidr ?? ''),
+      })
+      if (tokenErr) return tokenErr
+
       const fwApi = process.env.FIREWALL_API
       if (!fwApi) return 'FIREWALL_API environment variable not configured — firewall_block is not configured'
       const fwKey = process.env.FIREWALL_API_KEY ?? ''
