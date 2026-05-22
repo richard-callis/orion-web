@@ -17,6 +17,8 @@ const SOURCE_ICONS: Record<string, React.ElementType> = {
   wazuh: Shield,
   elk: Shield,
   ntopng: Shield,
+  host_agent: Wifi,
+  gateway_audit: Wifi,
 }
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -24,6 +26,8 @@ const SOURCE_LABELS: Record<string, string> = {
   wazuh: 'Wazuh',
   elk: 'Elasticsearch',
   ntopng: 'ntopng',
+  host_agent: 'Host Agent',
+  gateway_audit: 'Gateway Audit',
 }
 
 export default function SourceHealthPanel() {
