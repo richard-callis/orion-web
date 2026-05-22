@@ -11,7 +11,7 @@
  *   claude / claude:<model>   — Claude Code SDK (OAuth credentials)
  *   ollama:<model>            — Ollama /v1/chat/completions (OpenAI-compat, supports tool_calls)
  *   ext:<id>                  — ExternalModel lookup → Ollama or OpenAI-compatible
- *   gemini:<model>            — falls back to Claude for now
+ *   gemini:<model>            — not yet supported; posts a clear error to the room
  */
 
 import { prisma } from './db'
@@ -336,7 +336,7 @@ async function callOpenAIChat(
   model: string,
   baseUrl: string,
   apiKey?: string | null,
-  toolContext?: { roomId: string; agentId: string; llm: string },
+  toolContext?: { roomId: string; agentId: string; llm: string; allowedTools?: Set<string> },
   gateway?: AgentGateway | null,
   gatewayTools?: GatewayTool[],
   activeGoal?: string,
@@ -368,7 +368,8 @@ async function callOpenAIChat(
   const legacyToolNames: Set<string> = new Set(legacyTools.map(d => d.function.name))
 
   // Merge: registry + legacy + gateway tools
-  const allTools = hasTools
+  const allowedTools = toolContext?.allowedTools
+  const merged = hasTools
     ? [
         ...registryTools,
         ...legacyTools,
@@ -378,6 +379,12 @@ async function callOpenAIChat(
         })),
       ]
     : undefined
+  // Apply per-agent allowlist if present (agents like Warden ship with a
+  // narrow whitelist via contextConfig.allowedTools). If the whitelist is
+  // present but empty (operator wants tools off), pass an empty array.
+  const allTools = merged && allowedTools
+    ? merged.filter(t => allowedTools.has(t.function.name))
+    : merged
 
   // Names of ORION-native tools for dispatch routing (registry + legacy)
   const orionToolNames: Set<string> = new Set([...registryToolNames, ...legacyToolNames])
@@ -656,7 +663,12 @@ export async function triggerRoomAgentReplies(
   // delegate to specialists or answer directly.
   const roomMeta = (room?.metadata ?? {}) as Record<string, unknown>
   const ringLeaderId = roomMeta?.ringLeaderAgentId as string | undefined
-  const activeGoal   = (roomMeta?.activeGoal as string | undefined) || undefined
+  // TODO: remove metadata.activeGoal fallback — deprecated in favour of RoomGoal table
+  const activeGoalRecord = await prisma.roomGoal.findFirst({
+    where: { roomId, status: 'active' },
+    orderBy: { createdAt: 'desc' },
+  })
+  const activeGoal = activeGoalRecord?.text
   const mentionedNames  = parseMentions(triggerContent)
   const isEveryone      = mentionedNames.some(n => n.toLowerCase() === 'everyone')
   const isDirect        = agentMembers.length === 1  // 1-on-1 room — always reply
@@ -808,9 +820,17 @@ export async function triggerRoomAgentReplies(
         .filter((a: any) => a.id !== agent.id)
         .map((a: any) => a.name)
 
+      // Optional tool whitelist — when an agent's contextConfig.allowedTools is
+      // present, only those tools are exposed (defense in depth: a jailbroken
+      // agent can't reach tools outside its whitelist). Backwards compatible:
+      // agents without `allowedTools` see the full registry as before.
+      const allowedTools = Array.isArray(contextConfig.allowedTools)
+        ? new Set((contextConfig.allowedTools as unknown[]).filter((t): t is string => typeof t === 'string'))
+        : undefined
+
       // Tool context passed to OpenAI-compatible calls when tools are enabled
       const toolContext = toolsEnabled
-        ? { roomId, agentId: agent.id, llm }
+        ? { roomId, agentId: agent.id, llm, allowedTools }
         : undefined
 
       // Resolve gateway from the agent's linked environment (same tools regardless of execution context)
@@ -841,7 +861,12 @@ export async function triggerRoomAgentReplies(
           }
           const baseUrl = extModel.baseUrl ?? 'http://localhost:11434'
           if (extModel.provider === 'ollama') {
-            reply = await callOllamaChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, !!toolContext, '', activeGoal)
+            // Route through OpenAI-compat endpoint so tool_calls JSON is supported.
+            // Ollama's native /api/chat has no tools array — callOllamaChat can't handle tools.
+            const result = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey ?? null, toolContext, gateway, gatewayTools, activeGoal)
+            reply = result.reply
+            tokensUsed = result.tokensUsed
+            discoveredContextLimit = result.contextLimit
           } else {
             // openai / custom — OpenAI-compatible (supports tool calling + token tracking)
             const result = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey, toolContext, gateway, gatewayTools, activeGoal)
@@ -859,6 +884,25 @@ export async function triggerRoomAgentReplies(
           reply = result.reply
           tokensUsed = result.tokensUsed
           discoveredContextLimit = result.contextLimit
+        } else if (llm.startsWith('gemini:')) {
+          // Gemini not yet supported — reject clearly instead of silently falling back to Claude
+          console.error(`[room-agents] ${agent.name}: gemini:* models are not yet supported (got "${llm}")`)
+          const notice = `I'm configured to use a Gemini model (\`${llm}\`) which isn't supported yet. Please update my model setting to a Claude or Ollama model.`
+          const msg = await prisma.chatMessage.create({
+            data: { roomId, agentId: agent.id, senderType: 'agent', content: notice },
+            include: {
+              agent: { select: { id: true, name: true } },
+              user:  { select: { id: true, username: true, name: true } },
+            },
+          })
+          await publishChatMessage(roomId, {
+            id:         msg.id,
+            senderType: 'agent',
+            content:    notice,
+            sender:     { type: 'agent', id: agent.id, name: agent.name },
+            createdAt:  msg.createdAt instanceof Date ? msg.createdAt.toISOString() : msg.createdAt,
+          })
+          continue
         } else {
           // claude / claude:<model> — routed through orion-claude sidecar.
           // When tools are enabled, the sidecar writes a per-request .mcp.json so Claude

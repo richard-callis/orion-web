@@ -39,10 +39,10 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
         if (!fresh) return
         if (fresh.plan !== feature.plan) {
           setPlan(fresh.plan ?? '')
-          onUpdate({ plan: fresh.plan ?? null }).catch(() => {})
+          onUpdate({ plan: fresh.plan ?? null }).catch((e) => console.error("[fetch]", e))
         }
       })
-      .catch(() => {})
+      .catch((e) => console.error("[fetch]", e))
   }, [feature.id])
 
   const handlePlanFeature = async () => {

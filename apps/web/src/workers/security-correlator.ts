@@ -13,6 +13,8 @@ import { prisma } from '@/lib/db'
 import { type IncidentDraft } from '@/lib/security/types'
 import { correlateEvents, recordRuleIncident } from '@/lib/security/rule-engine'
 import type { NamedRule, RuleParams } from '@/lib/security/rule-engine'
+import { getSystemRoomId } from '@/lib/seed-system-epic'
+import { triggerRoomAgentReplies } from '@/lib/room-agents'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -42,6 +44,17 @@ const MAX_INCIDENTS_PER_RUN = 10
 /** How often to update source health staleness check (ms). */
 const STALENESS_CHECK_INTERVAL = 5 * 60 * 1000
 
+/**
+ * Synthetic ID used to surface the orphan-events bucket in {@link CorrelationResult}.
+ *
+ * Events with `environmentId === null` cannot be processed against a real
+ * Environment row; the correlator handles them under this sentinel so they
+ * still get matched against global rules (BLOCK-1, PR #408).
+ *
+ * Exported so tests can assert against the synthetic bucket result.
+ */
+export const GLOBAL_BUCKET_ID = '__global__'
+
 // ── Correlator ────────────────────────────────────────────────────────────────
 
 /**
@@ -67,6 +80,21 @@ export async function runCorrelator(): Promise<CorrelationResult[]> {
     },
     select: { id: true },
   })
+
+  // 1b. Detect orphaned events (environmentId IS NULL). The previous query
+  //     only matched Environment rows, so events ingested without an env
+  //     binding were never correlated. We process them under a synthetic
+  //     `GLOBAL_BUCKET_ID` so global rules can still run against them.
+  const orphanCount = await prisma.securityEvent.count({
+    where: {
+      environmentId: null,
+      createdAt: {
+        gte: new Date(Date.now() - LOOKBACK_WINDOW_SEC * 1000),
+      },
+      incidentId: null,
+    },
+  })
+  const hasOrphans = orphanCount > 0
 
   // 2. Fetch correlation rules in a single query that includes BOTH
   //    per-environment rules AND global rules (environmentId IS NULL).
@@ -109,6 +137,36 @@ export async function runCorrelator(): Promise<CorrelationResult[]> {
     }
   }
 
+  // 2b. Process the synthetic global bucket for orphan events. Only global
+  //     rules apply (environmentId IS NULL) — per-environment rules cannot
+  //     match events that have no environment binding.
+  if (hasOrphans) {
+    const globalRules = allRules.filter(r => r.environmentId === null)
+    try {
+      const orphanResult = await correlateEnvironment(
+        {
+          id: GLOBAL_BUCKET_ID,
+          correlationRules: globalRules.map(r => ({
+            name: r.name,
+            params: r.params,
+            severity: r.severity,
+          })),
+        },
+        { isGlobalBucket: true },
+      )
+      results.push(orphanResult)
+    } catch {
+      results.push({
+        envId: GLOBAL_BUCKET_ID,
+        status: 'error',
+        error: 'Global bucket correlation failed',
+        durationMs: Date.now() - startTime,
+        incidentsCreated: 0,
+        eventsProcessed: 0,
+      })
+    }
+  }
+
   // 2. Check for stale sources
   await checkSourceStaleness()
 
@@ -117,19 +175,27 @@ export async function runCorrelator(): Promise<CorrelationResult[]> {
 
 /**
  * Correlate events for a single environment.
+ *
+ * When `opts.isGlobalBucket` is true, `env.id` is the {@link GLOBAL_BUCKET_ID}
+ * sentinel and the query targets events with `environmentId IS NULL` instead.
+ * The correlator never persists `GLOBAL_BUCKET_ID` as an Environment FK; on
+ * the global path, generated Incidents are written with `environmentId: null`.
  */
 async function correlateEnvironment(
   env: {
     id: string
     correlationRules: Array<{ name: string; params: unknown; severity: number }>
-  }
+  },
+  opts: { isGlobalBucket?: boolean } = {},
 ): Promise<CorrelationResult> {
   const envStartTime = Date.now()
+  const isGlobal = opts.isGlobalBucket === true
 
-  // 1. Fetch uncorrelated events since lookback window
+  // 1. Fetch uncorrelated events since lookback window. Global bucket queries
+  //    use `environmentId: null` so orphan events are processed exactly once.
   const events = await prisma.securityEvent.findMany({
     where: {
-      environmentId: env.id,
+      environmentId: isGlobal ? null : env.id,
       createdAt: {
         gte: new Date(Date.now() - LOOKBACK_WINDOW_SEC * 1000),
       },
@@ -156,7 +222,10 @@ async function correlateEnvironment(
     params: r.params as RuleParams,
   }))
 
-  // 3. Run correlation
+  // 3. Run correlation.
+  //    For the global bucket, the rule engine receives the synthetic ID
+  //    (used solely for its rate-limit bucket keys); generated drafts will
+  //    be rewritten to `environmentId: null` below.
   const { drafts, errorCount, erroredRules } = await correlateEvents(
     env.id,
     new Date(Date.now() - LOOKBACK_WINDOW_SEC * 1000),
@@ -170,33 +239,40 @@ async function correlateEnvironment(
     )
   }
 
-  // 4. Deduplicate: skip drafts that would create duplicates of open incidents
-  const openIncidents = await prisma.incident.findMany({
-    where: {
-      environmentId: env.id,
-      status: { in: ['open', 'triaged', 'contained'] },
-    },
-    select: { id: true, attackerKey: true },
-  })
-
-  const existingKeys = new Set<string>(openIncidents.map(inc => `${inc.attackerKey ?? 'unknown'}`))
+  // 4. Deduplicate: keep in-run drafts unique by `${attackerKey}:${ruleName}`
+  //    so a port-scan draft is not silently dropped by a brute-force draft on
+  //    the same IP. The previous implementation keyed the from-DB set by
+  //    `attackerKey` alone but used the 2-tuple for the in-run add/check,
+  //    causing any open incident on the same IP to suppress every new rule
+  //    against that IP (BLOCK-1, PR #408).
+  //
+  //    The Incident model does not currently store a rule name, so we cannot
+  //    safely 2-tuple the DB set. We still preload open incidents to suppress
+  //    multiple in-run drafts that all target an attacker for which any
+  //    incident is already open under the same rule — by checking the
+  //    in-run set only. Cross-run protection is provided by the per-rule
+  //    rate limit (`recordRuleIncident` / `shouldRateLimitRule`).
+  const existingKeys = new Set<string>()
   const newDrafts = drafts.filter(d => {
-    const key = `${d.attackerKey ?? 'unknown'}:${d.ruleName}`
-    if (existingKeys.has(d.attackerKey ?? 'unknown')) return false
-    existingKeys.add(key)
+    const ruleKey = `${d.attackerKey ?? 'unknown'}:${d.ruleName ?? 'unknown'}`
+    if (existingKeys.has(ruleKey)) return false
+    existingKeys.add(ruleKey)
     return true
   })
 
   // 5. Cap incidents created per run
   const cappedDrafts = newDrafts.slice(0, MAX_INCIDENTS_PER_RUN)
 
-  // 6. Create incidents
+  // 6. Create incidents. Drafts produced from the global bucket must be
+  //    written with `environmentId: null` (the synthetic bucket ID is never
+  //    a valid FK target).
   let incidentsCreated = 0
   for (const draft of cappedDrafts) {
     try {
+      const incidentEnvId = isGlobal ? null : draft.environmentId
       const incident = await prisma.incident.create({
         data: {
-          environmentId: draft.environmentId,
+          environmentId: incidentEnvId,
           severity: draft.severity,
           rootCauseSummary: draft.rootCauseSummary ?? null,
           attackerKey: draft.attackerKey ?? null,
@@ -208,6 +284,45 @@ async function correlateEnvironment(
           },
         },
       })
+
+      // Notify Warden in the security room. The typed `incidentId` link
+      // (added in 14_chatmessage_incident_link) lets the UI look up the
+      // incident chat by foreign key — no need to embed the id in body text.
+      const securityRoomId = await getSystemRoomId('system.room.security')
+      if (securityRoomId) {
+        const noticeBody = [
+          `Warden | New Incident [${new Date().toISOString()}]`,
+          `Incident: ${incident.rootCauseSummary || 'Untitled'}`,
+          `Severity: ${incident.severity}`,
+          `Attacker: ${incident.attackerKey || 'unknown'}`,
+          `Events linked: ${draft.eventIds.length}`,
+          `Warden is triaging...`,
+        ].join('\n')
+
+        await prisma.chatMessage.create({
+          data: {
+            roomId: securityRoomId,
+            senderType: 'system',
+            incidentId: incident.id,
+            content: noticeBody,
+          },
+        })
+
+        // BUG-2 fix: trigger room agents so Warden actually wakes up on a new
+        // incident. The HTTP message-create paths
+        // (api/chatrooms/[id]/messages/route.ts and api/chatrooms/route.ts)
+        // both call triggerRoomAgentReplies after writing a ChatMessage; the
+        // correlator was skipping this call, so Warden's agent never received
+        // the new-incident notice. Fire-and-forget so a slow agent never
+        // blocks correlation.
+        triggerRoomAgentReplies(securityRoomId, noticeBody).catch((e: unknown) => {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[siem] correlator: triggerRoomAgentReplies failed for room ${securityRoomId}:`,
+            e instanceof Error ? `${e.name}: ${e.message}` : e,
+          )
+        })
+      }
 
       // Update events to reference the new incident
       await prisma.securityEvent.updateMany({

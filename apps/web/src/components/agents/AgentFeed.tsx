@@ -31,7 +31,7 @@ export function AgentFeed({ initialMessages, initialPaused = false }: { initialM
   // Poll for new messages every 10s
   useEffect(() => {
     const poll = () =>
-      fetch('/api/agents/messages?limit=50').then(r => r.json()).then(setMessages).catch(() => {})
+      fetch('/api/agents/messages?limit=50').then(r => r.json()).then(setMessages).catch((e) => console.error("[fetch]", e))
     const t = setInterval(poll, 10_000)
     return () => clearInterval(t)
   }, [])
