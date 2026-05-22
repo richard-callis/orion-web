@@ -68,6 +68,68 @@ const DEFAULT_RULES = [
     severity: 85,
     window: 300,
   },
+  // ── Host-agent rules (from gigly-sniffing-parasol.md, PR3) ─────────────────
+
+  // host.ssh_brute_force — ≥5 SSH failed-password events from same IP in 5min.
+  // This is a narrower variant of the generic brute_force rule that fires
+  // specifically on host_agent source SSH failures (which have structured
+  // metadata from the Vector shipper).
+  {
+    name: 'host.ssh_brute_force',
+    ruleType: 'threshold',
+    params: {
+      type: 'threshold',
+      field: 'attackerKey',
+      op: 'gte' as const,
+      value: 5,
+      window: 300, // 5 minutes
+      groupBy: ['attackerKey'],
+      // Only match events from the host_agent source — the generic
+      // brute_force rule already handles CrowdSec/Wazuh SSH failures.
+      sourceFilter: ['host_agent'],
+    },
+    severity: 70,
+    window: 300,
+  },
+
+  // host.vault_anomaly — Vault root-token create OR unseal. Fires immediately
+  // (no aggregation) because these are always high-signal admin operations
+  // regardless of time of day — an attacker will not schedule around a
+  // maintenance window. Any vault root-token creation or unseal is auditable
+  // and should trigger an Incident for human review.
+  {
+    name: 'host.vault_anomaly',
+    ruleType: 'pattern',
+    params: {
+      type: 'pattern',
+      regex: '^vault\\.(token\\.create\\.root|unseal)$',
+      field: 'type',
+      window: 0, // fire immediately — no aggregation window
+    },
+    severity: 80,
+    window: 0,
+  },
+
+  // gateway_audit — any single agent.tool.invoked event with severity >= 60
+  // opens an Incident immediately. This is the correlation rule for PR4
+  // (gateway tool-call audit). Lower-severity gateway events are informational
+  // only. Uses a pattern rule scoped to source=gateway_audit and
+  // minSeverity=60 to avoid false positives from other gateway_audit event
+  // types (e.g. agent.session.start, agent.tool.result).
+  {
+    name: 'gateway_audit_high_severity',
+    ruleType: 'pattern',
+    params: {
+      type: 'pattern',
+      regex: '^agent\\.tool\\.invoked$',
+      field: 'type',
+      window: 0, // fire immediately — no aggregation
+      sourceFilter: ['gateway_audit'],
+      minSeverity: 60,
+    },
+    severity: 80,
+    window: 0,
+  },
 ]
 
 /**
