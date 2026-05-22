@@ -26,6 +26,7 @@
  *   docker.volume.create      → 0
  */
 
+import crypto from 'crypto'
 import { type NormalizedSecurityEvent } from '../types'
 
 export interface HostAgentEvent {
@@ -273,12 +274,5 @@ export function normalizeHostAgentEvent(
 }
 
 function createDedupKey(...parts: string[]): string {
-  const joined = parts.join('|')
-  let hash = 0
-  for (let i = 0; i < joined.length; i++) {
-    const char = joined.charCodeAt(i)
-    hash = ((hash << 5) - hash) + char
-    hash &= hash
-  }
-  return `host_agent_${Math.abs(hash).toString(16)}`
+  return crypto.createHash('sha256').update(parts.join('|')).digest('hex')
 }

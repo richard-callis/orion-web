@@ -90,6 +90,7 @@ export const HOST_AGENT_CATEGORIES = [
   'docker',
   'vault',
   'edge',
+  'audit',
 ] as const
 
 export const hostAgentEventSchema = z.object({

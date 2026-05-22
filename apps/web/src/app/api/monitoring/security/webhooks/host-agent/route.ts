@@ -203,7 +203,7 @@ export async function POST(req: NextRequest) {
     create: {
       source: 'host_agent',
       lastSeenAt: now,
-      lastWatermark: now,
+      lastWatermark: null,
       staleAfterMs: 120 * 1000, // 2 minutes
     },
   })
@@ -211,8 +211,8 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     received: true,
     batch_id,
-    eventsProcessed: events.length,
+    eventsProcessed: insertCandidates.length,
     eventsInserted: toInsert.length,
-    eventsRejected: events.length - toInsert.length,
+    eventsRejected: insertCandidates.length - toInsert.length,
   })
 }
