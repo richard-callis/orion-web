@@ -92,6 +92,15 @@ prisma.securityConfig.upsert({
 " 2>/dev/null || echo "NOTE: Could not seed SecurityConfig (app may not be running yet — run bootstrap.sh again after first start)."
 fi
 
+# ── Auto-generate GATEWAY_AUDIT_SECRET if missing ──────────────────────────
+if ! grep -q "^GATEWAY_AUDIT_SECRET=" "$DEPLOY_DIR/.env" || \
+   grep -q "^GATEWAY_AUDIT_SECRET=$" "$DEPLOY_DIR/.env"; then
+  TOKEN=$(openssl rand -hex 32)
+  sed -i '/^GATEWAY_AUDIT_SECRET=/d' "$DEPLOY_DIR/.env"
+  echo "GATEWAY_AUDIT_SECRET=${TOKEN}" >> "$DEPLOY_DIR/.env"
+  echo "Generated GATEWAY_AUDIT_SECRET."
+fi
+
 # ── Auto-generate NEXTAUTH_SECRET if placeholder ──────────────────────────────
 if grep -q "^NEXTAUTH_SECRET=change-me" "$DEPLOY_DIR/.env"; then
   SECRET=$(openssl rand -base64 32)
