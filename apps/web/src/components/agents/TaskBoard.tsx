@@ -39,7 +39,7 @@ export function TaskBoard({ initialTasks, agents }: { initialTasks: Task[]; agen
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
-    }).catch(() => {})
+    }).catch((e) => console.error("[fetch]", e))
   }
 
   const create = async () => {

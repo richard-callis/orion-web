@@ -27,7 +27,7 @@ export function PlanWithAIButton({ onSelect }: { onSelect: (modelId: string) => 
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    fetch('/api/models').then(r => r.json()).then(setModels).catch(() => {})
+    fetch('/api/models').then(r => r.json()).then(setModels).catch((e) => console.error("[fetch]", e))
   }, [])
 
   useEffect(() => {

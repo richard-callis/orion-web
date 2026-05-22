@@ -95,7 +95,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
   const planningInputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
 
-  useEffect(() => { fetch('/api/models').then(r => r.json()).then(setAvailableModels).catch(() => {}) }, [])
+  useEffect(() => { fetch('/api/models').then(r => r.json()).then(setAvailableModels).catch((e) => console.error("[fetch]", e)) }, [])
 
   const openModal = (agent: Agent) => {
     const meta = agent.metadata as Record<string, unknown> | null
@@ -276,7 +276,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
   const handleNovaImport = (novaName: string) => {
     setShowNovaBrowser(false)
     // Refresh the agents list after import
-    fetch('/api/agents').then(r => r.json()).then(setLocalAgents).catch(() => {})
+    fetch('/api/agents').then(r => r.json()).then(setLocalAgents).catch((e) => console.error("[fetch]", e))
   }
 
   const openCreate = () => { setForm(emptyForm); setCreateModal(true) }
@@ -348,7 +348,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
       setLocalAgents(prev => prev.map(a => a.id === modalAgent.id ? { ...a, ...patch } : a))
       await fetch(`/api/agents/${modalAgent.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-      }).catch(() => {})
+      }).catch((e) => console.error("[fetch]", e))
     }
     setSaving(false)
     closeModal()
@@ -360,7 +360,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
     if (onDelete) onDelete(modalAgent.id)
     else {
       setLocalAgents(prev => prev.filter(a => a.id !== modalAgent.id))
-      fetch(`/api/agents/${modalAgent.id}`, { method: 'DELETE' }).catch(() => {})
+      fetch(`/api/agents/${modalAgent.id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
     }
     closeModal()
   }
