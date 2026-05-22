@@ -64,7 +64,12 @@ export async function runElkPoller(envId: string): Promise<PollResult> {
 
   result.eventsFound = events.length
 
-  // 3. Normalize and insert
+  // 3. Normalize and insert. Track the timestamp of the last *successfully
+  //    inserted* event so the watermark only advances over rows we actually
+  //    persisted — Zod parse failures or DB errors must NOT bump the watermark
+  //    or they'd be permanently skipped on the next poll.
+  let lastInsertedTimestamp: Date | null = null
+
   for (const raw of events) {
     try {
       const event = normalizeElkEvent(raw)
@@ -99,26 +104,39 @@ export async function runElkPoller(envId: string): Promise<PollResult> {
         },
       })
       result.eventsInserted++
+      // Advance the in-memory watermark candidate only after a successful insert.
+      if (parsed.timestamp instanceof Date && (!lastInsertedTimestamp || parsed.timestamp > lastInsertedTimestamp)) {
+        lastInsertedTimestamp = parsed.timestamp
+      }
     } catch (err) {
       result.errors.push(`Failed to process event: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
-  // 4. Update watermark to the newest event
-  if (events.length > 0) {
-    const newest = events[events.length - 1]
-    result.watermark = newest['@timestamp'] ?? newest.syslog_timestamp ?? new Date().toISOString()
+  // 4. Determine the watermark to persist:
+  //    - If no events were inserted, leave the existing watermark untouched.
+  //    - Otherwise advance to the latest successfully-inserted timestamp.
+  if (lastInsertedTimestamp) {
+    result.watermark = lastInsertedTimestamp.toISOString()
   }
 
-  // 5. Update source health
+  // 5. Update source health. Only persist a new lastWatermark when we have
+  //    a successful insert this run; otherwise keep the prior value.
+  const upsertData: { lastSeenAt: Date; lastWatermark?: Date } = { lastSeenAt: new Date() }
+  if (lastInsertedTimestamp) {
+    upsertData.lastWatermark = lastInsertedTimestamp
+  }
   await prisma.sourceHealth.upsert({
     where: { source: 'elk' },
-    update: { lastSeenAt: new Date() },
+    update: upsertData,
     create: {
       environmentId: envId,
       source: 'elk',
       lastSeenAt: new Date(),
-      lastWatermark: result.watermark ? new Date(result.watermark) : new Date(),
+      // For first-run create: use the inserted timestamp if available;
+      // otherwise fall back to `sinceTime` so we don't accidentally skip
+      // the window we just polled.
+      lastWatermark: lastInsertedTimestamp ?? sinceTime,
       staleAfterMs: ELK_POLL_INTERVAL_SEC * 1000 * 3, // 3x poll interval
     },
   })

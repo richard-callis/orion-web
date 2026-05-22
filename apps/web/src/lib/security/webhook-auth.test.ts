@@ -11,6 +11,8 @@ import {
   isWithinReplayWindow,
   isLoopbackWebhookRequest,
   warnMissingWebhookSecret,
+  checkWebhookBodySize,
+  WEBHOOK_MAX_BODY_BYTES,
 } from './webhook-auth'
 
 const secret = 'super-secret-key'
@@ -55,7 +57,20 @@ describe('verifyWebhookHmac (BLOCK-1 regression — timing-safe comparison)', ()
 })
 
 describe('isWithinReplayWindow', () => {
-  it('returns true when there is no timestamp header', () => {
+  const originalRequire = process.env.WEBHOOK_REQUIRE_TIMESTAMP
+  const originalNodeEnv = process.env.NODE_ENV
+  beforeEach(() => {
+    delete process.env.WEBHOOK_REQUIRE_TIMESTAMP
+  })
+  afterEach(() => {
+    if (originalRequire === undefined) delete process.env.WEBHOOK_REQUIRE_TIMESTAMP
+    else process.env.WEBHOOK_REQUIRE_TIMESTAMP = originalRequire
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = originalNodeEnv
+  })
+
+  it('returns true when there is no timestamp header in dev', () => {
+    // Default test env: NODE_ENV !== 'production' and no require flag.
     expect(isWithinReplayWindow(null)).toBe(true)
   })
 
@@ -67,6 +82,89 @@ describe('isWithinReplayWindow', () => {
   it('returns false for an ISO timestamp outside the replay window', () => {
     const old = new Date(Date.now() - 60 * 60 * 1000).toISOString() // 1 hour ago
     expect(isWithinReplayWindow(old)).toBe(false)
+  })
+
+  // MAJOR-1 (PR #407): missing timestamp must be rejected in production.
+  it('returns false when timestamp is missing and NODE_ENV=production', () => {
+    process.env.NODE_ENV = 'production'
+    expect(isWithinReplayWindow(null)).toBe(false)
+  })
+
+  it('returns false when timestamp is missing and WEBHOOK_REQUIRE_TIMESTAMP=true', () => {
+    process.env.WEBHOOK_REQUIRE_TIMESTAMP = 'true'
+    expect(isWithinReplayWindow(null)).toBe(false)
+  })
+
+  it('returns true when timestamp is missing and explicit WEBHOOK_REQUIRE_TIMESTAMP=false in prod', () => {
+    process.env.NODE_ENV = 'production'
+    process.env.WEBHOOK_REQUIRE_TIMESTAMP = 'false'
+    expect(isWithinReplayWindow(null)).toBe(true)
+  })
+
+  it('accepts a recent timestamp even when require flag is on', () => {
+    process.env.WEBHOOK_REQUIRE_TIMESTAMP = 'true'
+    expect(isWithinReplayWindow(new Date().toISOString())).toBe(true)
+  })
+
+  it('rejects a timestamp far in the future (clock-skew / forgery)', () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    expect(isWithinReplayWindow(future)).toBe(false)
+  })
+})
+
+describe('checkWebhookBodySize (PR #407 MAJOR-3)', () => {
+  const originalNodeEnv = process.env.NODE_ENV
+  beforeEach(() => {})
+  afterEach(() => {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = originalNodeEnv
+  })
+
+  function reqWith(headers: Record<string, string>) {
+    const h = new Headers()
+    for (const [k, v] of Object.entries(headers)) h.set(k, v)
+    return { headers: h }
+  }
+
+  it('accepts a 100 KB body', () => {
+    const res = checkWebhookBodySize(reqWith({ 'content-length': String(100 * 1024) }))
+    expect(res.ok).toBe(true)
+  })
+
+  it('rejects a 2 MB body with too_large', () => {
+    const res = checkWebhookBodySize(reqWith({ 'content-length': String(2 * 1024 * 1024) }))
+    expect(res.ok).toBe(false)
+    expect(res.reason).toBe('too_large')
+  })
+
+  it('rejects exactly WEBHOOK_MAX_BODY_BYTES + 1', () => {
+    const res = checkWebhookBodySize(reqWith({ 'content-length': String(WEBHOOK_MAX_BODY_BYTES + 1) }))
+    expect(res.ok).toBe(false)
+    expect(res.reason).toBe('too_large')
+  })
+
+  it('accepts a body equal to the limit', () => {
+    const res = checkWebhookBodySize(reqWith({ 'content-length': String(WEBHOOK_MAX_BODY_BYTES) }))
+    expect(res.ok).toBe(true)
+  })
+
+  it('rejects missing Content-Length in production', () => {
+    process.env.NODE_ENV = 'production'
+    const res = checkWebhookBodySize(reqWith({}))
+    expect(res.ok).toBe(false)
+    expect(res.reason).toBe('missing_length')
+  })
+
+  it('allows missing Content-Length in dev', () => {
+    process.env.NODE_ENV = 'development'
+    const res = checkWebhookBodySize(reqWith({}))
+    expect(res.ok).toBe(true)
+  })
+
+  it('rejects a malformed Content-Length', () => {
+    const res = checkWebhookBodySize(reqWith({ 'content-length': 'not-a-number' }))
+    expect(res.ok).toBe(false)
+    expect(res.reason).toBe('missing_length')
   })
 })
 

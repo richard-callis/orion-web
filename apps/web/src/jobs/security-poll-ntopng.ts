@@ -48,6 +48,11 @@ export async function runNtopngPoller(envId: string): Promise<PollResult> {
 
   const sinceTime = sourceHealth?.lastWatermark ?? new Date(Date.now() - 10 * 60 * 1000) // last 10 min
 
+  // Track the timestamp of the last *successfully inserted* event across both
+  // alert and flow loops so the watermark advances only over rows we actually
+  // persisted. If everything fails, we leave the prior watermark untouched.
+  let lastInsertedTimestamp: Date | null = null
+
   // 2. Poll threat alerts
   try {
     const alerts = await pollNtopngAlerts(sinceTime, NTOPNG_POLL_SIZE)
@@ -85,6 +90,9 @@ export async function runNtopngPoller(envId: string): Promise<PollResult> {
           },
         })
         result.eventsInserted++
+        if (parsed.timestamp instanceof Date && (!lastInsertedTimestamp || parsed.timestamp > lastInsertedTimestamp)) {
+          lastInsertedTimestamp = parsed.timestamp
+        }
       } catch (err) {
         result.errors.push(`Threat: ${err instanceof Error ? err.message : String(err)}`)
       }
@@ -137,6 +145,9 @@ export async function runNtopngPoller(envId: string): Promise<PollResult> {
             },
           })
           result.eventsInserted++
+          if (parsed.timestamp instanceof Date && (!lastInsertedTimestamp || parsed.timestamp > lastInsertedTimestamp)) {
+            lastInsertedTimestamp = parsed.timestamp
+          }
         } catch (err) {
           result.errors.push(`Flow: ${err instanceof Error ? err.message : String(err)}`)
         }
@@ -146,16 +157,26 @@ export async function runNtopngPoller(envId: string): Promise<PollResult> {
     }
   }
 
-  // 4. Update source health
+  // 4. Update source health. Only advance lastWatermark when we successfully
+  //    inserted at least one event this run; otherwise leave the previous
+  //    watermark untouched (avoids advancing past a failed batch).
   const now = new Date()
+  const upsertData: { lastSeenAt: Date; lastWatermark?: Date } = { lastSeenAt: now }
+  if (lastInsertedTimestamp) {
+    upsertData.lastWatermark = lastInsertedTimestamp
+    result.watermark = lastInsertedTimestamp.toISOString()
+  }
   await prisma.sourceHealth.upsert({
     where: { source: 'ntopng' },
-    update: { lastSeenAt: now },
+    update: upsertData,
     create: {
       environmentId: envId,
       source: 'ntopng',
       lastSeenAt: now,
-      lastWatermark: now,
+      // For first-run create: use the inserted timestamp if available;
+      // otherwise fall back to `sinceTime` so we don't accidentally skip
+      // the window we just polled.
+      lastWatermark: lastInsertedTimestamp ?? sinceTime,
       staleAfterMs: NTOPNG_POLL_INTERVAL_SEC * 1000 * 3, // 3x poll interval
     },
   })

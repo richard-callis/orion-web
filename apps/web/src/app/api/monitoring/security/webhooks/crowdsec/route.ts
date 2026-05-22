@@ -18,6 +18,8 @@ import {
   wasAlreadyProcessed,
   isLoopbackWebhookRequest,
   warnMissingWebhookSecret,
+  checkWebhookBodySize,
+  WEBHOOK_MAX_BODY_BYTES,
 } from '@/lib/security/webhook-auth'
 import { normalizeCrowdSecAlert, type CrowdSecAlert } from '@/lib/security/normalize/crowdsec'
 
@@ -28,6 +30,21 @@ export const maxDuration = 30
 
 export async function POST(req: NextRequest) {
   const envId = req.nextUrl.searchParams.get('env') || process.env.ENVIRONMENT_ID || ''
+
+  // 0. Body-size guard (rejects oversize/unsized requests BEFORE HMAC work).
+  const sizeCheck = checkWebhookBodySize(req)
+  if (!sizeCheck.ok) {
+    if (sizeCheck.reason === 'too_large') {
+      return NextResponse.json(
+        { error: `Request body exceeds ${WEBHOOK_MAX_BODY_BYTES} bytes` },
+        { status: 413 }
+      )
+    }
+    return NextResponse.json(
+      { error: 'Content-Length header required' },
+      { status: 411 }
+    )
+  }
 
   // 1. Read raw body (for HMAC verification)
   const bodyText = await req.text()
