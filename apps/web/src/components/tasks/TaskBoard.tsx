@@ -71,13 +71,13 @@ export function TaskBoard({ initialTasks }: { initialTasks: Task[] }) {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
-    }).catch(() => {})
+    }).catch((e) => console.error("[fetch]", e))
   }
 
   const deleteTask = async (id: string) => {
     setTasks(prev => prev.filter(t => t.id !== id))
     if (selected?.id === id) setSelected(null)
-    await fetch(`/api/tasks/${id}`, { method: 'DELETE' }).catch(() => {})
+    await fetch(`/api/tasks/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
   }
 
   const createTask = async () => {

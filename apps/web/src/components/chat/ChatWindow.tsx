@@ -70,7 +70,7 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
           }
         }
       })
-      .catch(() => {})
+      .catch((e) => console.error("[fetch]", e))
   }, [])
 
   // Resolve which provider/model is active
@@ -96,7 +96,7 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
     fetch('/api/environments')
       .then(r => r.json())
       .then((envs: Environment[]) => setEnvironments(envs.filter((e: Environment) => e.status === 'connected')))
-      .catch(() => {})
+      .catch((e) => console.error("[fetch]", e))
   }, [])
 
   const mentionMatches = mentionQuery !== null
@@ -402,7 +402,7 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ metadata: { ollamaModel: model ?? undefined } }),
-      }).catch(() => {})
+      }).catch((e) => console.error("[fetch]", e))
     }
   }
 

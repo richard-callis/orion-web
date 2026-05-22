@@ -49,7 +49,6 @@ interface CreateBugForm {
 export function BugManager({ initialBugs, users }: Props) {
   const [bugs, setBugs]         = useState<Bug[]>(initialBugs)
   const [selectedBug, setSelectedBug] = useState<Bug | null>(null)
-  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const [modal, setModal]       = useState(false)
   const [saving, setSaving]     = useState(false)
   const [form, setForm]         = useState<CreateBugForm>({ title: '', description: '', severity: 'medium', area: '' })
@@ -88,16 +87,16 @@ export function BugManager({ initialBugs, users }: Props) {
     if (selectedBug?.id === id) setSelectedBug(s => s ? { ...s, ...patch } : s)
     await fetch(`/api/bugs/${id}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch(() => {})
+    }).catch((e) => console.error("[fetch]", e))
   }
 
   const deleteBug = async (id: string) => {
     setBugs(prev => prev.filter(b => b.id !== id))
     if (selectedBug?.id === id) {
       setSelectedBug(null)
-      setIsDetailModalOpen(false)
+  
     }
-    await fetch(`/api/bugs/${id}`, { method: 'DELETE' }).catch(() => {})
+    await fetch(`/api/bugs/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
   }
 
   const createBug = async () => {
@@ -119,7 +118,7 @@ export function BugManager({ initialBugs, users }: Props) {
     setModal(false)
     setSaving(false)
     setSelectedBug(bug)
-    setIsDetailModalOpen(true)
+
   }
 
   const saveDetail = async () => {
@@ -180,10 +179,10 @@ export function BugManager({ initialBugs, users }: Props) {
                   onClick={() => {
                     if (isSelected) {
                       setSelectedBug(null)
-                      setIsDetailModalOpen(false)
+                  
                     } else {
                       setSelectedBug(bug)
-                      setIsDetailModalOpen(true)
+                  
                     }
                   }}
                   className={`p-2.5 rounded-lg border cursor-pointer transition-colors ${

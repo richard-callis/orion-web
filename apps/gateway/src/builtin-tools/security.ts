@@ -1,7 +1,83 @@
 import { promisify } from 'util'
 import { execFile } from 'child_process'
+import { redactSensitive } from '../lib/redact'
+import { verifyDecisionToken } from '../lib/decision-token'
 
 const exec = promisify(execFile)
+
+// ── Validation helpers ────────────────────────────────────────────────────────
+
+// IPv4 dotted-quad (0–255 per octet) — accepts no CIDR suffix.
+const IPV4_RE = /^(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)){3}$/
+// IPv6 (loose: hex groups with optional :: shorthand). Sufficient for validation gate.
+const IPV6_RE = /^(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}$|^(?:[0-9A-Fa-f]{1,4}:){1,7}:$|^(?:[0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4}$|^(?:[0-9A-Fa-f]{1,4}:){1,5}(?::[0-9A-Fa-f]{1,4}){1,2}$|^(?:[0-9A-Fa-f]{1,4}:){1,4}(?::[0-9A-Fa-f]{1,4}){1,3}$|^(?:[0-9A-Fa-f]{1,4}:){1,3}(?::[0-9A-Fa-f]{1,4}){1,4}$|^(?:[0-9A-Fa-f]{1,4}:){1,2}(?::[0-9A-Fa-f]{1,4}){1,5}$|^[0-9A-Fa-f]{1,4}:(?::[0-9A-Fa-f]{1,4}){1,6}$|^:(?:(?::[0-9A-Fa-f]{1,4}){1,7}|:)$|^::1$|^::$/
+// Wazuh agent naming
+const AGENT_RE = /^[a-zA-Z0-9_-]+$/
+// 2-letter country code
+const COUNTRY_RE = /^[A-Z]{2}$/
+// AS number (AS prefix optional)
+const AS_RE = /^(?:AS)?\d+$/
+
+const VALID_CROWDSEC_SCOPES = new Set(['ip', 'range', 'country', 'as'])
+
+function isIpv4(value: string): boolean { return IPV4_RE.test(value) }
+function isIpv6(value: string): boolean { return IPV6_RE.test(value) }
+function isIp(value: string): boolean { return isIpv4(value) || isIpv6(value) }
+
+/**
+ * Validate CIDR notation. Returns { ok, error?, prefix? }.
+ * Rejects /0 outright. For IPv4 expects 1..32, for IPv6 expects 1..128.
+ */
+function validateCidr(value: string): { ok: boolean; error?: string; prefix?: number } {
+  const m = value.match(/^([^/]+)\/(\d+)$/)
+  if (!m) return { ok: false, error: 'CIDR must be in <address>/<prefix> form' }
+  const addr = m[1]
+  const prefix = Number(m[2])
+  if (!Number.isFinite(prefix)) return { ok: false, error: 'CIDR prefix must be a number' }
+  if (prefix === 0) return { ok: false, error: 'CIDR /0 (whole internet) is not allowed' }
+  if (isIpv4(addr)) {
+    if (prefix < 1 || prefix > 32) return { ok: false, error: 'IPv4 prefix must be 1..32' }
+    return { ok: true, prefix }
+  }
+  if (isIpv6(addr)) {
+    if (prefix < 1 || prefix > 128) return { ok: false, error: 'IPv6 prefix must be 1..128' }
+    return { ok: true, prefix }
+  }
+  return { ok: false, error: 'CIDR address is not a valid IP' }
+}
+
+/**
+ * Reject obviously dangerous IPs (link-local, multicast, loopback unicast for ban targets,
+ * and the unspecified address). This is a soft guard, not a full IP-classification suite.
+ */
+function isUnsafeBanTarget(ip: string): boolean {
+  if (ip === '0.0.0.0' || ip === '::' || ip === '::1' || ip === '127.0.0.1') return true
+  if (ip.startsWith('169.254.')) return true // IPv4 link-local
+  if (/^fe80:/i.test(ip)) return true        // IPv6 link-local
+  if (/^ff[0-9a-f]{2}:/i.test(ip)) return true // IPv6 multicast
+  if (/^22[4-9]\.|^23\d\./.test(ip)) return true // IPv4 multicast 224-239
+  return false
+}
+
+/**
+ * Redact + bound an upstream error body before returning to the agent.
+ * Falls back to raw truncation if the redactor isn't available.
+ */
+function sanitizeUpstream(body: string, max = 200): string {
+  let safe: string
+  try {
+    safe = redactSensitive(body)
+  } catch {
+    safe = body
+  }
+  // Belt-and-braces: strip common auth header echos that redactSensitive's regex set
+  // doesn't already cover (X-Api-Key in particular).
+  safe = safe
+    .replace(/X-Api-Key:\s*\S+/gi, 'X-Api-Key: ***REDACTED***')
+    .replace(/Authorization:\s*\S+(?:\s+\S+)?/gi, 'Authorization: ***REDACTED***')
+  if (safe.length > max) safe = safe.slice(0, max) + '…'
+  return safe
+}
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
@@ -40,7 +116,7 @@ async function crowdsecGet(endpoint: string, params: Record<string, string> = {}
   return jsonStr(JSON.parse(await res.text()))
 }
 
-export const securityTools = ([
+const readToolDefs = ([
   {
     name: 'crowdsec_blocks',
     description: 'Get blocked IPs / requests from CrowdSec LAPI',
@@ -250,7 +326,7 @@ export const securityTools = ([
       const res = await fetch(url, {
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${Buffer.from(`${user}:${pass}`).toString('base64')}`,
+          Authorization: `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`,
         },
         signal: AbortSignal.timeout(30_000),
       })
@@ -286,7 +362,7 @@ export const securityTools = ([
       const res = await fetch(url, {
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${Buffer.from(`${user}:${pass}`).toString('base64')}`,
+          Authorization: `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`,
         },
         signal: AbortSignal.timeout(30_000),
       })
@@ -429,3 +505,267 @@ export const securityTools = ([
     },
   },
 ] as const).map(t => ({ ...t, category: 'security' as const }))
+
+// ── Defense-in-depth: signed decision token guard ───────────────────────────
+//
+// The four mutating tools below require a fresh HMAC-signed `__decision_token`
+// minted by the action-service. The token is bound to the action type and the
+// target arg, so it cannot be replayed across tools or targets. The token is
+// intentionally NOT exposed in the tool's inputSchema — agents must not see or
+// forge it; only action-service can produce one.
+function checkDecisionToken(
+  args: Record<string, unknown>,
+  expected: { actionType: string; target: string },
+): string | null {
+  const token = args.__decision_token
+  if (typeof token !== 'string' || token.length === 0) {
+    return jsonStr({ error: 'security write tool requires __decision_token from action-service' })
+  }
+  try {
+    verifyDecisionToken(token, expected)
+    return null
+  } catch (e) {
+    return jsonStr({ error: `decision token rejected: ${e instanceof Error ? e.message : 'invalid'}` })
+  }
+}
+
+// ── Write tools (action-oriented) ──────────────────────────────────────────────
+
+const writeToolDefs = ([
+  // ── 11. crowdsec_decision_create (ban IP) ────────────────────────────────
+
+  {
+    name: 'crowdsec_decision_create',
+    description: 'Add a ban/block to CrowdSec threat intelligence (create a decision)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ip:       { type: 'string', description: 'IP address to ban' },
+        scope:    { type: 'string', description: 'Scope to ban (e.g. "ip", "os", "fqdn"). Defaults to "ip".' },
+        duration: { type: 'string', description: 'Ban duration (e.g. "24h", "7d", "infinite"). Defaults to "24h".' },
+        reason:   { type: 'string', description: 'Human-readable reason for the ban' },
+      },
+      required: ['ip'],
+    },
+    async execute(args: Record<string, unknown>) {
+      // Defense-in-depth: gateway refuses direct write-tool calls without a
+      // fresh action-service-signed token bound to this actionType + target.
+      const tokenErr = checkDecisionToken(args, {
+        actionType: 'crowdsec_decision_create',
+        target: String(args.ip ?? ''),
+      })
+      if (tokenErr) return tokenErr
+
+      const api = process.env.CROWDSEC_API
+      if (!api) return 'CROWDSEC_API environment variable not configured'
+      const key = process.env.CROWDSEC_API_KEY ?? ''
+      const ipRaw = args.ip
+      const scope = String(args.scope ?? 'ip')
+      const duration = String(args.duration ?? '24h')
+      const reason = String(args.reason ?? 'blocked by security tool')
+
+      // ── Input validation (structured error, no HTTP call) ──────────────
+      if (typeof ipRaw !== 'string' || ipRaw.length === 0) {
+        return jsonStr({ error: 'validation: ip must be a non-empty string' })
+      }
+      const ip = ipRaw
+      if (!VALID_CROWDSEC_SCOPES.has(scope)) {
+        return jsonStr({ error: `validation: scope must be one of ${[...VALID_CROWDSEC_SCOPES].join(', ')}` })
+      }
+      if (scope === 'ip') {
+        if (!isIp(ip)) return jsonStr({ error: 'validation: ip must be a valid IPv4 or IPv6 address' })
+        if (isUnsafeBanTarget(ip)) return jsonStr({ error: `validation: refusing to ban unsafe address '${ip}'` })
+      } else if (scope === 'range') {
+        const c = validateCidr(ip)
+        if (!c.ok) return jsonStr({ error: `validation: ${c.error}` })
+      } else if (scope === 'country') {
+        if (!COUNTRY_RE.test(ip)) return jsonStr({ error: 'validation: country scope expects 2-letter uppercase ISO code' })
+      } else if (scope === 'as') {
+        if (!AS_RE.test(ip)) return jsonStr({ error: 'validation: as scope expects AS number (e.g. "AS12345" or "12345")' })
+      }
+
+      const url = `${api.replace(/\/+$/, '')}/api/v1/decisions`
+      const body = { scope, value: ip, duration, reason }
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          'X-Api-Key': key,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (!res.ok) return `CrowdSec error HTTP ${res.status}: ${sanitizeUpstream(await res.text())}`
+      return jsonStr({ success: true, ip, scope, duration, reason })
+    },
+  },
+
+  // ── 12. crowdsec_decision_delete (unban IP) ─────────────────────────────
+
+  {
+    name: 'crowdsec_decision_delete',
+    description: 'Remove a ban/block from CrowdSec threat intelligence (delete a decision)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ip:    { type: 'string', description: 'IP address to unban' },
+        scope: { type: 'string', description: 'Scope to remove (e.g. "ip"). Defaults to "ip".' },
+      },
+      required: ['ip'],
+    },
+    async execute(args: Record<string, unknown>) {
+      // Defense-in-depth: gateway refuses direct write-tool calls without a
+      // fresh action-service-signed token bound to this actionType + target.
+      //
+      // The action-service routes ActionRequest.target through as `decisionId`
+      // for this tool (see apps/web/.../security/actions/route.ts), so the
+      // token's `target` claim must match `decisionId`. The tool body itself
+      // continues to operate on `ip` for backward compatibility with the
+      // pre-existing CrowdSec LAPI shape.
+      const tokenErr = checkDecisionToken(args, {
+        actionType: 'crowdsec_decision_delete',
+        target: String(args.decisionId ?? ''),
+      })
+      if (tokenErr) return tokenErr
+
+      const api = process.env.CROWDSEC_API
+      if (!api) return 'CROWDSEC_API environment variable not configured'
+      const key = process.env.CROWDSEC_API_KEY ?? ''
+      const ip = String(args.ip)
+      const scope = String(args.scope ?? 'ip')
+      const url = `${api.replace(/\/+$/, '')}/api/v1/decisions?type=${scope}&value=${encodeURIComponent(ip)}`
+      const res = await fetch(url.toString(), {
+        method: 'DELETE',
+        headers: {
+          'X-Api-Key': key,
+          'Content-Type': 'application/json',
+        },
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (!res.ok) return `CrowdSec error HTTP ${res.status}: ${sanitizeUpstream(await res.text())}`
+      return jsonStr({ success: true, ip, scope, action: 'deleted' })
+    },
+  },
+
+  // ── 13. wazuh_active_response ────────────────────────────────────────────
+
+  {
+    name: 'wazuh_active_response',
+    description: 'Send an active response command to a Wazuh agent (e.g. block IP, restart agent)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent:    { type: 'string', description: 'Wazuh agent ID or name' },
+        command:  { type: 'string', description: 'Command to execute (e.g. "firewall-drop", "host-deny", "restart-wazuh")' },
+        args:     { type: 'object', description: 'Command arguments as key-value pairs' },
+      },
+      required: ['agent', 'command'],
+    },
+    async execute(args: Record<string, unknown>) {
+      // Defense-in-depth: gateway refuses direct write-tool calls without a
+      // fresh action-service-signed token bound to this actionType + target.
+      const tokenErr = checkDecisionToken(args, {
+        actionType: 'wazuh_active_response',
+        target: String(args.agent ?? ''),
+      })
+      if (tokenErr) return tokenErr
+
+      const api = process.env.WAZUH_API
+      if (!api) return 'WAZUH_API environment variable not configured'
+      const user = process.env.WAZUH_USERNAME ?? ''
+      const pass = process.env.WAZUH_PASSWORD ?? ''
+      const agentRaw = args.agent
+      const commandRaw = args.command
+      const wazuhArgs = args.args ?? {}
+
+      // ── Input validation (structured error, no HTTP call) ──────────────
+      if (typeof agentRaw !== 'string' || agentRaw.length === 0) {
+        return jsonStr({ error: 'validation: agent must be a non-empty string' })
+      }
+      if (!AGENT_RE.test(agentRaw)) {
+        return jsonStr({ error: 'validation: agent must match [a-zA-Z0-9_-]+' })
+      }
+      if (typeof commandRaw !== 'string' || commandRaw.length === 0) {
+        return jsonStr({ error: 'validation: command must be a non-empty string' })
+      }
+      const agent = agentRaw
+      const command = commandRaw
+
+      const url = `${api.replace(/\/+$/, '')}/active-response/run`
+      const body: Record<string, unknown> = {
+        cmd: command,
+        agent_id: agent,
+      }
+      if (typeof wazuhArgs === 'object' && wazuhArgs !== null) {
+        body.arguments = wazuhArgs
+      }
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (!res.ok) return `Wazuh error HTTP ${res.status}: ${sanitizeUpstream(await res.text())}`
+      return jsonStr({ success: true, agent, command })
+    },
+  },
+
+  // ── 14. firewall_block (stub) ────────────────────────────────────────────
+
+  {
+    name: 'firewall_block',
+    description: 'Block a CIDR range via the firewall API (behind feature flag — stub for now)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        cidr:   { type: 'string', description: 'CIDR notation to block (e.g. "10.0.0.0/24")' },
+        reason: { type: 'string', description: 'Reason for the block' },
+      },
+      required: ['cidr'],
+    },
+    async execute(args: Record<string, unknown>) {
+      // Defense-in-depth: gateway refuses direct write-tool calls without a
+      // fresh action-service-signed token bound to this actionType + target.
+      const tokenErr = checkDecisionToken(args, {
+        actionType: 'firewall_block',
+        target: String(args.cidr ?? ''),
+      })
+      if (tokenErr) return tokenErr
+
+      const fwApi = process.env.FIREWALL_API
+      if (!fwApi) return 'FIREWALL_API environment variable not configured — firewall_block is not configured'
+      const fwKey = process.env.FIREWALL_API_KEY ?? ''
+      const cidrRaw = args.cidr
+      const reason = String(args.reason ?? 'blocked by security tool')
+
+      // ── Input validation (structured error, no HTTP call) ──────────────
+      if (typeof cidrRaw !== 'string' || cidrRaw.length === 0) {
+        return jsonStr({ error: 'validation: cidr must be a non-empty string' })
+      }
+      const c = validateCidr(cidrRaw)
+      if (!c.ok) return jsonStr({ error: `validation: ${c.error}` })
+      const cidr = cidrRaw
+
+      const url = `${fwApi.replace(/\/+$/, '')}/blocks`
+      const body = { cidr, reason }
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${fwKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (!res.ok) return `Firewall API error HTTP ${res.status}: ${sanitizeUpstream(await res.text())}`
+      return jsonStr({ success: true, cidr, reason })
+    },
+  },
+] as const).map(t => ({ ...t, category: 'security' as const }))
+
+// ── Combined export ──────────────────────────────────────────────────────────
+
+export const securityTools = [...readToolDefs, ...writeToolDefs]

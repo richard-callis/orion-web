@@ -9,6 +9,20 @@ import { prisma } from '@/lib/db'
 import { type NormalizedSecurityEvent } from './types'
 import { type IncidentDraft } from './types'
 
+// Mirror of GLOBAL_BUCKET_ID from `../../workers/security-correlator.ts`.
+// Imported here as a string literal to avoid a circular dependency between
+// the rule engine and the worker. Must stay in sync.
+const GLOBAL_BUCKET_ID = '__global__'
+
+/**
+ * Build the `environmentId` filter for a Prisma where-clause. The synthetic
+ * GLOBAL_BUCKET_ID sentinel is translated to `null` so orphan events (no env)
+ * are processed by global rules (BLOCK-1, PR #408).
+ */
+function envIdFilter(envId: string): string | null {
+  return envId === GLOBAL_BUCKET_ID ? null : envId
+}
+
 // ── Rule types ────────────────────────────────────────────────────────────────
 
 /**
@@ -225,9 +239,14 @@ export async function correlateEvents(
 /**
  * Resolve a groupBy / field selector against a SecurityEvent row.
  *
- * Supports two forms:
+ * Supports three forms:
+ *   - "attackerKey" — virtual extractor that probes the most common attacker
+ *     identifiers across CrowdSec / Wazuh / ELK / ntopng raw payloads. This
+ *     is the preferred groupBy for rules that need a source-agnostic attacker
+ *     identity (e.g. brute-force across mixed sources). See BLOCK-2, PR #408.
  *   - "source" — a top-level column on the SecurityEvent row
- *   - "rawEvent.srcip" or "rawEvent.alert.srcip" — a dot-path into the rawEvent JSON
+ *   - "rawEvent.srcip" or "rawEvent.alert.srcip" — a dot-path into the
+ *     rawEvent JSON
  *
  * Returns the string-coerced value, or `null` if the path doesn't resolve.
  *
@@ -236,6 +255,40 @@ export async function correlateEvents(
 export function extractGroupValue(event: unknown, field: string): string | null {
   if (event === null || typeof event !== 'object') return null
   const evt = event as Record<string, unknown>
+
+  // Virtual `attackerKey` extractor — covers known shapes:
+  //   CrowdSec: rawEvent.payload.value (range/ip scope) or rawEvent.source.ip
+  //   Wazuh:    rawEvent.alert.srcip
+  //   ELK:      rawEvent.source_ip / rawEvent.src_ip
+  //   ntopng:   rawEvent.cli.ip
+  // First non-null match wins. Falls back to the event's top-level
+  // `attackerKey` column for future schema upgrades.
+  if (field === 'attackerKey') {
+    const directColumn = evt['attackerKey']
+    if (typeof directColumn === 'string' && directColumn.length > 0) return directColumn
+
+    const raw = evt['rawEvent']
+    if (raw === null || typeof raw !== 'object') return null
+    const r = raw as Record<string, unknown>
+    const probe = (path: string[]): string | null => {
+      let cursor: unknown = r
+      for (const p of path) {
+        if (cursor === null || typeof cursor !== 'object') return null
+        cursor = (cursor as Record<string, unknown>)[p]
+      }
+      return typeof cursor === 'string' && cursor.length > 0 ? cursor : null
+    }
+    return (
+      probe(['payload', 'value']) ??
+      probe(['source', 'ip']) ??
+      probe(['alert', 'srcip']) ??
+      probe(['srcip']) ??
+      probe(['source_ip']) ??
+      probe(['src_ip']) ??
+      probe(['cli', 'ip']) ??
+      null
+    )
+  }
 
   // Top-level column access (no dot)
   if (!field.includes('.')) {
@@ -267,7 +320,7 @@ async function runThresholdRule(
   // Find the most recent incident for this rule + group to avoid duplicate incidents
   const events = await prisma.securityEvent.findMany({
     where: {
-      environmentId: envId,
+      environmentId: envIdFilter(envId),
       createdAt: { gte: since },
     },
     orderBy: { createdAt: 'desc' },
@@ -335,7 +388,7 @@ async function runPatternRule(
 ): Promise<IncidentDraft | null> {
   const events = await prisma.securityEvent.findMany({
     where: {
-      environmentId: envId,
+      environmentId: envIdFilter(envId),
       createdAt: { gte: since },
     },
     orderBy: { createdAt: 'desc' },
@@ -380,7 +433,7 @@ async function runMalwareRule(
 ): Promise<IncidentDraft | null> {
   const events = await prisma.securityEvent.findMany({
     where: {
-      environmentId: envId,
+      environmentId: envIdFilter(envId),
       createdAt: { gte: since },
       type: 'wazuh_malware',
       severity: { gte: params.ruleLevel * 10 }, // convert level to severity scale
@@ -420,7 +473,7 @@ async function runProcessRule(
 ): Promise<IncidentDraft | null> {
   const events = await prisma.securityEvent.findMany({
     where: {
-      environmentId: envId,
+      environmentId: envIdFilter(envId),
       createdAt: { gte: since },
     },
     orderBy: { createdAt: 'desc' },
