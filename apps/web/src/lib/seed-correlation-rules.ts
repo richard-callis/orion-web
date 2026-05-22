@@ -17,17 +17,19 @@ const DEFAULT_RULES = [
     ruleType: 'threshold',
     params: {
       type: 'threshold',
-      // Plan: "≥5 failed logins, same IP, 5min". The attacker IP lives in
-      // the rawEvent JSON payload (e.g. CrowdSec/Wazuh both expose `srcip`
-      // there), not as a top-level SecurityEvent column. Grouping by the
-      // ingestion source ("crowdsec", "wazuh") — as the original seed did —
-      // bucketed every event together regardless of attacker, producing
-      // false positives and missing distinct-IP grouping entirely.
-      field: 'srcip',
+      // Plan: "≥5 failed logins, same IP, 5min". Group by the virtual
+      // `attackerKey` extractor so the rule fires uniformly across CrowdSec,
+      // Wazuh, ELK, and ntopng — each source surfaces the attacker IP at a
+      // different JSON path. The previous seed hard-coded `rawEvent.srcip`
+      // which silently missed CrowdSec (where the attacker IP lives at
+      // `rawEvent.payload.value`) and ntopng (at `rawEvent.cli.ip`).
+      // See `extractGroupValue` in `lib/security/rule-engine.ts` for the
+      // source-path probe order.
+      field: 'attackerKey',
       op: 'gte' as const,
       value: 5,
       window: 300, // 5 minutes
-      groupBy: ['rawEvent.srcip'],
+      groupBy: ['attackerKey'],
     },
     severity: 70,
     window: 300,
