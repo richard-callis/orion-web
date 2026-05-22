@@ -29,8 +29,8 @@ function envIdFilter(envId: string): string | null {
  * Rule parameter types supported by the correlation engine.
  */
 export type RuleParams =
-  | { type: 'threshold'; field: string; op: 'gte' | 'lte' | 'eq'; value: number; window: number; groupBy: string[]; maxEvents?: number }
-  | { type: 'pattern'; regex: string; field: string; window: number }
+  | { type: 'threshold'; field: string; op: 'gte' | 'lte' | 'eq'; value: number; window: number; groupBy: string[]; maxEvents?: number; sourceFilter?: string[] }
+  | { type: 'pattern'; regex: string; field: string; window: number; sourceFilter?: string[]; minSeverity?: number }
   | { type: 'malware'; ruleLevel: number; field: string }
   | { type: 'process'; commandPattern: string; window: number }
   | { type: 'composite'; rules: RuleParams[]; combine: 'all' | 'any'; window: number }
@@ -322,6 +322,7 @@ async function runThresholdRule(
     where: {
       environmentId: envIdFilter(envId),
       createdAt: { gte: since },
+      ...(params.sourceFilter?.length ? { source: { in: params.sourceFilter } } : {}),
     },
     orderBy: { createdAt: 'desc' },
   })
@@ -390,6 +391,8 @@ async function runPatternRule(
     where: {
       environmentId: envIdFilter(envId),
       createdAt: { gte: since },
+      ...(params.sourceFilter?.length ? { source: { in: params.sourceFilter } } : {}),
+      ...(params.minSeverity != null ? { severity: { gte: params.minSeverity } } : {}),
     },
     orderBy: { createdAt: 'desc' },
   })
