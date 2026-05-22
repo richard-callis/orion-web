@@ -73,3 +73,39 @@ export const actionDecisionSchema = z.object({
 })
 
 export type ActionDecision = z.infer<typeof actionDecisionSchema>
+
+// ── HostAgentEventBatch ───────────────────────────────────────────────────────
+// Wire format for the host-agent ingest webhook.
+// Vector ships a batch envelope so the endpoint can process multiple events
+// in one HTTP call — critical for throughput on the Orion host.
+//
+// Divergence from existing webhooks: crowdsec / wazuh accept singleton events
+// because that's how those upstreams push. Host-agent is fundamentally log
+// shipping — Vector batches natively, and forcing one request per event would
+// burn CPU on the host and add latency.
+
+/** Valid event categories from the host agent. */
+export const HOST_AGENT_CATEGORIES = [
+  'auth',
+  'docker',
+  'vault',
+  'edge',
+] as const
+
+export const hostAgentEventSchema = z.object({
+  category:   z.enum(HOST_AGENT_CATEGORIES),
+  subtype:    z.string(),   // e.g. 'ssh.failed_password', 'container.restarted'
+  severity:   z.number().int().min(0).max(100),
+  timestamp:  z.coerce.date(),
+  source_file: z.string().optional(), // journald tag, container name, file path
+  raw:        z.string(),              // original log line or excerpt
+})
+
+export const hostAgentBatchSchema = z.object({
+  batch_id: z.string(),
+  hostname: z.string(),
+  events:   z.array(hostAgentEventSchema),
+})
+
+export type HostAgentEvent = z.infer<typeof hostAgentEventSchema>
+export type HostAgentEventBatch = z.infer<typeof hostAgentBatchSchema>
