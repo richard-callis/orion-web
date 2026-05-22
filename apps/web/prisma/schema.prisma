@@ -881,7 +881,7 @@ model SecurityEvent {
   acknowledgedAt DateTime?
   acknowledgedBy String?
   incidentId   String?  // Linked incident (if correlated)
-  incident     Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  incident     Incident? @relation(fields: [incidentId], references: [id], onDelete: Cascade)
   firstSeen    DateTime? // When this event was first observed
   lastSeen     DateTime? // When this event was last observed (updated by dedup)
   createdAt    DateTime @default(now())
@@ -937,7 +937,7 @@ model ActionAudit {
   environmentId String?
   environment  Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
   incidentId   String?
-  incident     Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  incident     Incident? @relation(fields: [incidentId], references: [id], onDelete: Cascade)
   policyId     String?
   policy       ActionPolicy? @relation(fields: [policyId], references: [id], onDelete: SetNull)
   actionType   String   // matches ActionPolicy.actionType
