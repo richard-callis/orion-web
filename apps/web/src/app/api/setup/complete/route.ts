@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { requireWizardSession } from '@/lib/setup-guard'
 import { ensureSystemAgents } from '@/lib/seed-system-agents'
 import { ensureSystemEpic } from '@/lib/seed-system-epic'
+import { ensureActionPolicies } from '@/lib/seed-action-policies'
 
 export async function POST(req: NextRequest) {
   if (!await requireWizardSession(req)) {
@@ -29,8 +30,11 @@ export async function POST(req: NextRequest) {
   // Seed system agents (Alpha, Veritas, Planner, Pulse) as Novas + imported Agents
   await ensureSystemAgents()
 
-  // Seed System epic + Health / Operations / Maintenance features + chatrooms
+  // Seed System epic + Health / Operations / Maintenance / Security features + chatrooms
   await ensureSystemEpic()
+
+  // Seed default action policies (tier matrix)
+  await ensureActionPolicies()
 
   const res = NextResponse.json({ ok: true })
   res.cookies.delete('__orion_wizard')

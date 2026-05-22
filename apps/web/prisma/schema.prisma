@@ -125,6 +125,12 @@ model Environment {
   nebulaInstances  NebulaInstance[]
   evals            Eval[]
   agentScores      AgentScore[]
+  incidents        Incident[]
+  actionAudits     ActionAudit[]
+  actionPolicies   ActionPolicy[]
+  correlationRules CorrelationRule[]
+  sourceHealths    SourceHealth[]
+  suppressions     Suppression[]
 }
 
 /// Tracks every PR opened by the GitOps loop — open, auto-merged, or awaiting review.
@@ -881,8 +887,8 @@ model ManagedSecret {
 model SecurityEvent {
   id           String   @id @default(uuid())
   environmentId String?
-  environment  Environment? @relation(fields: [environmentId], references: [id])
-  type         String   // 'crowdsec_block', 'ntopng_threat', 'wazuh_alert', 'anomaly'
+  environment  Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  type         String   // 'crowdsec_block', 'ntopng_threat', 'wazuh_alert', 'anomaly', 'source_stale'
   source       String   // 'crowdsec', 'ntopng', 'wazuh', 'elk'
   severity     Int      // 0-100
   title        String
@@ -892,10 +898,15 @@ model SecurityEvent {
   acknowledged Boolean  @default(false)
   acknowledgedAt DateTime?
   acknowledgedBy String?
+  incidentId   String?  // Linked incident (if correlated)
+  incident     Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  firstSeen    DateTime? // When this event was first observed
+  lastSeen     DateTime? // When this event was last observed (updated by dedup)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   @@index([environmentId, createdAt])
   @@index([environmentId, type, acknowledged])
+  @@index([incidentId])
 }
 
 // ── Security: Per-environment configuration ───────────────────────────────────
@@ -905,12 +916,135 @@ model SecurityEvent {
 model SecurityConfig {
   id          String   @id @default(uuid())
   environmentId String?
-  environment  Environment? @relation(fields: [environmentId], references: [id])
+  environment  Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
   key         String
   value       String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   @@unique([environmentId, key])
+}
+
+// ── Security: Incidents ───────────────────────────────────────────────────────
+// Correlation-engine-created incidents grouped from SecurityEvent rows.
+// State machine: open → triaged → contained → closed.
+
+model Incident {
+  id                 String   @id @default(uuid())
+  environmentId      String?
+  environment        Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  status             String   @default("open") // "open" | "triaged" | "contained" | "closed"
+  severity           Int      // 0-100, inherited from highest-severity correlated event
+  rootCauseSummary   String?  @db.Text // Free-text explanation (populated by Warden)
+  attackerKey        String?  // External identifier for the attacker (IP, user, host)
+  hostKey            String?  // Internal identifier for the affected host
+  openedAt           DateTime @default(now())
+  closedAt           DateTime?
+  updatedAt          DateTime @updatedAt
+  events             SecurityEvent[]
+  actionAudits       ActionAudit[]
+
+  @@index([environmentId, status])
+  @@index([environmentId, severity])
+}
+
+// ── Security: Action audit log ────────────────────────────────────────────────
+// Every action proposed, approved, or auto-executed gets an audit row.
+// Written with status='attempting' BEFORE execution (R9).
+
+model ActionAudit {
+  id           String   @id @default(uuid())
+  environmentId String?
+  environment  Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  incidentId   String?
+  incident     Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  policyId     String?
+  policy       ActionPolicy? @relation(fields: [policyId], references: [id], onDelete: SetNull)
+  actionType   String   // matches ActionPolicy.actionType
+  target       String   // target pattern (IP, CIDR, hostname, etc.)
+  tier         String   // tier at time of decision: "auto" | "approve" | "escalate" | "notify"
+  proposedBy   String   // "warden" | "system" | operator username
+  approvedBy   String?  // operator username who approved; null for auto/notify
+  status       String   // "attempting" | "succeeded" | "failed" | "denied"
+  payload      Json?    // full action request payload
+  result       String?  @db.Text // action outcome or error message
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([incidentId])
+  @@index([status])
+  @@index([tier])
+}
+
+// ── Security: Action policies ─────────────────────────────────────────────────
+// Default tier matrix: one row per action type, with optional target patterns.
+// The __panic_mode__ row controls global panic-mode behaviour (disabled by default).
+
+model ActionPolicy {
+  id              String   @id @default(uuid())
+  environmentId   String?
+  environment     Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  actionType      String   @unique // e.g. "crowdsec_decision_create", "__panic_mode__"
+  defaultTier     String   // "auto" | "approve" | "escalate" | "notify"
+  targetPatterns  Json?    // null or [{ pattern: string; tier: string; operator?: "strict" | "subnet" }]
+  updatedBy       String?  // "system" | operator username
+  auditRows       ActionAudit[]
+
+  @@index([actionType])
+  @@index([environmentId])
+}
+
+// ── Security: Correlation rules ────────────────────────────────────────────────
+// Rules consumed by the security-correlator worker. Each rule defines a
+// pattern-matching strategy for grouping SecurityEvents into Incidents.
+
+model CorrelationRule {
+  id            String   @id @default(uuid())
+  environmentId String?
+  environment   Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  name          String   @unique // e.g. "brute_force", "port_scan", "malware"
+  enabled       Boolean  @default(true)
+  ruleType      String   // "threshold" | "pattern" | "malware" | "process"
+  params        Json     // rule-specific params (window, threshold, etc.)
+  severity      Int      // default severity for generated incidents (0-100)
+  window        Int      // time window in seconds for rule evaluation
+
+  @@index([enabled])
+  @@index([environmentId])
+}
+
+// ── Security: Source health tracking ──────────────────────────────────────────
+// Tracks last-seen time and watermark per ingestion source.
+// Staleness detected by cron (every 5min) compared to staleAfterMs.
+
+model SourceHealth {
+  id            String   @id @default(uuid())
+  environmentId String?
+  environment   Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  source        String   @unique // "crowdsec" | "wazuh" | "elk_syslog" | "elk_flow" | "ntopng"
+  lastSeenAt    DateTime?
+  lastWatermark DateTime? // highest watermark advanced by poller
+  staleAfterMs  Int      // milliseconds before source is considered stale
+
+  @@index([source])
+  @@index([environmentId])
+}
+
+// ── Security: Event suppressions ──────────────────────────────────────────────
+// Static allowlist: patterns to suppress (e.g. known-good IPs).
+// Used to prevent false-positive incidents.
+
+model Suppression {
+  id             String   @id @default(uuid())
+  environmentId  String?
+  environment    Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  matchPattern   Json     // { type: "ip" | "cidr" | "host" | "pattern"; value: string }
+  reason         String   @db.Text
+  expiresAt      DateTime? // null = permanent
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([expiresAt])
+  @@index([environmentId])
 }
 
 // ─── Ring Leader: Agent Profiles ──────────────────────────────────────────────
