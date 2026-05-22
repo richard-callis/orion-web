@@ -231,9 +231,10 @@ services:
   vault-init:
     image: alpine
     restart: "no"
-    command: ["sh", "-c", "chown -R 100:1000 /vault/data && echo 'vault data dir ready'"]
+    command: ["sh", "-c", "chown -R 100:1000 /vault/data && mkdir -p /vault/audit && chown -R 100:1000 /vault/audit && echo 'vault data dir ready'"]
     volumes:
       - vault-data:/vault/data
+      - vault-audit:/vault/audit
 
   # ── Vault ──────────────────────────────────────────────────────────────────
   vault:
@@ -263,6 +264,7 @@ services:
         cluster_addr = "http://vault:8201"
     volumes:
       - vault-data:/vault/data
+      - vault-audit:/vault/audit
       - ./vault-proxy/certs:/vault-proxy-certs:ro
     healthcheck:
       # exit 0 = active, exit 1 = uninitialized, exit 2 = sealed — all mean vault is running
@@ -552,6 +554,36 @@ services:
           cpus: '0.25'
           memory: 128M
 
+  # ── Vector — host telemetry shipper ───────────────────────────────────────
+  # Collects journald, Docker lifecycle, Vault audit, and edge container logs
+  # from the Orion host, batches them, and POSTs to the host-agent webhook.
+  #
+  # This is the shipper described in gigly-sniffing-parasol.md (PR2).
+  vector:
+    image: timberio/vector:0.39.0-debian
+    restart: unless-stopped
+    depends_on:
+      orion:
+        condition: service_healthy
+    read_only: true
+    user: "1000:1000"
+    group_add:
+      - "${DOCKER_GID:-999}"
+    environment:
+      HOST_AGENT_WEBHOOK_SECRET: "${HOST_AGENT_WEBHOOK_SECRET:-}"
+      ORION_HOST_AGENT_WEBHOOK_URL: "http://orion:3000/api/monitoring/security/webhooks/host-agent"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log/journal:/var/log/journal:ro
+      - vault-audit:/vault/audit:ro
+      - ./host-agent/vector.toml:/etc/vector/vector.toml:ro
+      - vector-data:/var/lib/vector
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
 volumes:
   gitea-data:
   postgres-data:
@@ -565,3 +597,5 @@ volumes:
   redis-sentinel-3-data:
   argocd-server-data:
   argocd-redis-data:
+  vector-data:
+  vault-audit:
