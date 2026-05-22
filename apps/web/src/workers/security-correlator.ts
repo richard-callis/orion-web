@@ -14,6 +14,7 @@ import { type IncidentDraft } from '@/lib/security/types'
 import { correlateEvents } from '@/lib/security/rule-engine'
 import type { RuleParams } from '@/lib/security/rule-engine'
 import { getSystemRoomId } from '@/lib/seed-system-epic'
+import { triggerRoomAgentReplies } from '@/lib/room-agents'
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -172,20 +173,37 @@ async function correlateEnvironment(
       // incident chat by foreign key — no need to embed the id in body text.
       const securityRoomId = await getSystemRoomId('system.room.security')
       if (securityRoomId) {
+        const noticeBody = [
+          `Warden | New Incident [${new Date().toISOString()}]`,
+          `Incident: ${incident.rootCauseSummary || 'Untitled'}`,
+          `Severity: ${incident.severity}`,
+          `Attacker: ${incident.attackerKey || 'unknown'}`,
+          `Events linked: ${draft.eventIds.length}`,
+          `Warden is triaging...`,
+        ].join('\n')
+
         await prisma.chatMessage.create({
           data: {
             roomId: securityRoomId,
             senderType: 'system',
             incidentId: incident.id,
-            content: [
-              `Warden | New Incident [${new Date().toISOString()}]`,
-              `Incident: ${incident.rootCauseSummary || 'Untitled'}`,
-              `Severity: ${incident.severity}`,
-              `Attacker: ${incident.attackerKey || 'unknown'}`,
-              `Events linked: ${draft.eventIds.length}`,
-              `Warden is triaging...`,
-            ].join('\n'),
+            content: noticeBody,
           },
+        })
+
+        // BUG-2 fix: trigger room agents so Warden actually wakes up on a new
+        // incident. The HTTP message-create paths
+        // (api/chatrooms/[id]/messages/route.ts and api/chatrooms/route.ts)
+        // both call triggerRoomAgentReplies after writing a ChatMessage; the
+        // correlator was skipping this call, so Warden's agent never received
+        // the new-incident notice. Fire-and-forget so a slow agent never
+        // blocks correlation.
+        triggerRoomAgentReplies(securityRoomId, noticeBody).catch((e: unknown) => {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[siem] correlator: triggerRoomAgentReplies failed for room ${securityRoomId}:`,
+            e instanceof Error ? `${e.name}: ${e.message}` : e,
+          )
         })
       }
 
