@@ -24,52 +24,233 @@ export type RuleParams =
 // ── Correlation ───────────────────────────────────────────────────────────────
 
 /**
+ * Input to {@link correlateEvents}. Carries a rule name alongside the params
+ * so that downstream code can log which rule failed and attribute incidents
+ * to a named rule.
+ *
+ * `correlateEvents` also accepts the legacy bare-`RuleParams[]` shape for
+ * backward compatibility — those entries get an `unnamed_<type>` rule name.
+ */
+export interface NamedRule {
+  name: string
+  params: RuleParams
+}
+
+export interface CorrelationRunResult {
+  drafts: IncidentDraft[]
+  /** Number of rules that threw during execution (MAJOR-4). */
+  errorCount: number
+  /** Names of rules that errored (best-effort; may include `unnamed_<type>`). */
+  erroredRules: string[]
+}
+
+// ── Per-rule rate limit (R4 / MAJOR-2) ────────────────────────────────────────
+
+/**
+ * In-memory per-rule rate-limit state. Keys are `<envId>:<ruleName>`. The
+ * tracker enforces the R4 risk-register requirement (SIEM_PLAN.md): a poison
+ * rule that produces many incidents in a short window is skipped for the
+ * remainder of the window so it cannot starve other rules, flood the
+ * incident table, or spin the correlator in a tight loop.
+ *
+ * Defaults are intentionally generous (per-rule cap higher than the
+ * worker's global `MAX_INCIDENTS_PER_RUN` cap of 10) so a healthy rule that
+ * happens to fire repeatedly across runs is not penalised. The cap is
+ * tunable via `SIEM_RULE_RATE_LIMIT_MAX` and `SIEM_RULE_RATE_LIMIT_WINDOW_MS`.
+ */
+const DEFAULT_RULE_MAX_INCIDENTS = 20
+const DEFAULT_RULE_WINDOW_MS = 5 * 60 * 1000 // 5 minutes
+
+interface RuleBucket {
+  count: number
+  windowStart: number
+}
+
+const ruleRateLimitState = new Map<string, RuleBucket>()
+
+function getRuleRateLimitConfig(): { max: number; windowMs: number } {
+  const maxRaw = Number(process.env.SIEM_RULE_RATE_LIMIT_MAX)
+  const windowRaw = Number(process.env.SIEM_RULE_RATE_LIMIT_WINDOW_MS)
+  return {
+    max: Number.isFinite(maxRaw) && maxRaw > 0 ? maxRaw : DEFAULT_RULE_MAX_INCIDENTS,
+    windowMs:
+      Number.isFinite(windowRaw) && windowRaw > 0
+        ? windowRaw
+        : DEFAULT_RULE_WINDOW_MS,
+  }
+}
+
+/**
+ * Returns true if the rule has exceeded its per-window incident cap and
+ * should be skipped this run. The bucket auto-resets once the window
+ * elapses. Exported for unit tests.
+ */
+export function shouldRateLimitRule(
+  envId: string,
+  ruleName: string,
+  now: number = Date.now(),
+): boolean {
+  const { max, windowMs } = getRuleRateLimitConfig()
+  const key = `${envId}:${ruleName}`
+  const bucket = ruleRateLimitState.get(key)
+  if (!bucket) return false
+  if (now - bucket.windowStart >= windowMs) {
+    ruleRateLimitState.delete(key)
+    return false
+  }
+  return bucket.count >= max
+}
+
+/**
+ * Record that a rule produced an incident, advancing its rate-limit bucket.
+ * Should be called by the correlator after each incident is persisted (not
+ * just drafted) so the cap reflects committed output. Exported for tests.
+ */
+export function recordRuleIncident(
+  envId: string,
+  ruleName: string,
+  now: number = Date.now(),
+): void {
+  const { windowMs } = getRuleRateLimitConfig()
+  const key = `${envId}:${ruleName}`
+  const bucket = ruleRateLimitState.get(key)
+  if (!bucket || now - bucket.windowStart >= windowMs) {
+    ruleRateLimitState.set(key, { count: 1, windowStart: now })
+    return
+  }
+  bucket.count += 1
+}
+
+/** Test helper: clear all rate-limit state. */
+export function _resetRuleRateLimitsForTests(): void {
+  ruleRateLimitState.clear()
+}
+
+function isNamedRuleArray(
+  rules: ReadonlyArray<RuleParams | NamedRule>,
+): rules is NamedRule[] {
+  return rules.length === 0
+    ? false
+    : typeof (rules[0] as NamedRule).name === 'string' &&
+        (rules[0] as NamedRule).params !== undefined
+}
+
+/**
  * Run all enabled correlation rules against recent events.
  *
- * Returns a list of IncidentDrafts — one per rule match.
+ * Accepts either:
+ *  - `NamedRule[]` (preferred) — preserves rule names for logging and
+ *    incident attribution.
+ *  - `RuleParams[]` (legacy) — kept for backward compatibility; rules are
+ *    given a synthetic `unnamed_<type>` name.
+ *
+ * Returns `{ drafts, errorCount, erroredRules }`. Rule execution failures
+ * are still non-blocking — a single bad rule must not stop the worker — but
+ * they are now logged with the rule name (MAJOR-4) and counted so callers
+ * can surface a health signal. The previous implementation used a bare
+ * `catch {}` so a broken rule failed silently every 30s with no diagnostic.
  */
 export async function correlateEvents(
   envId: string,
   since: Date,
-  ruleParams: RuleParams[]
-): Promise<IncidentDraft[]> {
+  rules: ReadonlyArray<RuleParams | NamedRule>,
+): Promise<CorrelationRunResult> {
   const drafts: IncidentDraft[] = []
+  const erroredRules: string[] = []
 
-  for (const params of ruleParams) {
+  const named: NamedRule[] = isNamedRuleArray(rules)
+    ? rules
+    : (rules as RuleParams[]).map((p) => ({
+        name: `unnamed_${p.type}`,
+        params: p,
+      }))
+
+  for (const { name, params } of named) {
+    // R4 / MAJOR-2 — per-rule rate limit. A poison rule (e.g. one matching
+    // every event) is capped at SIEM_RULE_RATE_LIMIT_MAX incidents per
+    // window. The bucket is fed by `recordRuleIncident` from the worker
+    // after each persisted incident.
+    if (shouldRateLimitRule(envId, name)) {
+      const cfg = getRuleRateLimitConfig()
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[siem] correlation rule "${name}" rate-limited for env ${envId}: ` +
+          `exceeded ${cfg.max} incidents in the last ${cfg.windowMs}ms window. Skipping.`,
+      )
+      continue
+    }
     try {
+      let result: IncidentDraft | null = null
       switch (params.type) {
-        case 'threshold': {
-          const result = await runThresholdRule(envId, params, since)
-          if (result) drafts.push(result)
+        case 'threshold':
+          result = await runThresholdRule(envId, params, since)
           break
-        }
-        case 'pattern': {
-          const result = await runPatternRule(envId, params, since)
-          if (result) drafts.push(result)
+        case 'pattern':
+          result = await runPatternRule(envId, params, since)
           break
-        }
-        case 'malware': {
-          const result = await runMalwareRule(envId, params, since)
-          if (result) drafts.push(result)
+        case 'malware':
+          result = await runMalwareRule(envId, params, since)
           break
-        }
-        case 'process': {
-          const result = await runProcessRule(envId, params, since)
-          if (result) drafts.push(result)
+        case 'process':
+          result = await runProcessRule(envId, params, since)
           break
-        }
-        case 'composite': {
-          const result = await runCompositeRule(envId, params, since)
-          if (result) drafts.push(result)
+        case 'composite':
+          result = await runCompositeRule(envId, params, since)
           break
-        }
       }
-    } catch {
-      // Rule execution failures are non-blocking
+      if (result) {
+        // Attribute to the rule name from the caller (overrides the
+        // synthetic ruleName some sub-runners build from regex / fields).
+        result.ruleName = name
+        drafts.push(result)
+      }
+    } catch (err) {
+      // MAJOR-4: previously this was a silent `catch {}` — a broken rule
+      // would fail every 30s with no signal. We now log with the rule name
+      // + error message and count the failure so callers can alert.
+      erroredRules.push(name)
+      // eslint-disable-next-line no-console
+      console.error(
+        `[siem] correlation rule "${name}" failed for env ${envId}:`,
+        err instanceof Error ? `${err.name}: ${err.message}` : err,
+      )
     }
   }
 
-  return drafts
+  return { drafts, errorCount: erroredRules.length, erroredRules }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve a groupBy / field selector against a SecurityEvent row.
+ *
+ * Supports two forms:
+ *   - "source" — a top-level column on the SecurityEvent row
+ *   - "rawEvent.srcip" or "rawEvent.alert.srcip" — a dot-path into the rawEvent JSON
+ *
+ * Returns the string-coerced value, or `null` if the path doesn't resolve.
+ *
+ * Exported for unit tests; used by `runThresholdRule` to bucket events.
+ */
+export function extractGroupValue(event: unknown, field: string): string | null {
+  if (event === null || typeof event !== 'object') return null
+  const evt = event as Record<string, unknown>
+
+  // Top-level column access (no dot)
+  if (!field.includes('.')) {
+    const v = evt[field]
+    return v == null ? null : String(v)
+  }
+
+  // Dot-path traversal. First segment must be a top-level column.
+  const parts = field.split('.')
+  let cursor: unknown = evt[parts[0]]
+  for (let i = 1; i < parts.length; i++) {
+    if (cursor === null || typeof cursor !== 'object') return null
+    cursor = (cursor as Record<string, unknown>)[parts[i]]
+  }
+  return cursor == null ? null : String(cursor)
 }
 
 // ── Threshold rule ────────────────────────────────────────────────────────────
@@ -92,10 +273,19 @@ async function runThresholdRule(
     orderBy: { createdAt: 'desc' },
   })
 
-  // Group events by the specified fields
+  // Group events by the specified fields.
+  //
+  // A groupBy entry may name a top-level SecurityEvent column (e.g. "source")
+  // or a JSON path into the rawEvent payload using dot notation (e.g.
+  // "rawEvent.srcip", "rawEvent.alert.srcip"). This is required for the
+  // brute-force rule: the attacker IP lives in the raw payload, not in a
+  // first-class column — grouping by "source" would bucket every CrowdSec
+  // event together regardless of attacker.
   const grouped = new Map<string, typeof events>()
   for (const event of events) {
-    const groupKey = params.groupBy.map(f => (event as Record<string, unknown>)[f] ?? 'unknown').join(':')
+    const groupKey = params.groupBy
+      .map(f => extractGroupValue(event, f) ?? 'unknown')
+      .join(':')
     if (!grouped.has(groupKey)) grouped.set(groupKey, [])
     grouped.get(groupKey)!.push(event)
   }
