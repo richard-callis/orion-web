@@ -336,7 +336,7 @@ async function callOpenAIChat(
   model: string,
   baseUrl: string,
   apiKey?: string | null,
-  toolContext?: { roomId: string; agentId: string; llm: string },
+  toolContext?: { roomId: string; agentId: string; llm: string; allowedTools?: Set<string> },
   gateway?: AgentGateway | null,
   gatewayTools?: GatewayTool[],
   activeGoal?: string,
@@ -368,7 +368,8 @@ async function callOpenAIChat(
   const legacyToolNames: Set<string> = new Set(legacyTools.map(d => d.function.name))
 
   // Merge: registry + legacy + gateway tools
-  const allTools = hasTools
+  const allowedTools = toolContext?.allowedTools
+  const merged = hasTools
     ? [
         ...registryTools,
         ...legacyTools,
@@ -378,6 +379,12 @@ async function callOpenAIChat(
         })),
       ]
     : undefined
+  // Apply per-agent allowlist if present (agents like Warden ship with a
+  // narrow whitelist via contextConfig.allowedTools). If the whitelist is
+  // present but empty (operator wants tools off), pass an empty array.
+  const allTools = merged && allowedTools
+    ? merged.filter(t => allowedTools.has(t.function.name))
+    : merged
 
   // Names of ORION-native tools for dispatch routing (registry + legacy)
   const orionToolNames: Set<string> = new Set([...registryToolNames, ...legacyToolNames])
@@ -813,9 +820,17 @@ export async function triggerRoomAgentReplies(
         .filter((a: any) => a.id !== agent.id)
         .map((a: any) => a.name)
 
+      // Optional tool whitelist — when an agent's contextConfig.allowedTools is
+      // present, only those tools are exposed (defense in depth: a jailbroken
+      // agent can't reach tools outside its whitelist). Backwards compatible:
+      // agents without `allowedTools` see the full registry as before.
+      const allowedTools = Array.isArray(contextConfig.allowedTools)
+        ? new Set((contextConfig.allowedTools as unknown[]).filter((t): t is string => typeof t === 'string'))
+        : undefined
+
       // Tool context passed to OpenAI-compatible calls when tools are enabled
       const toolContext = toolsEnabled
-        ? { roomId, agentId: agent.id, llm }
+        ? { roomId, agentId: agent.id, llm, allowedTools }
         : undefined
 
       // Resolve gateway from the agent's linked environment (same tools regardless of execution context)
