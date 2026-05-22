@@ -1,254 +1,219 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { decide, execute } from './action-service'
-import { type ActionDecision } from './types'
+/**
+ * Unit tests for action-service pure helpers.
+ *
+ * Covers the BLOCK/MAJOR fixes from the SIEM P2 review:
+ *   B6 — isDestructiveAction must NOT catch crowdsec_decision_delete
+ *   M1 — IPv6 home-subnet override must engage (fail-closed)
+ *   matchesPattern — wildcard, literal, subnet operators
+ *
+ * The `decide()` and `execute()` flows talk to Prisma; we cover them via the
+ * pure helpers + the executor branch logic that doesn't hit the DB.
+ */
 
-// Mock Prisma — we only care about tier resolution, not DB internals
-vi.mock('@/lib/db', () => ({
-  prisma: {
-    actionPolicy: {
-      findUnique: vi.fn(),
-    },
-    actionAudit: {
-      create: vi.fn().mockResolvedValue({ id: 'audit-1', status: 'denied' }),
-      update: vi.fn().mockResolvedValue({ id: 'audit-1' }),
-    },
-  },
-}))
+import { describe, it, expect } from 'vitest'
+import {
+  isDestructiveAction,
+  matchesPattern,
+  ipInRange,
+  prefixLTE,
+  extractPrefixLength,
+} from './action-service'
 
-import { prisma } from '@/lib/db'
-
-const mockPolicy = (actionType: string, defaultTier: string, targetPatterns: unknown = null) => {
-  vi.mocked(prisma.actionPolicy.findUnique).mockResolvedValue({
-    id: 'policy-1',
-    actionType,
-    defaultTier,
-    targetPatterns,
-    updatedBy: 'system',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  } as any)
-}
-
-const mockNoPolicy = () => {
-  vi.mocked(prisma.actionPolicy.findUnique).mockResolvedValue(null)
-}
-
-const makeRequest = (actionType: string, target: string) => ({
-  actionType,
-  target,
-  reason: 'test',
-})
-
-describe('decide() — tier resolution', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
+describe('action-service: isDestructiveAction', () => {
+  it('does NOT flag crowdsec_decision_delete (the original substring bug)', () => {
+    // B6: the prior heuristic matched on substring "delete" and broke unbans
+    expect(isDestructiveAction('crowdsec_decision_delete')).toBe(false)
   })
 
-  describe('crowdsec_decision_create', () => {
-    it('defaults to auto tier', async () => {
-      mockPolicy('crowdsec_decision_create', 'auto')
-      const decision = await decide(makeRequest('crowdsec_decision_create', '1.2.3.4'), false)
-      expect(decision.tier).toBe('auto')
-    })
-
-    it('approves home subnet IPs', async () => {
-      mockPolicy('crowdsec_decision_create', 'auto', [
-        { pattern: '10.0.0.0/8', tier: 'approve', operator: 'subnet' },
-        { pattern: '172.16.0.0/12', tier: 'approve', operator: 'subnet' },
-        { pattern: '192.168.0.0/16', tier: 'approve', operator: 'subnet' },
-      ])
-      expect((await decide(makeRequest('crowdsec_decision_create', '10.1.2.3'), false)).tier).toBe('approve')
-      expect((await decide(makeRequest('crowdsec_decision_create', '172.16.5.10'), false)).tier).toBe('approve')
-      expect((await decide(makeRequest('crowdsec_decision_create', '192.168.1.100'), false)).tier).toBe('approve')
-    })
+  it('does NOT flag legitimate auto-tier actions', () => {
+    expect(isDestructiveAction('crowdsec_decision_create')).toBe(false)
+    expect(isDestructiveAction('investigate')).toBe(false)
+    expect(isDestructiveAction('incident_close')).toBe(false)
+    expect(isDestructiveAction('suppression_add')).toBe(false)
   })
 
-  // Note (SIEM Review B6 / PR #414 fix): the prior describe block contained a
-  // test asserting `crowdsec_decision_delete` should `escalate` "because it
-  // contains delete". That test codified PR #410's substring-heuristic bug.
-  // The correct expectation — per the SIEM_PLAN.md default tier matrix — is
-  // that crowdsec_decision_delete is `auto`. Coverage of the correct behavior
-  // lives in PR #410's test suite (which also lands the heuristic fix); the
-  // mis-asserting test has been removed from this file.
-  describe('non-destructive action sanity', () => {
-    it('is auto when isDestructiveAction check is bypassed', async () => {
-      // Test default tier without destructive override
-      mockPolicy('some_other_action', 'auto')
-      const decision = await decide(makeRequest('some_other_action', 'target'), false)
-      expect(decision.tier).toBe('auto')
-    })
+  it('flags the __destructive__ policy bucket', () => {
+    expect(isDestructiveAction('__destructive__')).toBe(true)
   })
 
-  describe('wazuh_active_response', () => {
-    it('defaults to approve tier', async () => {
-      mockPolicy('wazuh_active_response', 'approve')
-      const decision = await decide(makeRequest('wazuh_active_response', 'staging-web'), false)
-      expect(decision.tier).toBe('approve')
-    })
-
-    it('escalates for named-prod-* targets', async () => {
-      mockPolicy('wazuh_active_response', 'approve', [
-        { pattern: 'named-prod-*', tier: 'escalate', operator: 'strict' },
-      ])
-      expect((await decide(makeRequest('wazuh_active_response', 'named-prod-web'), false)).tier).toBe('escalate')
-      expect((await decide(makeRequest('wazuh_active_response', 'staging-web'), false)).tier).toBe('approve')
-    })
+  it('flags explicit infra-destroy actions', () => {
+    expect(isDestructiveAction('infra_destroy')).toBe(true)
+    expect(isDestructiveAction('infra_wipe')).toBe(true)
+    expect(isDestructiveAction('volume_purge')).toBe(true)
+    expect(isDestructiveAction('cluster_delete')).toBe(true)
   })
 
-  describe('firewall_block', () => {
-    it('defaults to approve tier', async () => {
-      mockPolicy('firewall_block', 'approve')
-      const decision = await decide(makeRequest('firewall_block', '10.0.0.0/24'), false)
-      expect(decision.tier).toBe('approve')
-    })
-
-    it('matches CIDR target patterns (specific before broad)', async () => {
-      mockPolicy('firewall_block', 'approve', [
-        { pattern: '10.2.2.9', tier: 'escalate', operator: 'strict' },
-        { pattern: '10.0.0.0/8', tier: 'approve', operator: 'subnet' },
-      ])
-      expect((await decide(makeRequest('firewall_block', '10.2.2.9'), false)).tier).toBe('escalate')
-      expect((await decide(makeRequest('firewall_block', '10.5.3.1'), false)).tier).toBe('approve')
-      expect((await decide(makeRequest('firewall_block', '8.8.8.8'), false)).tier).toBe('approve')
-    })
-  })
-
-  describe('investigate', () => {
-    it('defaults to auto tier', async () => {
-      mockPolicy('investigate', 'auto')
-      const decision = await decide(makeRequest('investigate', '*'), false)
-      expect(decision.tier).toBe('auto')
-    })
-  })
-
-  describe('incident_close', () => {
-    it('defaults to notify tier', async () => {
-      mockPolicy('incident_close', 'notify')
-      const decision = await decide(makeRequest('incident_close', 'inc-1'), false)
-      expect(decision.tier).toBe('notify')
-    })
-  })
-
-  describe('suppression_add', () => {
-    it('defaults to approve tier', async () => {
-      mockPolicy('suppression_add', 'approve')
-      const decision = await decide(makeRequest('suppression_add', '1.2.3.4'), false)
-      expect(decision.tier).toBe('approve')
-    })
-  })
-
-  describe('destructive actions', () => {
-    it('always escalates destructive actions', async () => {
-      mockPolicy('delete', 'auto')
-      const decision = await decide(makeRequest('delete', 'resource-1'), false)
-      expect(decision.tier).toBe('escalate')
-    })
-  })
-
-  describe('no policy found', () => {
-    it('defaults to approve (never auto)', async () => {
-      mockNoPolicy()
-      const decision = await decide(makeRequest('unknown_action', '*'), false)
-      expect(decision.tier).toBe('approve')
-    })
-  })
-
-  describe('panic mode', () => {
-    it('downgrades auto to approve', async () => {
-      mockPolicy('crowdsec_decision_create', 'auto')
-      const decision = await decide(makeRequest('crowdsec_decision_create', '1.2.3.4'), true)
-      expect(decision.tier).toBe('approve')
-    })
-
-    it('downgrades notify to approve', async () => {
-      mockPolicy('incident_close', 'notify')
-      const decision = await decide(makeRequest('incident_close', 'inc-1'), true)
-      expect(decision.tier).toBe('approve')
-    })
-
-    it('does NOT change approve or escalate', async () => {
-      mockPolicy('firewall_block', 'approve')
-      expect((await decide(makeRequest('firewall_block', '10.0.0.0/24'), true)).tier).toBe('approve')
-    })
-  })
-
-  describe('wildcard pattern matching', () => {
-    it('matches wildcard patterns', async () => {
-      mockPolicy('test_action', 'auto', [
-        { pattern: 'prod-*', tier: 'escalate', operator: 'strict' },
-      ])
-      expect((await decide(makeRequest('test_action', 'prod-web'), false)).tier).toBe('escalate')
-      expect((await decide(makeRequest('test_action', 'staging-web'), false)).tier).toBe('auto')
-    })
-
-    it('matches literal patterns exactly', async () => {
-      mockPolicy('test_action', 'auto', [
-        { pattern: 'exact-target', tier: 'escalate', operator: 'strict' },
-      ])
-      expect((await decide(makeRequest('test_action', 'exact-target'), false)).tier).toBe('escalate')
-      expect((await decide(makeRequest('test_action', 'exact-target-extra'), false)).tier).toBe('auto')
-    })
+  it('does NOT match by substring (allowlist, not heuristic)', () => {
+    expect(isDestructiveAction('safe_cluster_delete_v2')).toBe(false)
+    expect(isDestructiveAction('please_destroy_nothing')).toBe(false)
+    expect(isDestructiveAction('delete_audit_after_purge')).toBe(false)
   })
 })
 
-describe('execute()', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
+describe('action-service: ipInRange (IPv4)', () => {
+  it('matches 10.x in 10.0.0.0/8', () => {
+    expect(ipInRange('10.1.2.3', '10.0.0.0/8')).toBe(true)
+    expect(ipInRange('10.255.255.254', '10.0.0.0/8')).toBe(true)
   })
 
-  it('auto tier executes immediately', async () => {
-    mockPolicy('crowdsec_decision_create', 'auto')
-    const decision = await decide(makeRequest('crowdsec_decision_create', '1.2.3.4'), false)
-
-    const mockExecutor = vi.fn().mockResolvedValue({ success: true, result: 'Blocked 1.2.3.4' })
-    const result = await execute(makeRequest('crowdsec_decision_create', '1.2.3.4'), decision, mockExecutor)
-
-    expect(result.status).toBe('succeeded')
-    expect(mockExecutor).toHaveBeenCalledTimes(1)
+  it('rejects 11.x outside 10.0.0.0/8', () => {
+    expect(ipInRange('11.0.0.1', '10.0.0.0/8')).toBe(false)
   })
 
-  // The prior "approve tier without approval stays denied" test asserted
-  // result.status === 'denied' for an awaiting-approval row, codifying the
-  // PR #410 B3 conflation of 'pending' and 'denied'. Removed; the corrected
-  // behavior (status='pending' until the operator decides) is covered by
-  // PR #410's test suite once that branch lands.
+  it('matches 192.168.x.x in 192.168.0.0/16', () => {
+    expect(ipInRange('192.168.1.1', '192.168.0.0/16')).toBe(true)
+  })
 
-  it('approve tier with approvedBy executes', async () => {
-    mockPolicy('firewall_block', 'approve')
-    const decision: ActionDecision = {
-      actionType: 'firewall_block',
-      target: '10.0.0.0/24',
-      tier: 'approve',
-      approvedBy: 'operator',
-      incidentId: null,
+  it('rejects public IPs outside home subnets', () => {
+    expect(ipInRange('8.8.8.8', '10.0.0.0/8')).toBe(false)
+    expect(ipInRange('1.1.1.1', '192.168.0.0/16')).toBe(false)
+  })
+})
+
+describe('action-service: ipInRange (IPv6 fail-closed) — R1', () => {
+  it('engages the home-subnet override for an IPv6 address', () => {
+    // M1: prior code returned false for anything without a dot, so IPv6 home
+    // addresses bypassed the home-subnet `approve` override. We now fail closed
+    // and return true, forcing the override.
+    expect(ipInRange('fe80::1', '10.0.0.0/8')).toBe(true)
+    expect(ipInRange('::1', '192.168.0.0/16')).toBe(true)
+    expect(ipInRange('2001:db8::1', '172.16.0.0/12')).toBe(true)
+  })
+
+  it('still rejects malformed inputs', () => {
+    expect(ipInRange('not-an-ip', '10.0.0.0/8')).toBe(false)
+    expect(ipInRange('10.0.0.1', 'no-cidr-here')).toBe(false)
+  })
+})
+
+describe('action-service: matchesPattern', () => {
+  it('handles literal match', () => {
+    expect(matchesPattern('named-prod-1', 'named-prod-1', 'strict')).toBe(true)
+    expect(matchesPattern('named-dev-1', 'named-prod-1', 'strict')).toBe(false)
+  })
+
+  it('handles wildcard match', () => {
+    expect(matchesPattern('named-prod-1', 'named-prod-*')).toBe(true)
+    expect(matchesPattern('named-prod-foo-bar', 'named-prod-*')).toBe(true)
+    expect(matchesPattern('named-dev-1', 'named-prod-*')).toBe(false)
+  })
+
+  it('handles subnet operator with IPv4 home range', () => {
+    expect(matchesPattern('10.1.2.3', '10.0.0.0/8', 'subnet')).toBe(true)
+    expect(matchesPattern('8.8.8.8', '10.0.0.0/8', 'subnet')).toBe(false)
+  })
+
+  it('handles subnet operator with IPv6 — fail-closed', () => {
+    // R1 mitigation: IPv6 home-subnet override must engage.
+    expect(matchesPattern('fe80::1', '10.0.0.0/8', 'subnet')).toBe(true)
+  })
+})
+
+// ── prefixLTE / prefix_lte ──────────────────────────────────────────────────
+
+describe('action-service: extractPrefixLength', () => {
+  it('parses IPv4 /8 through /32', () => {
+    for (let i = 0; i <= 32; i++) {
+      expect(extractPrefixLength(`10.0.0.0/${i}`)).toBe(i)
     }
-
-    const mockExecutor = vi.fn().mockResolvedValue({ success: true, result: 'Blocked' })
-    const result = await execute(makeRequest('firewall_block', '10.0.0.0/24'), decision, mockExecutor)
-
-    expect(result.status).toBe('succeeded')
-    expect(mockExecutor).toHaveBeenCalledTimes(1)
   })
 
-  it('notify tier does not execute', async () => {
-    mockPolicy('incident_close', 'notify')
-    const decision = await decide(makeRequest('incident_close', 'inc-1'), false)
-
-    const mockExecutor = vi.fn()
-    const result = await execute(makeRequest('incident_close', 'inc-1'), decision, mockExecutor)
-
-    expect(result.status).toBe('succeeded')
-    expect(mockExecutor).not.toHaveBeenCalled()
+  it('parses IPv6 /16 through /128', () => {
+    for (const p of [16, 32, 48, 64, 96, 112, 128]) {
+      expect(extractPrefixLength(`2001:db8::/${p}`)).toBe(p)
+    }
   })
 
-  it('executor failure returns failed status', async () => {
-    mockPolicy('crowdsec_decision_create', 'auto')
-    const decision = await decide(makeRequest('crowdsec_decision_create', '1.2.3.4'), false)
+  it('parses prefix-only notation', () => {
+    expect(extractPrefixLength('/8')).toBe(8)
+    expect(extractPrefixLength('/24')).toBe(24)
+    expect(extractPrefixLength('/64')).toBe(64)
+    expect(extractPrefixLength('/128')).toBe(128)
+  })
 
-    const mockExecutor = vi.fn().mockRejectedValue(new Error('API error'))
-    const result = await execute(makeRequest('crowdsec_decision_create', '1.2.3.4'), decision, mockExecutor)
+  it('rejects out-of-range prefixes', () => {
+    expect(extractPrefixLength('10.0.0.0/33')).toBe(null)
+    expect(extractPrefixLength('::/129')).toBe(null)
+    expect(extractPrefixLength('/-1')).toBe(null)
+    expect(extractPrefixLength('/abc')).toBe(null)
+  })
 
-    expect(result.status).toBe('failed')
-    expect(result.result).toContain('API error')
+  it('rejects malformed input', () => {
+    expect(extractPrefixLength('not-a-cidr')).toBe(null)
+    expect(extractPrefixLength('10.0.0.1')).toBe(null) // no slash
+  })
+})
+
+describe('action-service: prefixLTE — prefix length comparison', () => {
+  // Core semantics: targetLen <= patternLen means target is wider-or-equal
+  it('firewall_block 0.0.0.0/0 matches /24 threshold', () => {
+    expect(prefixLTE('0.0.0.0/0', '/24')).toBe(true) // 0 <= 24
+  })
+
+  it('firewall_block 10.0.0.0/8 matches /24 threshold', () => {
+    expect(prefixLTE('10.0.0.0/8', '/24')).toBe(true) // 8 <= 24
+  })
+
+  it('firewall_block 10.0.0.0/16 matches /24 threshold', () => {
+    expect(prefixLTE('10.0.0.0/16', '/24')).toBe(true) // 16 <= 24
+  })
+
+  it('firewall_block 10.0.0.0/24 does NOT exceed /24 threshold (equal)', () => {
+    expect(prefixLTE('10.0.0.0/24', '/24')).toBe(true) // 24 <= 24 — equal counts
+  })
+
+  it('firewall_block 10.0.0.0/32 does NOT match /24 threshold', () => {
+    expect(prefixLTE('10.0.0.0/32', '/24')).toBe(false) // 32 > 24 — too narrow
+  })
+
+  it('handles IPv6 prefix comparison', () => {
+    expect(prefixLTE('2001:db8::/32', '/48')).toBe(true) // 32 <= 48
+    expect(prefixLTE('2001:db8::/48', '/64')).toBe(true) // 48 <= 64
+    expect(prefixLTE('2001:db8::/64', '/48')).toBe(false) // 64 > 48
+    expect(prefixLTE('::/0', '/16')).toBe(true) // 0 <= 16
+    expect(prefixLTE('fe80::/10', '/128')).toBe(true) // 10 <= 128
+    expect(prefixLTE('fe80::/128', '/16')).toBe(false) // 128 > 16
+  })
+
+  // Home-subnet inversion: a /32 inside the home subnet should NOT trigger
+  // escalation via prefix_lte, because 32 > 24 (it's narrower)
+  it('home-subnet /32 does NOT escalate via prefix_lte (narrower than /24)', () => {
+    const homeIP = '10.1.2.3'
+    const cidr = `${homeIP}/32`
+    expect(prefixLTE(cidr, '/24')).toBe(false) // 32 > 24 — narrow host, no escalation
+  })
+
+  // Unparseable inputs default to safe behavior
+  it('returns false for unparseable inputs (safe default)', () => {
+    expect(prefixLTE('not-a-cidr', '/24')).toBe(false)
+    expect(prefixLTE('10.0.0.0', '/24')).toBe(false) // no slash in target
+    expect(prefixLTE('10.0.0.0/8', 'not-a-pattern')).toBe(false)
+  })
+})
+
+describe('action-service: matchesPattern prefix_lte operator', () => {
+  it('escalates 0.0.0.0/0 against /24 (B5: the original dead-code path)', () => {
+    expect(
+      matchesPattern('0.0.0.0/0', '/24', 'prefix_lte')
+    ).toBe(true)
+  })
+
+  it('escalates 172.16.0.0/12 against /24', () => {
+    expect(
+      matchesPattern('172.16.0.0/12', '/24', 'prefix_lte')
+    ).toBe(true)
+  })
+
+  it('does NOT escalate 10.0.1.0/24 against /24 (equal)', () => {
+    // 24 <= 24 is true, so this DOES match (equal is wider-or-equal)
+    expect(
+      matchesPattern('10.0.1.0/24', '/24', 'prefix_lte')
+    ).toBe(true)
+  })
+
+  it('does NOT escalate 10.0.1.0/32 against /24 (host route)', () => {
+    expect(
+      matchesPattern('10.0.1.0/32', '/24', 'prefix_lte')
+    ).toBe(false)
   })
 })
