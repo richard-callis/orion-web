@@ -21,7 +21,7 @@ export function CodeBlock({ children }: { children: React.ReactNode }) {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    }).catch(() => {})
+    }).catch((e) => console.error("[fetch]", e))
   }
 
   return (

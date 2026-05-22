@@ -280,13 +280,13 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
       setPanel(p => p?.kind === 'task' ? { ...p, task: { ...p.task, ...patch } } : p)
     await fetch(`/api/tasks/${id}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch(() => {})
+    }).catch((e) => console.error("[fetch]", e))
   }
 
   const deleteTask = async (id: string) => {
     setTasks(prev => prev.filter(t => t.id !== id))
     if (panel?.kind === 'task' && panel.task.id === id) setPanel(null)
-    await fetch(`/api/tasks/${id}`, { method: 'DELETE' }).catch(() => {})
+    await fetch(`/api/tasks/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
   }
 
   const createTask = async () => {
@@ -334,14 +334,14 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
       setPanel(p => p?.kind === 'epic' ? { ...p, epic: { ...p.epic, ...patch } } : p)
     await fetch(`/api/epics/${id}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch(() => {})
+    }).catch((e) => console.error("[fetch]", e))
   }
 
   const deleteEpic = async (id: string) => {
     setEpics(prev => prev.filter(e => e.id !== id))
     setSelection({ kind: 'all' })
     setPanel(null)
-    await fetch(`/api/epics/${id}`, { method: 'DELETE' }).catch(() => {})
+    await fetch(`/api/epics/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
   }
 
   const createEpic = async () => {
@@ -372,7 +372,7 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
       setPanel(p => p?.kind === 'feature' ? { ...p, feature: { ...p.feature, ...patch } } : p)
     await fetch(`/api/features/${id}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch(() => {})
+    }).catch((e) => console.error("[fetch]", e))
   }
 
   const deleteFeature = async (id: string, epicId: string) => {
@@ -381,7 +381,7 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
     ))
     setSelection({ kind: 'epic', epicId })
     setPanel(null)
-    await fetch(`/api/features/${id}`, { method: 'DELETE' }).catch(() => {})
+    await fetch(`/api/features/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
   }
 
   const createFeature = async () => {
@@ -411,14 +411,14 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
     setAgents(prev => prev.map(a => a.id === id ? { ...a, ...patch } : a))
     await fetch(`/api/agents/${id}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch(() => {})
+    }).catch((e) => console.error("[fetch]", e))
   }
 
   const deleteAgent = async (id: string) => {
     setAgents(prev => prev.filter(a => a.id !== id))
     // Clear assignment from tasks
     setTasks(prev => prev.map(t => t.assignedAgent === id ? { ...t, assignedAgent: null, agent: null } : t))
-    await fetch(`/api/agents/${id}`, { method: 'DELETE' }).catch(() => {})
+    await fetch(`/api/agents/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
   }
 
   // ── Plan with AI ───────────────────────────────────────────────────────────

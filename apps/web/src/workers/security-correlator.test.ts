@@ -1,42 +1,31 @@
-/**
- * Tests for the security correlator's Warden-notice path.
- *
- * Locks in BUG-2 (#408 follow-up): the correlator must call
- * triggerRoomAgentReplies() after writing the "New Incident" ChatMessage so
- * Warden's agent actually wakes on a new incident. Every other ChatMessage
- * producer in the codebase (the HTTP message routes) makes this call; the
- * correlator was the only path that did not, leaving Warden silent.
- *
- * Regression guard: if you see this test failing because
- * triggerRoomAgentReplies was not called, the correlator has lost the trigger
- * again — do NOT relax this expectation.
- */
-
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-// ── Prisma double ────────────────────────────────────────────────────────────
+// ── Module-level prisma test double ─────────────────────────────────────────
+//
+// Earlier suites in this file only exercise the pure helper
+// `rulesForEnvironment` and don't touch prisma; the worker-level suites
+// added for PR #408 BLOCK-1 need a fuller stub. We define both here and let
+// the existing tests pass through unchanged.
+
 const env_findMany = vi.fn(async () => [] as unknown[])
 const event_findMany = vi.fn(async () => [] as unknown[])
+const event_count = vi.fn(async () => 0)
 const event_updateMany = vi.fn(async () => ({ count: 0 }))
 const incident_findMany = vi.fn(async () => [] as unknown[])
 const incident_create = vi.fn(async (args: { data: Record<string, unknown> }) => ({
-  id: 'inc-1',
-  rootCauseSummary: 'brute force',
-  severity: 80,
-  attackerKey: '1.2.3.4',
+  id: 'inc-' + Math.random(),
   ...args.data,
 }))
-const chatMessage_create = vi.fn(async (args: { data: Record<string, unknown> }) => ({
-  id: 'msg-1',
-  ...args.data,
-}))
+const rule_findMany = vi.fn(async () => [] as unknown[])
 const sourceHealth_findMany = vi.fn(async () => [] as unknown[])
+const sourceHealth_update = vi.fn(async () => ({}))
 
 vi.mock('@/lib/db', () => ({
   prisma: {
     environment: { findMany: (...a: unknown[]) => env_findMany(...a) },
     securityEvent: {
       findMany: (...a: unknown[]) => event_findMany(...a),
+      count: (...a: unknown[]) => event_count(...a),
       updateMany: (...a: unknown[]) => event_updateMany(...a),
       create: async (args: { data: unknown }) => args.data,
     },
@@ -44,99 +33,172 @@ vi.mock('@/lib/db', () => ({
       findMany: (...a: unknown[]) => incident_findMany(...a),
       create: (...a: unknown[]) => incident_create(a[0] as { data: Record<string, unknown> }),
     },
-    chatMessage: {
-      create: (...a: unknown[]) => chatMessage_create(a[0] as { data: Record<string, unknown> }),
-    },
+    correlationRule: { findMany: (...a: unknown[]) => rule_findMany(...a) },
     sourceHealth: {
       findMany: (...a: unknown[]) => sourceHealth_findMany(...a),
-      update: async () => ({}),
+      update: (...a: unknown[]) => sourceHealth_update(...a),
     },
   },
 }))
 
-// rule-engine: return one draft per environment so the incident-create branch
-// runs (and with it the Warden-notice + agent-trigger block).
+// rule-engine is imported by the worker; mock it so each test can inject
+// the drafts that "would" come out of the engine without spinning up Postgres.
+const mockDrafts: { value: Array<Record<string, unknown>> } = { value: [] }
+const recordRuleIncidentMock = vi.fn()
 vi.mock('@/lib/security/rule-engine', () => ({
-  correlateEvents: vi.fn(async (envId: string) => [
-    {
-      ruleName: 'brute_force',
-      severity: 80,
-      rootCauseSummary: 'brute force',
-      attackerKey: '1.2.3.4',
-      hostKey: null,
-      eventIds: ['evt-1'],
-      environmentId: envId,
-    },
-  ]),
+  correlateEvents: vi.fn(async () => ({
+    drafts: mockDrafts.value,
+    errorCount: 0,
+    erroredRules: [],
+  })),
+  recordRuleIncident: (...args: unknown[]) => recordRuleIncidentMock(...args),
 }))
 
-vi.mock('@/lib/seed-system-epic', () => ({
-  getSystemRoomId: vi.fn(async (key: string) =>
-    key === 'system.room.security' ? 'security-room-id' : null,
-  ),
-}))
-
-// The unit under test: triggerRoomAgentReplies must be invoked after the
-// correlator writes the "New Incident" ChatMessage. We mock it so the test
-// stays in-memory and does not spin up the agent runner.
-const triggerRoomAgentRepliesMock = vi.fn(async () => undefined)
-vi.mock('@/lib/room-agents', () => ({
-  triggerRoomAgentReplies: (...a: unknown[]) => triggerRoomAgentRepliesMock(...a),
-}))
-
-import { runCorrelator } from './security-correlator'
+import { rulesForEnvironment, runCorrelator, GLOBAL_BUCKET_ID } from './security-correlator'
 
 beforeEach(() => {
-  env_findMany.mockClear().mockResolvedValue([
-    {
-      id: 'env-1',
-      correlationRules: [
-        { name: 'brute_force', params: {}, severity: 80 },
-      ],
-    },
-  ])
-  event_findMany.mockClear().mockResolvedValue([
-    { id: 'evt-1', environmentId: 'env-1' },
-  ])
-  event_updateMany.mockClear().mockResolvedValue({ count: 1 })
+  env_findMany.mockClear().mockResolvedValue([])
+  event_findMany.mockClear().mockResolvedValue([])
+  event_count.mockClear().mockResolvedValue(0)
+  event_updateMany.mockClear()
   incident_findMany.mockClear().mockResolvedValue([])
   incident_create.mockClear()
-  chatMessage_create.mockClear()
+  rule_findMany.mockClear().mockResolvedValue([])
   sourceHealth_findMany.mockClear().mockResolvedValue([])
-  triggerRoomAgentRepliesMock.mockClear().mockResolvedValue(undefined)
+  recordRuleIncidentMock.mockClear()
+  mockDrafts.value = []
 })
 
-describe('runCorrelator — triggers room agent replies on new incident (BUG-2)', () => {
-  it('calls triggerRoomAgentReplies once with the security room id and notice body', async () => {
-    await runCorrelator()
+describe('rulesForEnvironment (BLOCK-1a regression — global rules included)', () => {
+  it('includes per-environment rules whose environmentId matches', () => {
+    const rules = [
+      { environmentId: 'env-1', name: 'a' },
+      { environmentId: 'env-2', name: 'b' },
+    ]
+    const result = rulesForEnvironment(rules, 'env-1')
+    expect(result.map(r => r.name)).toEqual(['a'])
+  })
 
-    // The Warden-notice ChatMessage must have been written first.
-    expect(chatMessage_create).toHaveBeenCalledTimes(1)
-    const msgArgs = chatMessage_create.mock.calls[0]?.[0]?.data as Record<string, unknown>
-    expect(msgArgs.roomId).toBe('security-room-id')
-    expect(typeof msgArgs.content).toBe('string')
-
-    // And the agent trigger must have followed it.
-    expect(triggerRoomAgentRepliesMock).toHaveBeenCalledTimes(1)
-    expect(triggerRoomAgentRepliesMock).toHaveBeenCalledWith(
-      'security-room-id',
-      msgArgs.content,
+  it('includes global rules (environmentId === null) for every environment', () => {
+    const rules = [
+      { environmentId: null, name: 'brute_force' },
+      { environmentId: null, name: 'port_scan' },
+      { environmentId: 'env-1', name: 'env-specific' },
+    ]
+    expect(rulesForEnvironment(rules, 'env-1').map(r => r.name).sort()).toEqual(
+      ['brute_force', 'env-specific', 'port_scan'],
+    )
+    // env-2 has no specific rules but should still pick up both globals.
+    expect(rulesForEnvironment(rules, 'env-2').map(r => r.name).sort()).toEqual(
+      ['brute_force', 'port_scan'],
     )
   })
 
-  it('does NOT fail the correlation cycle if triggerRoomAgentReplies throws', async () => {
-    triggerRoomAgentRepliesMock.mockRejectedValueOnce(new Error('agent runner down'))
+  it('excludes rules belonging to a different environment', () => {
+    const rules = [
+      { environmentId: 'env-other', name: 'foreign' },
+      { environmentId: null, name: 'global' },
+    ]
+    const result = rulesForEnvironment(rules, 'env-1')
+    expect(result.map(r => r.name)).toEqual(['global'])
+  })
+
+  it('returns empty array when no rules match', () => {
+    const rules: Array<{ environmentId: string | null }> = []
+    expect(rulesForEnvironment(rules, 'env-1')).toEqual([])
+  })
+})
+
+describe('runCorrelator — global bucket (BLOCK-1a, PR #408)', () => {
+  it('processes orphan events (environmentId=null) under the synthetic bucket', async () => {
+    env_findMany.mockResolvedValue([])          // no environments need work
+    event_count.mockResolvedValue(2)             // 2 orphan events
+    rule_findMany.mockResolvedValue([
+      { name: 'brute_force', params: { type: 'threshold' }, severity: 70, environmentId: null },
+    ])
+    event_findMany.mockResolvedValue([
+      { id: 'e1', environmentId: null, severity: 60, source: 'crowdsec', rawEvent: {} },
+      { id: 'e2', environmentId: null, severity: 60, source: 'crowdsec', rawEvent: {} },
+    ])
+    mockDrafts.value = [
+      {
+        severity: 75,
+        attackerKey: '1.2.3.4',
+        ruleName: 'brute_force',
+        eventIds: ['e1', 'e2'],
+        environmentId: GLOBAL_BUCKET_ID,
+      },
+    ]
 
     const results = await runCorrelator()
+    const globalResult = results.find(r => r.envId === GLOBAL_BUCKET_ID)
+    expect(globalResult).toBeDefined()
+    expect(globalResult?.eventsProcessed).toBe(2)
+    expect(globalResult?.incidentsCreated).toBe(1)
 
-    // Fire-and-forget: incident was created, message was written, and the
-    // correlator returned a 'correlated' status despite the trigger failing.
-    expect(incident_create).toHaveBeenCalledTimes(1)
-    expect(chatMessage_create).toHaveBeenCalledTimes(1)
-    expect(results[0]?.status).toBe('correlated')
+    // The Incident must be written with environmentId=null (NOT the
+    // synthetic sentinel) so the FK to Environment stays valid.
+    const createArgs = incident_create.mock.calls[0]?.[0]
+    expect(createArgs?.data.environmentId).toBeNull()
+  })
 
-    // Give the unhandled promise a turn to settle so the test runner's
-    // unhandled-rejection guard doesn't flag the inner .catch handler.
-    await new Promise(resolve => setImmediate(resolve))
+  it('skips the global bucket entirely when no orphan events exist', async () => {
+    env_findMany.mockResolvedValue([])
+    event_count.mockResolvedValue(0) // no orphans
+    rule_findMany.mockResolvedValue([
+      { name: 'brute_force', params: { type: 'threshold' }, severity: 70, environmentId: null },
+    ])
+    const results = await runCorrelator()
+    expect(results.find(r => r.envId === GLOBAL_BUCKET_ID)).toBeUndefined()
+  })
+})
+
+describe('runCorrelator — in-run dedup (BLOCK-1b, PR #408)', () => {
+  it('does NOT suppress a different rule firing on the same attacker IP', async () => {
+    env_findMany.mockResolvedValue([{ id: 'env-1' }])
+    event_count.mockResolvedValue(0)             // no orphans
+    rule_findMany.mockResolvedValue([
+      { name: 'brute_force', params: { type: 'threshold' }, severity: 70, environmentId: null },
+      { name: 'port_scan',   params: { type: 'pattern'   }, severity: 50, environmentId: null },
+    ])
+    event_findMany.mockResolvedValue([
+      { id: 'e1', environmentId: 'env-1', severity: 60, source: 'wazuh', rawEvent: {} },
+    ])
+    // An open brute-force incident on 1.2.3.4 already exists.
+    incident_findMany.mockResolvedValue([
+      { id: 'inc-existing', attackerKey: '1.2.3.4' },
+    ])
+    // Engine outputs two drafts on the SAME attacker IP for DIFFERENT rules.
+    mockDrafts.value = [
+      { severity: 70, attackerKey: '1.2.3.4', ruleName: 'brute_force', eventIds: ['e1'], environmentId: 'env-1' },
+      { severity: 55, attackerKey: '1.2.3.4', ruleName: 'port_scan',   eventIds: ['e1'], environmentId: 'env-1' },
+    ]
+
+    const results = await runCorrelator()
+    const envResult = results.find(r => r.envId === 'env-1')
+    // Both drafts must persist — the open brute-force incident must NOT
+    // suppress the port-scan draft on the same attacker. Previously the
+    // 1-tuple vs 2-tuple mismatch caused both drafts to be dropped.
+    expect(envResult?.incidentsCreated).toBe(2)
+    expect(incident_create).toHaveBeenCalledTimes(2)
+  })
+
+  it('does suppress a duplicate draft for the SAME rule on the SAME attacker within a run', async () => {
+    env_findMany.mockResolvedValue([{ id: 'env-1' }])
+    event_count.mockResolvedValue(0)
+    rule_findMany.mockResolvedValue([
+      { name: 'brute_force', params: { type: 'threshold' }, severity: 70, environmentId: null },
+    ])
+    event_findMany.mockResolvedValue([
+      { id: 'e1', environmentId: 'env-1', severity: 60, source: 'wazuh', rawEvent: {} },
+    ])
+    mockDrafts.value = [
+      { severity: 70, attackerKey: '1.2.3.4', ruleName: 'brute_force', eventIds: ['e1'], environmentId: 'env-1' },
+      { severity: 70, attackerKey: '1.2.3.4', ruleName: 'brute_force', eventIds: ['e1'], environmentId: 'env-1' },
+    ]
+
+    const results = await runCorrelator()
+    const envResult = results.find(r => r.envId === 'env-1')
+    expect(envResult?.incidentsCreated).toBe(1)
   })
 })
