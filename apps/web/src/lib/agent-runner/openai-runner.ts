@@ -265,9 +265,13 @@ async function resolveOpenAIConfig(modelId: string): Promise<{ baseUrl: string; 
   // claude:* -> use Anthropic's OpenAI-compatible endpoint
   if (modelId.startsWith('claude:')) {
     const modelName = modelId.slice('claude:'.length)
+    const apiKey = process.env.ANTHROPIC_API_KEY
+    if (!apiKey) {
+      throw new Error(`ANTHROPIC_API_KEY environment variable is not set — cannot call Claude model "${modelName}". Set it in your deployment config.`)
+    }
     return {
       baseUrl: 'https://api.anthropic.com',
-      apiKey: process.env.ANTHROPIC_API_KEY,
+      apiKey,
       modelId: modelName,
       timeoutSecs: 120,
       maxTokens: 8192,

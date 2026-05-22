@@ -42,10 +42,10 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
         if (!fresh) return
         if (fresh.plan !== epic.plan) {
           setPlan(fresh.plan ?? '')
-          onUpdate({ plan: fresh.plan ?? null }).catch(() => {})
+          onUpdate({ plan: fresh.plan ?? null }).catch((e) => console.error("[fetch]", e))
         }
       })
-      .catch(() => {})
+      .catch((e) => console.error("[fetch]", e))
 
     // Check if there is an existing planning room for this epic
     fetch(`/api/chatrooms?epicId=${epic.id}&type=planning`)
@@ -55,7 +55,7 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
           setEpicPlanningRoom({ id: data.rooms[0].id })
         }
       })
-      .catch(() => {})
+      .catch((e) => console.error("[fetch]", e))
   }, [epic.id])
 
   const save = () => onUpdate({ title, description: desc || null, plan: plan || null, status })

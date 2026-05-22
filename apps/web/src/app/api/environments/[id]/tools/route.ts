@@ -2,12 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 
-async function verifyEnvAccess(userId: string, envId: string): Promise<{ error: NextResponse['body']; env: { id: string } } | null> {
-  const env = await prisma.environment.findUnique({ where: { id: envId }, select: { id: true } })
-  if (!env) return { error: NextResponse.json({ error: 'Not found' }, { status: 404 }).body, env: {} as any }
-  return null // access OK (any authenticated user can list/manage tools on any env for now)
-}
-
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   // Support gateway Bearer auth (existing) OR user session auth (SOC2: CR-001)
   const auth = req.headers.get('authorization')
