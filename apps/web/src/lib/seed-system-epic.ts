@@ -10,11 +10,13 @@
  *     Feature: "Health"      → ChatRoom for Pulse reports + cluster health tasks
  *     Feature: "Operations"  → ChatRoom for Alpha/Veritas cycle summaries
  *     Feature: "Maintenance" → ChatRoom for scheduled upkeep, upgrades, patches
+ *     Feature: "Security"    → ChatRoom for Warden incident triage + action proposals
  *
  * After seeding, room IDs are stored in SystemSetting:
  *   system.room.health      → ChatRoom ID for the Health feature
  *   system.room.operations  → ChatRoom ID for the Operations feature
  *   system.room.maintenance → ChatRoom ID for the Maintenance feature
+ *   system.room.security    → ChatRoom ID for the Security feature
  *
  * The worker reads these settings and injects them into each watcher's
  * enriched prompt so agents always know where to post.
@@ -47,6 +49,12 @@ const SYSTEM_FEATURES: SystemFeatureDef[] = [
     description: 'Scheduled maintenance, upgrades, and routine housekeeping tasks.',
     settingKey:  'system.room.maintenance',
     agents:      ['Alpha', 'Warden', 'Archivist'],
+  },
+  {
+    title:       'Security',
+    description: 'SIEM incident management. Warden posts incident triage summaries and proposed actions here.',
+    settingKey:  'system.room.security',
+    agents:      ['Warden'],
   },
 ]
 
@@ -153,7 +161,7 @@ export async function ensureSystemEpic(): Promise<void> {
  * Look up a system room ID by its setting key.
  * Returns null if the system epic hasn't been seeded yet.
  */
-export async function getSystemRoomId(key: 'system.room.health' | 'system.room.operations' | 'system.room.maintenance'): Promise<string | null> {
+export async function getSystemRoomId(key: 'system.room.health' | 'system.room.operations' | 'system.room.maintenance' | 'system.room.security'): Promise<string | null> {
   const setting = await prisma.systemSetting.findUnique({ where: { key } })
   return typeof setting?.value === 'string' ? setting.value : null
 }
@@ -164,12 +172,13 @@ export async function getSystemRoomId(key: 'system.room.health' | 'system.room.o
  */
 export async function getSystemRooms(): Promise<Record<string, string | null>> {
   const settings = await prisma.systemSetting.findMany({
-    where: { key: { in: ['system.room.health', 'system.room.operations', 'system.room.maintenance'] } },
+    where: { key: { in: ['system.room.health', 'system.room.operations', 'system.room.maintenance', 'system.room.security'] } },
   })
   const map: Record<string, string | null> = {
     'system.room.health':      null,
     'system.room.operations':  null,
     'system.room.maintenance': null,
+    'system.room.security':    null,
   }
   for (const s of settings) {
     if (typeof s.value === 'string') map[s.key] = s.value
