@@ -139,10 +139,12 @@ export async function GET(request: NextRequest) {
       client.on('notification', onNotify)
       listener = onNotify
 
-      // Issue LISTEN on the channel
-      client.query(`LISTEN ${pgChannel}`).catch(() => {
-        // Channel may not exist yet if migration hasn't run
-        // — fall through to polling as a safety net
+      // Issue LISTEN on the channel. If this fails (DB down, migration
+      // hasn't run, permissions, etc.) we must surface the error so the
+      // EventSource client reconnects instead of holding a dead stream.
+      client.query(`LISTEN ${pgChannel}`).catch((err) => {
+        controller.error(err)
+        client.end().catch(() => {})
       })
 
       // Handle client disconnect
