@@ -12,11 +12,30 @@ import { createHmac, timingSafeEqual } from 'crypto'
 /** Maximum replay window in seconds (5 minutes). */
 export const WEBHOOK_REPLAY_WINDOW_SEC = 5 * 60
 
+/**
+ * Maximum acceptable webhook body size in bytes (1 MiB).
+ *
+ * Anything larger is rejected with 413 *before* we touch the HMAC verifier
+ * or buffer the body. This bounds the work an unauthenticated request can
+ * cost the gateway: a 100 MB POST against an HMAC endpoint still requires
+ * us to read the body to validate the signature, which an attacker can use
+ * to mount a memory/CPU DoS.
+ */
+export const WEBHOOK_MAX_BODY_BYTES = 1 * 1024 * 1024
+
 /** Key in Prisma for storing webhook secrets per environment/source. */
 const SECRET_CONFIG_KEY = (envId: string, source: string) => `webhook_${source}_secret_${envId}`
 
-/** Idempotency cache TTL: 60 seconds after first write. */
-const IDEMPOTENCY_WINDOW_MS = 60_000
+/**
+ * Idempotency cache TTL: 24 hours after first write.
+ *
+ * Upstream sources (CrowdSec, Wazuh) may retry deliveries across long-running
+ * outages of this service; a 60-second window let duplicates leak through.
+ * Backed by the existing `SecurityEvent.dedupKey` index, which is already in
+ * place on the schema, so the wider lookup has no extra cost beyond an
+ * indexed B-tree range scan.
+ */
+const IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60 * 1000
 
 /** Key used to detect if an idempotent event was already processed. */
 type IdempotencyKey = { dedupKey: string; source: string }
@@ -71,13 +90,44 @@ function constantTimeCompare(a: string, b: string): boolean {
 // ── Replay Window ─────────────────────────────────────────────────────────────
 
 /**
+ * Should the missing-timestamp passthrough be disabled?
+ *
+ * Production requires a timestamp header so replay attacks can be blocked.
+ * Dev/test keeps the previous lenient behaviour so unit tests and local
+ * curl sessions don't need to manage clocks. The behaviour is also gated by
+ * an explicit `WEBHOOK_REQUIRE_TIMESTAMP=true|false` flag so the
+ * production-gate can be exercised in tests without juggling NODE_ENV.
+ */
+function requireTimestampHeader(): boolean {
+  const flag = (process.env.WEBHOOK_REQUIRE_TIMESTAMP ?? '').toLowerCase()
+  if (flag === 'true' || flag === '1') return true
+  if (flag === 'false' || flag === '0') return false
+  return process.env.NODE_ENV === 'production'
+}
+
+/**
  * Check whether a timestamp header indicates a replay (older than the replay window).
  *
  * Accepts `X-Timestamp` header in ISO 8601 or Unix epoch format.
  * Returns `true` if the request is within the replay window.
+ *
+ * Hardening (MAJOR-1, PR #407):
+ * - In production (or when `WEBHOOK_REQUIRE_TIMESTAMP=true`) a missing
+ *   timestamp header is now treated as a replay (returns false) so the
+ *   caller can reject with 401. Without this, a forwarding proxy that
+ *   strips the timestamp header could let stale captures through.
+ * - In dev/test the previous lenient behaviour is preserved but logs a
+ *   warning so operators notice the relaxed mode.
  */
 export function isWithinReplayWindow(timestampHeader: string | null): boolean {
-  if (!timestampHeader) return true // no timestamp = allow (some sources don't send one)
+  if (!timestampHeader) {
+    if (requireTimestampHeader()) {
+      return false // refuse — must be sent in prod
+    }
+    // eslint-disable-next-line no-console
+    console.warn('[siem] webhook request missing X-Timestamp header; allowed because WEBHOOK_REQUIRE_TIMESTAMP is not set')
+    return true
+  }
 
   let timestamp: number
 
@@ -93,7 +143,10 @@ export function isWithinReplayWindow(timestampHeader: string | null): boolean {
   }
 
   const now = Date.now()
-  return now - timestamp <= WEBHOOK_REPLAY_WINDOW_SEC * 1000
+  // Reject both past replays AND timestamps far in the future (clock skew or
+  // forged future-dated requests).
+  const delta = now - timestamp
+  return delta >= -WEBHOOK_REPLAY_WINDOW_SEC * 1000 && delta <= WEBHOOK_REPLAY_WINDOW_SEC * 1000
 }
 
 // ── Idempotency (dedupKey) ────────────────────────────────────────────────────
@@ -204,6 +257,48 @@ export function isLoopbackWebhookRequest(req: {
   const realIp = req.headers.get('x-real-ip') ?? ''
   const clientIp = xff.split(',')[0]?.trim() || realIp.trim()
   return isLoopbackIp(clientIp)
+}
+
+// ── Body-size guard ───────────────────────────────────────────────────────────
+
+/**
+ * Inspect the request's Content-Length and decide whether to reject before
+ * buffering the body for HMAC verification (PR #407 MAJOR-3).
+ *
+ * Returns:
+ *   - { ok: true }                            — proceed
+ *   - { ok: false, reason: 'too_large' }     — caller should reply 413
+ *   - { ok: false, reason: 'missing_length' } — in production caller should
+ *     reply 411 Length Required; in dev/test we allow the request but log
+ *     a warning since some test clients omit the header.
+ *
+ * The caller decides the actual HTTP status. We rely on the runtime's
+ * Content-Length parsing rather than streaming-count because Next.js
+ * already buffers `req.text()`; a content-length lie is at worst a
+ * runtime-imposed cap, never a bypass.
+ */
+export function checkWebhookBodySize(req: { headers: Headers }): {
+  ok: boolean
+  reason?: 'too_large' | 'missing_length'
+  size?: number
+} {
+  const lenHeader = req.headers.get('content-length')
+  if (!lenHeader) {
+    if (process.env.NODE_ENV === 'production') {
+      return { ok: false, reason: 'missing_length' }
+    }
+    // eslint-disable-next-line no-console
+    console.warn('[siem] webhook request missing Content-Length; accepting because NODE_ENV !== production')
+    return { ok: true }
+  }
+  const n = Number(lenHeader)
+  if (!Number.isFinite(n) || n < 0) {
+    return { ok: false, reason: 'missing_length' }
+  }
+  if (n > WEBHOOK_MAX_BODY_BYTES) {
+    return { ok: false, reason: 'too_large', size: n }
+  }
+  return { ok: true, size: n }
 }
 
 /**
