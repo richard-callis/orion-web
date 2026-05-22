@@ -17,11 +17,18 @@ export const maxDuration = 30
 
 /**
  * Gateway executor — calls the gateway's tool execution endpoint.
+ *
+ * For gated write actions, a signed `__decision_token` (produced by
+ * action-service.execute()) is injected into the arguments payload so the
+ * gateway can verify the call originated from the action-service decision
+ * layer. Non-gated actions (e.g. `investigate`) pass `null` and proceed
+ * without the token.
  */
 async function gatewayExecutor(
   action: ActionRequest,
   target: string,
-  payload: Record<string, unknown> | undefined
+  payload: Record<string, unknown> | undefined,
+  decisionToken: string | null,
 ): Promise<{ success: boolean; result: string }> {
   const gatewayUrl = process.env.GATEWAY_URL
   const gatewayToken = process.env.GATEWAY_TOKEN
@@ -56,6 +63,12 @@ async function gatewayExecutor(
       break
     default:
       return { success: false, result: `Unknown action type: ${action.actionType}` }
+  }
+
+  // Inject the signed decision token for gated write tools. The gateway
+  // strips and verifies it before executing the tool body.
+  if (decisionToken) {
+    toolArgs = { ...toolArgs, __decision_token: decisionToken }
   }
 
   const res = await fetch(`${gatewayUrl}/tools/execute`, {

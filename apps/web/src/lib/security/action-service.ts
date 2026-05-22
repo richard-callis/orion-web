@@ -11,6 +11,23 @@
 
 import { prisma } from '@/lib/db'
 import { type ActionRequest, type ActionDecision, actionRequestSchema, actionDecisionSchema } from './types'
+import { signDecisionToken } from './decision-token'
+
+/**
+ * Action types whose gateway write tools require a signed decision token.
+ * Read-only investigations (e.g. `investigate` → `elk_flow_search`) are NOT
+ * gated; only the four mutating tools that change firewall/ban state.
+ */
+const GATED_ACTION_TYPES = new Set<string>([
+  'crowdsec_decision_create',
+  'crowdsec_decision_delete',
+  'wazuh_active_response',
+  'firewall_block',
+])
+
+export function isGatedAction(actionType: string): boolean {
+  return GATED_ACTION_TYPES.has(actionType)
+}
 
 // ── Tier resolution ───────────────────────────────────────────────────────────
 
@@ -225,10 +242,23 @@ export function extractPrefixLength(s: string): number | null {
  *
  * Writes status='attempting' BEFORE execution (R9), updates after.
  */
+/**
+ * Executor signature. The `decisionToken` parameter is set to a short-lived
+ * HMAC-signed token for gated write actions (the gateway verifies it before
+ * executing the underlying tool) and `null` for non-gated actions (e.g.
+ * `investigate` → `elk_flow_search`).
+ */
+export type ActionExecutor = (
+  action: ActionRequest,
+  target: string,
+  payload: Record<string, unknown> | undefined,
+  decisionToken: string | null,
+) => Promise<{ success: boolean; result: string }>
+
 export async function execute(
   request: ActionRequest,
   decision: ActionDecision,
-  executor: (action: ActionRequest, target: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; result: string }>
+  executor: ActionExecutor,
 ): Promise<{ auditId: string; status: string; result?: string }> {
   const parsed = actionRequestSchema.parse(request)
   const parsedDecision = actionDecisionSchema.parse(decision)
@@ -260,10 +290,21 @@ export async function execute(
     },
   })
 
+  // Sign a short-lived decision token for gated write actions. The gateway
+  // refuses to invoke the underlying write tool without a valid token. Non-
+  // gated actions (e.g. `investigate`) receive `null` and proceed unchanged.
+  const decisionToken = isGatedAction(parsed.actionType)
+    ? signDecisionToken({
+        auditId: audit.id,
+        actionType: parsed.actionType,
+        target: parsed.target,
+      })
+    : null
+
   // 2. Auto-tier: execute immediately
   if (parsedDecision.tier === 'auto') {
     try {
-      const { success, result } = await executor(parsed, parsed.target, parsed.payload ?? {})
+      const { success, result } = await executor(parsed, parsed.target, parsed.payload ?? {}, decisionToken)
 
       await prisma.actionAudit.update({
         where: { id: audit.id },
@@ -282,7 +323,7 @@ export async function execute(
   // 3. Approve-tier with approvedBy: execute
   if (parsedDecision.tier === 'approve' && parsedDecision.approvedBy) {
     try {
-      const { success, result } = await executor(parsed, parsed.target, parsed.payload ?? {})
+      const { success, result } = await executor(parsed, parsed.target, parsed.payload ?? {}, decisionToken)
 
       await prisma.actionAudit.update({
         where: { id: audit.id },
