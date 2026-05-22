@@ -167,13 +167,16 @@ async function correlateEnvironment(
         },
       })
 
-      // Notify Warden in the security room
+      // Notify Warden in the security room. The typed `incidentId` link
+      // (added in 14_chatmessage_incident_link) lets the UI look up the
+      // incident chat by foreign key — no need to embed the id in body text.
       const securityRoomId = await getSystemRoomId('system.room.security')
       if (securityRoomId) {
         await prisma.chatMessage.create({
           data: {
             roomId: securityRoomId,
             senderType: 'system',
+            incidentId: incident.id,
             content: [
               `Warden | New Incident [${new Date().toISOString()}]`,
               `Incident: ${incident.rootCauseSummary || 'Untitled'}`,
