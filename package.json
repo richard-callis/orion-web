@@ -12,6 +12,7 @@
     "build:gateway": "npm run build --workspace=apps/gateway"
   },
   "dependencies": {
+    "node-cron": "^4.2.1",
     "playwright": "^1.59.1"
   }
 }
