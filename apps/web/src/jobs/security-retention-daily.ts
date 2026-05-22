@@ -71,15 +71,26 @@ export async function runSecurityRetentionJob(log: JobLogger): Promise<void> {
   const incidentCutoff = new Date(now.getTime() - INCIDENT_RETENTION_DAYS * 24 * 60 * 60 * 1000)
   const auditCutoff = new Date(now.getTime() - ACTION_AUDIT_RETENTION_DAYS * 24 * 60 * 60 * 1000)
 
-  // 1. Delete old security events
+  // 1. Delete old security events (those not currently linked to a recent
+  //    incident still in the 365d retention window are removed here).
   const deletedEvents = await prisma.securityEvent.deleteMany({
     where: { createdAt: { lt: eventCutoff } },
   })
   await log(`Security events purged: ${deletedEvents.count} rows older than ${eventCutoff.toISOString()}`)
 
-  // 2. Delete old incidents (this cascades to related events via FK constraints)
+  // 2. Delete old incidents — but ONLY if they have no SecurityEvent with
+  //    lastSeen newer than the event cutoff. Otherwise an old Incident with a
+  //    recently-updated recurring event would cascade-delete that event via
+  //    the ON DELETE CASCADE FK introduced in 15_siem_cascade_on_delete,
+  //    which would silently destroy data we explicitly chose to keep above.
+  //    (Reviewer flag: option (b) from #414 MAJOR 1.)
   const deletedIncidents = await prisma.incident.deleteMany({
-    where: { openedAt: { lt: incidentCutoff } },
+    where: {
+      openedAt: { lt: incidentCutoff },
+      events: {
+        none: { lastSeen: { gt: eventCutoff } },
+      },
+    },
   })
   await log(`Incidents purged: ${deletedIncidents.count} rows older than ${incidentCutoff.toISOString()}`)
 
