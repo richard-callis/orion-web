@@ -519,10 +519,11 @@ describe('Security Tools', () => {
       })
 
       const tool = securityTools[10]
-      await tool.execute({ ip: '1.2.3.4', scope: 'os', duration: '7d' })
+      // scope locked to ip|range|country|as per validation; use 'range' with a CIDR target.
+      await tool.execute({ ip: '203.0.113.0/24', scope: 'range', duration: '7d' })
 
       const body = JSON.parse((global.fetch as any).mock.calls[0][1].body)
-      expect(body.scope).toBe('os')
+      expect(body.scope).toBe('range')
       expect(body.duration).toBe('7d')
     })
 
@@ -669,6 +670,150 @@ describe('Security Tools', () => {
       const tool = securityTools[13]
       const result = await tool.execute({ cidr: '10.0.0.0/24' })
       expect(result).toContain('Firewall API error HTTP 500')
+    })
+  })
+
+  // ── Input validation for write tools (PR #406 MAJOR 1) ─────────────────
+  describe('Input validation', () => {
+    beforeEach(() => {
+      // ensure env is set so we don't short-circuit on "not configured"
+      process.env.CROWDSEC_API = 'http://localhost:8080'
+      process.env.CROWDSEC_API_KEY = 'test-key'
+      process.env.WAZUH_API = 'http://localhost:55000'
+      process.env.WAZUH_USERNAME = 'admin'
+      process.env.WAZUH_PASSWORD = 'secret'
+      process.env.FIREWALL_API = 'http://localhost:9000'
+      process.env.FIREWALL_API_KEY = 'fw-key'
+      global.fetch = vi.fn() // should NOT be called for validation failures
+    })
+
+    it('crowdsec_decision_create rejects missing ip without HTTP call', async () => {
+      const tool = securityTools[10]
+      const result = await tool.execute({})
+      expect(result).toContain('validation')
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    it('crowdsec_decision_create rejects invalid ip without HTTP call', async () => {
+      const tool = securityTools[10]
+      const result = await tool.execute({ ip: 'not-an-ip' })
+      expect(result).toContain('validation')
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    it('crowdsec_decision_create rejects 0.0.0.0', async () => {
+      const tool = securityTools[10]
+      const result = await tool.execute({ ip: '0.0.0.0' })
+      expect(result).toContain('validation')
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    it('crowdsec_decision_create rejects link-local 169.254.x.x', async () => {
+      const tool = securityTools[10]
+      const result = await tool.execute({ ip: '169.254.10.5' })
+      expect(result).toContain('validation')
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    it('crowdsec_decision_create rejects unsupported scope', async () => {
+      const tool = securityTools[10]
+      const result = await tool.execute({ ip: '1.2.3.4', scope: 'fqdn' })
+      expect(result).toContain('validation')
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    it('crowdsec_decision_create rejects /0 range', async () => {
+      const tool = securityTools[10]
+      const result = await tool.execute({ ip: '0.0.0.0/0', scope: 'range' })
+      expect(result).toContain('validation')
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    it('crowdsec_decision_create accepts a valid range CIDR', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true, text: () => Promise.resolve('{}'),
+      }) as any
+      const tool = securityTools[10]
+      const result = await tool.execute({ ip: '203.0.113.0/24', scope: 'range' })
+      expect(result).not.toContain('validation')
+      expect(global.fetch).toHaveBeenCalled()
+    })
+
+    it('firewall_block rejects /0 cidr without HTTP call', async () => {
+      const tool = securityTools[13]
+      const result = await tool.execute({ cidr: '0.0.0.0/0' })
+      expect(result).toContain('validation')
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    it('firewall_block rejects empty cidr', async () => {
+      const tool = securityTools[13]
+      const result = await tool.execute({ cidr: '' })
+      // empty string treated as not configured? Check: cidrRaw === '' triggers validation
+      expect(result).toContain('validation')
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    it('firewall_block rejects malformed cidr', async () => {
+      const tool = securityTools[13]
+      const result = await tool.execute({ cidr: '999.999.999.999/24' })
+      expect(result).toContain('validation')
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    it('wazuh_active_response rejects empty agent', async () => {
+      const tool = securityTools[12]
+      const result = await tool.execute({ agent: '', command: 'firewall-drop' })
+      expect(result).toContain('validation')
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+
+    it('wazuh_active_response rejects agent with invalid chars', async () => {
+      const tool = securityTools[12]
+      const result = await tool.execute({ agent: 'agent;rm -rf /', command: 'firewall-drop' })
+      expect(result).toContain('validation')
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+  })
+
+  // ── Upstream error redaction (PR #406 MAJOR 2) ──────────────────────────
+  describe('Upstream error redaction', () => {
+    it('crowdsec_decision_create redacts X-Api-Key in upstream error body', async () => {
+      process.env.CROWDSEC_API = 'http://localhost:8080'
+      process.env.CROWDSEC_API_KEY = 'super-secret-key'
+      const leak = 'Bad request. Headers received: X-Api-Key: super-secret-key-leaked'
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false, status: 400, text: () => Promise.resolve(leak),
+      }) as any
+      const tool = securityTools[10]
+      const result = await tool.execute({ ip: '1.2.3.4' })
+      expect(result).toContain('CrowdSec error HTTP 400')
+      expect(result).not.toContain('super-secret-key-leaked')
+    })
+
+    it('firewall_block redacts Bearer token echo in upstream error', async () => {
+      process.env.FIREWALL_API = 'http://localhost:9000'
+      process.env.FIREWALL_API_KEY = 'fw-secret'
+      const leak = 'Unauthorized: Bearer fw-secret-token-here'
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false, status: 401, text: () => Promise.resolve(leak),
+      }) as any
+      const tool = securityTools[13]
+      const result = await tool.execute({ cidr: '10.0.0.0/24' })
+      expect(result).toContain('Firewall API error HTTP 401')
+      expect(result).not.toContain('fw-secret-token-here')
+    })
+
+    it('truncates very long upstream error bodies', async () => {
+      process.env.CROWDSEC_API = 'http://localhost:8080'
+      const longBody = 'X'.repeat(2000)
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false, status: 500, text: () => Promise.resolve(longBody),
+      }) as any
+      const tool = securityTools[10]
+      const result = await tool.execute({ ip: '1.2.3.4' })
+      // 200 char cap + ellipsis + prefix
+      expect(result.length).toBeLessThan(longBody.length)
     })
   })
 })
