@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
   const pending = await prisma.actionAudit.findMany({
     where: {
       environmentId: envId || null,
-      status: 'denied', // Pending actions are stored as 'denied' until approved
+      status: 'pending',
       tier: 'approve',
     },
     orderBy: { createdAt: 'asc' },
