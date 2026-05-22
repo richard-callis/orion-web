@@ -10,13 +10,42 @@
  * pure helpers + the executor branch logic that doesn't hit the DB.
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+// ── Prisma test double for execute() coverage ─────────────────────────────────
+// The execute() flow now looks up environmentId from the linked Incident
+// (PR #410 follow-up). We stub the few Prisma surfaces it touches so the
+// tests stay in-memory.
+const incident_findUnique = vi.fn(async (_args: unknown) => null as { environmentId: string | null } | null)
+const actionAudit_create = vi.fn(async (args: { data: Record<string, unknown> }) => ({
+  id: 'audit-' + Math.random(),
+  ...args.data,
+}))
+const actionAudit_update = vi.fn(async (_args: unknown) => ({}))
+
+vi.mock('@/lib/db', () => ({
+  prisma: {
+    incident: { findUnique: (...a: unknown[]) => incident_findUnique(a[0]) },
+    actionAudit: {
+      create: (...a: unknown[]) => actionAudit_create(a[0] as { data: Record<string, unknown> }),
+      update: (...a: unknown[]) => actionAudit_update(a[0]),
+    },
+  },
+}))
+
+// Decision-token signing requires a secret; stub it for tests.
+vi.mock('./decision-token', () => ({
+  signDecisionToken: vi.fn(() => 'test.token'),
+  verifyDecisionToken: vi.fn(() => ({ valid: true })),
+}))
+
 import {
   isDestructiveAction,
   matchesPattern,
   ipInRange,
   prefixLTE,
   extractPrefixLength,
+  execute,
 } from './action-service'
 
 describe('action-service: isDestructiveAction', () => {
@@ -215,5 +244,123 @@ describe('action-service: matchesPattern prefix_lte operator', () => {
     expect(
       matchesPattern('10.0.1.0/32', '/24', 'prefix_lte')
     ).toBe(false)
+  })
+})
+
+// ── execute(): environmentId resolution ──────────────────────────────────────
+//
+// PR #410 originally wrote `environmentId: null` with a TODO comment, leaving
+// every ActionAudit row unscoped. The fix resolves env from the linked
+// Incident (`request.incidentId ?? decision.incidentId`). These tests lock
+// that behaviour in.
+
+describe('action-service: execute() environmentId resolution', () => {
+  beforeEach(() => {
+    incident_findUnique.mockReset().mockResolvedValue(null)
+    actionAudit_create.mockReset().mockImplementation(async (args: { data: Record<string, unknown> }) => ({
+      id: 'audit-1',
+      ...args.data,
+    }))
+    actionAudit_update.mockReset().mockResolvedValue({})
+  })
+
+  it('resolves environmentId from the linked Incident on propose-with-incidentId', async () => {
+    const incidentId = '11111111-1111-4111-8111-111111111111'
+    incident_findUnique.mockResolvedValue({ environmentId: 'env-prod' })
+
+    await execute(
+      {
+        actionType: 'investigate',
+        target: '10.1.2.3',
+        incidentId,
+        reason: 'triage',
+      },
+      {
+        actionType: 'investigate',
+        target: '10.1.2.3',
+        tier: 'approve', // 'pending' path — no executor call
+        incidentId,
+      },
+      async () => ({ success: true, result: 'noop' }),
+    )
+
+    expect(incident_findUnique).toHaveBeenCalledWith({
+      where: { id: incidentId },
+      select: { environmentId: true },
+    })
+    const created = actionAudit_create.mock.calls[0]?.[0]?.data as Record<string, unknown>
+    expect(created.environmentId).toBe('env-prod')
+    expect(created.incidentId).toBe(incidentId)
+  })
+
+  it('falls back to null when no incidentId is provided', async () => {
+    await execute(
+      {
+        actionType: 'investigate',
+        target: '10.1.2.3',
+        reason: 'system-originated',
+      },
+      {
+        actionType: 'investigate',
+        target: '10.1.2.3',
+        tier: 'approve',
+      },
+      async () => ({ success: true, result: 'noop' }),
+    )
+
+    expect(incident_findUnique).not.toHaveBeenCalled()
+    const created = actionAudit_create.mock.calls[0]?.[0]?.data as Record<string, unknown>
+    expect(created.environmentId).toBeNull()
+  })
+
+  it('falls back to null when the linked Incident has no environment', async () => {
+    const incidentId = '22222222-2222-4222-8222-222222222222'
+    incident_findUnique.mockResolvedValue({ environmentId: null })
+
+    await execute(
+      {
+        actionType: 'investigate',
+        target: '10.1.2.3',
+        incidentId,
+        reason: 'triage',
+      },
+      {
+        actionType: 'investigate',
+        target: '10.1.2.3',
+        tier: 'approve',
+        incidentId,
+      },
+      async () => ({ success: true, result: 'noop' }),
+    )
+
+    const created = actionAudit_create.mock.calls[0]?.[0]?.data as Record<string, unknown>
+    expect(created.environmentId).toBeNull()
+  })
+
+  it('uses decision.incidentId when request.incidentId is missing', async () => {
+    const incidentId = '33333333-3333-4333-8333-333333333333'
+    incident_findUnique.mockResolvedValue({ environmentId: 'env-staging' })
+
+    await execute(
+      {
+        actionType: 'investigate',
+        target: '10.1.2.3',
+        reason: 'triage',
+      },
+      {
+        actionType: 'investigate',
+        target: '10.1.2.3',
+        tier: 'approve',
+        incidentId,
+      },
+      async () => ({ success: true, result: 'noop' }),
+    )
+
+    expect(incident_findUnique).toHaveBeenCalledWith({
+      where: { id: incidentId },
+      select: { environmentId: true },
+    })
+    const created = actionAudit_create.mock.calls[0]?.[0]?.data as Record<string, unknown>
+    expect(created.environmentId).toBe('env-staging')
   })
 })

@@ -276,9 +276,26 @@ export async function execute(
       ? 'attempting'
       : 'pending'
 
+  // Resolve environmentId from the linked Incident so ActionAudit rows are
+  // properly scoped. Without this, the approvals API filter
+  // `where: { environmentId: envId || null }` mis-matches every scoped query.
+  // We prefer the request's incidentId (the originator) and fall back to the
+  // decision's incidentId. If neither is present, the audit row remains
+  // unscoped (null) — which is correct for system-originated actions that
+  // don't relate to a particular environment.
+  const linkedIncidentId = parsed.incidentId ?? parsedDecision.incidentId ?? null
+  let resolvedEnvironmentId: string | null = null
+  if (linkedIncidentId) {
+    const incident = await prisma.incident.findUnique({
+      where: { id: linkedIncidentId },
+      select: { environmentId: true },
+    })
+    resolvedEnvironmentId = incident?.environmentId ?? null
+  }
+
   const audit = await prisma.actionAudit.create({
     data: {
-      environmentId: null, // TODO: resolve from context
+      environmentId: resolvedEnvironmentId,
       incidentId: parsedDecision.incidentId ?? null,
       actionType: parsed.actionType,
       target: parsed.target,
