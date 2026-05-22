@@ -18,5 +18,8 @@ export async function register() {
 
     const { ensureCorrelationRules } = await import('./lib/seed-correlation-rules')
     await ensureCorrelationRules()
+
+    const { ensureSecurityRetentionJobScheduled } = await import('./jobs/security-retention-daily')
+    await ensureSecurityRetentionJobScheduled()
   }
 }
