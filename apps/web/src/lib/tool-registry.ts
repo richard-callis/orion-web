@@ -471,6 +471,13 @@ async function handleCloseTask(args: unknown, ctx: ToolExecutionContext): Promis
 async function handleReopenTask(args: unknown, ctx: ToolExecutionContext): Promise<string> {
   const { task_id, reason } = parseArgs(args) as { task_id?: string; reason?: string }
   if (!task_id) return 'Error: task_id is required'
+  if (!reason?.trim()) return 'Error: reason is required'
+
+  const existing = await ctx.prisma.task.findUnique({ where: { id: task_id }, select: { status: true } })
+  if (!existing) return `Error: task ${task_id} not found`
+  if (existing.status !== 'pending_validation') {
+    return `Error: task is "${existing.status}" — orion_reopen_task only operates on pending_validation tasks`
+  }
 
   await ctx.prisma.task.update({
     where: { id: task_id },
@@ -504,7 +511,7 @@ async function handleClosePR(args: unknown, ctx: ToolExecutionContext): Promise<
   await ctx.prisma.gitOpsPR.updateMany({
     where: { environmentId: env.id, prNumber: pr_number },
     data: { status: 'closed' },
-  }).catch(() => {})
+  }).catch((e) => console.error(`[gitea_close_pr] DB update failed for PR #${pr_number}:`, e))
 
   const msg = `🚫 Closed PR #${pr_number} in ${env.gitOwner}/${env.gitRepo}${reason ? ` — ${reason}` : ''}`
   await auditLog(ctx.agentId ?? ctx.userId, msg)
@@ -577,10 +584,29 @@ async function handleSetGoal(args: unknown, ctx: ToolExecutionContext): Promise<
   const room = await ctx.prisma.chatRoom.findUnique({ where: { id: room_id } })
   if (!room) return `Error: room ${room_id} not found`
 
-  const meta = (room.metadata ?? {}) as Record<string, unknown>
-  await ctx.prisma.chatRoom.update({
-    where: { id: room_id },
-    data: { metadata: { ...meta, activeGoal: goal.trim() } },
+  // Abandon any existing active goal
+  await ctx.prisma.roomGoal.updateMany({
+    where: { roomId: room_id, status: 'active' },
+    data: { status: 'abandoned', completedAt: new Date() },
+  })
+
+  // Create new goal record
+  const newGoal = await ctx.prisma.roomGoal.create({
+    data: {
+      roomId: room_id,
+      text: goal.trim(),
+      status: 'active',
+      setBy: ctx.agentId ?? ctx.userId ?? null,
+    },
+  })
+
+  // Post system message and capture its ID
+  const msg = await ctx.prisma.chatMessage.create({
+    data: { roomId: room_id, senderType: 'system', content: `🎯 Goal set: ${goal.trim()}` },
+  })
+  await ctx.prisma.roomGoal.update({
+    where: { id: newGoal.id },
+    data: { startMessageId: msg.id },
   })
 
   return `Goal set in room "${room.name}": ${goal.trim()}`
@@ -596,15 +622,27 @@ async function handleCompleteGoal(args: unknown, ctx: ToolExecutionContext): Pro
   const room = await ctx.prisma.chatRoom.findUnique({ where: { id: room_id } })
   if (!room) return `Error: room ${room_id} not found`
 
-  const meta = (room.metadata ?? {}) as Record<string, unknown>
-  const { activeGoal, ...rest } = meta
-  await ctx.prisma.chatRoom.update({
-    where: { id: room_id },
-    data: { metadata: rest as Record<string, unknown> & object },
+  const activeGoalRecord = await ctx.prisma.roomGoal.findFirst({
+    where: { roomId: room_id, status: 'active' },
+    orderBy: { createdAt: 'desc' },
+  })
+  if (!activeGoalRecord) return `Error: no active goal found in room ${room_id}`
+
+  await ctx.prisma.roomGoal.update({
+    where: { id: activeGoalRecord.id },
+    data: {
+      status: 'completed',
+      completionSummary: verification_summary.trim(),
+      completedAt: new Date(),
+    },
   })
 
-  if (ctx.agentId) await auditLog(ctx.agentId, `✅ Goal complete in room **${room.name}**: ${activeGoal ?? '(unknown)'} — Verification: ${verification_summary.trim()}`)
-  return `Goal "${activeGoal ?? '(none)'}" marked complete. Verification: ${verification_summary.trim()}`
+  await ctx.prisma.chatMessage.create({
+    data: { roomId: room_id, senderType: 'system', content: `✓ Goal completed: ${verification_summary.trim()}` },
+  })
+
+  if (ctx.agentId) await auditLog(ctx.agentId, `✅ Goal complete in room **${room.name}**: ${activeGoalRecord.text} — Verification: ${verification_summary.trim()}`)
+  return `Goal "${activeGoalRecord.text}" marked complete. Verification: ${verification_summary.trim()}`
 }
 
 async function handleCreateFeature(args: unknown, ctx: ToolExecutionContext): Promise<string> {
@@ -1500,7 +1538,7 @@ registerTool({
 
 registerTool({
   name: 'orion_reopen_task',
-  description: 'Reopen a pending_validation, done, or failed task back to pending. Use when validation reveals the task was not actually completed — e.g. agent self-reported done with zero tool calls.',
+  description: 'Reopen a pending_validation task back to pending. Use when validation reveals the task was not actually completed — e.g. agent self-reported done with zero tool calls.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -2092,7 +2130,7 @@ For Docker Compose: use self-contained services (no host bind mounts for config 
   parallelSafe: false,
   availableIn: 'both',
   category: 'gitops',
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const { environment_id, title, reasoning, operation_description, changes } =
       args as { environment_id?: string; title?: string; reasoning?: string; operation_description?: string; changes?: Array<{ path: string; content?: string; delete?: boolean }> }
 
@@ -2156,6 +2194,7 @@ For Docker Compose: use self-contained services (no host bind mounts for config 
       const action = result.merged
         ? `auto-merged (${result.classification.reason})`
         : `opened for review — ${result.classification.reason}`
+      await auditLog(ctx.agentId ?? ctx.userId, `📦 GitOps PR #${result.prNumber} ${action} in ${env.gitOwner}/${env.gitRepo}: "${title}"`)
       return `PR #${result.prNumber} ${action}. URL: ${result.prUrl}`
     } catch (e) {
       return `Error proposing GitOps change: ${e instanceof Error ? e.message : String(e)}`

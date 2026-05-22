@@ -276,7 +276,7 @@ function Step3Git({ onNext }: { onNext: () => void }) {
           setError(data.error ?? 'Failed to configure bundled Gitea')
         }
       })
-      .catch(() => {})
+      .catch((e) => console.error("[fetch]", e))
   }, [onNext])
 
   const isBundled = providerType === 'gitea-bundled'
@@ -482,7 +482,7 @@ function Step4Domain({ onNext }: { onNext: () => void }) {
     fetch('/api/setup/bootstrap-config')
       .then(r => r.json())
       .then(d => { if (d.managementIp) setManagementIp(d.managementIp) })
-      .catch(() => {})
+      .catch((e) => console.error("[fetch]", e))
   }, [])
 
   async function submit(e: FormEvent) {
