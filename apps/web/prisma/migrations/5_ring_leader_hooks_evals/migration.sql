@@ -291,19 +291,11 @@ CREATE INDEX "Ruleset_name_idx" ON "Ruleset"("name");
 -- CreateIndex
 CREATE UNIQUE INDEX "AgentScore_targetType_targetId_key" ON "AgentScore"("targetType", "targetId");
 
--- RenameForeignKey (wrapped for idempotency — constraint may already have correct name)
-DO $$ BEGIN
-  ALTER TABLE "managed_secrets" RENAME CONSTRAINT "managed_secrets_createdby_fkey" TO "managed_secrets_createdBy_fkey";
-EXCEPTION WHEN undefined_object THEN NULL;
-END $$;
+-- RenameForeignKey
+ALTER TABLE "managed_secrets" RENAME CONSTRAINT "managed_secrets_createdby_fkey" TO "managed_secrets_createdBy_fkey";
 
-DO $$ BEGIN
-  ALTER TABLE "managed_secrets" RENAME CONSTRAINT "managed_secrets_environmentid_fkey" TO "managed_secrets_environmentId_fkey";
-EXCEPTION WHEN undefined_object THEN NULL;
-END $$;
-
--- RenameIndex
-ALTER INDEX "managed_secrets_environmentid_idx" RENAME TO "managed_secrets_environmentId_idx";
+-- RenameForeignKey
+ALTER TABLE "managed_secrets" RENAME CONSTRAINT "managed_secrets_environmentid_fkey" TO "managed_secrets_environmentId_fkey";
 
 -- AddForeignKey
 ALTER TABLE "SecurityEvent" ADD CONSTRAINT "SecurityEvent_environmentId_fkey" FOREIGN KEY ("environmentId") REFERENCES "Environment"("id") ON DELETE SET NULL ON UPDATE CASCADE;

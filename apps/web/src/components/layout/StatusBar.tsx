@@ -35,7 +35,7 @@ export function StatusBar() {
     fetch('/api/setup/status')
       .then(r => r.json())
       .then(d => { if (d.internalDomain) setDomain(d.internalDomain) })
-      .catch(() => {})
+      .catch((e) => console.error("[fetch]", e))
   }, [])
 
   useEffect(() => {
