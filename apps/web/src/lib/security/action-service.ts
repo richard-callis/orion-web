@@ -78,10 +78,20 @@ export async function decide(
 
 /**
  * Match a target string against a pattern.
- * Supports: literal match, wildcard (*), and CIDR subnet (operator: 'subnet').
+ * Supports: literal match, wildcard (*), CIDR subnet (operator: 'subnet'),
+ * and prefix length comparison (operator: 'prefix_lte').
+ *
+ * prefix_lte: checks if the target's prefix length is <= the pattern's prefix
+ * length (i.e. the target subnet is wider than or equal to the threshold).
+ * Used for firewall_block /24-or-wider escalation.
  */
-function matchesPattern(target: string, pattern: string, operator?: string): boolean {
-  // CIDR subnet matching
+export function matchesPattern(target: string, pattern: string, operator?: string): boolean {
+  // prefix_lte: target prefix length <= pattern prefix length (wider-or-equal)
+  if (operator === 'prefix_lte') {
+    return prefixLTE(target, pattern)
+  }
+
+  // CIDR subnet containment matching
   if (operator === 'subnet') {
     return matchesSubnet(target, pattern)
   }
@@ -116,10 +126,25 @@ function matchesSubnet(target: string, cidr: string): boolean {
 
 /**
  * Check if an IP is within a CIDR range.
- * Only handles common home subnet ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16).
+ *
+ * IPv4: full check against the provided CIDR.
+ * IPv6: fail CLOSED — if the target looks like IPv6 (contains ':') and the CIDR
+ *       is an IPv4 home subnet, we cannot prove the address is NOT a home
+ *       address, so we return true to force the home-subnet `approve` override.
+ *       This addresses R1 (locking out a legitimate home/LAN IP) for IPv6.
  */
-function ipInRange(ip: string, cidr: string): boolean {
-  if (!ip.includes('.') || !cidr.includes('/')) return false
+export function ipInRange(ip: string, cidr: string): boolean {
+  if (!cidr.includes('/')) return false
+
+  // IPv6 fail-closed: any IPv6 address is treated as potentially home/LAN
+  // for the home-subnet override path. The home-subnet rows are 10/8, 172.16/12,
+  // 192.168/16 — all IPv4 — so we can't compare numerically. The safer default
+  // is to engage the override (force `approve`) rather than auto-ban.
+  if (ip.includes(':')) {
+    return true
+  }
+
+  if (!ip.includes('.')) return false
 
   const [cidrIp, cidrPrefixStr] = cidr.split('/')
   const prefixLength = parseInt(cidrPrefixStr, 10)
@@ -137,6 +162,62 @@ function ipInRange(ip: string, cidr: string): boolean {
   return (ipNum & mask) === (cidrNum & mask)
 }
 
+/**
+ * Check if target's prefix length is <= pattern's prefix length (wider-or-equal).
+ *
+ * Used for firewall_block escalation: "is this subnet /24-or-wider?"
+ *
+ * Handles:
+ * - IPv4: "10.0.0.0/8", "192.168.1.0/24", "/16" (prefix-only)
+ * - IPv6: "2001:db8::/32", "fe80::/10", "::/0" (full IPv6 range)
+ * - Defaults to `approve` (never `auto`) for unparseable inputs
+ */
+export function prefixLTE(target: string, pattern: string): boolean {
+  const targetLen = extractPrefixLength(target)
+  const patternLen = extractPrefixLength(pattern)
+
+  // If either is unparseable, default to approve (safe)
+  if (targetLen === null || patternLen === null) return false
+
+  return targetLen <= patternLen
+}
+
+/**
+ * Extract the prefix length from an IPv4 CIDR, IPv6 CIDR, or prefix-only string.
+ *
+ * Accepts: "10.0.0.0/8", "/8", "2001:db8::/32", "/32", "0.0.0.0/0"
+ * Returns null for unparseable inputs.
+ */
+export function extractPrefixLength(s: string): number | null {
+  // Strip leading slash for prefix-only notation (e.g. "/24")
+  let cleaned = s
+  if (cleaned.startsWith('/') && !cleaned.includes('.')) {
+    const n = parseInt(cleaned.slice(1), 10)
+    if (n >= 0 && n <= 128) return n
+    return null
+  }
+
+  // CIDR notation — split on last '/'
+  const slashIdx = cleaned.lastIndexOf('/')
+  if (slashIdx === -1) return null // no prefix length
+
+  const prefixStr = cleaned.slice(slashIdx + 1)
+  const prefix = parseInt(prefixStr, 10)
+  if (!Number.isFinite(prefix)) return null
+
+  // Validate range based on address family
+  const ipPart = cleaned.slice(0, slashIdx)
+  if (ipPart.includes(':')) {
+    // IPv6
+    if (prefix >= 0 && prefix <= 128) return prefix
+  } else {
+    // IPv4
+    if (prefix >= 0 && prefix <= 32) return prefix
+  }
+
+  return null
+}
+
 // ── Execution ─────────────────────────────────────────────────────────────────
 
 /**
@@ -152,7 +233,19 @@ export async function execute(
   const parsed = actionRequestSchema.parse(request)
   const parsedDecision = actionDecisionSchema.parse(decision)
 
-  // 1. Create ActionAudit with status='attempting' (R9: no data loss)
+  // 1. Create ActionAudit BEFORE invoking the gateway (R9: no data loss).
+  //    - auto / approved-approve     → 'attempting'  (gateway call about to fire)
+  //    - approve (awaiting approval) → 'pending'      (sits in approval queue)
+  //    - notify                       → 'attempting'  (no gateway call, but logged)
+  //    - escalate                     → 'pending'      (operator action required)
+  // 'denied' is reserved for actions the operator explicitly denied (terminal).
+  const initialStatus =
+    parsedDecision.tier === 'auto' ||
+    (parsedDecision.tier === 'approve' && parsedDecision.approvedBy) ||
+    parsedDecision.tier === 'notify'
+      ? 'attempting'
+      : 'pending'
+
   const audit = await prisma.actionAudit.create({
     data: {
       environmentId: null, // TODO: resolve from context
@@ -162,7 +255,7 @@ export async function execute(
       tier: parsedDecision.tier,
       proposedBy: request.incidentId ? 'warden' : 'system',
       approvedBy: parsedDecision.approvedBy ?? null,
-      status: 'denied',
+      status: initialStatus,
       payload: parsed.payload as any,
     },
   })
@@ -205,26 +298,41 @@ export async function execute(
     }
   }
 
-  // 4. Approve without approval: remain 'denied' (pending)
+  // 4. Approve without approval: remain 'pending' (awaiting operator)
   if (parsedDecision.tier === 'approve') {
-    return { auditId: audit.id, status: 'denied' }
+    return { auditId: audit.id, status: 'pending' }
   }
 
-  // 5. Escalate → denied, notify → succeeded (no execution needed)
-  const finalStatus = parsedDecision.tier === 'notify' ? 'succeeded' : 'denied'
-  return { auditId: audit.id, status: finalStatus }
+  // 5. Notify-tier: no gateway call, mark succeeded (audit-only).
+  //    Escalate-tier: stays 'pending' for the human escalation path.
+  if (parsedDecision.tier === 'notify') {
+    await prisma.actionAudit.update({
+      where: { id: audit.id },
+      data: { status: 'succeeded' },
+    })
+    return { auditId: audit.id, status: 'succeeded' }
+  }
+  return { auditId: audit.id, status: 'pending' }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function isDestructiveAction(actionType: string): boolean {
-  const destructivePatterns = [
+/**
+ * Detect destructive infra actions that MUST escalate.
+ *
+ * IMPORTANT: this is an explicit allowlist, not a substring heuristic.
+ * The previous substring match caught `crowdsec_decision_delete` (a legitimate
+ * `auto`-tier unban), inverting the tier matrix. Anything that should escalate
+ * must be added by name or via the `__destructive__` policy row.
+ */
+export function isDestructiveAction(actionType: string): boolean {
+  const destructiveActions = new Set<string>([
     '__destructive__',
-    'delete',
-    'destroy',
-    'purge',
-    'wipe',
-    'format',
-  ]
-  return destructivePatterns.some(p => actionType.includes(p))
+    'infra_destroy',
+    'infra_wipe',
+    'infra_format',
+    'volume_purge',
+    'cluster_delete',
+  ])
+  return destructiveActions.has(actionType)
 }

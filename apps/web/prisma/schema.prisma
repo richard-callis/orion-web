@@ -803,15 +803,18 @@ model ChatMessage {
   senderType    String              // "agent" | "human" | "system"
   content       String          @db.Text
   attachments   Json?
+  incidentId    String?
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
 
   agent         Agent?      @relation(fields: [agentId], references: [id], onDelete: SetNull)
   user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
   task          Task?       @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  incident      Incident?  @relation(fields: [incidentId], references: [id], onDelete: SetNull)
 
   @@index([roomId, createdAt])
   @@index([roomId, taskId, createdAt])
+  @@index([incidentId])
   @@map("chat_messages")
 }
 
@@ -881,7 +884,7 @@ model SecurityEvent {
   acknowledgedAt DateTime?
   acknowledgedBy String?
   incidentId   String?  // Linked incident (if correlated)
-  incident     Incident? @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  incident     Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
   firstSeen    DateTime? // When this event was first observed
   lastSeen     DateTime? // When this event was last observed (updated by dedup)
   createdAt    DateTime @default(now())
@@ -923,6 +926,7 @@ model Incident {
   closedAt           DateTime?
   events             SecurityEvent[]
   actionAudits       ActionAudit[]
+  chatMessages       ChatMessage[]
 
   @@index([environmentId, status])
   @@index([environmentId, severity])
@@ -937,7 +941,7 @@ model ActionAudit {
   environmentId String?
   environment  Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
   incidentId   String?
-  incident     Incident? @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  incident     Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
   policyId     String?
   policy       ActionPolicy? @relation(fields: [policyId], references: [id], onDelete: SetNull)
   actionType   String   // matches ActionPolicy.actionType

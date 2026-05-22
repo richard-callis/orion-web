@@ -12,7 +12,7 @@
 import { prisma } from '@/lib/db'
 import { type IncidentDraft } from '@/lib/security/types'
 import { correlateEvents } from '@/lib/security/rule-engine'
-import type { RuleParams } from '@/lib/security/rule-engine'
+import type { RuleParams, NamedRule } from '@/lib/security/rule-engine'
 import { getSystemRoomId } from '@/lib/seed-system-epic'
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -118,15 +118,20 @@ async function correlateEnvironment(
     }
   }
 
-  // 2. Convert rule params from JSON to typed RuleParams
-  const typedRules: RuleParams[] = env.correlationRules.map(r => r.params as RuleParams)
+  // 2. Convert rule params from JSON to typed NamedRules (params + name)
+  const typedRules: NamedRule[] = env.correlationRules.map(r => ({
+    name: r.name,
+    params: r.params as RuleParams,
+  }))
 
-  // 3. Run correlation
-  const drafts = await correlateEvents(
+  // 3. Run correlation. Rule-engine returns drafts + error metadata (R4
+  // per-rule rate-limit + silent-error counters).
+  const runResult = await correlateEvents(
     env.id,
     new Date(Date.now() - LOOKBACK_WINDOW_SEC * 1000),
     typedRules
   )
+  const drafts: IncidentDraft[] = runResult.drafts
 
   // 4. Deduplicate: skip drafts that would create duplicates of open incidents
   const openIncidents = await prisma.incident.findMany({
@@ -138,7 +143,7 @@ async function correlateEnvironment(
   })
 
   const existingKeys = new Set<string>(openIncidents.map(inc => `${inc.attackerKey ?? 'unknown'}`))
-  const newDrafts = drafts.filter(d => {
+  const newDrafts = drafts.filter((d: IncidentDraft) => {
     const key = `${d.attackerKey ?? 'unknown'}:${d.ruleName}`
     if (existingKeys.has(d.attackerKey ?? 'unknown')) return false
     existingKeys.add(key)
@@ -167,13 +172,16 @@ async function correlateEnvironment(
         },
       })
 
-      // Notify Warden in the security room
+      // Notify Warden in the security room. The typed `incidentId` link
+      // (added in 14_chatmessage_incident_link) lets the UI look up the
+      // incident chat by foreign key — no need to embed the id in body text.
       const securityRoomId = await getSystemRoomId('system.room.security')
       if (securityRoomId) {
         await prisma.chatMessage.create({
           data: {
             roomId: securityRoomId,
             senderType: 'system',
+            incidentId: incident.id,
             content: [
               `Warden | New Incident [${new Date().toISOString()}]`,
               `Incident: ${incident.rootCauseSummary || 'Untitled'}`,
