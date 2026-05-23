@@ -19,48 +19,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { TextEncoder } from 'util'
 import { Client } from 'pg'
+import { type StreamChannel, type NotifyMessage } from '@/lib/security/stream-utils'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 const encoder = new TextEncoder()
-
-// ── Channel types ─────────────────────────────────────────────────────────────
-
-type StreamChannel = 'incidents' | 'events' | 'approvals'
-
-/**
- * Per R7 (SIEM_PLAN.md Risk Register), SSE frames carry ID-only payloads.
- * Consumers fetch the full row via the REST endpoints (e.g. /incidents/[id]).
- * This:
- *   1. Sidesteps the 8 KB NOTIFY payload limit.
- *   2. Forces consumers through the read endpoints, where access control
- *      can filter sensitive fields per session/role.
- */
-export interface NotifyMessage {
-  channel: StreamChannel
-  payload: {
-    id: string
-    type: string // 'created' | 'updated' | 'deleted'
-    timestamp: string
-  }
-}
-
-/**
- * Build an ID-only SSE frame. Exported so tests can lock in the R7 invariant
- * (frames must never embed row data — only the ID for the consumer to fetch).
- */
-export function buildIdOnlyFrame(
-  channel: StreamChannel,
-  id: string,
-  type: 'created' | 'updated' | 'deleted' = 'created',
-  timestamp: string = new Date().toISOString()
-): NotifyMessage {
-  return {
-    channel,
-    payload: { id, type, timestamp },
-  }
-}
 
 // ── Channel → pg channel mapping ──────────────────────────────────────────────
 
