@@ -991,6 +991,8 @@ model ActionPolicy {
   defaultTier     String   // "auto" | "approve" | "escalate" | "notify"
   targetPatterns  Json?    // null or [{ pattern: string; tier: string; operator?: "strict" | "subnet" }]
   updatedBy       String?  // "system" | operator username
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
   auditRows       ActionAudit[]
 
   @@index([actionType])
@@ -1011,6 +1013,8 @@ model CorrelationRule {
   params        Json     // rule-specific params (window, threshold, etc.)
   severity      Int      // default severity for generated incidents (0-100)
   window        Int      // time window in seconds for rule evaluation
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@index([enabled])
   @@index([environmentId])
