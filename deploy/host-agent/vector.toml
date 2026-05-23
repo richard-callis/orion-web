@@ -24,10 +24,19 @@ address = "127.0.0.1:8686"
 
 # ── Source 1: journald (auth events) ─────────────────────────────────────────
 # Collects auth-related systemd journal entries.
+#
+# We filter by _COMM (process name) rather than _SYSTEMD_UNIT because:
+#   - PAM-driven auth events (sshd session opens, sudo failures) are written
+#     by the bare binary in journald, not attributed to a unit
+#   - SSH unit name varies by distro (sshd.service on RHEL, ssh.service on
+#     Debian/Ubuntu) — _COMM=sshd is portable
+#   - sudo is a binary, not a service — _SYSTEMD_UNIT=sudo never matches
 
 [sources.journald_auth]
 type = "journald"
-include_units = ["sshd.service", "sudo", "gdm-password", "login"]
+
+[sources.journald_auth.include_matches]
+_COMM = ["sshd", "sudo", "su", "login", "passwd"]
 
 # ── Source 2: Docker Events API (container lifecycle events) ─────────────────
 # Streams Docker lifecycle events (oom, die, restart, kill, start) via exec.
