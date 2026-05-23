@@ -45,3 +45,23 @@ have been addressed. See `SOC2_STATUS.md` for per-finding status.
 | `apps/gateway/src/tool-runner.ts` | Tool execution + injection prevention |
 | `docs/soc2/SECURITY_FINDINGS.md` | Full audit findings (19 items) |
 | `apps/web/src/lib/RATE-LIMITING.md` | Rate limiting architecture + config |
+
+## SIEM Telemetry Sources
+
+| Source | Producer | Authentication | Secret |
+|--------|----------|----------------|--------|
+| `host_agent` | Vector container on the Orion host (`deploy/host-agent/vector.toml`) → POST `/api/monitoring/security/webhooks/host-agent` | HMAC-SHA256 over body, 5-min replay window | `SecurityConfig.HOST_AGENT_WEBHOOK_SECRET` |
+| `gateway_audit` | In-process gateway dispatcher (`apps/gateway/src/gateway-audit.ts`) — writes `SecurityEvent` rows directly via the orion audit webhook | HMAC over body | `GATEWAY_AUDIT_SECRET` |
+| `crowdsec` / `wazuh` | External (not deployed yet — Phase 2+) | HMAC per source | Per-source `SecurityConfig` row |
+| `elk` / `ntopng` | Internal pollers (`apps/web/src/jobs/security-poll-*.ts`) | n/a (in-process) | n/a |
+
+### Secret rotation — `HOST_AGENT_WEBHOOK_SECRET`
+
+1. Generate new value: `openssl rand -hex 32`
+2. Update `SecurityConfig` row (`key='HOST_AGENT_WEBHOOK_SECRET'`) with the new value.
+3. Update Vault KV: `vault kv put secret/orion/host-agent webhook_secret=<new>`.
+4. Update `.env` on the Orion host and the env file the vector container reads.
+5. Restart vector: `docker compose restart vector`.
+6. Old secret stops being accepted on next webhook request.
+
+The bootstrap script (`deploy/bootstrap.sh`) generates this on first install and seeds the `SecurityConfig` row; subsequent rotations are manual per the steps above.
