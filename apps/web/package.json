@@ -36,6 +36,7 @@
     "next-auth": "^4.24.13",
     "node-cron": "^4.2.1",
     "otplib": "^13.4.0",
+    "pg": "^8.13.0",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -46,7 +47,6 @@
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^2.5.5",
     "three": "^0.184.0",
-    "pg": "^8.13.0",
     "ws": "^8.18.0",
     "yaml": "^2.9.0",
     "zod": "^3.25.0"
@@ -54,6 +54,7 @@
   "devDependencies": {
     "@types/node": "^22.10.1",
     "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.20.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/ws": "^8.5.13",
