@@ -18,6 +18,7 @@ import { resolveAgentGateway } from './lib/agent-gateway'
 import { getAgentsMd } from './lib/agents-md'
 import { startDream } from './lib/dream'
 import { runCorrelator } from './workers/security-correlator'
+import { runK8sPollerAll } from './jobs/security-poll-k8s'
 
 const POLL_INTERVAL_MS = 15_000
 const MAX_CONCURRENT   = 3
@@ -848,6 +849,13 @@ async function main() {
   // Security correlator — poll for uncorrelated events every 30s
   setInterval(() => {
     runCorrelator().catch(e => err(`Security correlator failed: ${e}`))
+  }, 30_000)
+
+  // K8s events poller — every 30s per the Phase 2 plan. Iterates all
+  // type="cluster" environments via runK8sPollerAll(); a single failed env
+  // doesn't block the others (errors captured per-env in K8sPollResult).
+  setInterval(() => {
+    runK8sPollerAll().catch(e => err(`K8s poller failed: ${e}`))
   }, 30_000)
 }
 
