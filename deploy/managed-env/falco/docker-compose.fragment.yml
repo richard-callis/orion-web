@@ -1,0 +1,60 @@
+# Falco + Falcosidekick fragment for managed Docker environments.
+#
+# How to use:
+#   1. Each managed Docker host has its own docker-compose.yml managed by
+#      Orion's GitOps loop.
+#   2. Orion's environment-registration flow appends this fragment to that
+#      compose file, substituting:
+#        ${ORION_HOST}                  — IP or hostname of the Orion server
+#        ${FALCO_WEBHOOK_SECRET}        — fetched from Vault (mirrored from
+#                                         the Orion host's bootstrap-minted
+#                                         secret per Phase 2 PR7)
+#        ${ENVIRONMENT_ID}              — the managed env's Postgres id
+#   3. Apply: `docker compose up -d falco falcosidekick`
+#
+# Network: this assumes Falcosidekick can reach the Orion webhook over the
+# host's network (HTTPS, via Traefik). For air-gapped envs, route through a
+# tunnel that terminates on the Orion host.
+
+services:
+  falco:
+    image: falcosecurity/falco-no-driver:0.38.2
+    restart: unless-stopped
+    privileged: true
+    pid: host
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock:ro
+      - /dev:/host/dev:ro
+      - /proc:/host/proc:ro
+      - /boot:/host/boot:ro
+      - /lib/modules:/host/lib/modules:ro
+      - /usr:/host/usr:ro
+      - /etc:/host/etc:ro
+    environment:
+      FALCO_GRPC_ENABLED: "true"
+      FALCO_GRPC_BIND_ADDRESS: "0.0.0.0:5060"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  falcosidekick:
+    image: falcosecurity/falcosidekick:2.30.0
+    restart: unless-stopped
+    depends_on:
+      - falco
+    environment:
+      # The Orion webhook URL — typically https://<orion-domain>/api/...
+      # but a plain http: URL works for trusted internal networks.
+      WEBHOOK_ADDRESS: "https://${ORION_HOST}/api/monitoring/security/webhooks/falco"
+      WEBHOOK_CUSTOMHEADERS: "X-Orion-Falco-Signature:${FALCO_WEBHOOK_SECRET}"
+      # CUSTOMFIELDS injects environmentId into every alert's output_fields.
+      # The Orion route reads this to attribute the alert to the right env.
+      CUSTOMFIELDS: "environmentId:${ENVIRONMENT_ID}"
+      WEBHOOK_MINIMUMPRIORITY: "notice"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
