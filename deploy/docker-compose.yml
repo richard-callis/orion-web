@@ -565,6 +565,10 @@ services:
   # This is the shipper described in gigly-sniffing-parasol.md (PR2).
   vector:
     image: timberio/vector:0.39.0-debian
+    # The image's default config path is /etc/vector/vector.yaml, which exists
+    # in the image as a demo-logs generator. Without --config, vector loads
+    # that demo and ships fake events. Point it explicitly at the mounted TOML.
+    command: ["--config", "/etc/vector/vector.toml"]
     restart: unless-stopped
     depends_on:
       orion:
