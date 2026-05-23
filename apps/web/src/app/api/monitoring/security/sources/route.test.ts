@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { computeSourceStatus } from './route'
+import { computeSourceStatus } from '@/lib/security/source-health-utils'
 
 describe('computeSourceStatus', () => {
   const STALE_MS = 60_000 // 1 min for tests
