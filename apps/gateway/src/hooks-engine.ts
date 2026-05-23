@@ -9,7 +9,7 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 
-import { OrionClient } from './orion-client'
+import { OrionClient } from './orion-client.js'
 
 const execFileAsync = promisify(execFile)
 
