@@ -585,7 +585,10 @@ services:
       - /var/log/journal:/var/log/journal:ro
       - vault-audit:/vault/audit:ro
       - ./host-agent/vector.toml:/etc/vector/vector.toml:ro
-      - vector-data:/var/lib/vector
+      # Bind-mount (not a named volume) so bootstrap can chown it to 1000:1000
+      # before vector starts. Named volumes are root-owned by default; vector
+      # runs as 1000:1000 and would otherwise fail to write checkpoints.
+      - ./vector-data:/var/lib/vector
     deploy:
       resources:
         limits:
@@ -605,5 +608,4 @@ volumes:
   redis-sentinel-3-data:
   argocd-server-data:
   argocd-redis-data:
-  vector-data:
   vault-audit:
