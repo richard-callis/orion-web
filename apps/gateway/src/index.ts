@@ -331,13 +331,15 @@ server.setRequestHandler(CallToolRequestSchema, async (req: unknown) => {
       result = await runTool(tool, args as Record<string, unknown>)
     }
     // Audit: fire-and-forget
-    emitGatewayAuditEvent(buildAuditEvent({ toolName: name, result, args, error: false }))
+    const sessionId = (req as any).sessionId ?? (req as any).params?.sessionId ?? 'unknown'
+    emitGatewayAuditEvent(buildAuditEvent({ toolName: name, result, args, error: false, agent: sessionId }))
     return { content: [{ type: 'text', text: result }] }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     // Audit: fire-and-forget (error path too)
     try {
-      emitGatewayAuditEvent(buildAuditEvent({ toolName: name, result: `Error: ${msg}`, args, error: true }))
+      const sessionId = (req as any).sessionId ?? (req as any).params?.sessionId ?? 'unknown'
+      emitGatewayAuditEvent(buildAuditEvent({ toolName: name, result: `Error: ${msg}`, args, error: true, agent: sessionId }))
     } catch { /* ignored */ }
     console.error(`[gateway] Tool ${name} failed:`, msg)
     return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true }
@@ -407,13 +409,15 @@ app.post('/tools/execute', requireAuth, async (req: Request, res: Response) => {
       result = await runTool(tool!, args)
     }
     // Audit: fire-and-forget
-    emitGatewayAuditEvent(buildAuditEvent({ toolName: name, result, args, error: false }))
+    const callerAgent = (req as any).agentId ?? req.body?.agent ?? 'rest-client'
+    emitGatewayAuditEvent(buildAuditEvent({ toolName: name, result, args, error: false, agent: callerAgent }))
     res.json({ result })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     // Audit: fire-and-forget (error path too)
     try {
-      emitGatewayAuditEvent(buildAuditEvent({ toolName: name, result: `Error: ${msg}`, args, error: true }))
+      const callerAgent = (req as any).agentId ?? req.body?.agent ?? 'rest-client'
+      emitGatewayAuditEvent(buildAuditEvent({ toolName: name, result: `Error: ${msg}`, args, error: true, agent: callerAgent }))
     } catch { /* ignored */ }
     res.status(500).json({ error: msg })
   }
