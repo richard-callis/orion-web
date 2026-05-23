@@ -18,7 +18,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { TextEncoder } from 'util'
-import { Client } from 'pg'
+import { Client, type Notification } from 'pg'
 import { type StreamChannel, type NotifyMessage } from '@/lib/security/stream-utils'
 
 export const dynamic = 'force-dynamic'
@@ -86,11 +86,11 @@ export async function GET(request: NextRequest) {
 
       // Listen for NOTIFY messages
       const pgChannel = pgChannelFor(channel)
-      let listener: ((name: string, payload: string) => void) | null = null
+      let listener: ((msg: Notification) => void) | null = null
 
-      const onNotify = (name: string, payload: string) => {
+      const onNotify = (msg: Notification) => {
         // NOTIFY payload format: "<id>:<type>" (e.g. "abc123:created")
-        const [id, type] = payload.split(':')
+        const [id, type] = (msg.payload ?? '').split(':')
         if (!id) return
 
         const frame: NotifyMessage = {
