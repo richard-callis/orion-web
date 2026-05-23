@@ -1,0 +1,60 @@
+# Falco configuration for the Orion host.
+#
+# This is the minimal config — uses Falco's built-in rule set
+# (/etc/falco/falco_rules.yaml inside the container, shipped with the image).
+# Custom rules tuned to Orion workloads (e.g., alert if gateway reads
+# /root/.kube) are out of scope for Phase 2.
+#
+# Output goes to Falcosidekick via gRPC. Falco does NOT POST directly to
+# Orion — Falcosidekick handles header injection (bearer token) and
+# customfields. Body HMAC is NOT used; Falcosidekick can't body-sign.
+
+# ── Rule files ──────────────────────────────────────────────────────────────
+rules_file:
+  - /etc/falco/falco_rules.yaml
+  - /etc/falco/falco_rules.local.yaml
+
+# ── Engine / driver ─────────────────────────────────────────────────────────
+# Modern eBPF (CO-RE) — no kernel module install required.
+engine:
+  kind: modern_ebpf
+  modern_ebpf:
+    cpus_for_each_buffer: 2
+
+# ── Output channels ─────────────────────────────────────────────────────────
+# gRPC: Falcosidekick subscribes to this and forwards to the webhook.
+# stdout: kept enabled for `docker logs deploy-falco-1` debugging.
+grpc:
+  enabled: true
+  bind_address: "0.0.0.0:5060"
+  threadiness: 8
+
+grpc_output:
+  enabled: true
+
+stdout_output:
+  enabled: true
+
+# Disable the file/syslog outputs we don't use — reduces noise + IO.
+file_output:
+  enabled: false
+
+syslog_output:
+  enabled: false
+
+# ── Other ───────────────────────────────────────────────────────────────────
+# Falco's own metrics endpoint — disabled for now; can enable later for
+# Prometheus scrape if needed.
+metrics:
+  enabled: false
+
+# Heartbeat: Falco itself doesn't ship a built-in periodic Heartbeat rule.
+# The isHeartbeat() detector in apps/web/src/lib/security/normalize/falco.ts
+# is forward-compat: if a custom Heartbeat rule is added later (or via
+# Falcosidekick's keepalive feature), it'll be classified as liveness
+# without producing a SecurityEvent. Until then, EnvironmentSourceHealth
+# / SourceHealth.lastSeenAt advances on every real alert and the
+# source-stale check naturally goes stale during quiet periods.
+priority: notice
+buffered_outputs: false
+output_timeout: 2000

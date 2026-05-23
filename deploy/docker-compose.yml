@@ -44,6 +44,10 @@ services:
       ORION_GATEWAY_TOKEN: ${ORION_GATEWAY_TOKEN:-}
       # Shared secret for gateway-to-web security audit channel (PR4)
       GATEWAY_AUDIT_SECRET: ${GATEWAY_AUDIT_SECRET:-}
+      # Shared HMAC secret for Falco webhook ingest (Phase 2 PR6/PR7).
+      # Used by every Falcosidekick instance (Orion host + managed envs) to
+      # sign POSTs to /api/monitoring/security/webhooks/falco.
+      FALCO_WEBHOOK_SECRET: ${FALCO_WEBHOOK_SECRET:-}
       # Audit Log Archival (S3 Export) — SOC2 [L-001]
       AUDIT_EXPORT_S3_BACKEND: ${AUDIT_EXPORT_S3_BACKEND:-minio}
       AUDIT_EXPORT_S3_ENDPOINT: ${AUDIT_EXPORT_S3_ENDPOINT:-http://minio:9000}
@@ -597,6 +601,64 @@ services:
         limits:
           cpus: '0.5'
           memory: 256M
+
+  # ── Falco — runtime security on the Orion host (Phase 2 PR7 amendment) ────
+  # Syscall-level visibility into every container on this host: shells spawned
+  # in containers, sensitive file reads (/etc/shadow), unexpected outbound
+  # network connections, privilege escalation attempts, container escape
+  # attempts. Falco's coverage is strictly larger than `docker events` (which
+  # vector's docker_lifecycle source already provides).
+  #
+  # Uses falco-no-driver image (eBPF-based, no kernel module install needed).
+  # privileged: true is currently required for Falco's syscall capture even
+  # with eBPF — see https://falco.org/docs/getting-started/running/#docker.
+  falco:
+    image: falcosecurity/falco-no-driver:0.38.2
+    restart: unless-stopped
+    privileged: true
+    pid: host
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock:ro
+      - /dev:/host/dev:ro
+      - /proc:/host/proc:ro
+      - /boot:/host/boot:ro
+      - /lib/modules:/host/lib/modules:ro
+      - /usr:/host/usr:ro
+      - /etc:/host/etc:ro
+      - ./host-agent/falco/falco.yaml:/etc/falco/falco.yaml:ro
+    environment:
+      FALCO_GRPC_ENABLED: "true"
+      FALCO_GRPC_BIND_ADDRESS: "0.0.0.0:5060"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # Falcosidekick — forwards Falco alerts to the /webhooks/falco endpoint
+  # with an HMAC-signed body. CUSTOMFIELDS injects environmentId="host" so
+  # the route can attribute alerts to the Orion host (vs a managed env).
+  falcosidekick:
+    image: falcosecurity/falcosidekick:2.30.0
+    restart: unless-stopped
+    depends_on:
+      orion:
+        condition: service_healthy
+      falco:
+        condition: service_started
+    environment:
+      WEBHOOK_ADDRESS: "http://orion:3000/api/monitoring/security/webhooks/falco"
+      WEBHOOK_CUSTOMHEADERS: "X-Orion-Falco-Token:${FALCO_WEBHOOK_SECRET:-}"
+      CUSTOMFIELDS: "environmentId:host"
+      WEBHOOK_MINIMUMPRIORITY: "notice"
+      # Read alerts from Falco's gRPC bridge instead of stdin
+      LISTENADDRESS: "0.0.0.0"
+      LISTENPORT: "2801"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
 
 volumes:
   gitea-data:

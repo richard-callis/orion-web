@@ -1,0 +1,57 @@
+# Helm values for deploying Falco + Falcosidekick into a managed K8s cluster.
+#
+# Install:
+#   helm repo add falcosecurity https://falcosecurity.github.io/charts
+#   helm install falco falcosecurity/falco \
+#     --namespace falco --create-namespace \
+#     -f deploy/managed-env/falco/falco-helm-values.yaml \
+#     --set falcosidekick.config.webhook.address="https://<orion-host>/api/monitoring/security/webhooks/falco" \
+#     --set falcosidekick.config.webhook.customheaders="X-Orion-Falco-Token:<secret>" \
+#     --set falcosidekick.config.customfields="environmentId:<env-id>"
+#
+# The placeholder values below (ORION_HOST, FALCO_WEBHOOK_SECRET, ENVIRONMENT_ID)
+# are filled in by Orion's environment-registration flow before running helm
+# install. They are NOT meant to be edited by hand in the values file.
+
+# Falco DaemonSet — runs on every node so we get syscall visibility into
+# every pod.
+driver:
+  kind: modern_ebpf
+
+falco:
+  rules_file:
+    - /etc/falco/falco_rules.yaml
+    - /etc/falco/falco_rules.local.yaml
+  grpc:
+    enabled: true
+    bind_address: "0.0.0.0:5060"
+  grpc_output:
+    enabled: true
+  json_output: true
+  json_include_output_property: true
+
+# Falcosidekick — Deployment (not DaemonSet) since we only need one
+# forwarder for the whole cluster.
+falcosidekick:
+  enabled: true
+  replicaCount: 1
+  config:
+    debug: false
+    customfields: "environmentId:ENVIRONMENT_ID_PLACEHOLDER"
+    webhook:
+      address: "https://ORION_HOST_PLACEHOLDER/api/monitoring/security/webhooks/falco"
+      customheaders: "X-Orion-Falco-Token:FALCO_WEBHOOK_SECRET_PLACEHOLDER"
+      minimumpriority: "notice"
+      method: "POST"
+    # Disable other outputs we don't use.
+    slack: { webhookurl: "" }
+    pagerduty: { routingkey: "" }
+
+# Restrict pod placement to nodes that can run Falco (eBPF-capable kernels).
+nodeSelector: {}
+tolerations:
+  - effect: NoSchedule
+    operator: Exists
+
+# Default rule severity threshold — match the host falco.yaml.
+priority: notice
