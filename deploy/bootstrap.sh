@@ -156,7 +156,7 @@ GITHUB_ORG="${GITHUB_ORG}" $COMPOSE up -d
 echo ""
 echo "Waiting for ORION to start (up to 30s)..."
 for i in $(seq 1 6); do
-  SETUP_TOKEN=$(GITHUB_ORG="${GITHUB_ORG}" $COMPOSE logs orion 2>&1 | grep "SETUP_TOKEN" | tail -1 | awk '{print $NF}')
+  SETUP_TOKEN=$(GITHUB_ORG="${GITHUB_ORG}" $COMPOSE logs orion 2>&1 | grep "SETUP_TOKEN" | tail -1 | awk '{print $NF}') || true
   [[ -n "$SETUP_TOKEN" ]] && break
   sleep 5
 done
