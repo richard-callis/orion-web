@@ -55,6 +55,7 @@ import { localhostTools } from './builtin-tools/localhost.js'
 import { talosTools } from './builtin-tools/talos.js'
 import { knowledgeGraphTools } from './builtin-tools/knowledge-graph.js'
 import { securityTools } from './builtin-tools/security.js'
+import { trivyTools } from './builtin-tools/trivy.js'
 import { discoveryTools } from './builtin-tools/discovery.js'
 import { ArgoCDWatcher } from './argocd-watcher.js'
 import { IngressWatcher } from './ingress-watcher.js'
@@ -289,6 +290,18 @@ if (GATEWAY_TYPE === 'cluster' && process.env.ENABLE_DOCKER === 'true') register
 
 // Security tools — always available (HTTP-based, call external monitoring)
 registerBuiltins(securityTools)
+
+// Trivy CVE scan tools (Phase 3 PR11). Only registered when trivy is
+// installed in the gateway image — env flag avoids surfacing tools that
+// can't actually run. docker-type gateways get all three (image, k8s, host);
+// cluster-type gateways get image + k8s (no host rootfs from inside a pod).
+if (process.env.ENABLE_TRIVY === 'true') {
+  if (GATEWAY_TYPE === 'cluster') {
+    registerBuiltins(trivyTools.filter((t) => t.name !== 'trivy_scan_host') as any)
+  } else {
+    registerBuiltins(trivyTools as any)
+  }
+}
 
 // ── ORION client (constructed after join so credentials are resolved) ───────────
 
