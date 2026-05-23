@@ -433,6 +433,90 @@ const readToolDefs = ([
     },
   },
 
+  // ── kubectl_get_events (Phase 2 PR8 — K8s event poller source) ─────────────
+  // Called by Orion's security-poll-k8s job every 30s to capture cluster-
+  // level events (CrashLoopBackOff, OOMKilled, ImagePullBackOff, etc.) that
+  // Falco doesn't see because they happen at the control plane, not in pods.
+  //
+  // resourceVersion-based incremental polling: caller passes the last seen
+  // resourceVersion, we return only newer events plus the new high-water
+  // mark. On 410 Gone, the caller does a full resync (empty resourceVersion).
+  //
+  // Per phase2-managed-infra-telemetry.md: NEVER use --since (clock-skew
+  // bug; lastTimestamp double-counts on repeat events; K8s events have 1h
+  // TTL so a full resync is bounded).
+  {
+    name: 'kubectl_get_events',
+    description:
+      'Fetch Kubernetes cluster events (Warning type only) since the given resourceVersion. ' +
+      'Returns { items: Event[], resourceVersion: string }. ' +
+      'On 410 Gone, caller should resync by passing empty resourceVersion.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        resourceVersion: {
+          type: 'string',
+          description:
+            'High-water mark from the previous call. Empty/missing = full resync.',
+        },
+        namespace: {
+          type: 'string',
+          description: 'Optional namespace filter; default --all-namespaces.',
+        },
+      },
+    },
+    async execute(args: Record<string, unknown>) {
+      const rv = typeof args.resourceVersion === 'string' ? args.resourceVersion : ''
+      const ns = typeof args.namespace === 'string' && args.namespace.length > 0
+        ? args.namespace
+        : ''
+
+      const kargs: string[] = ['get', 'events']
+      if (ns) {
+        if (!AGENT_RE.test(ns)) return 'Invalid namespace (alphanumeric/-/_ only)'
+        kargs.push('-n', ns)
+      } else {
+        kargs.push('--all-namespaces')
+      }
+      kargs.push(
+        '-o', 'json',
+        '--field-selector', 'type=Warning'
+      )
+      // resourceVersion is passed to the watch API. For a polled list we
+      // use the resourceVersion query parameter which kube-apiserver honors
+      // as "return events newer than this".
+      if (rv && /^[0-9]+$/.test(rv)) {
+        // Embed in --raw URL to bypass kubectl's lack of a direct flag.
+        // Safe — only digits make it through the regex.
+        kargs.length = 0
+        const path = ns
+          ? `/api/v1/namespaces/${ns}/events?fieldSelector=type=Warning&resourceVersion=${rv}`
+          : `/api/v1/events?fieldSelector=type=Warning&resourceVersion=${rv}`
+        kargs.push('get', '--raw', path)
+      }
+
+      try {
+        const { stdout } = await exec('kubectl', kargs, { timeout: 30_000 })
+        // Validate JSON before returning — kubectl can occasionally emit a
+        // trailing newline + warning to stdout depending on version.
+        const trimmed = stdout.trim()
+        try {
+          JSON.parse(trimmed)
+        } catch {
+          return `kubectl output is not valid JSON (first 200 chars): ${trimmed.slice(0, 200)}`
+        }
+        return trimmed
+      } catch (e: any) {
+        const stderr = sanitizeUpstream(String(e?.stderr ?? e?.message ?? e))
+        // Detect 410 Gone — caller should resync with empty resourceVersion.
+        if (/410|Gone|resource version is too old/i.test(stderr)) {
+          return JSON.stringify({ error: 'gone', message: stderr })
+        }
+        return `kubectl error: ${stderr}`
+      }
+    },
+  },
+
   // ── 10. security_propose_action (Warden policy-gated entry point) ──────────
   // Warden calls this single tool instead of invoking write tools directly.
   // The action-service layer consults the tier matrix, panic mode, and
