@@ -62,8 +62,8 @@ include_containers = ["traefik", "authentik", "authentik-worker"]
 type = "remap"
 inputs = ["journald_auth"]
 source = """
-  msg = .message ?? ""
-  unit = ._SYSTEMD_UNIT ?? "journald"
+  msg = string(.message) ?? ""
+  unit = string(._SYSTEMD_UNIT) ?? "journald"
   if contains(msg, "Failed password") || contains(msg, "Failed keyboard") {
     .subtype = "ssh.failed_password"
   } else if contains(msg, "Invalid user") {
@@ -92,8 +92,8 @@ inputs = ["docker_lifecycle"]
 source = """
   parsed, err = parse_json(.message)
   if err != null { abort }
-  action = parsed.Action ?? "unknown"
-  name = parsed.Actor.Attributes.name ?? "unknown"
+  action = string(parsed.Action) ?? "unknown"
+  name = string(parsed.Actor.Attributes.name) ?? "unknown"
   if action == "oom" {
     .subtype = "container.oom"
     .severity = 30
@@ -124,14 +124,14 @@ inputs = ["vault_audit"]
 source = """
   parsed, err = parse_json(.message)
   if err != null { abort }
-  request = parsed.request ?? {}
-  operation = request.operation ?? "unknown"
-  path = request.path ?? ""
+  request = object(parsed.request) ?? {}
+  operation = string(request.operation) ?? "unknown"
+  path = string(request.path) ?? ""
   if operation == "update" && contains(path, "unseal") {
     .subtype = "vault.unseal"
     .severity = 50
   } else if operation == "update" && path == "sys/token/create" {
-    policies = request.policies ?? []
+    policies = array(request.policies) ?? []
     if includes(policies, "root") {
       .subtype = "vault.token.create.root"
       .severity = 70
@@ -161,8 +161,8 @@ source = """
 type = "remap"
 inputs = ["docker_edge_logs"]
 source = """
-  name = .container_name ?? "edge"
-  msg = .message ?? ""
+  name = string(.container_name) ?? "edge"
+  msg = string(.message) ?? ""
   if contains(name, "authentik") {
     if contains(msg, "denied") || contains(msg, "Forbidden") || contains(msg, "invalid") {
       .subtype = "auth.denied"
@@ -204,9 +204,9 @@ source = """
     "category": .category,
     "subtype": .subtype,
     "severity": .severity,
-    "timestamp": format_timestamp!(.timestamp ?? now(), format: "%+"),
-    "source_file": .source_file ?? "unknown",
-    "raw": .raw ?? ""
+    "timestamp": format_timestamp!(timestamp(.timestamp) ?? now(), format: "%+"),
+    "source_file": string(.source_file) ?? "unknown",
+    "raw": string(.raw) ?? ""
   }
   . = { "events": [event] }
 """
