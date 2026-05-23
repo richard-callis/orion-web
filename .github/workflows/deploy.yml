@@ -30,6 +30,13 @@ concurrency:
   group: deploy-orion
   cancel-in-progress: false
 
+# Deploy needs no GITHUB_TOKEN privileges. It git-fetches via the host's own
+# credentials and pulls images via the host's docker config; the workflow
+# token is not used for either. contents: read is the conventional explicit
+# minimum baseline (equivalent to the default for repos created Feb 2023+).
+permissions:
+  contents: read
+
 jobs:
   deploy:
     # Skip if triggered by a failed upstream build.

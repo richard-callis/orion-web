@@ -12,12 +12,13 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/orion-gateway
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
     runs-on: [self-hosted, linux, x64]
-    permissions:
-      contents: read
-      packages: write
 
     steps:
       - uses: actions/checkout@v4
