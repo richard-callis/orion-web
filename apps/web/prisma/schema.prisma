@@ -17,14 +17,14 @@ model Conversation {
   metadata    Json?
   messages    Message[]
   invocations ClaudeInvocation[]
-  memories    Memory[]           // Persistent key-value facts for this conversation
+  memories    Memory[] // Persistent key-value facts for this conversation
 }
 
 model Message {
   id             String       @id @default(cuid())
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  role           String       // user | assistant | tool_result | system
+  role           String // user | assistant | tool_result | system
   content        String       @db.Text
   model          String?
   inputTokens    Int?
@@ -50,87 +50,88 @@ model ClaudeInvocation {
 // "remember" important details beyond the sliding message history window.
 
 model Memory {
-  id             String   @id @default(cuid())
+  id             String       @id @default(cuid())
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  key            String   // e.g., "user_preference_editor", "project_main_language"
-  value          String   @db.Text
-  context        String?  @db.Text  // When/why this was stored (optional)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  key            String // e.g., "user_preference_editor", "project_main_language"
+  value          String       @db.Text
+  context        String?      @db.Text // When/why this was stored (optional)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   @@unique([conversationId, key])
 }
 
 model Agent {
-  id           String             @id @default(cuid())
-  name         String             @unique
-  type         String             @default("human") // claude | human | custom
-  role         String?
-  description  String?            @db.Text
-  status       String             @default("offline")
-  lastSeen     DateTime?
-  metadata     Json?              // { systemPrompt?: string }
-  novaId       String?            // Reference to the Nova definition this agent was imported from
-  nova         Nova?             @relation(fields: [novaId], references: [id], onDelete: SetNull)
-  messages     AgentMessage[]
-  tasks        Task[]             @relation("AssignedTasks")
-  environments AgentEnvironment[]
-  agentGroups  AgentGroupMember[]
+  id               String                 @id @default(cuid())
+  name             String                 @unique
+  type             String                 @default("human") // claude | human | custom
+  role             String?
+  description      String?                @db.Text
+  status           String                 @default("offline")
+  lastSeen         DateTime?
+  metadata         Json? // { systemPrompt?: string }
+  novaId           String? // Reference to the Nova definition this agent was imported from
+  nova             Nova?                  @relation(fields: [novaId], references: [id], onDelete: SetNull)
+  messages         AgentMessage[]
+  tasks            Task[]                 @relation("AssignedTasks")
+  environments     AgentEnvironment[]
+  agentGroups      AgentGroupMember[]
   toolRestrictions ToolAgentRestriction[]
-  novaDeployments NovaDeployment[]
-  chatRoomMembers ChatRoomMember[]
-  chatMessages    ChatMessage[]
-  profiles        AgentProfile[]
-  knowledge       AgentKnowledge[]
+  novaDeployments  NovaDeployment[]
+  chatRoomMembers  ChatRoomMember[]
+  chatMessages     ChatMessage[]
+  profiles         AgentProfile[]
+  knowledge        AgentKnowledge[]
 }
 
 model Environment {
-  id           String             @id @default(cuid())
-  name         String             @unique
-  type         String             @default("cluster") // "cluster" | "docker"
-  description  String?            @db.Text
-  gatewayUrl     String?
-  gatewayToken   String?            // hashed token for gateway auth
-  gatewayVersion String?            // version reported by the gateway on heartbeat
-  status         String             @default("disconnected") // "connected" | "disconnected" | "error"
-  lastSeen       DateTime?
-  metadata     Json?
-  monitoringConfig Json?   // { stack: 'none' | 'basic' | 'full' }
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
+  id               String    @id @default(cuid())
+  name             String    @unique
+  type             String    @default("cluster") // "cluster" | "docker"
+  description      String?   @db.Text
+  gatewayUrl       String?
+  gatewayToken     String? // hashed token for gateway auth
+  gatewayVersion   String? // version reported by the gateway on heartbeat
+  status           String    @default("disconnected") // "connected" | "disconnected" | "error"
+  lastSeen         DateTime?
+  metadata         Json?
+  monitoringConfig Json? // { stack: 'none' | 'basic' | 'full' }
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   // GitOps fields
-  gitProvider     String?            // "gitea-bundled" | "gitea" | "github" | "gitlab" (inherits global if null)
-  gitOwner        String?            // org/user that owns this env's repo
-  gitRepo         String?            // repo name for this environment
-  repoPath        String?            // ArgoCD-watched sub-directory in the repo, e.g. "deployments"
-  vaultPathPrefix String?            // Vault KV prefix for this env's secrets, e.g. "Talos Cluster" → secret/Talos Cluster/<service>
-  argoCdUrl       String?            // ArgoCD URL (K8s clusters only)
-  policyConfig    Json?              // PolicyConfig: { reviewAll?, overrides? }
-  kubeconfig   String?            @db.Text // base64 kubeconfig (K8s clusters only)
+  gitProvider     String? // "gitea-bundled" | "gitea" | "github" | "gitlab" (inherits global if null)
+  gitOwner        String? // org/user that owns this env's repo
+  gitRepo         String? // repo name for this environment
+  repoPath        String? // ArgoCD-watched sub-directory in the repo, e.g. "deployments"
+  vaultPathPrefix String? // Vault KV prefix for this env's secrets, e.g. "Talos Cluster" → secret/Talos Cluster/<service>
+  argoCdUrl       String? // ArgoCD URL (K8s clusters only)
+  policyConfig    Json? // PolicyConfig: { reviewAll?, overrides? }
+  kubeconfig      String? @db.Text // base64 kubeconfig (K8s clusters only)
 
-  tools         McpTool[]
-  agents        AgentEnvironment[]
-  joinTokens    EnvironmentJoinToken[]
-  gitOpsPRs     GitOpsPR[]
-  toolGroups    ToolGroup[]
-  userTiers     EnvironmentUserTier[]
-  ingressPoints IngressPoint[]
-  coreDnsDomains Domain[]              @relation("DomainCoreDns")
-  novaDeployments NovaDeployment[]
-  managedSecrets   ManagedSecret[]
-  securityEvents   SecurityEvent[]
-  securityConfigs  SecurityConfig[]
-  nebulaInstances  NebulaInstance[]
-  evals            Eval[]
-  agentScores      AgentScore[]
-  incidents        Incident[]
-  actionAudits     ActionAudit[]
-  actionPolicies   ActionPolicy[]
-  correlationRules CorrelationRule[]
-  sourceHealths    SourceHealth[]
-  suppressions     Suppression[]
+  tools                    McpTool[]
+  agents                   AgentEnvironment[]
+  joinTokens               EnvironmentJoinToken[]
+  gitOpsPRs                GitOpsPR[]
+  toolGroups               ToolGroup[]
+  userTiers                EnvironmentUserTier[]
+  ingressPoints            IngressPoint[]
+  coreDnsDomains           Domain[]                  @relation("DomainCoreDns")
+  novaDeployments          NovaDeployment[]
+  managedSecrets           ManagedSecret[]
+  securityEvents           SecurityEvent[]
+  securityConfigs          SecurityConfig[]
+  nebulaInstances          NebulaInstance[]
+  evals                    Eval[]
+  agentScores              AgentScore[]
+  incidents                Incident[]
+  actionAudits             ActionAudit[]
+  actionPolicies           ActionPolicy[]
+  correlationRules         CorrelationRule[]
+  sourceHealths            SourceHealth[]
+  environmentSourceHealths EnvironmentSourceHealth[]
+  suppressions             Suppression[]
 }
 
 /// Tracks every PR opened by the GitOps loop — open, auto-merged, or awaiting review.
@@ -140,8 +141,8 @@ model GitOpsPR {
   environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
   prNumber      Int
   title         String
-  operation     String      // OperationType value
-  decision      String      // "auto" | "review"
+  operation     String // OperationType value
+  decision      String // "auto" | "review"
   status        String      @default("open") // "open" | "merged" | "closed"
   prUrl         String
   reasoning     String?     @db.Text
@@ -159,13 +160,13 @@ model McpTool {
   environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
   name          String
   description   String      @db.Text
-  inputSchema   Json        // JSON Schema { type: "object", properties: {...}, required: [...] }
+  inputSchema   Json // JSON Schema { type: "object", properties: {...}, required: [...] }
   execType      String      @default("builtin") // "builtin" | "shell" | "http"
-  execConfig    Json?       // builtin: { fn: "kubectl_get_pods" } | shell: { command: "..." } | http: { url: "..." }
+  execConfig    Json? // builtin: { fn: "kubectl_get_pods" } | shell: { command: "..." } | http: { url: "..." }
   enabled       Boolean     @default(true)
   builtIn       Boolean     @default(false) // true = shipped with gateway binary
   status        String      @default("active") // "active" | "pending" | "rejected"
-  proposedBy    String?     // conversationId that triggered the proposal
+  proposedBy    String? // conversationId that triggered the proposal
   proposedAt    DateTime?
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
@@ -188,14 +189,14 @@ model AgentEnvironment {
 }
 
 model EnvironmentJoinToken {
-  id            String       @id @default(cuid())
-  token         String       @unique  // mcg_<random> — one-time use
+  id            String      @id @default(cuid())
+  token         String      @unique // mcg_<random> — one-time use
   environmentId String
-  environment   Environment  @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
   usedAt        DateTime?
   expiresAt     DateTime
-  createdAt     DateTime     @default(now())
-  fingerprint   String?      // SHA-256 of the machineId presented at first join — verified on re-join
+  createdAt     DateTime    @default(now())
+  fingerprint   String? // SHA-256 of the machineId presented at first join — verified on re-join
 }
 
 model AgentMessage {
@@ -211,63 +212,63 @@ model AgentMessage {
 }
 
 model Epic {
-  id              String    @id @default(cuid())
-  title           String
-  description     String?   @db.Text
-  plan            String?   @db.Text
-  status          String    @default("active")
-  createdBy       String    @default("admin")
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  planApprovedBy  String?
-  planApprovedAt  DateTime?
-  features        Feature[]
-  chatRooms       ChatRoom[] @relation("EpicChatRooms")
+  id             String     @id @default(cuid())
+  title          String
+  description    String?    @db.Text
+  plan           String?    @db.Text
+  status         String     @default("active")
+  createdBy      String     @default("admin")
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  planApprovedBy String?
+  planApprovedAt DateTime?
+  features       Feature[]
+  chatRooms      ChatRoom[] @relation("EpicChatRooms")
 }
 
 model Feature {
-  id              String   @id @default(cuid())
-  epicId          String
-  epic            Epic     @relation(fields: [epicId], references: [id], onDelete: Cascade)
-  title           String
-  description     String?  @db.Text
-  plan            String?  @db.Text
-  status          String   @default("active")
-  createdBy       String   @default("admin")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  planApprovedBy  String?
-  planApprovedAt  DateTime?
-  tasks           Task[]
-  chatRooms       ChatRoom[] @relation("FeatureChatRooms")
+  id             String     @id @default(cuid())
+  epicId         String
+  epic           Epic       @relation(fields: [epicId], references: [id], onDelete: Cascade)
+  title          String
+  description    String?    @db.Text
+  plan           String?    @db.Text
+  status         String     @default("active")
+  createdBy      String     @default("admin")
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  planApprovedBy String?
+  planApprovedAt DateTime?
+  tasks          Task[]
+  chatRooms      ChatRoom[] @relation("FeatureChatRooms")
 }
 
 model Task {
-  id              String      @id @default(cuid())
-  title           String
-  description     String?     @db.Text
-  plan            String?     @db.Text
-  status          String      @default("pending")
-  priority        String      @default("medium")
-  featureId       String?
-  feature         Feature?    @relation(fields: [featureId], references: [id], onDelete: Cascade)
-  assignedAgent   String?
-  agent           Agent?      @relation("AssignedTasks", fields: [assignedAgent], references: [id])
-  assignedUserId  String?
-  assignedUser    User?       @relation("AssignedUserTasks", fields: [assignedUserId], references: [id], onDelete: SetNull)
-  createdBy       String
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  planProgress    Int?
-  planApprovedBy  String?
-  planApprovedAt  DateTime?
-  retryCount      Int       @default(0)
-  maxRetries      Int       @default(3)
-  nextRetryAt     DateTime?
-  events          TaskEvent[]
-  metadata        Json?
-  chatRooms       ChatRoom[]    @relation("ChatRoomTask")
-  chatMessages    ChatMessage[]
+  id             String        @id @default(cuid())
+  title          String
+  description    String?       @db.Text
+  plan           String?       @db.Text
+  status         String        @default("pending")
+  priority       String        @default("medium")
+  featureId      String?
+  feature        Feature?      @relation(fields: [featureId], references: [id], onDelete: Cascade)
+  assignedAgent  String?
+  agent          Agent?        @relation("AssignedTasks", fields: [assignedAgent], references: [id])
+  assignedUserId String?
+  assignedUser   User?         @relation("AssignedUserTasks", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  createdBy      String
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  planProgress   Int?
+  planApprovedBy String?
+  planApprovedAt DateTime?
+  retryCount     Int           @default(0)
+  maxRetries     Int           @default(3)
+  nextRetryAt    DateTime?
+  events         TaskEvent[]
+  metadata       Json?
+  chatRooms      ChatRoom[]    @relation("ChatRoomTask")
+  chatMessages   ChatMessage[]
 }
 
 model TaskEvent {
@@ -281,15 +282,15 @@ model TaskEvent {
 }
 
 model AuditLog {
-  id          String   @id @default(cuid())
-  userId      String
-  action      String
-  target      String
-  detail      Json?
-  ipAddress   String?  // SOC2: [M-005] Source IP for audit trail
-  userAgent   String?  // SOC2: [M-005] Client user-agent for audit trail
-  createdAt   DateTime @default(now())
-  previousHash String?  // SOC2: [M-005] Hash chain for tamper-evidence
+  id           String   @id @default(cuid())
+  userId       String
+  action       String
+  target       String
+  detail       Json?
+  ipAddress    String? // SOC2: [M-005] Source IP for audit trail
+  userAgent    String? // SOC2: [M-005] Client user-agent for audit trail
+  createdAt    DateTime @default(now())
+  previousHash String? // SOC2: [M-005] Hash chain for tamper-evidence
 
   // SOC2: [M-005, L-001] Indexes for user-specific queries and date range filters
   @@index([userId])
@@ -318,7 +319,7 @@ model SystemPrompt {
   description String?  @db.Text
   category    String   @default("system")
   content     String   @db.Text
-  variables   Json?    // Array<{ name: string; description: string }>
+  variables   Json? // Array<{ name: string; description: string }>
   updatedAt   DateTime @updatedAt
 }
 
@@ -331,7 +332,7 @@ model Note {
   // "note" | "wiki" | "runbook" | "llm-context"
   // llm-context notes are auto-injected into every agent system prompt
   type      String   @default("note")
-  tags      Json?    // string[]
+  tags      Json? // string[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -344,14 +345,14 @@ model Note {
 // Uses pgvector's <-> cosine distance for similarity search.
 
 model NoteEmbedding {
-  noteId      String   @id @default(cuid())
-  note        Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
-  embedding   String   @db.Text  // JSON-encoded vector array: [0.1, -0.3, ...]
-  dimension   Int      // 1536 (OpenAI) or 768 (Ollama nomic)
-  modelRef    String?  // which model generated this embedding (ext:xxx ID)
-  version     Int      @default(1) // bump when re-embedding
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  noteId    String   @id @default(cuid())
+  note      Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  embedding String   @db.Text // JSON-encoded vector array: [0.1, -0.3, ...]
+  dimension Int // 1536 (OpenAI) or 768 (Ollama nomic)
+  modelRef  String? // which model generated this embedding (ext:xxx ID)
+  version   Int      @default(1) // bump when re-embedding
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("note_embeddings")
 }
@@ -364,7 +365,7 @@ model NoteEmbedding {
 model SemanticConnection {
   sourceNoteId String
   targetNoteId String
-  score        Float  // cosine similarity, 0.0-1.0
+  score        Float // cosine similarity, 0.0-1.0
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -374,28 +375,28 @@ model SemanticConnection {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  username      String    @unique
-  email         String    @unique
-  name          String?
-  role          String    @default("user") // "admin" | "user" | "readonly"
-  provider      String    @default("local") // "local" | "authentik" | "oidc"
-  passwordHash  String?
-  externalId    String?
-  active        Boolean   @default(true)
-  lastSeen      DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id           String    @id @default(cuid())
+  username     String    @unique
+  email        String    @unique
+  name         String?
+  role         String    @default("user") // "admin" | "user" | "readonly"
+  provider     String    @default("local") // "local" | "authentik" | "oidc"
+  passwordHash String?
+  externalId   String?
+  active       Boolean   @default(true)
+  lastSeen     DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   // SOC2: [M-002] TOTP multi-factor authentication
-  totpSecret      String?   // Base32 TOTP secret (encrypted at rest)
-  totpEnabled     Boolean   @default(false)
+  totpSecret        String? // Base32 TOTP secret (encrypted at rest)
+  totpEnabled       Boolean   @default(false)
   totpRecoveryCodes String? // JSON array of bcrypt-hashed recovery codes
-  totpEnabledAt   DateTime? // When MFA was enabled (audit trail)
+  totpEnabledAt     DateTime? // When MFA was enabled (audit trail)
 
-  assignedTasks Task[]    @relation("AssignedUserTasks")
-  assignedBugs  Bug[]     @relation("AssignedBugUser")
-  sessions      Session[]
+  assignedTasks    Task[]                @relation("AssignedUserTasks")
+  assignedBugs     Bug[]                 @relation("AssignedBugUser")
+  sessions         Session[]
   environmentTiers EnvironmentUserTier[]
   apiKeys          ApiKey[]
   chatRoomMembers  ChatRoomMember[]
@@ -404,17 +405,18 @@ model User {
 }
 
 model ApiKey {
-  id         String   @id @default(uuid())
+  id         String    @id @default(uuid())
   userId     String
-  hash       String   @unique
+  hash       String    @unique
   hashPrefix String
-  name       String   @default("Default")
+  name       String    @default("Default")
   expiresAt  DateTime?
   lastUsedAt DateTime?
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@map("api_keys")
 }
 
@@ -430,6 +432,7 @@ model VerificationToken {
   identifier String
   token      String   @unique
   expires    DateTime
+
   @@unique([identifier, token])
 }
 
@@ -438,8 +441,8 @@ model Bug {
   title          String
   description    String?  @db.Text
   severity       String   @default("medium") // low | medium | high | critical
-  status         String   @default("open")   // open | triaged | in_progress | resolved | closed
-  area           String?  // component/area e.g. "Traefik", "Auth", "Game Servers"
+  status         String   @default("open") // open | triaged | in_progress | resolved | closed
+  area           String? // component/area e.g. "Traefik", "Auth", "Game Servers"
   reportedBy     String   @default("admin")
   assignedUserId String?
   assignedUser   User?    @relation("AssignedBugUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
@@ -448,13 +451,13 @@ model Bug {
 }
 
 model ExternalModel {
-  id          String   @id @default(cuid())
-  name        String
-  provider    String   // "openai" | "ollama" | "anthropic" | "custom"
-  baseUrl     String
-  apiKey      String?  @db.Text
-  modelId     String
-  enabled     Boolean  @default(true)
+  id            String   @id @default(cuid())
+  name          String
+  provider      String // "openai" | "ollama" | "anthropic" | "custom"
+  baseUrl       String
+  apiKey        String?  @db.Text
+  modelId       String
+  enabled       Boolean  @default(true)
   timeoutSecs   Int      @default(120)
   maxTokens     Int?
   temperature   Float?
@@ -463,7 +466,7 @@ model ExternalModel {
   repeatPenalty Float?
   seed          Int?
   createdAt     DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  updatedAt     DateTime @updatedAt
 }
 
 model OIDCProvider {
@@ -481,16 +484,16 @@ model OIDCProvider {
 // Ungrouped tools = no tier restriction (any user can trigger them via chat).
 
 model ToolGroup {
-  id            String   @id @default(cuid())
+  id            String                 @id @default(cuid())
   name          String
   description   String?
   environmentId String
-  environment   Environment          @relation(fields: [environmentId], references: [id], onDelete: Cascade)
-  minimumTier   String   @default("viewer") // "viewer" | "operator" | "admin"
+  environment   Environment            @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  minimumTier   String                 @default("viewer") // "viewer" | "operator" | "admin"
   tools         ToolGroupTool[]
   agentAccess   AgentGroupToolAccess[]
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
 
   @@unique([environmentId, name])
 }
@@ -500,6 +503,7 @@ model ToolGroupTool {
   toolId      String
   toolGroup   ToolGroup @relation(fields: [toolGroupId], references: [id], onDelete: Cascade)
   tool        McpTool   @relation(fields: [toolId], references: [id], onDelete: Cascade)
+
   @@id([toolGroupId, toolId])
 }
 
@@ -507,12 +511,12 @@ model ToolGroupTool {
 // Global named groups of agents. Agent groups are granted access to tool groups.
 
 model AgentGroup {
-  id          String   @id @default(cuid())
-  name        String   @unique
+  id          String                 @id @default(cuid())
+  name        String                 @unique
   description String?
   members     AgentGroupMember[]
   toolAccess  AgentGroupToolAccess[]
-  createdAt   DateTime @default(now())
+  createdAt   DateTime               @default(now())
 }
 
 model AgentGroupMember {
@@ -520,6 +524,7 @@ model AgentGroupMember {
   agentId      String
   agentGroup   AgentGroup @relation(fields: [agentGroupId], references: [id], onDelete: Cascade)
   agent        Agent      @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
   @@id([agentGroupId, agentId])
 }
 
@@ -528,6 +533,7 @@ model AgentGroupToolAccess {
   toolGroupId  String
   agentGroup   AgentGroup @relation(fields: [agentGroupId], references: [id], onDelete: Cascade)
   toolGroup    ToolGroup  @relation(fields: [toolGroupId], references: [id], onDelete: Cascade)
+
   @@id([agentGroupId, toolGroupId])
 }
 
@@ -540,6 +546,7 @@ model ToolAgentRestriction {
   agentId String
   tool    McpTool @relation(fields: [toolId], references: [id], onDelete: Cascade)
   agent   Agent   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
   @@id([toolId, agentId])
 }
 
@@ -548,12 +555,13 @@ model ToolAgentRestriction {
 // viewer < operator < admin. Admins (User.role=admin) bypass all tier checks.
 
 model EnvironmentUserTier {
-  id            String   @id @default(cuid())
+  id            String      @id @default(cuid())
   userId        String
   environmentId String
-  tier          String   @default("viewer") // "viewer" | "operator" | "admin"
+  tier          String      @default("viewer") // "viewer" | "operator" | "admin"
   user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
   @@unique([userId, environmentId])
 }
 
@@ -562,42 +570,42 @@ model EnvironmentUserTier {
 // Admin approves → one-time grant is created; user retries and it succeeds.
 
 model ToolApprovalRequest {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   conversationId String
   userId         String
   environmentId  String
   toolName       String
-  toolArgs       Json     @default("{}")
+  toolArgs       Json      @default("{}")
   reason         String?
-  status         String   @default("pending") // "pending" | "approved" | "denied"
+  status         String    @default("pending") // "pending" | "approved" | "denied"
   approvedBy     String?
   adminNote      String?
-  createdAt      DateTime @default(now())
+  createdAt      DateTime  @default(now())
   resolvedAt     DateTime?
 }
 
 // One-time execution grant — created when admin approves a ToolApprovalRequest.
 // Consumed when the user retries the same tool call.
 model ToolExecutionGrant {
-  id             String   @id @default(cuid())
-  userId         String
-  environmentId  String
-  toolName       String
-  expiresAt      DateTime
-  usedAt         DateTime?
-  createdAt      DateTime @default(now())
+  id            String    @id @default(cuid())
+  userId        String
+  environmentId String
+  toolName      String
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime  @default(now())
 }
 
 // ─── Ingress Management ───────────────────────────────────────────────────────
 
 model Domain {
   id                   String         @id @default(cuid())
-  name                 String         @unique  // e.g. "khalisio.com"
-  type                 String         @default("public")  // "public" | "internal"
+  name                 String         @unique // e.g. "khalisio.com"
+  type                 String         @default("public") // "public" | "internal"
   notes                String?        @db.Text
   coreDnsEnvironmentId String?
   coreDnsIp            String?
-  coreDnsStatus        String         @default("none")  // "none" | "bootstrapped" | "error"
+  coreDnsStatus        String         @default("none") // "none" | "bootstrapped" | "error"
   coreDnsEnvironment   Environment?   @relation("DomainCoreDns", fields: [coreDnsEnvironmentId], references: [id], onDelete: SetNull)
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
@@ -622,12 +630,12 @@ model IngressPoint {
   domainId      String
   environmentId String?
   name          String
-  type          String              @default("traefik")  // "traefik" | "nginx" | "cilium" | "haproxy" | "cloudflare-tunnel" | "other"
+  type          String              @default("traefik") // "traefik" | "nginx" | "cilium" | "haproxy" | "cloudflare-tunnel" | "other"
   ip            String?
   port          Int                 @default(443)
   certManager   Boolean             @default(true)
   clusterIssuer String?
-  status        String              @default("pending")  // "pending" | "bootstrapped" | "error"
+  status        String              @default("pending") // "pending" | "bootstrapped" | "error"
   comment       String?             @db.Text
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
@@ -641,9 +649,9 @@ model IngressRoute {
   id             String       @id @default(cuid())
   ingressPointId String
   host           String
-  paths          Json         @default("[]")  // [{path: "/", service: "svc-name", port: 80, namespace: "apps"}]
+  paths          Json         @default("[]") // [{path: "/", service: "svc-name", port: 80, namespace: "apps"}]
   tls            Boolean      @default(true)
-  middlewares    String[]     @default([])    // names of IngressMiddleware to apply
+  middlewares    String[]     @default([]) // names of IngressMiddleware to apply
   comment        String?      @db.Text
   enabled        Boolean      @default(true)
   disabledAt     DateTime?
@@ -659,9 +667,9 @@ model IngressRoute {
 
 model BackgroundJob {
   id            String    @id
-  type          String    // 'storage-bootstrap' | 'ingress-bootstrap'
+  type          String // 'storage-bootstrap' | 'ingress-bootstrap'
   title         String
-  status        String    @default("queued")   // queued | running | completed | failed
+  status        String    @default("queued") // queued | running | completed | failed
   logs          String[]  @default([])
   environmentId String?
   metadata      Json?
@@ -674,9 +682,9 @@ model BackgroundJob {
 model IngressMiddleware {
   id             String       @id @default(cuid())
   ingressPointId String
-  name           String       // e.g. "crowdsec-bouncer", "authentik-forward-auth"
-  type           String       // "crowdsec" | "forward-auth" | "rate-limit" | "basic-auth" | "headers" | "custom"
-  config         Json         @default("{}")  // provider URL, secret ref, namespace, etc.
+  name           String // e.g. "crowdsec-bouncer", "authentik-forward-auth"
+  type           String // "crowdsec" | "forward-auth" | "rate-limit" | "basic-auth" | "headers" | "custom"
+  config         Json         @default("{}") // provider URL, secret ref, namespace, etc.
   enabled        Boolean      @default(true)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
@@ -694,39 +702,39 @@ model IngressMiddleware {
 // or created by users. They are "imported" to create instances.
 
 model Nova {
-  id          String             @id @default(cuid())
-  name        String             @unique  // e.g. "cluster-monitor", "grafana", "excalidraw"
+  id          String   @id @default(cuid())
+  name        String   @unique // e.g. "cluster-monitor", "grafana", "excalidraw"
   displayName String
-  description String?            @db.Text
-  category    String             @default("Other")  // Identity | Storage | Monitoring | DevTools | Other | Agent
-  version     String             @default("1.0.0")  // version of the nova definition
-  source      String             @default("bundled")  // bundled | remote | user-created
-  config      Json               // Full NovaConfig: { type, name, displayName, helm?, overlaySecret?, deployments?, waitForReady?, cleanup?, manifests?, rawValues?, systemPrompt?, contextConfig? }
-  tags        String[]           @default([])  // ["collaboration", "whiteboard", "monitoring"]
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
+  description String?  @db.Text
+  category    String   @default("Other") // Identity | Storage | Monitoring | DevTools | Other | Agent
+  version     String   @default("1.0.0") // version of the nova definition
+  source      String   @default("bundled") // bundled | remote | user-created
+  config      Json // Full NovaConfig: { type, name, displayName, helm?, overlaySecret?, deployments?, waitForReady?, cleanup?, manifests?, rawValues?, systemPrompt?, contextConfig? }
+  tags        String[] @default([]) // ["collaboration", "whiteboard", "monitoring"]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  deployments  NovaDeployment[]
-  revisions    NovaRevision[]
-  agents       Agent[]
+  deployments NovaDeployment[]
+  revisions   NovaRevision[]
+  agents      Agent[]
 
   @@map("nova")
 }
 
 model NovaDeployment {
-  id             String   @id @default(cuid())
-  novaId         String
-  nova           Nova     @relation(fields: [novaId], references: [id], onDelete: Cascade)
-  environmentId  String?
-  environment    Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
-  agentId        String?
-  agent          Agent?   @relation(fields: [agentId], references: [id], onDelete: SetNull)
-  deployedAt     DateTime @default(now())
-  status         String   @default("deployed")  // deployed | degraded | error | upgrading
-  version        String   // version of nova that was deployed
-  metadata       Json?    // runtime info: ingress URLs, namespaces, etc.
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id            String       @id @default(cuid())
+  novaId        String
+  nova          Nova         @relation(fields: [novaId], references: [id], onDelete: Cascade)
+  environmentId String?
+  environment   Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  agentId       String?
+  agent         Agent?       @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  deployedAt    DateTime     @default(now())
+  status        String       @default("deployed") // deployed | degraded | error | upgrading
+  version       String // version of nova that was deployed
+  metadata      Json? // runtime info: ingress URLs, namespaces, etc.
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
   @@unique([novaId, environmentId])
   @@index([novaId])
@@ -737,8 +745,8 @@ model NovaRevision {
   novaId    String
   nova      Nova     @relation(fields: [novaId], references: [id], onDelete: Cascade)
   version   String
-  diff      String   @db.Text   // JSON diff from previous version
-  createdBy String   // "admin" | agentId | "system"
+  diff      String   @db.Text // JSON diff from previous version
+  createdBy String // "admin" | agentId | "system"
   reasoning String?  @db.Text
   createdAt DateTime @default(now())
 
@@ -749,26 +757,26 @@ model NovaRevision {
 // Multi-agent + human group chats tied to tasks/features.
 
 model ChatRoom {
-  id            String      @id @default(cuid())
-  name          String
-  description   String?            @db.Text
+  id          String   @id @default(cuid())
+  name        String
+  description String?  @db.Text
   // "task" | "feature" | "general" | "ops" | "planning" | "direct"
-  type          String             @default("task")
-  taskId        String?
-  task          Task?              @relation("ChatRoomTask", fields: [taskId], references: [id], onDelete: SetNull)
-  featureId     String?
-  feature       Feature?           @relation("FeatureChatRooms", fields: [featureId], references: [id], onDelete: SetNull)
-  epicId        String?
-  epic          Epic?              @relation("EpicChatRooms", fields: [epicId], references: [id], onDelete: SetNull)
-  createdBy     String
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  tokenCount    Int                @default(0)   // rolling prompt_tokens from last LLM turn
-  tokenLimit    Int?                             // override context limit; null = auto-discover from model
+  type        String   @default("task")
+  taskId      String?
+  task        Task?    @relation("ChatRoomTask", fields: [taskId], references: [id], onDelete: SetNull)
+  featureId   String?
+  feature     Feature? @relation("FeatureChatRooms", fields: [featureId], references: [id], onDelete: SetNull)
+  epicId      String?
+  epic        Epic?    @relation("EpicChatRooms", fields: [epicId], references: [id], onDelete: SetNull)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tokenCount  Int      @default(0) // rolling prompt_tokens from last LLM turn
+  tokenLimit  Int? // override context limit; null = auto-discover from model
 
   members       ChatRoomMember[]
   messages      ChatMessage[]
-  metadata      Json?    // { ringLeaderAgentId?: string, knowledgeScope: "global" | "room" | "mixed" }
+  metadata      Json? // { ringLeaderAgentId?: string, knowledgeScope: "global" | "room" | "mixed" }
   roomKnowledge RoomKnowledge[]
   goals         RoomGoal[]
 
@@ -781,10 +789,10 @@ model RoomGoal {
   roomId            String
   room              ChatRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
   text              String    @db.Text
-  status            String    @default("active")  // "active" | "completed" | "abandoned"
+  status            String    @default("active") // "active" | "completed" | "abandoned"
   completionSummary String?   @db.Text
-  startMessageId    String?   // ID of the "goal set" system ChatMessage — for future jump-to
-  setBy             String?   // userId or agentId that created this goal
+  startMessageId    String? // ID of the "goal set" system ChatMessage — for future jump-to
+  setBy             String? // userId or agentId that created this goal
   createdAt         DateTime  @default(now())
   completedAt       DateTime?
 
@@ -794,17 +802,17 @@ model RoomGoal {
 }
 
 model ChatRoomMember {
-  id            String      @id @default(cuid())
-  roomId        String
-  room          ChatRoom    @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  agentId       String?
-  userId        String?
-  role          String      @default("member")  // "lead" | "member" | "readonly"
-  joinedAt      DateTime    @default(now())
-  lastReadAt    DateTime?
+  id         String    @id @default(cuid())
+  roomId     String
+  room       ChatRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  agentId    String?
+  userId     String?
+  role       String    @default("member") // "lead" | "member" | "readonly"
+  joinedAt   DateTime  @default(now())
+  lastReadAt DateTime?
 
-  agent         Agent?      @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  user          User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent Agent? @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  user  User?  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([roomId, agentId])
   @@unique([roomId, userId])
@@ -812,23 +820,23 @@ model ChatRoomMember {
 }
 
 model ChatMessage {
-  id            String      @id @default(cuid())
-  roomId        String
-  room          ChatRoom    @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  agentId       String?
-  userId        String?
-  taskId        String?
-  senderType    String              // "agent" | "human" | "system"
-  content       String          @db.Text
-  attachments   Json?
-  incidentId    String?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
+  id          String   @id @default(cuid())
+  roomId      String
+  room        ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  agentId     String?
+  userId      String?
+  taskId      String?
+  senderType  String // "agent" | "human" | "system"
+  content     String   @db.Text
+  attachments Json?
+  incidentId  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  agent         Agent?      @relation(fields: [agentId], references: [id], onDelete: SetNull)
-  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
-  task          Task?       @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  incident      Incident?  @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  agent    Agent?    @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  user     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  task     Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  incident Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
 
   @@index([roomId, createdAt])
   @@index([roomId, taskId, createdAt])
@@ -843,41 +851,41 @@ model ChatMessage {
 // cluster and what ESO last reported.
 
 model ManagedSecret {
-  id              String      @id @default(cuid())
-  environmentId   String
-  environment     Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  id            String      @id @default(cuid())
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
 
   // Identity
-  name            String      // ExternalSecret CRD name (becomes K8s secret name by default)
-  namespace       String      @default("default")
-  description     String?     @db.Text
+  name        String // ExternalSecret CRD name (becomes K8s secret name by default)
+  namespace   String  @default("default")
+  description String? @db.Text
 
   // External store config
-  secretStore     String      @default("vault-backend")      // SecretStore or ClusterSecretStore name
-  secretStoreKind String      @default("ClusterSecretStore") // "SecretStore" | "ClusterSecretStore"
-  remoteRef       String      // Vault path e.g. "secret/data/myapp/db"
-  targetSecretName String?    // Override K8s secret name (defaults to `name`)
-  refreshInterval String      @default("1h")                 // ESO sync interval
+  secretStore      String  @default("vault-backend") // SecretStore or ClusterSecretStore name
+  secretStoreKind  String  @default("ClusterSecretStore") // "SecretStore" | "ClusterSecretStore"
+  remoteRef        String // Vault path e.g. "secret/data/myapp/db"
+  targetSecretName String? // Override K8s secret name (defaults to `name`)
+  refreshInterval  String  @default("1h") // ESO sync interval
 
   // Key mappings: Array<{ secretKey: string; remoteKey: string }>
   // secretKey   = key in the resulting K8s Secret
   // remoteKey   = key inside the remote secret (Vault field name)
-  dataKeys        Json        @default("[]")
+  dataKeys Json @default("[]")
 
   // Labels/tags for filtering
-  tags            Json        @default("[]")
+  tags Json @default("[]")
 
   // Lifecycle
-  status          String      @default("draft") // "draft" | "applied" | "error"
-  statusMessage   String?     @db.Text
-  appliedAt       DateTime?
+  status        String    @default("draft") // "draft" | "applied" | "error"
+  statusMessage String?   @db.Text
+  appliedAt     DateTime?
 
   // Ownership
-  createdBy       String?
-  creator         User?       @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  createdBy String?
+  creator   User?   @relation(fields: [createdBy], references: [id], onDelete: SetNull)
 
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([environmentId])
   @@map("managed_secrets")
@@ -888,25 +896,26 @@ model ManagedSecret {
 // Deduplicated via `dedupKey`; acknowledged by admins/operators.
 
 model SecurityEvent {
-  id           String   @id @default(uuid())
-  environmentId String?
-  environment  Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
-  type         String   // 'crowdsec_block', 'ntopng_threat', 'wazuh_alert', 'anomaly', 'source_stale'
-  source       String   // 'crowdsec', 'ntopng', 'wazuh', 'elk'
-  severity     Int      // 0-100
-  title        String
-  description  String?  @db.Text
-  rawEvent     Json     // full event payload
-  dedupKey     String   // hash for dedup
-  acknowledged Boolean  @default(false)
+  id             String       @id @default(uuid())
+  environmentId  String?
+  environment    Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  type           String // 'crowdsec_block', 'ntopng_threat', 'wazuh_alert', 'anomaly', 'source_stale'
+  source         String // 'crowdsec', 'ntopng', 'wazuh', 'elk'
+  severity       Int // 0-100
+  title          String
+  description    String?      @db.Text
+  rawEvent       Json // full event payload
+  dedupKey       String // hash for dedup
+  acknowledged   Boolean      @default(false)
   acknowledgedAt DateTime?
   acknowledgedBy String?
-  incidentId   String?  // Linked incident (if correlated)
-  incident     Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
-  firstSeen    DateTime? // When this event was first observed
-  lastSeen     DateTime? // When this event was last observed (updated by dedup)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  incidentId     String? // Linked incident (if correlated)
+  incident       Incident?    @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  firstSeen      DateTime? // When this event was first observed
+  lastSeen       DateTime? // When this event was last observed (updated by dedup)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
   @@index([environmentId, createdAt])
   @@index([environmentId, type, acknowledged])
   @@index([incidentId])
@@ -917,13 +926,14 @@ model SecurityEvent {
 // Wazuh server URL, ntopng credentials, ELK connection string, …).
 
 model SecurityConfig {
-  id          String   @id @default(uuid())
+  id            String       @id @default(uuid())
   environmentId String?
-  environment  Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
-  key         String
-  value       String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  environment   Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  key           String
+  value         String
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
   @@unique([environmentId, key])
 }
 
@@ -932,20 +942,20 @@ model SecurityConfig {
 // State machine: open → triaged → contained → closed.
 
 model Incident {
-  id                 String   @id @default(uuid())
-  environmentId      String?
-  environment        Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
-  status             String   @default("open") // "open" | "triaged" | "contained" | "closed"
-  severity           Int      // 0-100, inherited from highest-severity correlated event
-  rootCauseSummary   String?  @db.Text // Free-text explanation (populated by Warden)
-  attackerKey        String?  // External identifier for the attacker (IP, user, host)
-  hostKey            String?  // Internal identifier for the affected host
-  openedAt           DateTime @default(now())
-  closedAt           DateTime?
-  updatedAt          DateTime @updatedAt
-  events             SecurityEvent[]
-  actionAudits       ActionAudit[]
-  chatMessages       ChatMessage[]
+  id               String          @id @default(uuid())
+  environmentId    String?
+  environment      Environment?    @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  status           String          @default("open") // "open" | "triaged" | "contained" | "closed"
+  severity         Int // 0-100, inherited from highest-severity correlated event
+  rootCauseSummary String?         @db.Text // Free-text explanation (populated by Warden)
+  attackerKey      String? // External identifier for the attacker (IP, user, host)
+  hostKey          String? // Internal identifier for the affected host
+  openedAt         DateTime        @default(now())
+  closedAt         DateTime?
+  updatedAt        DateTime        @updatedAt
+  events           SecurityEvent[]
+  actionAudits     ActionAudit[]
+  chatMessages     ChatMessage[]
 
   @@index([environmentId, status])
   @@index([environmentId, severity])
@@ -956,23 +966,23 @@ model Incident {
 // Written with status='attempting' BEFORE execution (R9).
 
 model ActionAudit {
-  id           String   @id @default(uuid())
+  id            String        @id @default(uuid())
   environmentId String?
-  environment  Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
-  incidentId   String?
-  incident     Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
-  policyId     String?
-  policy       ActionPolicy? @relation(fields: [policyId], references: [id], onDelete: SetNull)
-  actionType   String   // matches ActionPolicy.actionType
-  target       String   // target pattern (IP, CIDR, hostname, etc.)
-  tier         String   // tier at time of decision: "auto" | "approve" | "escalate" | "notify"
-  proposedBy   String   // "warden" | "system" | operator username
-  approvedBy   String?  // operator username who approved; null for auto/notify
-  status       String   // "attempting" | "succeeded" | "failed" | "denied"
-  payload      Json?    // full action request payload
-  result       String?  @db.Text // action outcome or error message
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  environment   Environment?  @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  incidentId    String?
+  incident      Incident?     @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  policyId      String?
+  policy        ActionPolicy? @relation(fields: [policyId], references: [id], onDelete: SetNull)
+  actionType    String // matches ActionPolicy.actionType
+  target        String // target pattern (IP, CIDR, hostname, etc.)
+  tier          String // tier at time of decision: "auto" | "approve" | "escalate" | "notify"
+  proposedBy    String // "warden" | "system" | operator username
+  approvedBy    String? // operator username who approved; null for auto/notify
+  status        String // "attempting" | "succeeded" | "failed" | "denied"
+  payload       Json? // full action request payload
+  result        String?       @db.Text // action outcome or error message
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   @@index([incidentId])
   @@index([status])
@@ -984,16 +994,16 @@ model ActionAudit {
 // The __panic_mode__ row controls global panic-mode behaviour (disabled by default).
 
 model ActionPolicy {
-  id              String   @id @default(uuid())
-  environmentId   String?
-  environment     Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
-  actionType      String   @unique // e.g. "crowdsec_decision_create", "__panic_mode__"
-  defaultTier     String   // "auto" | "approve" | "escalate" | "notify"
-  targetPatterns  Json?    // null or [{ pattern: string; tier: string; operator?: "strict" | "subnet" }]
-  updatedBy       String?  // "system" | operator username
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  auditRows       ActionAudit[]
+  id             String        @id @default(uuid())
+  environmentId  String?
+  environment    Environment?  @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  actionType     String        @unique // e.g. "crowdsec_decision_create", "__panic_mode__"
+  defaultTier    String // "auto" | "approve" | "escalate" | "notify"
+  targetPatterns Json? // null or [{ pattern: string; tier: string; operator?: "strict" | "subnet" }]
+  updatedBy      String? // "system" | operator username
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  auditRows      ActionAudit[]
 
   @@index([actionType])
   @@index([environmentId])
@@ -1004,17 +1014,17 @@ model ActionPolicy {
 // pattern-matching strategy for grouping SecurityEvents into Incidents.
 
 model CorrelationRule {
-  id            String   @id @default(uuid())
+  id            String       @id @default(uuid())
   environmentId String?
   environment   Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
-  name          String   @unique // e.g. "brute_force", "port_scan", "malware"
-  enabled       Boolean  @default(true)
-  ruleType      String   // "threshold" | "pattern" | "malware" | "process"
-  params        Json     // rule-specific params (window, threshold, etc.)
-  severity      Int      // default severity for generated incidents (0-100)
-  window        Int      // time window in seconds for rule evaluation
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  name          String       @unique // e.g. "brute_force", "port_scan", "malware"
+  enabled       Boolean      @default(true)
+  ruleType      String // "threshold" | "pattern" | "malware" | "process"
+  params        Json // rule-specific params (window, threshold, etc.)
+  severity      Int // default severity for generated incidents (0-100)
+  window        Int // time window in seconds for rule evaluation
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
   @@index([enabled])
   @@index([environmentId])
@@ -1025,14 +1035,44 @@ model CorrelationRule {
 // Staleness detected by cron (every 5min) compared to staleAfterMs.
 
 model SourceHealth {
-  id            String   @id @default(uuid())
+  id            String       @id @default(uuid())
   environmentId String?
   environment   Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
-  source        String   @unique // "crowdsec" | "wazuh" | "elk_syslog" | "elk_flow" | "ntopng"
+  source        String       @unique // "crowdsec" | "wazuh" | "elk_syslog" | "elk_flow" | "ntopng"
   lastSeenAt    DateTime?
   lastWatermark DateTime? // highest watermark advanced by poller
-  staleAfterMs  Int      // milliseconds before source is considered stale
+  staleAfterMs  Int // milliseconds before source is considered stale
 
+  @@index([source])
+  @@index([environmentId])
+}
+
+// ── Security: Per-environment source health (Phase 2) ────────────────────────
+// Tracks Falco / K8s-events ingestion health PER managed environment.
+// Separate from SourceHealth (which is keyed by source string only and is
+// used by Phase 1's global/host sources). environmentId is required here —
+// these sources are inherently scoped to a managed env.
+//
+//   source values:
+//     "falco"      — push-based; lastWatermark is null
+//     "k8s_events" — poll-based; lastWatermark holds the K8s resourceVersion
+//
+//   staleAfterMs guidance (per Phase 2 plan):
+//     falco:      300000  (Falco heartbeat rule fires every ~60s, allow 5min)
+//     k8s_events: 120000  (poller runs every 30s, allow 2min)
+
+model EnvironmentSourceHealth {
+  id            String      @id @default(uuid())
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  source        String // "falco" | "k8s_events"
+  lastSeenAt    DateTime?
+  lastWatermark String? // K8s resourceVersion (string) — null for push-based Falco
+  staleAfterMs  Int
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([environmentId, source])
   @@index([source])
   @@index([environmentId])
 }
@@ -1042,14 +1082,14 @@ model SourceHealth {
 // Used to prevent false-positive incidents.
 
 model Suppression {
-  id             String   @id @default(uuid())
-  environmentId  String?
-  environment    Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
-  matchPattern   Json     // { type: "ip" | "cidr" | "host" | "pattern"; value: string }
-  reason         String   @db.Text
-  expiresAt      DateTime? // null = permanent
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id            String       @id @default(uuid())
+  environmentId String?
+  environment   Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  matchPattern  Json // { type: "ip" | "cidr" | "host" | "pattern"; value: string }
+  reason        String       @db.Text
+  expiresAt     DateTime? // null = permanent
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
   @@index([expiresAt])
   @@index([environmentId])
@@ -1061,30 +1101,30 @@ model Suppression {
 
 model AgentProfile {
   /// Each system agent or user-created persistent agent gets one profile.
-  id              String   @id @default(cuid())
-  agentId         String
-  agent           Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  id      String @id @default(cuid())
+  agentId String
+  agent   Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
   /// Machine-readable domain label, e.g. "kubernetes-sre", "database-admin", "networking"
-  domain          String
+  domain String
 
   /// Human-readable description of what this agent handles
-  description     String   @db.Text
+  description String @db.Text
 
   /// Tags derived from agent behavior (e.g. "pod-debugging", "node-management")
-  tags            String[]  @default([])
+  tags String[] @default([])
 
   /// Which environments this agent is active in
   activeEnvironments String[] @default([])
 
   /// Confidence score 0.0-1.0 — updated by Dream Mode based on successful delegations
-  confidence      Float     @default(0.5)
+  confidence Float @default(0.5)
 
   /// Last time Dream Mode verified this agent's domain
-  verifiedAt      DateTime?
+  verifiedAt DateTime?
 
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([agentId])
   @@index([domain])
@@ -1096,17 +1136,17 @@ model AgentProfile {
 // Knowledge entries scoped to a single chat room.
 
 model RoomKnowledge {
-  id            String   @id @default(cuid())
-  roomId        String
-  room          ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  id     String   @id @default(cuid())
+  roomId String
+  room   ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
 
-  title         String
-  content       String   @db.Text
-  type          String   @default("note") // "note" | "runbook" | "context" | "decision"
-  tags          Json?    // string[]
+  title   String
+  content String @db.Text
+  type    String @default("note") // "note" | "runbook" | "context" | "decision"
+  tags    Json? // string[]
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([roomId, title])
   @@index([roomId])
@@ -1119,17 +1159,17 @@ model RoomKnowledge {
 // debugging patterns, and context the agent retains between delegations.
 
 model AgentKnowledge {
-  id            String   @id @default(cuid())
-  agentId       String
-  agent         Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  id      String @id @default(cuid())
+  agentId String
+  agent   Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
-  title         String
-  content       String   @db.Text
-  type          String   @default("note") // "note" | "runbook" | "context" | "lesson"
-  tags          Json?    // string[]
+  title   String
+  content String @db.Text
+  type    String @default("note") // "note" | "runbook" | "context" | "lesson"
+  tags    Json? // string[]
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([agentId, title])
   @@index([agentId])
@@ -1140,52 +1180,52 @@ model AgentKnowledge {
 // ── ORION Hooks, Skills, Evals & Observability (Phase 1) ──────────────────────
 
 model NovaDefinition {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  category    String   // "skill" | "hook"
-  version     String   @default("1.0")
+  id          String           @id @default(cuid())
+  name        String           @unique
+  category    String // "skill" | "hook"
+  version     String           @default("1.0")
   title       String
-  description String   @db.Text
-  spec        String   @db.Text // JSON string
-  metadata    String?  @db.Text // JSON string
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  description String           @db.Text
+  spec        String           @db.Text // JSON string
+  metadata    String?          @db.Text // JSON string
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
   instances   NebulaInstance[]
 
   @@index([category])
 }
 
 model NebulaInstance {
-  id            String             @id @default(cuid())
-  environmentId String
-  environment   Environment        @relation(fields: [environmentId], references: [id], onDelete: Cascade)
-  sourceNovaId  String?
-  novaDefinition NovaDefinition?   @relation(fields: [sourceNovaId], references: [id])
-  name          String
-  category      String             // "skill" | "hook"
-  spec          String             @db.Text
-  isForked      Boolean            @default(false)
-  isInstalled   Boolean            @default(true)
-  minimumTier   String?
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  hookLogs      HookExecutionLog[]
-  skillLogs     SkillExecutionLog[]
+  id             String              @id @default(cuid())
+  environmentId  String
+  environment    Environment         @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  sourceNovaId   String?
+  novaDefinition NovaDefinition?     @relation(fields: [sourceNovaId], references: [id])
+  name           String
+  category       String // "skill" | "hook"
+  spec           String              @db.Text
+  isForked       Boolean             @default(false)
+  isInstalled    Boolean             @default(true)
+  minimumTier    String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  hookLogs       HookExecutionLog[]
+  skillLogs      SkillExecutionLog[]
 
   @@unique([environmentId, name])
   @@index([environmentId, category, isInstalled])
 }
 
 model HookExecutionLog {
-  id           String             @id @default(cuid())
+  id           String         @id @default(cuid())
   nebulaId     String
-  nebula       NebulaInstance     @relation(fields: [nebulaId], references: [id], onDelete: Cascade)
+  nebula       NebulaInstance @relation(fields: [nebulaId], references: [id], onDelete: Cascade)
   triggerEvent String
-  triggerData  String?            @db.Text
+  triggerData  String?        @db.Text
   actionType   String
-  status       String             @default("running")
-  output       String?            @db.Text
-  startedAt    DateTime           @default(now())
+  status       String         @default("running")
+  output       String?        @db.Text
+  startedAt    DateTime       @default(now())
   completedAt  DateTime?
   durationMs   Int?
 
@@ -1194,13 +1234,13 @@ model HookExecutionLog {
 }
 
 model SkillExecutionLog {
-  id             String           @id @default(cuid())
+  id             String         @id @default(cuid())
   nebulaId       String
-  nebula         NebulaInstance   @relation(fields: [nebulaId], references: [id], onDelete: Cascade)
-  source         String           // "chat_match" | "hook_trigger" | "manual"
+  nebula         NebulaInstance @relation(fields: [nebulaId], references: [id], onDelete: Cascade)
+  source         String // "chat_match" | "hook_trigger" | "manual"
   contextId      String?
   matchedPattern String?
-  createdAt      DateTime         @default(now())
+  createdAt      DateTime       @default(now())
 
   @@index([nebulaId, createdAt])
 }
@@ -1210,7 +1250,7 @@ model AgentTrace {
   conversationId   String?
   taskId           String?
   step             Int
-  type             String   // "tool_call" | "tool_result" | "skill_injected" | "hook_triggered" | "text_generation" | "error"
+  type             String // "tool_call" | "tool_result" | "skill_injected" | "hook_triggered" | "text_generation" | "error"
   toolName         String?
   toolArgs         String?  @db.Text
   toolResult       String?  @db.Text
@@ -1222,7 +1262,7 @@ model AgentTrace {
   systemPromptHash String?
   tokensIn         Int?
   tokensOut        Int?
-  costCents        Decimal? @db.Decimal(10,6)
+  costCents        Decimal? @db.Decimal(10, 6)
   createdAt        DateTime @default(now())
 
   @@index([conversationId, step])
@@ -1232,20 +1272,20 @@ model AgentTrace {
 }
 
 model Eval {
-  id            String         @id @default(cuid())
-  environmentId String
-  environment   Environment    @relation(fields: [environmentId], references: [id], onDelete: Cascade)
-  targetType    String         // "conversation" | "task" | "skill" | "hook"
-  targetId      String
-  evalType      String         // "manual" | "auto_rule" | "auto_llm"
-  evaluator     String?
-  rulesetId     String?
-  scores        String         @db.Text // JSON
-  scoreTotal    Float          // 0-100
-  scoreBreakdown String?       @db.Text // JSON
-  feedback      String?        @db.Text
-  evidence      String?        @db.Text // JSON
-  createdAt     DateTime       @default(now())
+  id             String      @id @default(cuid())
+  environmentId  String
+  environment    Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  targetType     String // "conversation" | "task" | "skill" | "hook"
+  targetId       String
+  evalType       String // "manual" | "auto_rule" | "auto_llm"
+  evaluator      String?
+  rulesetId      String?
+  scores         String      @db.Text // JSON
+  scoreTotal     Float // 0-100
+  scoreBreakdown String?     @db.Text // JSON
+  feedback       String?     @db.Text
+  evidence       String?     @db.Text // JSON
+  createdAt      DateTime    @default(now())
 
   @@index([environmentId, targetType, targetId])
   @@index([evalType, createdAt])
@@ -1284,21 +1324,21 @@ model Nebula {
 }
 
 model AgentScore {
-  id            String         @id @default(cuid())
+  id            String      @id @default(cuid())
   environmentId String
-  environment   Environment    @relation(fields: [environmentId], references: [id], onDelete: Cascade)
-  targetType    String         // "conversation" | "task" | "skill" | "hook"
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  targetType    String // "conversation" | "task" | "skill" | "hook"
   targetId      String
-  scoreTotal    Float          // 0-100
-  accuracy      Float          // 0-100
-  completeness  Float?         // 0-100
-  safety        Float          // 0-100
-  efficiency    Float?         // 0-100
-  quality       Float?         // 0-100
-  evalCount     Int            @default(0)
+  scoreTotal    Float // 0-100
+  accuracy      Float // 0-100
+  completeness  Float? // 0-100
+  safety        Float // 0-100
+  efficiency    Float? // 0-100
+  quality       Float? // 0-100
+  evalCount     Int         @default(0)
   lastEvalAt    DateTime?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 
   @@unique([targetType, targetId])
 }
