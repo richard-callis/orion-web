@@ -128,6 +128,20 @@ fi
 # ── Fix coredns dir ownership (ORION runs as uid=1001, needs write access) ────
 chown -R 1001:1001 "$DEPLOY_DIR/coredns" 2>/dev/null || true
 
+# ── Detect docker.sock GID for vector / orion / gateway docker access ─────────
+# The vector container runs as 1000:1000 with group_add to gain access to
+# /var/run/docker.sock. The compose default of 999 is a guess — actual GID
+# varies per host (e.g. Debian ships 988). Write the real value to .env so
+# compose substitutes it correctly on every `up -d`.
+if [[ -S /var/run/docker.sock ]]; then
+  DETECTED_DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+  if ! grep -q "^DOCKER_GID=${DETECTED_DOCKER_GID}$" "$DEPLOY_DIR/.env"; then
+    sed -i '/^DOCKER_GID=/d' "$DEPLOY_DIR/.env"
+    echo "DOCKER_GID=${DETECTED_DOCKER_GID}" >> "$DEPLOY_DIR/.env"
+    echo "Set DOCKER_GID=${DETECTED_DOCKER_GID} (detected from /var/run/docker.sock)."
+  fi
+fi
+
 # ── Validate required vars ────────────────────────────────────────────────────
 source "$DEPLOY_DIR/.env"
 MISSING=()
