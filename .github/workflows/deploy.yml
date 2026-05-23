@@ -47,6 +47,7 @@ jobs:
         run: |
           cd /opt/orion
           git fetch --depth 1 origin main
+          git reset --hard HEAD
           git checkout -B main origin/main
 
       - name: Bootstrap and start stack
