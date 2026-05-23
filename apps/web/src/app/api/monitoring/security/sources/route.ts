@@ -6,31 +6,9 @@
 
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { computeSourceStatus } from '@/lib/security/source-health-utils'
 
 export const dynamic = 'force-dynamic'
-
-/**
- * Compute the source health status from the last-seen timestamp and the
- * configured `staleAfterMs` threshold. Exported so the SIEM Review B3 invariant
- * (the 'down' branch must be reachable) is locked in unit tests.
- *
- * Ladder:
- *   - lastSeenAt missing (0)      → 'down'
- *   - elapsed > staleAfterMs * 2  → 'down'
- *   - elapsed > staleAfterMs      → 'stale'
- *   - otherwise                    → 'healthy'
- */
-export function computeSourceStatus(
-  lastSeenMs: number,
-  nowMs: number,
-  staleAfterMs: number,
-): 'healthy' | 'stale' | 'down' {
-  if (lastSeenMs === 0) return 'down'
-  const elapsed = nowMs - lastSeenMs
-  if (elapsed > staleAfterMs * 2) return 'down'
-  if (elapsed > staleAfterMs) return 'stale'
-  return 'healthy'
-}
 
 export async function GET() {
   const sources = await prisma.sourceHealth.findMany({
