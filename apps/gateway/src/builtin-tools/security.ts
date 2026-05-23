@@ -1,7 +1,7 @@
 import { promisify } from 'util'
 import { execFile } from 'child_process'
-import { redactSensitive } from '../lib/redact'
-import { verifyDecisionToken } from '../lib/decision-token'
+import { redactSensitive } from '../lib/redact.js'
+import { verifyDecisionToken } from '../lib/decision-token.js'
 
 const exec = promisify(execFile)
 
