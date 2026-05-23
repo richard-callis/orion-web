@@ -131,6 +131,7 @@ model Environment {
   correlationRules         CorrelationRule[]
   sourceHealths            SourceHealth[]
   environmentSourceHealths EnvironmentSourceHealth[]
+  vulnerabilityFindings    VulnerabilityFinding[]
   suppressions             Suppression[]
 }
 
@@ -1075,6 +1076,67 @@ model EnvironmentSourceHealth {
   @@unique([environmentId, source])
   @@index([source])
   @@index([environmentId])
+}
+
+// ── Security: Vulnerability findings (Phase 3) ──────────────────────────────
+// Per-CVE-per-target rows produced by Trivy scans. Separate from SecurityEvent
+// because findings carry their own lifecycle (open → fixed/accepted/false_pos)
+// and need structured fields for querying (cvssScore, epssScore, isKev). A
+// SecurityEvent of type 'vuln.new' / 'vuln.escalated' / 'vuln.fixed' is emitted
+// alongside this row when the correlator should react.
+
+enum VulnStatus {
+  open
+  fixed
+  accepted
+  false_positive
+}
+
+model VulnerabilityFinding {
+  id            String      @id @default(cuid())
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
+  // target: identifies what was scanned.
+  //   "image:<repo>:<tag>"   for container images
+  //   "k8s:<ns>/<workload>"  for K8s workload misconfigurations
+  //   "host"                 for Orion host OS packages
+  target         String
+  packageName    String
+  packageVersion String
+  fixedVersion   String?
+
+  cveId           String
+  cvssScore       Float?
+  cvssVector      String?
+  attackVector    String? // NETWORK / ADJACENT / LOCAL / PHYSICAL
+  attackComplexity String?
+
+  epssScore     Float?
+  epssPercentile Float?
+  isKev         Boolean   @default(false)
+  kevDueDate    DateTime?
+
+  severity Int // 0-100, computed via attack-vector formula
+  status   VulnStatus @default(open)
+
+  firstSeenAt DateTime  @default(now())
+  // lastSeenAt is set explicitly by the scanner on each Trivy run that sees
+  // the finding — NOT @updatedAt. With @updatedAt this column would bump on
+  // status flips (open→accepted/false_positive) too, breaking "not seen
+  // for N days → auto-fixed" detection. Operator-driven status changes
+  // must leave lastSeenAt untouched.
+  lastSeenAt  DateTime
+  fixedAt     DateTime?
+
+  rawTrivy Json // full Trivy vulnerability object (for forensics)
+
+  @@unique([environmentId, target, cveId, packageName])
+  @@index([environmentId])
+  @@index([cveId])
+  @@index([isKev])
+  @@index([status])
+  @@index([severity])
 }
 
 // ── Security: Event suppressions ──────────────────────────────────────────────
