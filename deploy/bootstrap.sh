@@ -244,9 +244,24 @@ else
 fi
 
 # ── Start Vector shipper ────────────────────────────────────────────────────
+# Two non-obvious requirements for vector to actually deliver:
+#   1. Its data_dir (/var/lib/vector inside the container) must be writable by
+#      UID 1000. We bind-mount ./vector-data and chown it here. A named volume
+#      would be root-owned and vector would fail with permission denied on
+#      checkpoint writes.
+#   2. The vector.toml config is mounted as a file. Docker pins file bind-mounts
+#      to the host inode at container-create time, so when a deploy rewrites
+#      vector.toml via git checkout, the running container keeps reading the
+#      OLD content. --force-recreate gives the container a fresh inode binding
+#      to the new file. This is why config-only PRs were not landing until
+#      someone manually `docker restart`ed vector.
 echo ""
+echo "Preparing vector data dir..."
+mkdir -p "$DEPLOY_DIR/vector-data"
+chown -R 1000:1000 "$DEPLOY_DIR/vector-data" 2>/dev/null || true
+
 echo "Starting Vector host telemetry shipper..."
-$COMPOSE up -d vector 2>/dev/null || echo "NOTE: Vector service failed to start (check compose logs)."
+$COMPOSE up -d --force-recreate vector 2>/dev/null || echo "NOTE: Vector service failed to start (check compose logs)."
 
 if [[ -n "${SETUP_TOKEN:-}" ]]; then
   echo ""
