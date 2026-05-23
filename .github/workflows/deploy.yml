@@ -16,7 +16,7 @@ name: Deploy ORION
 
 on:
   workflow_run:
-    workflows: ["Build ORION Web", "Build ORION Gateway"]
+    workflows: ["Build ORION Web", "Build ORION Gateway", "Build ORION Vector"]
     types: [completed]
     branches: [main]
   push:
