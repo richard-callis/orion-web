@@ -5,7 +5,7 @@ const nextConfig = {
   optimizeFonts: false,
   experimental: {
     instrumentationHook: true,
-    serverComponentsExternalPackages: ['@kubernetes/client-node', '@prisma/client', 'ws', '@anthropic-ai/claude-code']
+    serverComponentsExternalPackages: ['@kubernetes/client-node', '@prisma/client', 'ws', '@anthropic-ai/claude-code', 'pg']
   },
   env: {
     NEXT_TELEMETRY_DISABLED: '1'
