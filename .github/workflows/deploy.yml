@@ -1,0 +1,73 @@
+name: Deploy ORION
+
+# Single canonical deploy. Fires whenever:
+#   1. Either image-build workflow completes on main (so new app code lands)
+#   2. Any push to main that touches deploy/** (so compose / bootstrap / vector
+#      config changes land even when no app code changed)
+#   3. Manually via workflow_dispatch
+#
+# Concurrency=deploy-orion serializes runs so two near-simultaneous triggers
+# don't race against each other on the host.
+#
+# Bootstrap is idempotent — re-running on every deploy is the design. It
+# generates any missing secrets, enables the Vault file audit device, pulls
+# latest images, and runs `docker compose up -d` which picks up any new
+# services (e.g. vector) added to docker-compose.yml.
+
+on:
+  workflow_run:
+    workflows: ["Build ORION Web", "Build ORION Gateway"]
+    types: [completed]
+    branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-orion
+  cancel-in-progress: false
+
+# Deploy needs no GITHUB_TOKEN privileges. It git-fetches via the host's own
+# credentials and pulls images via the host's docker config; the workflow
+# token is not used for either. contents: read is the conventional explicit
+# minimum baseline (equivalent to the default for repos created Feb 2023+).
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # Skip if triggered by a failed upstream build.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - name: Sync /opt/orion to origin/main
+        run: |
+          cd /opt/orion
+          git fetch --depth 1 origin main
+          git checkout -B main origin/main
+
+      - name: Bootstrap and start stack
+        # bootstrap.sh:
+        #   - generates any missing secrets in deploy/.env (idempotent grep guards)
+        #   - seeds Vault KV + SecurityConfig where applicable
+        #   - enables Vault file audit device
+        #   - docker compose pull + up -d (picks up new services like vector)
+        #   - creates Gitea admin + token if using bundled profile
+        run: |
+          cd /opt/orion/deploy
+          ./bootstrap.sh
+
+      - name: Wait for ORION health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+              echo "ORION is healthy."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "WARNING: health check timed out after 60s — ORION may still be starting"
+          exit 0
