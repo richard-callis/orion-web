@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { prisma } from '@/lib/db'
+import { constantTimeCompare } from '@/lib/security/webhook-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -19,7 +20,7 @@ export const maxDuration = 30
 export async function POST(req: NextRequest) {
   // Auth: verify trusted internal secret
   const secret = req.headers.get('x-gateway-secret')
-  if (secret !== process.env.GATEWAY_AUDIT_SECRET) {
+  if (!constantTimeCompare(secret ?? '', process.env.GATEWAY_AUDIT_SECRET ?? '')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
@@ -70,6 +71,17 @@ export async function POST(req: NextRequest) {
     })
     ids.push(eventId)
   }
+
+  await prisma.sourceHealth.upsert({
+    where: { source: 'gateway_audit' },
+    update: { lastSeenAt: now },
+    create: {
+      source: 'gateway_audit',
+      lastSeenAt: now,
+      lastWatermark: null,
+      staleAfterMs: 3600 * 1000, // 1 hour — gateway_audit only fires on writes
+    },
+  })
 
   return NextResponse.json({ accepted: ids.length, ids })
 }

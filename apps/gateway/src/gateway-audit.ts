@@ -46,7 +46,7 @@ export interface GatewayAuditEvent {
   rawEvent: Record<string, unknown>
 }
 
-const WEBHOOK_URL = process.env.GATEWAY_AUDIT_EVENT_URL ?? '/api/monitoring/security/events'
+const WEBHOOK_URL = process.env.GATEWAY_AUDIT_EVENT_URL ?? 'http://orion:3000/api/monitoring/security/events'
 const WEBHOOK_SECRET = process.env.GATEWAY_AUDIT_SECRET
 const GATEWAY_ID = process.env.ENVIRONMENT_ID || process.env.HOSTNAME || 'unknown'
 
@@ -109,19 +109,21 @@ export function buildAuditEvent({
   args,
   gatewayId,
   error,
+  agent,
 }: {
   toolName: string
   result: string
   args: Record<string, unknown>
   gatewayId?: string
   error?: boolean
+  agent?: string
 }): GatewayAuditEvent {
   return {
     type: 'agent.tool.invoked',
     source: 'gateway_audit',
     severity: getToolSeverity(toolName),
     toolName,
-    agent: 'unknown',
+    agent: agent ?? 'unknown',
     gatewayId,
     title: `Tool ${error ? 'failed' : 'executed'}: ${toolName}`,
     description: error ? `Tool ${toolName} execution failed` : `Tool ${toolName} completed successfully`,
