@@ -1,4 +1,4 @@
-name: Build & Deploy ORION Gateway
+name: Build ORION Gateway
 
 on:
   push:
@@ -11,7 +11,6 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/orion-gateway
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   build:
@@ -34,7 +33,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
-        id: build
         uses: docker/build-push-action@v7
         with:
           context: apps/gateway
@@ -45,14 +43,3 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  deploy:
-    needs: build
-    runs-on: [self-hosted, linux, x64]
-    steps:
-      - name: Deploy Gateway
-        run: |
-          cd /opt/orion/deploy
-          docker compose pull --quiet
-          docker compose up -d --remove-orphans
-          echo "Gateway restarted"

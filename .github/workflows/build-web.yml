@@ -1,4 +1,4 @@
-name: Build & Deploy ORION Web
+name: Build ORION Web
 
 on:
   push:
@@ -11,7 +11,6 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/orion-web
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   build:
@@ -34,7 +33,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
-        id: build
         uses: docker/build-push-action@v7
         with:
           context: apps/web
@@ -45,25 +43,3 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  deploy:
-    needs: build
-    runs-on: [self-hosted, linux, x64]
-    steps:
-      - name: Deploy ORION
-        env:
-          COMPOSE_PROFILES: gitea
-        run: |
-          cd /opt/orion/deploy
-          docker compose pull --quiet
-          docker compose up -d --remove-orphans
-          echo "Waiting for ORION health check..."
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
-              echo "ORION is healthy!"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "WARNING: Health check timed out"
-          exit 0
