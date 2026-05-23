@@ -914,12 +914,21 @@ model SecurityEvent {
   incident       Incident?    @relation(fields: [incidentId], references: [id], onDelete: SetNull)
   firstSeen      DateTime? // When this event was first observed
   lastSeen       DateTime? // When this event was last observed (updated by dedup)
+  // Phase 3 PR13: timestamp the vulnerability scanner sets when it has acted
+  // on a docker.image.pull event (Trivy-scanned the pulled image). NULL =
+  // not yet scanned. Indexed for the 60s event-triggered scan loop.
+  scannedAt      DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
   @@index([environmentId, createdAt])
   @@index([environmentId, type, acknowledged])
   @@index([incidentId])
+  // Drives the event-triggered vuln scan loop in Phase 3 PR13 — partial
+  // index would be ideal (only WHERE scannedAt IS NULL) but Prisma doesn't
+  // emit partial indexes. The full index is small because the planner uses
+  // (type, scannedAt) for the IN+IS NULL lookup. Cheap.
+  @@index([type, scannedAt])
 }
 
 // ── Security: Per-environment configuration ───────────────────────────────────

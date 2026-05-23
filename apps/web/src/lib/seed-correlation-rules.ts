@@ -254,6 +254,52 @@ const DEFAULT_RULES = [
     window: 0,
     enabledByDefault: false,
   },
+
+  // ── Phase 3 PR13 — Vulnerability correlation rules ────────────────────────
+
+  // vuln.kev_critical — any single vuln.new event where the underlying
+  // finding is on CISA's KEV list (isKev=true) AND severity ≥ 80 opens
+  // an Incident immediately. KEV CVEs are actively exploited in the
+  // wild — no aggregation window, no waiting.
+  {
+    name: 'vuln.kev_critical',
+    ruleType: 'pattern',
+    params: {
+      type: 'pattern',
+      regex: '^vuln\\.new$',
+      field: 'type',
+      window: 0, // fire immediately
+      sourceFilter: ['trivy'],
+      minSeverity: 80,
+      rawEventFilter: { isKev: true },
+    },
+    severity: 90,
+    window: 0,
+    enabledByDefault: false,
+  },
+
+  // vuln.epss_storm — ≥3 vuln.new events on same environment within 1 hour
+  // where EPSS > 0.7 (likely-to-be-exploited). Could indicate a supply-chain
+  // event (a popular base image picking up many high-EPSS CVEs at once) or
+  // an env where many services share a vulnerable dependency.
+  {
+    name: 'vuln.epss_storm',
+    ruleType: 'threshold',
+    params: {
+      type: 'threshold',
+      field: 'environmentId',
+      op: 'gte' as const,
+      value: 3,
+      window: 3600, // 1 hour
+      groupBy: ['environmentId'],
+      sourceFilter: ['trivy'],
+      typeFilter: ['vuln.new'],
+      rawEventFilter: { epssThreshold: 0.7 },
+    },
+    severity: 75,
+    window: 3600,
+    enabledByDefault: false,
+  },
 ]
 
 /**
