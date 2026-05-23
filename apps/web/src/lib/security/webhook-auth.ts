@@ -79,7 +79,7 @@ export function verifyWebhookHmac(
  *   to undefined and the fallback was plain `===`, which is bypassable
  *   via a timing oracle. Fixed by routing through Node's `timingSafeEqual`.
  */
-function constantTimeCompare(a: string, b: string): boolean {
+export function constantTimeCompare(a: string, b: string): boolean {
   if (a.length !== b.length) return false
   const bufA = Buffer.from(a, 'utf8')
   const bufB = Buffer.from(b, 'utf8')

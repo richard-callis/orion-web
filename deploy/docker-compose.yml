@@ -42,6 +42,8 @@ services:
       EMBED_TRIGGER_TOKEN: ${EMBED_TRIGGER_TOKEN:-}
       # Service token for gateway↔ORION authentication (SOC2: [AC-001])
       ORION_GATEWAY_TOKEN: ${ORION_GATEWAY_TOKEN:-}
+      # Shared secret for gateway-to-web security audit channel (PR4)
+      GATEWAY_AUDIT_SECRET: ${GATEWAY_AUDIT_SECRET:-}
       # Audit Log Archival (S3 Export) — SOC2 [L-001]
       AUDIT_EXPORT_S3_BACKEND: ${AUDIT_EXPORT_S3_BACKEND:-minio}
       AUDIT_EXPORT_S3_ENDPOINT: ${AUDIT_EXPORT_S3_ENDPOINT:-http://minio:9000}
@@ -107,6 +109,8 @@ services:
       GATEWAY_CREDS_FILE: /gateway-creds/credentials.json
       # Token to authenticate with ORION's API (e.g. for knowledge graph tools)
       ORION_GATEWAY_TOKEN: ${ORION_GATEWAY_TOKEN:-}
+      # Shared secret for gateway-to-web security audit channel (PR4)
+      GATEWAY_AUDIT_SECRET: ${GATEWAY_AUDIT_SECRET:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - gateway-creds:/gateway-creds
