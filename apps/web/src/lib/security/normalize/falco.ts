@@ -126,6 +126,14 @@ export function normalizeFalcoAlert(
       priority: alert.priority,
       output: alert.output,
       output_fields: fields,
+      // Flat aliases at the top of rawEvent so correlation-rule groupBy
+      // paths (which split on '.') can reach these values. The original
+      // `output_fields` keys have literal dots (e.g. "container.image")
+      // which would otherwise be mis-traversed as nested objects.
+      container_image: containerImage,
+      container_name: containerName,
+      proc_name: procName,
+      fd_name: fdName,
       hostname,
       time,
     },

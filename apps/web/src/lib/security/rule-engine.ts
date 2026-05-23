@@ -29,8 +29,35 @@ function envIdFilter(envId: string): string | null {
  * Rule parameter types supported by the correlation engine.
  */
 export type RuleParams =
-  | { type: 'threshold'; field: string; op: 'gte' | 'lte' | 'eq'; value: number; window: number; groupBy: string[]; maxEvents?: number; sourceFilter?: string[] }
-  | { type: 'pattern'; regex: string; field: string; window: number; sourceFilter?: string[]; minSeverity?: number }
+  | {
+      type: 'threshold'
+      field: string
+      op: 'gte' | 'lte' | 'eq'
+      value: number
+      window: number
+      groupBy: string[]
+      maxEvents?: number
+      sourceFilter?: string[]
+      // Phase 2 PR9 additions:
+      // - typeFilter: restrict matched events to specific `type` column values
+      //   (e.g. ['k8s.crash_loop_backoff']). Without this, threshold rules
+      //   count ALL events from the sourceFilter, not just the named type.
+      // - countDistinct: instead of counting events in a group, count the
+      //   distinct values of this field. Used by infra.cross_env_image_anomaly
+      //   to fire on "same image triggering across ≥2 environments."
+      typeFilter?: string[]
+      countDistinct?: string
+    }
+  | {
+      type: 'pattern'
+      regex: string
+      field: string
+      window: number
+      sourceFilter?: string[]
+      minSeverity?: number
+      // Phase 2 PR9 addition — same semantics as threshold.typeFilter.
+      typeFilter?: string[]
+    }
   | { type: 'malware'; ruleLevel: number; field: string }
   | { type: 'process'; commandPattern: string; window: number }
   | { type: 'composite'; rules: RuleParams[]; combine: 'all' | 'any'; window: number }
@@ -323,6 +350,7 @@ async function runThresholdRule(
       environmentId: envIdFilter(envId),
       createdAt: { gte: since },
       ...(params.sourceFilter?.length ? { source: { in: params.sourceFilter } } : {}),
+      ...(params.typeFilter?.length ? { type: { in: params.typeFilter } } : {}),
     },
     orderBy: { createdAt: 'desc' },
   })
@@ -347,7 +375,14 @@ async function runThresholdRule(
   let bestGroup: { key: string; events: typeof events; severity: number } | null = null
 
   for (const [key, group] of grouped) {
-    const count = group.length
+    // If countDistinct is set, count distinct values of that field within
+    // the group rather than the raw group size. Used by infra.cross_env_image_anomaly
+    // ("same image triggering across ≥2 environments"): groupBy is the
+    // shared image, countDistinct is environmentId.
+    const count = params.countDistinct
+      ? new Set(group.map(e => extractGroupValue(e, params.countDistinct!) ?? 'unknown')).size
+      : group.length
+
     if (count < (params.value ?? 5)) continue // threshold not met
 
     // Calculate severity as max of group events
@@ -393,6 +428,7 @@ async function runPatternRule(
       createdAt: { gte: since },
       ...(params.sourceFilter?.length ? { source: { in: params.sourceFilter } } : {}),
       ...(params.minSeverity != null ? { severity: { gte: params.minSeverity } } : {}),
+      ...(params.typeFilter?.length ? { type: { in: params.typeFilter } } : {}),
     },
     orderBy: { createdAt: 'desc' },
   })
