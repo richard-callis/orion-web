@@ -65,7 +65,7 @@ export async function runDailyScan(): Promise<ScanResult[]> {
 
   for (const env of envs) {
     if (!env.gatewayUrl) continue
-    const client = new GatewayClient(env.gatewayUrl, env.gatewayToken ?? null)
+    const client = new GatewayClient(env.gatewayUrl, env.gatewayToken ?? '')
 
     // List running images via the existing kubectl/docker tools.
     let images: string[] = []
@@ -98,7 +98,7 @@ export async function runDailyScan(): Promise<ScanResult[]> {
     select: { id: true, gatewayUrl: true, gatewayToken: true },
   })
   if (localhost?.gatewayUrl) {
-    const client = new GatewayClient(localhost.gatewayUrl, localhost.gatewayToken ?? null)
+    const client = new GatewayClient(localhost.gatewayUrl, localhost.gatewayToken ?? '')
     results.push(await scanHost(client, localhost.id, kev))
   }
 
@@ -153,7 +153,7 @@ export async function runEventTriggeredScan(): Promise<ScanResult[]> {
     })
     if (!env?.gatewayUrl) continue
 
-    const client = new GatewayClient(env.gatewayUrl, env.gatewayToken ?? null)
+    const client = new GatewayClient(env.gatewayUrl, env.gatewayToken ?? '')
     const result = await scanImage(client, env.id, image, kev)
     results.push(result)
 
