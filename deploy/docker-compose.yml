@@ -69,6 +69,8 @@ services:
       ORION_CLAUDE_URL: ${ORION_CLAUDE_URL:-http://orion-claude:3100}
       # MCP service token — shared with orion-claude so Claude can call ORION tools via MCP
       ORION_MCP_TOKEN: ${ORION_MCP_TOKEN:-}
+      # Host-agent webhook secret — must match the value passed to the vector service
+      HOST_AGENT_WEBHOOK_SECRET: ${HOST_AGENT_WEBHOOK_SECRET:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
