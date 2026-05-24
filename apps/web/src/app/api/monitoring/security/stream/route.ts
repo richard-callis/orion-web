@@ -47,8 +47,8 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  // Validate PostgreSQL connection
-  if (!process.env.DATABASE_URL?.includes('postgres://')) {
+  // Validate PostgreSQL connection (matches both postgres:// and postgresql://)
+  if (!process.env.DATABASE_URL?.startsWith('postgres')) {
     return NextResponse.json(
       { error: 'LISTEN/NOTIFY requires PostgreSQL' },
       { status: 500 }

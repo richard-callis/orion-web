@@ -19,6 +19,8 @@ import { getAgentsMd } from './lib/agents-md'
 import { startDream } from './lib/dream'
 import { runCorrelator } from './workers/security-correlator'
 import { runK8sPollerAll } from './jobs/security-poll-k8s'
+import { runElkPollerAll } from './jobs/security-poll-elk'
+import { runNtopngPollerAll } from './jobs/security-poll-ntopng'
 import { runDailyScan, runEventTriggeredScan } from './jobs/security-scan-vulns'
 
 const POLL_INTERVAL_MS = 15_000
@@ -857,6 +859,16 @@ async function main() {
   // doesn't block the others (errors captured per-env in K8sPollResult).
   setInterval(() => {
     runK8sPollerAll().catch(e => err(`K8s poller failed: ${e}`))
+  }, 30_000)
+
+  // ELK poller — every 15s. No-ops if ELK_URL is not set.
+  setInterval(() => {
+    runElkPollerAll().catch(e => err(`ELK poller failed: ${e}`))
+  }, 15_000)
+
+  // ntopng poller — every 30s. No-ops if NTOPNG_URL is not set.
+  setInterval(() => {
+    runNtopngPollerAll().catch(e => err(`ntopng poller failed: ${e}`))
   }, 30_000)
 
   // ── Phase 3: vulnerability scanning ───────────────────────────────────────
