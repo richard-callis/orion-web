@@ -27,7 +27,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import {
-  verifyWebhookHmac,
+  constantTimeCompare,
   isWithinReplayWindow,
   isLoopbackWebhookRequest,
   warnMissingWebhookSecret,
@@ -74,7 +74,9 @@ export async function POST(req: NextRequest) {
     req.headers.get('X-Signature')
   const timestamp = req.headers.get('X-Timestamp') || req.headers.get('x-timestamp')
 
-  // 2. Verify HMAC
+  // 2. Verify token — Falcosidekick sends the raw secret as a custom header
+  // (it cannot compute HMAC). We do a constant-time equality check instead of
+  // HMAC to avoid timing oracles while matching what Falcosidekick actually sends.
   if (!process.env.FALCO_WEBHOOK_SECRET) {
     const refuse = warnMissingWebhookSecret('falco', 'FALCO_WEBHOOK_SECRET')
     if (refuse) {
@@ -87,8 +89,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Webhook secret not configured' }, { status: 403 })
     }
   } else {
-    const secret = process.env.FALCO_WEBHOOK_SECRET
-    if (!verifyWebhookHmac(secret, bodyText, signature)) {
+    if (!constantTimeCompare(signature ?? '', process.env.FALCO_WEBHOOK_SECRET)) {
       return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
     }
   }
@@ -146,23 +147,32 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Resolve 'host' to the real localhost environment UUID.
+  // EnvironmentSourceHealth.environmentId is a non-nullable FK — the literal
+  // string 'host' would cause a constraint violation.
+  const sourceHealthEnvId: string | null = environmentId === 'host'
+    ? (await prisma.environment.findFirst({ where: { type: 'localhost' }, select: { id: true } }))?.id ?? null
+    : environmentId
+
   const now = new Date()
 
   // 7. Heartbeat path — bump lastSeenAt only, no SecurityEvent
   if (isHeartbeat(alert)) {
-    await prisma.environmentSourceHealth.upsert({
-      where: {
-        environmentId_source: { environmentId, source: FALCO_SOURCE },
-      },
-      update: { lastSeenAt: now },
-      create: {
-        environmentId,
-        source: FALCO_SOURCE,
-        lastSeenAt: now,
-        lastWatermark: null,
-        staleAfterMs: FALCO_STALE_AFTER_MS,
-      },
-    })
+    if (sourceHealthEnvId) {
+      await prisma.environmentSourceHealth.upsert({
+        where: {
+          environmentId_source: { environmentId: sourceHealthEnvId, source: FALCO_SOURCE },
+        },
+        update: { lastSeenAt: now },
+        create: {
+          environmentId: sourceHealthEnvId,
+          source: FALCO_SOURCE,
+          lastSeenAt: now,
+          lastWatermark: null,
+          staleAfterMs: FALCO_STALE_AFTER_MS,
+        },
+      })
+    }
     return NextResponse.json({ received: true, kind: 'heartbeat', environmentId })
   }
 
@@ -201,20 +211,22 @@ export async function POST(req: NextRequest) {
     inserted = true
   }
 
-  // 9. Bump EnvironmentSourceHealth — both heartbeat and real alerts count
-  await prisma.environmentSourceHealth.upsert({
-    where: {
-      environmentId_source: { environmentId, source: FALCO_SOURCE },
-    },
-    update: { lastSeenAt: now },
-    create: {
-      environmentId,
-      source: FALCO_SOURCE,
-      lastSeenAt: now,
-      lastWatermark: null,
-      staleAfterMs: FALCO_STALE_AFTER_MS,
-    },
-  })
+  // 9. Bump EnvironmentSourceHealth — skip if we couldn't resolve a real env UUID
+  if (sourceHealthEnvId) {
+    await prisma.environmentSourceHealth.upsert({
+      where: {
+        environmentId_source: { environmentId: sourceHealthEnvId, source: FALCO_SOURCE },
+      },
+      update: { lastSeenAt: now },
+      create: {
+        environmentId: sourceHealthEnvId,
+        source: FALCO_SOURCE,
+        lastSeenAt: now,
+        lastWatermark: null,
+        staleAfterMs: FALCO_STALE_AFTER_MS,
+      },
+    })
+  }
 
   return NextResponse.json({
     received: true,
