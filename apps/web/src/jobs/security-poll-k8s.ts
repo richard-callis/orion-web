@@ -74,7 +74,7 @@ export async function runK8sPoller(env: {
     return result
   }
 
-  const client = new GatewayClient(env.gatewayUrl, env.gatewayToken ?? null)
+  const client = new GatewayClient(env.gatewayUrl, env.gatewayToken ?? '')
 
   // 1. Get the last watermark
   const health = await prisma.environmentSourceHealth.findUnique({
