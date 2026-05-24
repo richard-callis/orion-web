@@ -8,19 +8,12 @@
 #
 # This image adds *just the docker client* (not the daemon). The container
 # uses the host's /var/run/docker.sock for daemon communication.
+#
+# We copy the docker binary from the official docker:cli image rather than
+# fetching a pinned tar URL, which avoids 404s as old versions are removed
+# from the download server.
+FROM docker:27-cli AS docker-cli
+
 FROM timberio/vector:0.39.0-debian
-
-USER root
-
-ARG DOCKER_VERSION=26.1.5
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl && \
-    curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz" \
-        | tar -xz --strip-components=1 -C /usr/local/bin docker/docker && \
-    chmod 755 /usr/local/bin/docker && \
-    apt-get purge -y curl && \
-    apt-get autoremove -y && \
-    rm -rf /var/lib/apt/lists/*
-
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 USER vector
