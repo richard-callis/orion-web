@@ -18,6 +18,8 @@ import { resolveAgentGateway } from './lib/agent-gateway'
 import { getAgentsMd } from './lib/agents-md'
 import { startDream } from './lib/dream'
 import { runCorrelator } from './workers/security-correlator'
+import { runK8sPollerAll } from './jobs/security-poll-k8s'
+import { runDailyScan, runEventTriggeredScan } from './jobs/security-scan-vulns'
 
 const POLL_INTERVAL_MS = 15_000
 const MAX_CONCURRENT   = 3
@@ -849,6 +851,34 @@ async function main() {
   setInterval(() => {
     runCorrelator().catch(e => err(`Security correlator failed: ${e}`))
   }, 30_000)
+
+  // K8s events poller — every 30s per the Phase 2 plan. Iterates all
+  // type="cluster" environments via runK8sPollerAll(); a single failed env
+  // doesn't block the others (errors captured per-env in K8sPollResult).
+  setInterval(() => {
+    runK8sPollerAll().catch(e => err(`K8s poller failed: ${e}`))
+  }, 30_000)
+
+  // ── Phase 3: vulnerability scanning ───────────────────────────────────────
+  // Event-triggered: every 60s, pick up new docker.image.pull events and
+  // scan the pulled image. Separate from the 15s main loop — Trivy scans
+  // are heavy and we don't want them to starve agent task polling.
+  setInterval(() => {
+    runEventTriggeredScan().catch(e => err(`Event-triggered vuln scan failed: ${e}`))
+  }, 60_000)
+
+  // Daily scheduled scan — once a day at 02:00 server time. Implemented as
+  // a guard inside an hourly tick so we don't need a separate scheduler
+  // library and the timing self-heals across worker restarts.
+  let lastDailyScanDate: string | null = null
+  setInterval(() => {
+    const now = new Date()
+    const dateKey = now.toISOString().slice(0, 10)
+    if (now.getHours() === 2 && lastDailyScanDate !== dateKey) {
+      lastDailyScanDate = dateKey
+      runDailyScan().catch(e => err(`Daily vuln scan failed: ${e}`))
+    }
+  }, 60 * 60 * 1000)
 }
 
 main().catch(e => { err(`Fatal: ${e}`); process.exit(1) })

@@ -101,6 +101,44 @@ if ! grep -q "^GATEWAY_AUDIT_SECRET=" "$DEPLOY_DIR/.env" || \
   echo "Generated GATEWAY_AUDIT_SECRET."
 fi
 
+# ── Seed NVD_API_KEY into SecurityConfig (Phase 3 PR12) ────────────────────
+# CVE enrichment uses the NIST NVD API. Without a key: 5 req/30s; with: 50.
+# The env var is optional — if absent, enrichNvd() falls back to anon mode.
+# We mirror it to SecurityConfig so the app can read it without restart on
+# rotation.
+if [[ -n "${NVD_API_KEY:-}" ]]; then
+  $COMPOSE exec -T orion npx tsx -e "
+const { prisma } = require('./src/lib/db');
+prisma.securityConfig.upsert({
+  where: { key: 'NVD_API_KEY' },
+  update: { value: process.env.NVD_API_KEY },
+  create: { key: 'NVD_API_KEY', value: process.env.NVD_API_KEY }
+}).then(() => process.exit(0)).catch(() => process.exit(1));
+" 2>/dev/null || echo "NOTE: Could not seed NVD_API_KEY in SecurityConfig (app may not be running yet)."
+  if [[ -n "${VAULT_TOKEN:-}" ]]; then
+    $COMPOSE exec -T vault vault kv put secret/orion/nvd api_key="${NVD_API_KEY}" \
+      >/dev/null 2>&1 || echo "NOTE: Could not mirror NVD_API_KEY to Vault."
+  fi
+fi
+
+# ── Auto-generate FALCO_WEBHOOK_SECRET if missing (Phase 2 PR7) ────────────
+# Shared HMAC secret between every Falcosidekick instance (Orion host +
+# managed envs) and the /webhooks/falco route. Mirrored to Vault KV so
+# managed-env deployments can fetch it via the same vault-proxy that
+# already serves managed secrets.
+if ! grep -q "^FALCO_WEBHOOK_SECRET=" "$DEPLOY_DIR/.env" || \
+   grep -q "^FALCO_WEBHOOK_SECRET=$" "$DEPLOY_DIR/.env"; then
+  TOKEN=$(openssl rand -hex 32)
+  sed -i '/^FALCO_WEBHOOK_SECRET=/d' "$DEPLOY_DIR/.env"
+  echo "FALCO_WEBHOOK_SECRET=${TOKEN}" >> "$DEPLOY_DIR/.env"
+  echo "Generated FALCO_WEBHOOK_SECRET."
+  if [[ -n "${VAULT_TOKEN:-}" ]]; then
+    $COMPOSE exec -T vault vault kv put secret/orion/falco \
+      webhook_secret="${TOKEN}" >/dev/null 2>&1 || \
+      echo "NOTE: Could not write Falco secret to Vault (Vault may not be unsealed yet)."
+  fi
+fi
+
 # ── Auto-generate NEXTAUTH_SECRET if placeholder ──────────────────────────────
 if grep -q "^NEXTAUTH_SECRET=change-me" "$DEPLOY_DIR/.env"; then
   SECRET=$(openssl rand -base64 32)

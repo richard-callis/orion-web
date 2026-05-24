@@ -131,6 +131,7 @@ model Environment {
   correlationRules         CorrelationRule[]
   sourceHealths            SourceHealth[]
   environmentSourceHealths EnvironmentSourceHealth[]
+  vulnerabilityFindings    VulnerabilityFinding[]
   suppressions             Suppression[]
 }
 
@@ -913,12 +914,21 @@ model SecurityEvent {
   incident       Incident?    @relation(fields: [incidentId], references: [id], onDelete: SetNull)
   firstSeen      DateTime? // When this event was first observed
   lastSeen       DateTime? // When this event was last observed (updated by dedup)
+  // Phase 3 PR13: timestamp the vulnerability scanner sets when it has acted
+  // on a docker.image.pull event (Trivy-scanned the pulled image). NULL =
+  // not yet scanned. Indexed for the 60s event-triggered scan loop.
+  scannedAt      DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
   @@index([environmentId, createdAt])
   @@index([environmentId, type, acknowledged])
   @@index([incidentId])
+  // Drives the event-triggered vuln scan loop in Phase 3 PR13 — partial
+  // index would be ideal (only WHERE scannedAt IS NULL) but Prisma doesn't
+  // emit partial indexes. The full index is small because the planner uses
+  // (type, scannedAt) for the IN+IS NULL lookup. Cheap.
+  @@index([type, scannedAt])
 }
 
 // ── Security: Per-environment configuration ───────────────────────────────────
@@ -1075,6 +1085,62 @@ model EnvironmentSourceHealth {
   @@unique([environmentId, source])
   @@index([source])
   @@index([environmentId])
+}
+
+// ── Security: Vulnerability findings (Phase 3) ──────────────────────────────
+// Per-CVE-per-target rows produced by Trivy scans. Separate from SecurityEvent
+// because findings carry their own lifecycle (open → fixed/accepted/false_pos)
+// and need structured fields for querying (cvssScore, epssScore, isKev). A
+// SecurityEvent of type 'vuln.new' / 'vuln.escalated' / 'vuln.fixed' is emitted
+// alongside this row when the correlator should react.
+
+enum VulnStatus {
+  open
+  fixed
+  accepted
+  false_positive
+}
+
+model VulnerabilityFinding {
+  id            String      @id @default(cuid())
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
+  // target: identifies what was scanned.
+  //   "image:<repo>:<tag>"   for container images
+  //   "k8s:<ns>/<workload>"  for K8s workload misconfigurations
+  //   "host"                 for Orion host OS packages
+  target         String
+  packageName    String
+  packageVersion String
+  fixedVersion   String?
+
+  cveId           String
+  cvssScore       Float?
+  cvssVector      String?
+  attackVector    String? // NETWORK / ADJACENT / LOCAL / PHYSICAL
+  attackComplexity String?
+
+  epssScore     Float?
+  epssPercentile Float?
+  isKev         Boolean   @default(false)
+  kevDueDate    DateTime?
+
+  severity Int // 0-100, computed via attack-vector formula
+  status   VulnStatus @default(open)
+
+  firstSeenAt DateTime  @default(now())
+  lastSeenAt  DateTime  @updatedAt
+  fixedAt     DateTime?
+
+  rawTrivy Json // full Trivy vulnerability object (for forensics)
+
+  @@unique([environmentId, target, cveId, packageName])
+  @@index([environmentId])
+  @@index([cveId])
+  @@index([isKev])
+  @@index([status])
+  @@index([severity])
 }
 
 // ── Security: Event suppressions ──────────────────────────────────────────────
