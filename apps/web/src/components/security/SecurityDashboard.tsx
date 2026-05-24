@@ -103,7 +103,7 @@ export default function SecurityDashboard() {
   ]
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 p-4 lg:p-6">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold text-text-primary flex items-center gap-2">
           <Shield size={20} className="text-accent" />

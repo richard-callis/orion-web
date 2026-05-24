@@ -188,6 +188,17 @@ async function queryElk(since: Date, index: string, size: number): Promise<ElkEv
   return hits.map((h: { _source: ElkEvent }) => h._source).filter(Boolean)
 }
 
+// ── Runner for all eligible environments ──────────────────────────────────────
+
+export async function runElkPollerAll(): Promise<PollResult[]> {
+  if (!ELK_URL) return []
+  const envs = await prisma.environment.findMany({
+    where: { type: 'localhost', status: 'connected' },
+    select: { id: true },
+  })
+  return Promise.all(envs.map((env) => runElkPoller(env.id)))
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface PollResult {

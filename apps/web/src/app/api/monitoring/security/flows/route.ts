@@ -1,29 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { prisma } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url)
+export async function GET(request: NextRequest) {
+  const { searchParams } = request.nextUrl
   const query = searchParams.get('q') || '*'
   const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : 50
-  const index = searchParams.get('index') || 'netflow-*'
 
-  // Get Gateway URL from environment
-  const gatewayUrl = process.env.GATEWAY_URL
-  if (!gatewayUrl) {
-    return NextResponse.json({ error: 'Gateway URL not configured' }, { status: 503 })
+  // Gateway credentials live per-environment in the DB, not in env vars.
+  // Use the first connected environment that has a gateway configured.
+  const env = await prisma.environment.findFirst({
+    where: { status: 'connected', gatewayUrl: { not: null } },
+    select: { gatewayUrl: true, gatewayToken: true },
+  })
+
+  if (!env?.gatewayUrl) {
+    return NextResponse.json({ error: 'No connected environment with a gateway configured' }, { status: 503 })
   }
 
-  const gatewayToken = process.env.GATEWAY_TOKEN
-  if (!gatewayToken) {
-    return NextResponse.json({ error: 'Gateway token not configured' }, { status: 503 })
-  }
-
-  // Call Gateway's elk_flow_search tool via REST API
-  const res = await fetch(`${gatewayUrl}/tools/execute`, {
+  const res = await fetch(`${env.gatewayUrl}/tools/execute`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${gatewayToken}`,
+      'Authorization': `Bearer ${env.gatewayToken ?? ''}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
