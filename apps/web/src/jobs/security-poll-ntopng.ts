@@ -237,6 +237,17 @@ async function pollNtopngFlows(since: Date, limit: number): Promise<NtopngFlow[]
   return Object.values(flows) as NtopngFlow[]
 }
 
+// ── Runner for all eligible environments ──────────────────────────────────────
+
+export async function runNtopngPollerAll(): Promise<PollResult[]> {
+  if (!NTOPNG_URL) return []
+  const envs = await prisma.environment.findMany({
+    where: { type: 'localhost', status: 'connected' },
+    select: { id: true },
+  })
+  return Promise.all(envs.map((env) => runNtopngPoller(env.id)))
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface PollResult {

@@ -617,6 +617,9 @@ services:
     restart: unless-stopped
     privileged: true
     pid: host
+    # Use legacy eBPF driver — modern eBPF (default) segfaults (SIGSEGV) on
+    # this kernel build. Legacy eBPF has broader 6.x kernel compatibility.
+    command: ["falco", "--driver", "ebpf"]
     volumes:
       - /var/run/docker.sock:/host/var/run/docker.sock:ro
       - /dev:/host/dev:ro
