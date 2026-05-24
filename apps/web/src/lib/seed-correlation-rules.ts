@@ -130,14 +130,197 @@ const DEFAULT_RULES = [
     severity: 80,
     window: 0,
   },
+
+  // ── Phase 2 PR9 — Infra correlation rules ─────────────────────────────────
+  // Seeded DISABLED by default (enabled=false) per the plan: thresholds
+  // need tuning against real-world Falco / K8s event volumes before they
+  // can run without paging on noise. Operators flip enabled=true once
+  // they've confirmed thresholds via the security dashboard.
+  //
+  // The SIEM_INFRA_RULES_ENABLED env var (checked at seed time below) can
+  // pre-enable them in dev/staging where false-positive paging is acceptable.
+
+  // infra.k8s_crash_storm — ≥3 CrashLoopBackOff events in same namespace
+  // within 5 minutes. Catches "deploy that immediately CrashLoopBackOffs
+  // across many pods" — a high-confidence outage signal.
+  {
+    name: 'infra.k8s_crash_storm',
+    ruleType: 'threshold',
+    params: {
+      type: 'threshold',
+      field: 'metadata.namespace',
+      op: 'gte' as const,
+      value: 3,
+      window: 300, // 5 minutes
+      groupBy: ['metadata.namespace'],
+      sourceFilter: ['k8s_events'],
+      typeFilter: ['k8s.crash_loop_backoff'],
+    },
+    severity: 70,
+    window: 300,
+    enabledByDefault: false,
+  },
+
+  // infra.falco_critical — any single Falco alert with severity ≥ 85 opens
+  // an Incident immediately. EMERGENCY / ALERT / CRITICAL Falco priorities
+  // are individually high-signal (container escape, kernel module load,
+  // sensitive file write to /etc/shadow, etc.).
+  {
+    name: 'infra.falco_critical',
+    ruleType: 'pattern',
+    params: {
+      type: 'pattern',
+      regex: '^falco\\.',
+      field: 'type',
+      window: 0, // fire immediately
+      sourceFilter: ['falco'],
+      minSeverity: 85,
+    },
+    severity: 90,
+    window: 0,
+    enabledByDefault: false,
+  },
+
+  // infra.container_shell_storm — ≥2 Falco "Terminal shell in container"
+  // alerts on same environment within 10 minutes. Single ad-hoc exec is
+  // common (debugging); two within a window suggests scripted access.
+  {
+    name: 'infra.container_shell_storm',
+    ruleType: 'threshold',
+    params: {
+      type: 'threshold',
+      field: 'environmentId',
+      op: 'gte' as const,
+      value: 2,
+      window: 600, // 10 minutes
+      groupBy: ['environmentId'],
+      sourceFilter: ['falco'],
+      typeFilter: ['falco.terminal_shell_in_container'],
+    },
+    severity: 80,
+    window: 600,
+    enabledByDefault: false,
+  },
+
+  // infra.cross_env_image_anomaly — same container image tag triggering
+  // Falco alerts OR OOMKilled across ≥2 environments within 30 minutes.
+  // Supply-chain signal: an image is misbehaving identically in multiple
+  // places, suggesting the image itself (not the env) is the cause.
+  //
+  // Grouping by metadata.container_image bridges Falco events (which carry
+  // it in output_fields.container.image → metadata.container_image) and
+  // K8s OOM events (which carry the image in involvedObject — handled by
+  // the rule engine's path probe).
+  {
+    name: 'infra.cross_env_image_anomaly',
+    ruleType: 'threshold',
+    params: {
+      type: 'threshold',
+      field: 'environmentId',
+      op: 'gte' as const,
+      value: 2,
+      window: 1800, // 30 minutes
+      groupBy: ['metadata.container_image'],
+      countDistinct: 'environmentId',
+      sourceFilter: ['falco', 'k8s_events'],
+      typeFilter: ['k8s.oom_killed', 'falco.terminal_shell_in_container'],
+    },
+    severity: 75,
+    window: 1800,
+    enabledByDefault: false,
+  },
+
+  // infra.falco_silence — synthetic rule: emits a SecurityEvent of type
+  // "source.silent" when an EnvironmentSourceHealth(source='falco') row
+  // is stale beyond 2× its staleAfterMs. A silenced Falco may mean the
+  // container was killed by an attacker — high-signal blind spot.
+  //
+  // Implementation: the correlator's source-stale checker (already runs
+  // every cycle) consults this rule's params to decide WHICH sources to
+  // check and what the synthetic event type should look like.
+  {
+    name: 'infra.falco_silence',
+    ruleType: 'pattern',
+    params: {
+      type: 'pattern',
+      regex: '^source\\.silent$',
+      field: 'type',
+      window: 0,
+      sourceFilter: ['environment_source_health'],
+      stalenessMultiplier: 2,
+      monitoredSource: 'falco',
+    },
+    severity: 70,
+    window: 0,
+    enabledByDefault: false,
+  },
+
+  // ── Phase 3 PR13 — Vulnerability correlation rules ────────────────────────
+
+  // vuln.kev_critical — any single vuln.new event where the underlying
+  // finding is on CISA's KEV list (isKev=true) AND severity ≥ 80 opens
+  // an Incident immediately. KEV CVEs are actively exploited in the
+  // wild — no aggregation window, no waiting.
+  {
+    name: 'vuln.kev_critical',
+    ruleType: 'pattern',
+    params: {
+      type: 'pattern',
+      regex: '^vuln\\.new$',
+      field: 'type',
+      window: 0, // fire immediately
+      sourceFilter: ['trivy'],
+      minSeverity: 80,
+      rawEventFilter: { isKev: true },
+    },
+    severity: 90,
+    window: 0,
+    enabledByDefault: false,
+  },
+
+  // vuln.epss_storm — ≥3 vuln.new events on same environment within 1 hour
+  // where EPSS > 0.7 (likely-to-be-exploited). Could indicate a supply-chain
+  // event (a popular base image picking up many high-EPSS CVEs at once) or
+  // an env where many services share a vulnerable dependency.
+  {
+    name: 'vuln.epss_storm',
+    ruleType: 'threshold',
+    params: {
+      type: 'threshold',
+      field: 'environmentId',
+      op: 'gte' as const,
+      value: 3,
+      window: 3600, // 1 hour
+      groupBy: ['environmentId'],
+      sourceFilter: ['trivy'],
+      typeFilter: ['vuln.new'],
+      rawEventFilter: { epssThreshold: 0.7 },
+    },
+    severity: 75,
+    window: 3600,
+    enabledByDefault: false,
+  },
 ]
 
 /**
- * Seed default correlation rules. Runs idempotently — skips existing rules.
+ * Seed default correlation rules. Runs idempotently — does NOT modify the
+ * `enabled` field of existing rows (operators flip rules on/off in the
+ * dashboard and we must not stomp that on every startup).
+ *
+ * Phase 2 infra rules carry `enabledByDefault: false`. They are seeded
+ * disabled unless `SIEM_INFRA_RULES_ENABLED=true` in the environment, in
+ * which case new infra rows are created with enabled=true. Existing rows
+ * are never re-enabled by this seeder regardless of the env var.
  */
 export async function ensureCorrelationRules(): Promise<void> {
+  const infraRulesEnabledViaEnv =
+    (process.env.SIEM_INFRA_RULES_ENABLED ?? '').toLowerCase() === 'true'
   try {
     for (const rule of DEFAULT_RULES) {
+      const enabledByDefault =
+        (rule as { enabledByDefault?: boolean }).enabledByDefault
+      const createEnabled =
+        enabledByDefault === false ? infraRulesEnabledViaEnv : true
       await prisma.correlationRule.upsert({
         where: { name: rule.name },
         update: {
@@ -153,9 +336,13 @@ export async function ensureCorrelationRules(): Promise<void> {
           severity: rule.severity,
           window: rule.window,
           environmentId: null, // global rule
+          enabled: createEnabled,
         },
       })
-      console.log(`[seed] CorrelationRule: ${rule.name} (${rule.ruleType}, severity=${rule.severity})`)
+      console.log(
+        `[seed] CorrelationRule: ${rule.name} (${rule.ruleType}, severity=${rule.severity}, ` +
+          `enabledByDefault=${enabledByDefault !== false}, createEnabled=${createEnabled})`
+      )
     }
   } catch (err) {
     console.error('[seed] Failed to seed correlation rules:', err instanceof Error ? err.message : err)
