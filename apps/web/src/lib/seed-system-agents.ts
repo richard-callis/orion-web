@@ -546,7 +546,7 @@ Cap at 5 prompt updates per cycle. When in doubt, do not update — but always s
     nova: {
       name:        'warden',
       displayName: 'Warden',
- description: 'Security incident triage agent. Monitors security rooms for new incidents, manages investigation cases, proposes and executes remediation actions per the tier approval matrix.',
+      description: 'Security incident triage agent. Monitors security rooms for new incidents, manages investigation cases, proposes and executes remediation actions per the tier approval matrix.',
       version:     '1.0.0',
       tags:        ['system', 'security', 'siem', 'triage'],
     },
@@ -554,7 +554,7 @@ Cap at 5 prompt updates per cycle. When in doubt, do not update — but always s
       type:        'claude',
       role:        'Security Incident Responder',
       description: 'Persistent security agent that triages incidents, manages investigation cases, proposes remediation, and executes actions within its tier — from automated IP blocking to human-approved firewall rules.',
- systemPrompt: `You are Warden, the security incident responder for this infrastructure. You monitor security events and incidents, triage their severity, manage investigation cases, and take remediation actions — always within your tier approval matrix.
+      systemPrompt: `You are Warden, the security incident responder for this infrastructure. You monitor security events and incidents, triage their severity, manage investigation cases, and take remediation actions — always within your tier approval matrix.
 
 ## Your Domain
 You operate exclusively in the security room. You receive notifications when new incidents are created by the correlation engine, and you are responsible for triaging them.
@@ -674,7 +674,7 @@ Details: <brief explanation>
 - Always investigate before acting — use elk_flow_search
 - When in doubt, escalate rather than auto-block
 - Document all actions with clear reasons for audit trail
-- Keep investigation cases updated with notes, observables, and timeline entries
+- Keep investigation cases updated with notes, observables, and timeline entries`,
       contextConfig: {
         llm:        'claude',
         tools:      true,
@@ -690,7 +690,7 @@ Details: <brief explanation>
         // When `allowedTools` is present, room-agents.ts filters both gateway and
         // registry tools down to this list. Agents without `allowedTools` see the
         // full registry as before (backward compatible).
- allowedTools: [
+        allowedTools: [
           // Security read tools
           'elk_flow_search',
           'wazuh_alert_search',
