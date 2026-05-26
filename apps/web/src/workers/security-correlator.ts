@@ -15,6 +15,13 @@ import { correlateEvents, recordRuleIncident } from '@/lib/security/rule-engine'
 import type { NamedRule, RuleParams } from '@/lib/security/rule-engine'
 import { getSystemRoomId } from '@/lib/seed-system-epic'
 import { triggerRoomAgentReplies } from '@/lib/room-agents'
+import { extractFromEvents, computeLinkConfidence } from '@/lib/security/extract-observables'
+import {
+  notifyIncidentLinked,
+  notifyStatusChanged,
+  notifyMaliciousObservable,
+  notifyWardenNote,
+} from '@/lib/security/notification-service'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -341,6 +348,9 @@ async function correlateEnvironment(
       // `correlateEvents` before the rule runs again.
       if (draft.ruleName) recordRuleIncident(env.id, draft.ruleName)
 
+      // SOC: Auto-extract observables from incident events
+      await extractAndLinkObservables(incident, events.filter(e => draft.eventIds.includes(e.id)))
+
       incidentsCreated++
     } catch (err) {
       // MAJOR-4 mirror: log so a misbehaving DB or constraint violation
@@ -363,7 +373,201 @@ async function correlateEnvironment(
   }
 }
 
-// ── Staleness check ───────────────────────────────────────────────────────────
+// ── SOC: Observable extraction + auto-linking ──────────────────────────────
+
+/**
+ * Auto-extract observables from an incident's events and attempt to link
+ * to an existing open investigation.
+ *
+ * Idempotency: uses the incident ID as an idempotency key. If the incident
+ * was already processed (observables created, timeline entries exist), this
+ * is a no-op.
+ */
+async function extractAndLinkObservables(
+  incident: {
+    id: string
+    severity: number
+    attackerKey: string | null
+    openedAt: Date
+    rootCauseSummary: string | null
+  },
+  relatedEvents: Array<{ source: string; rawEvent: unknown; id: string }>,
+): Promise<void> {
+  try {
+    const extracted = extractFromEvents(
+      relatedEvents.map(e => ({
+        source: e.source,
+        rawEvent: e.rawEvent as Record<string, unknown>,
+      })),
+    )
+
+    if (extracted.length === 0) return
+
+    // Check for matching open investigations
+    const openInvs = await prisma.investigation.findMany({
+      where: { status: { in: ['open', 'active'] } },
+      include: { observables: true },
+    })
+
+    let bestMatch: { investigationId: string; suggestion: ReturnType<typeof computeLinkConfidence> } | null = null
+
+    for (const inv of openInvs) {
+      const existingObs = inv.observables.map(o => ({
+        value: o.value,
+        displayValue: o.displayValue,
+        category: o.category as any,
+        confidence: o.confidence,
+      }))
+      const suggestion = computeLinkConfidence(extracted, existingObs, inv.startedAt)
+      if (
+        suggestion &&
+        (!bestMatch || suggestion.action === 'auto' || suggestion.confidence > bestMatch.suggestion.confidence)
+      ) {
+        bestMatch = { investigationId: inv.id, suggestion }
+      }
+    }
+
+    if (bestMatch) {
+      // Existing investigation matched
+      if (!bestMatch.suggestion.action === 'auto') {
+        // Auto-link: link incident, create observables, timeline entry
+        await prisma.incident.update({
+          where: { id: incident.id },
+          data: { investigationId: bestMatch.investigationId },
+        })
+
+        for (const obs of extracted) {
+          await prisma.investigationObservable.upsert({
+            where: {
+              investigationId_value_category: {
+                investigationId: bestMatch.investigationId,
+                value: obs.value,
+                category: obs.category,
+              },
+            },
+            create: {
+              investigationId: bestMatch.investigationId,
+              value: obs.value,
+              displayValue: obs.displayValue,
+              category: obs.category,
+              confidence: obs.confidence,
+              context: `Auto-extracted from incident ${incident.id}`,
+            },
+            update: { lastSeen: new Date() },
+          })
+        }
+
+        // Idempotent timeline entry (check by incident ID)
+        const existing = await prisma.investigationTimeline.findFirst({
+          where: {
+            investigationId: bestMatch.investigationId,
+            eventType: 'link_added',
+            payload: { path: ['incidentId'], equals: incident.id },
+          },
+        })
+        if (!existing) {
+          await prisma.investigationTimeline.create({
+            data: {
+              investigationId: bestMatch.investigationId,
+              eventTime: new Date(),
+              eventType: 'link_added',
+              title: `Auto-linked incident: ${incident.attackerKey ?? incident.id.slice(0, 8)}`,
+              description: bestMatch.suggestion.reason,
+              source: 'correlator',
+              payload: { incidentId: incident.id, confidence: bestMatch.suggestion.confidence },
+            },
+          })
+          await notifyIncidentLinked(incident.id, bestMatch.investigationId, bestMatch.suggestion.reason)
+        }
+      } else {
+        // Suggestion: create timeline entry for analyst review
+        const existing = await prisma.investigationTimeline.findFirst({
+          where: {
+            investigationId: bestMatch.investigationId,
+            eventType: 'warden_annotation',
+            payload: { path: ['incidentId'], equals: incident.id },
+          },
+        })
+        if (!existing) {
+          await prisma.investigationTimeline.create({
+            data: {
+              investigationId: bestMatch.investigationId,
+              eventTime: new Date(),
+              eventType: 'warden_annotation',
+              title: `Possible link: incident ${incident.id.slice(0, 8)}`,
+              description: bestMatch.suggestion.reason,
+              source: 'correlator',
+              isPinned: false,
+              payload: { incidentId: incident.id, confidence: bestMatch.suggestion.confidence },
+            },
+          })
+        }
+      }
+    } else {
+      // No match — create a new investigation with auto-extracted observables
+      const hasInv = await prisma.investigation.findFirst({
+        where: { incidents: { some: { id: incident.id } } },
+      })
+      if (!hasInv) {
+        const inv = await prisma.investigation.create({
+          data: {
+            name: `[${incident.attackerKey ?? incident.id.slice(0, 8)}] ${incident.rootCauseSummary ?? 'Investigation'}`,
+            severity: incident.severity,
+            createdBy: 'system',
+          },
+        })
+        await prisma.incident.update({
+          where: { id: incident.id },
+          data: { investigationId: inv.id },
+        })
+        for (const obs of extracted) {
+          await prisma.investigationObservable.upsert({
+            where: {
+              investigationId_value_category: {
+                investigationId: inv.id,
+                value: obs.value,
+                category: obs.category,
+              },
+            },
+            create: {
+              investigationId: inv.id,
+              value: obs.value,
+              displayValue: obs.displayValue,
+              category: obs.category,
+              confidence: obs.confidence,
+              context: `Auto-extracted from incident ${incident.id}`,
+            },
+            update: { lastSeen: new Date() },
+          })
+        }
+        await prisma.investigationTimeline.create({
+          data: {
+            investigationId: inv.id,
+            eventTime: incident.openedAt,
+            eventType: 'incident_created',
+            title: 'Investigation created from incident',
+            description: `Severity: ${incident.severity}, Attacker: ${incident.attackerKey ?? 'Unknown'}`,
+            source: 'correlator',
+          },
+        })
+        // Notify on high-confidence hash observables
+        for (const obs of extracted) {
+          if (obs.confidence >= 90 && ['file_hash_md5', 'file_hash_sha1', 'file_hash_sha256', 'mutex'].includes(obs.category)) {
+            await notifyMaliciousObservable(inv.id, obs.value, obs.category, obs.confidence)
+          }
+        }
+      }
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[siem] correlator: SOC observable extraction failed for incident ${incident.id}:`,
+      err instanceof Error ? `${err.name}: ${err.message}` : err,
+    )
+  }
+}
+
+// ── Staleness check ────────────────────────────────────────────────────────────
 
 /**
  * Check for stale sources and emit synthetic source_stale events.
