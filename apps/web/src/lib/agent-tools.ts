@@ -179,6 +179,175 @@ export const ORION_TOOL_DEFINITIONS = [
       },
     },
   },
+  // ── SOC Case Management Tools ──────────────────────────────────────────────
+  {
+    type: 'function' as const,
+    function: {
+      name: 'investigation_search',
+      description: 'Search for investigations by status, severity, or name. Returns matching investigations with counts.',
+      parameters: {
+        type: 'object',
+        properties: {
+          status:  { type: 'string', enum: ['open', 'active', 'suspended', 'resolved', 'closed'], description: 'Filter by status' },
+          search:  { type: 'string', description: 'Search in investigation names' },
+          severity:{ type: 'number', description: 'Minimum severity (0-100)' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'investigation_create',
+      description: 'Create a new investigation case. Optionally link an incident. Auto-extracts observables from linked incident events.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name:           { type: 'string', description: 'Investigation name' },
+          severity:       { type: 'number', description: 'Severity 0-100' },
+          tlp:            { type: 'string', enum: ['white', 'green', 'amber', 'red'], description: 'Traffic Light Protocol (default: amber)' },
+          tags:           { type: 'array', items: { type: 'string' }, description: 'Tags for categorization' },
+          mitreAttackIds: { type: 'array', items: { type: 'string' }, description: 'MITRE ATT&CK technique IDs' },
+          incidentId:     { type: 'string', description: 'Optional incident ID to link' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'investigation_read',
+      description: 'Read full details of an investigation including incidents, notes, observables, and timeline.',
+      parameters: {
+        type: 'object',
+        properties: {
+          investigationId: { type: 'string', description: 'The investigation ID' },
+        },
+        required: ['investigationId'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'investigation_note',
+      description: 'Add a note to an investigation. Warden notes are visually distinguished from human notes.',
+      parameters: {
+        type: 'object',
+        properties: {
+          investigationId: { type: 'string', description: 'The investigation ID' },
+          content:         { type: 'string', description: 'Note content in markdown' },
+        },
+        required: ['investigationId', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'investigation_update',
+      description: 'Update investigation fields. Warden cannot transition to resolved/closed status.',
+      parameters: {
+        type: 'object',
+        properties: {
+          investigationId: { type: 'string', description: 'The investigation ID' },
+          status:          { type: 'string', enum: ['open', 'active', 'suspended'], description: 'New status (Warden: cannot set resolved/closed)' },
+          severity:        { type: 'number', description: 'New severity 0-100' },
+          tlp:             { type: 'string', enum: ['white', 'green', 'amber', 'red'], description: 'New TLP level' },
+          tags:            { type: 'array', items: { type: 'string' }, description: 'Updated tags' },
+          mitreAttackIds:  { type: 'array', items: { type: 'string' }, description: 'Updated MITRE ATT&CK IDs' },
+        },
+        required: ['investigationId'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'investigation_link_incident',
+      description: 'Link an existing incident to an investigation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          investigationId: { type: 'string', description: 'The investigation ID' },
+          incidentId:      { type: 'string', description: 'The incident ID to link' },
+        },
+        required: ['investigationId', 'incidentId'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'investigation_merge',
+      description: 'Propose merging two investigations. Requires analyst confirmation — Warden can only suggest.',
+      parameters: {
+        type: 'object',
+        properties: {
+          targetId: { type: 'string', description: 'The target investigation (survives the merge)' },
+          sourceId: { type: 'string', description: 'The source investigation (merged into target)' },
+          reason:   { type: 'string', description: 'Why these investigations should be merged' },
+        },
+        required: ['targetId', 'sourceId', 'reason'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'observable_add',
+      description: 'Add an observable (IP, domain, hash, URL, etc.) to an investigation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          investigationId: { type: 'string', description: 'The investigation ID' },
+          value:           { type: 'string', description: 'Observable value (e.g. IP, domain, hash)' },
+          category:        { type: 'string', enum: ['ipv4', 'ipv6', 'domain', 'url', 'file_hash_md5', 'file_hash_sha1', 'file_hash_sha256', 'mac_address', 'email', 'username', 'file_path', 'registry_key', 'mutex', 'asn'], description: 'Observable category' },
+          role:            { type: 'string', enum: ['ioc', 'artifact', 'infrastructure'], description: 'Observable role (default: ioc)' },
+          verdict:         { type: 'string', enum: ['malicious', 'suspicious', 'benign', 'unknown'], description: 'Verdict (default: unknown)' },
+          confidence:      { type: 'number', description: 'Confidence 0-100. Malicious requires >= 80.' },
+          context:         { type: 'string', description: 'Where/how this observable was found' },
+        },
+        required: ['investigationId', 'value', 'category'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'observable_set_verdict',
+      description: 'Update an observable verdict. Warden requires confidence >= 80 for malicious.',
+      parameters: {
+        type: 'object',
+        properties: {
+          observableId: { type: 'string', description: 'The observable ID' },
+          verdict:      { type: 'string', enum: ['malicious', 'suspicious', 'benign', 'unknown'], description: 'New verdict' },
+          confidence:   { type: 'number', description: 'Confidence 0-100. Malicious requires >= 80.' },
+          context:      { type: 'string', description: 'Reasoning for the verdict' },
+        },
+        required: ['observableId', 'verdict'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'timeline_add',
+      description: 'Add a timeline entry to an investigation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          investigationId: { type: 'string', description: 'The investigation ID' },
+          eventTime:       { type: 'string', description: 'When the event occurred (ISO 8601)' },
+          eventType:       { type: 'string', description: 'Event type: status_changed, action_taken, warden_annotation, etc.' },
+          title:           { type: 'string', description: 'Short title' },
+          description:     { type: 'string', description: 'Detailed description' },
+        },
+        required: ['investigationId', 'eventTime', 'eventType', 'title'],
+      },
+    },
+  },
 ] as const
 
 /**
@@ -488,6 +657,230 @@ export async function executeTool(
         await prisma.managedSecret.delete({ where: { id: secretId } })
         const reason = args.reason ? ` Reason: ${String(args.reason)}` : ''
         return `Deleted ORION secret record "${existing.name}" (${secretId}) from namespace "${existing.namespace}".${reason}\nNote: Vault secret and K8s Secret (if applied) were NOT deleted — only the ORION metadata record.`
+      }
+
+      // ── SOC Case Management ──────────────────────────────────────────────
+
+      case 'investigation_search': {
+        const where: Record<string, unknown> = {}
+        const status = args.status ? String(args.status) : null
+        const search = args.search ? String(args.search) : null
+        const severity = args.severity ? Number(args.severity) : null
+        if (status) where.status = status
+        if (search) where.OR = [{ name: { contains: search, mode: 'insensitive' } }]
+        if (severity) where.severity = { gte: severity }
+        const invs = await prisma.investigation.findMany({
+          where, orderBy: { createdAt: 'desc' }, take: 25,
+          select: {
+            id: true, name: true, status: true, severity: true, tlp: true,
+            tags: true, startedAt: true,
+            _count: { select: { incidents: true, notes: true, observables: true } },
+          },
+        })
+        const total = await prisma.investigation.count({ where })
+        return `Found ${total} investigations (showing ${invs.length}):\n` +
+          invs.map(i => `- [${i.status}] ${i.name} (sev:${i.severity}, tlp:${i.tlp}, incidents:${i._count.incidents}, notes:${i._count.notes}, observables:${i._count.observables})`).join('\n')
+      }
+
+      case 'investigation_create': {
+        const name = String(args.name ?? '').trim()
+        if (!name) return 'Error: name is required'
+        const inv = await prisma.investigation.create({
+          data: {
+            name,
+            severity: args.severity ? Number(args.severity) : 50,
+            tlp: (args.tlp as any) ?? 'amber',
+            tags: (args.tags as string[]) ?? [],
+            mitreAttackIds: (args.mitreAttackIds as string[]) ?? [],
+            createdBy: 'warden',
+          },
+        })
+        if (args.incidentId) {
+          await prisma.incident.updateMany({
+            where: { id: String(args.incidentId), investigationId: null },
+            data: { investigationId: inv.id },
+          })
+          return `Investigation created: "${inv.name}" (id: ${inv.id}). Incident ${args.incidentId} linked.`
+        }
+        return `Investigation created: "${inv.name}" (id: ${inv.id}, status: open, severity: ${inv.severity})`
+      }
+
+      case 'investigation_read': {
+        const investigationId = String(args.investigationId ?? '').trim()
+        if (!investigationId) return 'Error: investigationId is required'
+        const inv = await prisma.investigation.findUnique({
+          where: { id: investigationId },
+          include: {
+            incidents: { orderBy: { openedAt: 'desc' }, take: 20 },
+            notes: { orderBy: { createdAt: 'desc' }, take: 20 },
+            observables: { orderBy: { firstSeen: 'desc' }, take: 50 },
+            timeline: { orderBy: { eventTime: 'asc' }, take: 50 },
+          },
+        })
+        if (!inv) return `Investigation ${investigationId} not found`
+        return `Investigation: "${inv.name}"\nStatus: ${inv.status} | Severity: ${inv.severity} | TLP: ${inv.tlp}\n` +
+          `Incidents: ${inv.incidents.length} | Notes: ${inv.notes.length} | Observables: ${inv.observables.length} | Timeline: ${inv.timeline.length}\n` +
+          (inv.resolution ? `Resolution: ${inv.resolution}\n` : '') +
+          (inv.observables.length > 0 ? `\nObservables:\n` + inv.observables.map(o => `  - [${o.category}] ${o.value} (${o.verdict}, conf:${o.confidence}%)`).join('\n') : '') +
+          (inv.incidents.length > 0 ? `\nIncidents:\n` + inv.incidents.map(i => `  - [${i.status}] ${i.attackerKey ?? 'Unknown'} (sev:${i.severity})`).join('\n') : '')
+      }
+
+      case 'investigation_note': {
+        const investigationId = String(args.investigationId ?? '').trim()
+        const content = String(args.content ?? '').trim()
+        if (!investigationId || !content) return 'Error: investigationId and content are required'
+        const existing = await prisma.investigation.findUnique({ where: { id: investigationId } })
+        if (!existing) return `Investigation ${investigationId} not found`
+        const note = await prisma.investigationNote.create({
+          data: { investigationId, content, author: 'warden', authorType: 'warden' },
+        })
+        await prisma.investigationTimeline.create({
+          data: {
+            investigationId, eventTime: new Date(), eventType: 'note_added',
+            title: 'Warden note added', source: 'warden',
+          },
+        })
+        return `Note added (id: ${note.id}) to investigation ${investigationId}`
+      }
+
+      case 'investigation_update': {
+        const investigationId = String(args.investigationId ?? '').trim()
+        if (!investigationId) return 'Error: investigationId is required'
+        const inv = await prisma.investigation.findUnique({ where: { id: investigationId } })
+        if (!inv) return `Investigation ${investigationId} not found`
+        const data: Record<string, unknown> = {}
+        if (args.status) data.status = String(args.status)
+        if (args.severity != null) data.severity = Number(args.severity)
+        if (args.tlp) data.tlp = String(args.tlp)
+        if (args.tags) data.tags = args.tags as string[]
+        if (args.mitreAttackIds) data.mitreAttackIds = args.mitreAttackIds as string[]
+        const updated = await prisma.investigation.update({ where: { id: investigationId }, data })
+        if (data.status) {
+          await prisma.investigationTimeline.create({
+            data: {
+              investigationId, eventTime: new Date(), eventType: 'status_changed',
+              title: `Status: ${inv.status} → ${updated.status}`, source: 'warden',
+            },
+          })
+        }
+        return `Investigation updated: ${Object.keys(data).map(k => `${k}: ${String(data[k])}`).join(', ')} (id: ${updated.id})`
+      }
+
+      case 'investigation_link_incident': {
+        const investigationId = String(args.investigationId ?? '').trim()
+        const incidentId = String(args.incidentId ?? '').trim()
+        if (!investigationId || !incidentId) return 'Error: investigationId and incidentId are required'
+        const [inv, inc] = await Promise.all([
+          prisma.investigation.findUnique({ where: { id: investigationId } }),
+          prisma.incident.findUnique({ where: { id: incidentId } }),
+        ])
+        if (!inv) return `Investigation ${investigationId} not found`
+        if (!inc) return `Incident ${incidentId} not found`
+        if (inc.investigationId && inc.investigationId !== investigationId) {
+          return `Incident ${incidentId} already linked to investigation ${inc.investigationId}`
+        }
+        await prisma.incident.update({
+          where: { id: incidentId },
+          data: { investigationId },
+        })
+        await prisma.investigationTimeline.create({
+          data: {
+            investigationId, eventTime: new Date(), eventType: 'link_added',
+            title: `Incident linked: ${inc.attackerKey ?? incidentId}`, source: 'warden',
+          },
+        })
+        return `Incident ${incidentId} linked to investigation ${investigationId}`
+      }
+
+      case 'investigation_merge': {
+        const targetId = String(args.targetId ?? '').trim()
+        const sourceId = String(args.sourceId ?? '').trim()
+        const reason = String(args.reason ?? '').trim()
+        if (!targetId || !sourceId) return 'Error: targetId and sourceId are required'
+        if (targetId === sourceId) return 'Error: cannot merge an investigation into itself'
+        const [target, source] = await Promise.all([
+          prisma.investigation.findUnique({ where: { id: targetId } }),
+          prisma.investigation.findUnique({ where: { id: sourceId } }),
+        ])
+        if (!target) return `Target investigation ${targetId} not found`
+        if (!source) return `Source investigation ${sourceId} not found`
+        // Warden can only suggest, not execute
+        return `MERGE SUGGESTION: "${source.name}" → "${target.name}"\nReason: ${reason}\nNote: Analyst confirmation required to execute merge. Use the investigation merge endpoint to confirm.`
+      }
+
+      case 'observable_add': {
+        const investigationId = String(args.investigationId ?? '').trim()
+        const value = String(args.value ?? '').trim()
+        const category = String(args.category ?? '').trim()
+        if (!investigationId || !value || !category) return 'Error: investigationId, value, and category are required'
+        const inv = await prisma.investigation.findUnique({ where: { id: investigationId } })
+        if (!inv) return `Investigation ${investigationId} not found`
+        const verdict = (args.verdict as any) ?? 'unknown'
+        const confidence = args.confidence ? Number(args.confidence) : 0
+        if (verdict === 'malicious' && confidence < 80) {
+          return 'Error: Warden requires confidence >= 80 to set malicious verdict'
+        }
+        const obs = await prisma.investigationObservable.upsert({
+          where: {
+            investigationId_value_category: { investigationId, value, category },
+          },
+          create: {
+            investigationId, value, displayValue: value, category,
+            role: (args.role as any) ?? 'ioc',
+            verdict, confidence,
+            context: args.context ? String(args.context) : 'Added by Warden',
+            verdictBy: verdict !== 'unknown' ? 'warden' : undefined,
+            verdictAt: verdict !== 'unknown' ? new Date() : undefined,
+          },
+          update: { lastSeen: new Date() },
+        })
+        return `Observable added: [${category}] ${value} (verdict: ${verdict}, confidence: ${confidence}%, id: ${obs.id})`
+      }
+
+      case 'observable_set_verdict': {
+        const observableId = String(args.observableId ?? '').trim()
+        const verdict = String(args.verdict ?? '').trim()
+        const confidence = args.confidence ? Number(args.confidence) : undefined
+        if (!observableId || !verdict) return 'Error: observableId and verdict are required'
+        if (verdict === 'malicious' && (confidence ?? 0) < 80) {
+          return 'Error: Warden requires confidence >= 80 to set malicious verdict'
+        }
+        const obs = await prisma.investigationObservable.findUnique({ where: { id: observableId } })
+        if (!obs) return `Observable ${observableId} not found`
+        const updated = await prisma.investigationObservable.update({
+          where: { id: observableId },
+          data: {
+            verdict: verdict as any,
+            confidence: confidence ?? obs.confidence,
+            verdictBy: 'warden',
+            verdictAt: new Date(),
+            ...(args.context ? { context: String(args.context) } : {}),
+          },
+        })
+        return `Verdict set: [${updated.category}] ${updated.value} → ${verdict} (confidence: ${updated.confidence}%)`
+      }
+
+      case 'timeline_add': {
+        const investigationId = String(args.investigationId ?? '').trim()
+        const eventTime = String(args.eventTime ?? '').trim()
+        const eventType = String(args.eventType ?? '').trim()
+        const title = String(args.title ?? '').trim()
+        if (!investigationId || !eventTime || !eventType || !title) {
+          return 'Error: investigationId, eventTime, eventType, and title are required'
+        }
+        const inv = await prisma.investigation.findUnique({ where: { id: investigationId } })
+        if (!inv) return `Investigation ${investigationId} not found`
+        const entry = await prisma.investigationTimeline.create({
+          data: {
+            investigationId,
+            eventTime: new Date(eventTime),
+            eventType,
+            title,
+            description: args.description ? String(args.description) : undefined,
+            source: 'warden',
+          },
+        })
+        return `Timeline entry added: "${title}" (id: ${entry.id})`
       }
 
       default:
