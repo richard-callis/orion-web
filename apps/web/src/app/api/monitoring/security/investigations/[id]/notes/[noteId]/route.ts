@@ -17,7 +17,8 @@ const updateSchema = z.object({
 
 export async function PATCH(req: Request, { params }: { params: { id: string; noteId: string } }) {
   const { id, noteId } = await params
-  const body = updateSchema.safeParse(await req.json())
+  const raw = await req.json()
+  const body = updateSchema.safeParse(raw)
   if (!body.success) {
     return NextResponse.json({ error: body.error.errors }, { status: 400 })
   }
@@ -28,7 +29,6 @@ export async function PATCH(req: Request, { params }: { params: { id: string; no
   }
 
   // Warden cannot edit human-authored notes
-  const raw = await req.json()
   const actor = (raw as any)._actor ?? 'admin'
   if (actor === 'warden' && note.authorType === 'human') {
     return NextResponse.json({ error: 'Warden cannot edit human-authored notes' }, { status: 403 })
@@ -59,7 +59,7 @@ export async function DELETE(_req: Request, { params }: { params: { id: string; 
   }
 
   await prisma.investigationNote.delete({ where: { id: noteId } })
-  await recordAudit(id, 'admin', 'human', 'note_added', { noteId }, null)
+  await recordAudit(id, 'admin', 'human', 'note_deleted', { noteId }, null)
 
   return NextResponse.json({ ok: true })
 }

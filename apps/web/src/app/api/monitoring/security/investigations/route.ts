@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
   if (status) where.status = status
   if (severity) where.severity = { gte: severity }
   if (assignedTo) where.assignedTo = assignedTo
-  if (tags) where.tags = { contains: tags }
+  if (tags) where.tags = { has: tags }
   if (search) where.OR = [{ name: { contains: search, mode: 'insensitive' } }]
 
   const cursorOpt = cursor ? { id: cursor } : undefined

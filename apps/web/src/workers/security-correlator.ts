@@ -429,7 +429,7 @@ async function extractAndLinkObservables(
 
     if (bestMatch) {
       // Existing investigation matched
-      if (!bestMatch.suggestion.action === 'auto') {
+      if (bestMatch.suggestion.action === 'auto') {
         // Auto-link: link incident, create observables, timeline entry
         await prisma.incident.update({
           where: { id: incident.id },
