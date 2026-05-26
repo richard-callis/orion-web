@@ -409,7 +409,7 @@ async function extractAndLinkObservables(
       include: { observables: true },
     })
 
-    let bestMatch: { investigationId: string; suggestion: ReturnType<typeof computeLinkConfidence> } | null = null
+    let bestMatch: { investigationId: string; suggestion: NonNullable<ReturnType<typeof computeLinkConfidence>> } | null = null
 
     for (const inv of openInvs) {
       const existingObs = inv.observables.map(o => ({
