@@ -817,7 +817,7 @@ export async function executeTool(
       case 'observable_add': {
         const investigationId = String(args.investigationId ?? '').trim()
         const value = String(args.value ?? '').trim()
-        const category = String(args.category ?? '').trim()
+        const category = String(args.category ?? '').trim() as import('@prisma/client').ObservableCategory
         if (!investigationId || !value || !category) return 'Error: investigationId, value, and category are required'
         const inv = await prisma.investigation.findUnique({ where: { id: investigationId } })
         if (!inv) return `Investigation ${investigationId} not found`

@@ -81,7 +81,7 @@ export async function DELETE(_req: Request, { params }: { params: { id: string; 
   }
 
   await prisma.investigationObservable.delete({ where: { id: obsId } })
-  await recordAudit(id, 'admin', 'human', 'observable_deleted', { observableId: obsId }, null)
+  await recordAudit(id, 'admin', 'human', 'observable_deleted', { observableId: obsId }, undefined)
 
   return NextResponse.json({ ok: true })
 }

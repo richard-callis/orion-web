@@ -38,6 +38,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       ...body.data,
       investigationId: id,
       eventTime: new Date(body.data.eventTime),
+      payload: (body.data.payload ?? undefined) as import('@prisma/client').Prisma.InputJsonValue | undefined,
     },
   })
 

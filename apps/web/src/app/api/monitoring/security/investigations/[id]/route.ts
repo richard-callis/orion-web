@@ -36,7 +36,7 @@ function applyWardenConstraints(
 ): Record<string, unknown> {
   if (actor !== 'warden') return data
   const clean = { ...data }
-  if (clean.status && !WARDEN_ALLOWED_STATUS.has(clean.status)) {
+  if (clean.status && !WARDEN_ALLOWED_STATUS.has(clean.status as string)) {
     throw new Error('Warden cannot transition investigation to resolved or closed')
   }
   delete clean.resolutionType

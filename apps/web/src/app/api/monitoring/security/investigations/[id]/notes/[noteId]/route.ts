@@ -59,7 +59,7 @@ export async function DELETE(_req: Request, { params }: { params: { id: string; 
   }
 
   await prisma.investigationNote.delete({ where: { id: noteId } })
-  await recordAudit(id, 'admin', 'human', 'note_deleted', { noteId }, null)
+  await recordAudit(id, 'admin', 'human', 'note_deleted', { noteId }, undefined)
 
   return NextResponse.json({ ok: true })
 }

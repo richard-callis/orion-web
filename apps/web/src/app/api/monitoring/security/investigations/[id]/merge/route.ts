@@ -43,6 +43,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
   const tx = await prisma.$transaction(async (tx) => {
     // 1. Move all incidents from source to target
+    const sourceIncidentCount = await tx.incident.count({ where: { investigationId: sourceId } })
     await tx.incident.updateMany({
       where: { investigationId: sourceId },
       data: { investigationId: targetId },
@@ -60,6 +61,10 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     })
 
     for (const obs of sourceObservables) {
+      const existing = await tx.investigationObservable.findUnique({
+        where: { investigationId_value_category: { investigationId: targetId, value: obs.value, category: obs.category } },
+        select: { confidence: true },
+      })
       await tx.investigationObservable.upsert({
         where: {
           investigationId_value_category: {
@@ -84,11 +89,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
           verdictAt: obs.verdictAt,
         },
         update: {
-          confidence: {
-            set: Math.max(obs.confidence, (await tx.investigationObservable.findUnique({
-              where: { investigationId_value_category: { investigationId: targetId, value: obs.value, category: obs.category } },
-            })?.confidence ?? 0)),
-          },
+          confidence: { set: Math.max(obs.confidence, existing?.confidence ?? 0) },
           lastSeen: new Date(),
         },
       })
@@ -108,7 +109,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
           description: entry.description,
           source: entry.source,
           isPinned: entry.isPinned,
-          payload: entry.payload,
+          payload: entry.payload ?? undefined,
         },
       })
     }
@@ -130,7 +131,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         investigationId: targetId, eventTime: new Date(),
         eventType: 'merge_target',
         title: `Merged investigation: ${source.name}`,
-        description: `${source.incidents.length} incidents, ${sourceObservables.length} observables, ${sourceTimeline.length} timeline entries`,
+        description: `${sourceIncidentCount} incidents, ${sourceObservables.length} observables, ${sourceTimeline.length} timeline entries`,
         source: 'manual',
       },
     })
