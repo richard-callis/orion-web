@@ -966,7 +966,7 @@ model Incident {
   events           SecurityEvent[]
   actionAudits     ActionAudit[]
   chatMessages     ChatMessage[]
-  investigation    Investigation?
+  investigation    Investigation?  @relation(fields: [investigationId], references: [id], onDelete: SetNull)
   investigationId  String? // Soft back-reference to investigation case
 
   @@index([environmentId, status])
