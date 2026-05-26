@@ -1,5 +1,5 @@
 /**
- * POST /api/security/incidents/[incidentId]/create-investigation
+ * POST /api/security/incidents/[id]/create-investigation
  *
  * One-click create investigation from incident detail.
  * Pre-populates name, severity, links the incident, auto-extracts observables.
@@ -11,8 +11,8 @@ import { extractFromEvents } from '@/lib/security/extract-observables'
 
 export const dynamic = 'force-dynamic'
 
-export async function POST(_req: Request, { params }: { params: { incidentId: string } }) {
-  const incidentId = (await params).incidentId
+export async function POST(_req: Request, { params }: { params: { id: string } }) {
+  const incidentId = (await params).id
 
   const incident = await prisma.incident.findUnique({
     where: { id: incidentId },
