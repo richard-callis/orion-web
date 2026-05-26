@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { Shield, CheckCircle2, XCircle, Loader2, RefreshCw } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Shield, CheckCircle2, XCircle, Loader2, RefreshCw, Save } from 'lucide-react'
 
 const sources = [
   { key: 'CROWDSEC_API', name: 'CrowdSec', desc: 'Brute-force & IP blocking', default: 'http://crowdsec-lapi.crowdsec:8080' },
@@ -14,7 +14,20 @@ const sources = [
 export default function SecuritySettings() {
   const [config, setConfig] = useState<Record<string, string>>({})
   const [testing, setTesting] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
   const [results, setResults] = useState<Record<string, 'ok' | 'error' | null>>({})
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch('/api/monitoring/security/config')
+        const data = await res.json()
+        setConfig(data.config ?? {})
+      } catch {}
+    }
+    load()
+  }, [])
 
   async function testConnection(key: string) {
     setTesting(key)
@@ -26,6 +39,24 @@ export default function SecuritySettings() {
       setResults(prev => ({ ...prev, [key]: 'error' as const }))
     }
     setTesting(null)
+  }
+
+  async function saveConfig() {
+    setSaving(true)
+    setSaved(false)
+    try {
+      const res = await fetch('/api/monitoring/security/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      })
+      if (res.ok) {
+        setSaved(true)
+        setTimeout(() => setSaved(false), 3000)
+      }
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -67,9 +98,17 @@ export default function SecuritySettings() {
         ))}
       </div>
 
-      <button className="px-4 py-2 text-sm font-medium rounded-lg bg-accent text-white hover:bg-accent/90 transition-colors">
-        Save Configuration
-      </button>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={saveConfig}
+          disabled={saving}
+          className="flex items-center gap-1 px-4 py-2 text-sm font-medium rounded-lg bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors"
+        >
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+          Save Configuration
+        </button>
+        {saved && <span className="text-xs text-status-healthy flex items-center gap-1"><CheckCircle2 size={12} /> Saved</span>}
+      </div>
     </div>
   )
 }
