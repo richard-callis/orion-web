@@ -2,6 +2,7 @@
  * Shared utilities for investigation API routes.
  */
 
+import { type Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db'
 
 /**
