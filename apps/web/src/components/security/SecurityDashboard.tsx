@@ -55,7 +55,7 @@ function StatCard({ icon: Icon, label, value, color }: {
   )
 }
 
-type Tab = 'incidents' | 'alerts' | 'approvals' | 'flows' | 'sources' | 'settings'
+type Tab = 'incidents' | 'investigations' | 'alerts' | 'approvals' | 'flows' | 'sources' | 'settings'
 
 export default function SecurityDashboard() {
   const [data, setData] = useState<any>(null)
@@ -93,10 +93,11 @@ export default function SecurityDashboard() {
     )
   }
 
-  const tabs: { key: Tab; label: string; badge?: number }[] = [
-    { key: 'incidents', label: 'Incidents', badge: data?.activeIncidents },
+  const tabs: { key: Tab; label: string; badge?: number; href?: string }[] = [
+    { key: 'incidents', label: 'Incidents', badge: data?.activeIncidents, href: '/security/incidents' },
+    { key: 'investigations', label: 'Investigations', href: '/security/investigations' },
     { key: 'alerts', label: 'Alerts' },
-    { key: 'approvals', label: 'Approvals', badge: data?.pendingApprovals },
+    { key: 'approvals', label: 'Approvals', badge: data?.pendingApprovals, href: '/security/approvals' },
     { key: 'flows', label: 'Flows' },
     { key: 'sources', label: 'Sources' },
     { key: 'settings', label: 'Settings' },
@@ -179,6 +180,54 @@ export default function SecurityDashboard() {
           ) : (
             <div className="rounded-lg border border-border-subtle bg-bg-card px-4 py-12 text-center text-sm text-text-muted">
               No incidents — security is clear.
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'investigations' && (
+        <div className="space-y-4">
+          {data?.recentInvestigations?.length ? (
+            <div className="bg-bg-surface border border-border-subtle rounded-xl">
+              <div className="px-4 py-3 border-b border-border-subtle flex items-center justify-between">
+                <span className="text-sm font-medium text-text-primary">Recent Investigations</span>
+                <Link href="/security/investigations" className="text-xs text-accent hover:underline">
+                  View all
+                </Link>
+              </div>
+              <div className="divide-y divide-border-subtle">
+                {data.recentInvestigations.map((inv: any) => (
+                  <Link
+                    key={inv.id}
+                    href={`/security/investigations/${inv.id}`}
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-bg-raised transition-colors"
+                  >
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                      inv.severity >= 80 ? 'bg-status-error/15 text-status-error' :
+                      inv.severity >= 50 ? 'bg-status-warning/15 text-status-warning' :
+                      'bg-bg-raised text-text-muted'
+                    }`}>
+                      {inv.severity}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-text-primary truncate">{inv.name}</div>
+                      <div className="text-xs text-text-muted">{inv._count?.incidents ?? 0} incidents · {inv._count?.observables ?? 0} observables</div>
+                    </div>
+                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
+                      inv.status === 'open' ? 'bg-status-warning/15 text-status-warning' :
+                      inv.status === 'active' ? 'bg-red-400/15 text-red-400' :
+                      inv.status === 'resolved' ? 'bg-status-healthy/15 text-status-healthy' :
+                      'bg-bg-raised text-text-muted'
+                    }`}>
+                      {inv.status}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-border-subtle bg-bg-card px-4 py-12 text-center text-sm text-text-muted">
+              No active investigations.
             </div>
           )}
         </div>
