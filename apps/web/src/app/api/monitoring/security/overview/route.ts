@@ -76,6 +76,22 @@ export async function GET() {
     criticalCount * 25 + highCount * 10 + totalUnack * 2
   ))
 
+  // Recent investigations
+  const recentInvestigations = await prisma.investigation.findMany({
+    where: { status: { in: ['open', 'active'] } },
+    orderBy: { updatedAt: 'desc' },
+    take: 5,
+    select: {
+      id: true,
+      name: true,
+      status: true,
+      severity: true,
+      _count: {
+        select: { incidents: true, observables: true, notes: true },
+      },
+    },
+  })
+
   return NextResponse.json({
     riskScore,
     activeThreats: recentAlerts.length,
@@ -86,6 +102,10 @@ export async function GET() {
     recentIncidents: recentIncidents.map(i => ({
       ...i,
       openedAt: i.openedAt.toISOString(),
+    })),
+    recentInvestigations: recentInvestigations.map(inv => ({
+      ...inv,
+      _count: inv._count,
     })),
     pendingApprovalsList: pendingApprovalsList.map((a: any) => ({
       ...a,
