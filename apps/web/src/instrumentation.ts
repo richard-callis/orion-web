@@ -21,5 +21,8 @@ export async function register() {
 
     const { ensureSecurityRetentionJobScheduled } = await import('./jobs/security-retention-daily')
     await ensureSecurityRetentionJobScheduled()
+
+    const { ensureSocConfig } = await import('./lib/seed-soc-config')
+    await ensureSocConfig()
   }
 }
