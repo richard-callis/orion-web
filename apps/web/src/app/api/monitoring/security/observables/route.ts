@@ -14,6 +14,10 @@ const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>()
 
 function checkRateLimit(ip: string, max: number = 10, windowMs: number = 60000): boolean {
   const now = Date.now()
+  // Evict expired buckets to prevent unbounded growth
+  for (const [key, b] of rateLimitBuckets.entries()) {
+    if (now > b.resetAt) rateLimitBuckets.delete(key)
+  }
   const bucket = rateLimitBuckets.get(ip)
   if (!bucket || now > bucket.resetAt) {
     rateLimitBuckets.set(ip, { count: 1, resetAt: now + windowMs })

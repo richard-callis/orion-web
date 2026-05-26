@@ -749,7 +749,13 @@ export async function executeTool(
         const inv = await prisma.investigation.findUnique({ where: { id: investigationId } })
         if (!inv) return `Investigation ${investigationId} not found`
         const data: Record<string, unknown> = {}
-        if (args.status) data.status = String(args.status)
+        if (args.status) {
+          const s = String(args.status)
+          if (s === 'resolved' || s === 'closed') {
+            return 'Error: Warden cannot transition investigation to resolved or closed status'
+          }
+          data.status = s
+        }
         if (args.severity != null) data.severity = Number(args.severity)
         if (args.tlp) data.tlp = String(args.tlp)
         if (args.tags) data.tags = args.tags as string[]
@@ -832,7 +838,12 @@ export async function executeTool(
             verdictBy: verdict !== 'unknown' ? 'warden' : undefined,
             verdictAt: verdict !== 'unknown' ? new Date() : undefined,
           },
-          update: { lastSeen: new Date() },
+          update: {
+            lastSeen: new Date(),
+            confidence,
+            ...(verdict !== 'unknown' ? { verdict, verdictBy: 'warden', verdictAt: new Date() } : {}),
+            ...(args.context ? { context: String(args.context) } : {}),
+          },
         })
         return `Observable added: [${category}] ${value} (verdict: ${verdict}, confidence: ${confidence}%, id: ${obs.id})`
       }

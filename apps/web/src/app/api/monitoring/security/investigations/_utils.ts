@@ -3,7 +3,6 @@
  */
 
 import { prisma } from '@/lib/db'
-import { type Prisma } from '@prisma/client'
 
 /**
  * Record an audit entry for an investigation.
@@ -64,27 +63,3 @@ export async function searchNotes(
   return rows as any
 }
 
-/**
- * Cursor pagination helper. Returns { items, nextCursor, hasMore }.
- */
-export async function cursorPaginate<T>(
-  model: Prisma.Model,
-  where: Record<string, unknown>,
-  orderBy: Record<string, 'asc' | 'desc'>,
-  limit: number,
-  cursor: string | null,
-  select?: Record<string, true>,
-) {
-  const take = limit + 1
-  const cursorOpt = cursor ? { id: cursor } : undefined
-
-  const items = await (model as any).findMany({
-    where, orderBy, take, cursor: cursorOpt,
-    select: select || undefined,
-  })
-
-  const hasMore = items.length > limit
-  const data = items.slice(0, limit)
-  const nextCursor = hasMore ? items[items.length - 1].id : null
-  return { items: data, nextCursor, hasMore }
-}

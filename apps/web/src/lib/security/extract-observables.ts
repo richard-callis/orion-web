@@ -81,7 +81,7 @@ const REFANG_REPLACEMENTS: [RegExp, string][] = [
 /** RFC 1918 + loopback + link-local ranges */
 const PRIVATE_RANGES_V4 = [
   { start: 0x00000000, end: 0x00000000 }, // 0.0.0.0/8
-  { start: 0x07f00000, end: 0x07fffffff }, // 127.0.0.0/8 (loopback)
+  { start: 0x7f000000, end: 0x7fffffff }, // 127.0.0.0/8 (loopback)
   { start: 0x0a000000, end: 0x0affffff }, // 10.0.0.0/8
   { start: 0xac100000, end: 0xac1fffff }, // 172.16.0.0/12
   { start: 0xc0a80000, end: 0xc0a8ffff }, // 192.168.0.0/16
@@ -142,7 +142,7 @@ export function isPrivateIPv4(ip: string): boolean {
   if (parts.length !== 4) return true
   const nums = parts.map(p => parseInt(p, 10))
   if (nums.some(n => isNaN(n) || n < 0 || n > 255)) return true
-  const int = (nums[0] << 24) | (nums[1] << 16) | (nums[2] << 8) | nums[3]
+  const int = ((nums[0] << 24) | (nums[1] << 16) | (nums[2] << 8) | nums[3]) >>> 0
   for (const range of PRIVATE_RANGES_V4) {
     if (int >= range.start && int <= range.end) return true
   }
