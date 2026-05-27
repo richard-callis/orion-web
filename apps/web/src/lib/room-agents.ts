@@ -987,7 +987,12 @@ export async function triggerRoomAgentReplies(
         const effectiveLimit = roomTokenLimit ?? (discoveredContextLimit > 0 ? discoveredContextLimit : 0)
         await prisma.chatRoom.update({
           where: { id: roomId },
-          data: { tokenCount: currentTokenCount, updatedAt: new Date() },
+          data: {
+            tokenCount: currentTokenCount,
+            updatedAt: new Date(),
+            // Cache auto-discovered limit so GET route can return it without re-querying the model
+            ...(room.tokenLimit === null && effectiveLimit > 0 ? { tokenLimit: effectiveLimit } : {}),
+          },
         })
         if (effectiveLimit > 0) {
           const pct = currentTokenCount / effectiveLimit
