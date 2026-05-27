@@ -17,7 +17,16 @@ function fmt(n: number): string {
 export default function ContextWindowBar({ tokenCount, tokenLimit, onCompact }: Props) {
   const [expanded, setExpanded] = useState(false)
 
-  if (!tokenLimit) return null
+  if (!tokenLimit) {
+    if (!tokenCount) return null
+    return (
+      <div className="px-4 py-1.5 border-b border-border-subtle flex-shrink-0">
+        <span className="text-[10px] text-text-muted tabular-nums">
+          {fmt(tokenCount)} tokens used
+        </span>
+      </div>
+    )
+  }
 
   const pct = Math.min(100, Math.round((tokenCount / tokenLimit) * 100))
   const remaining = tokenLimit - tokenCount
