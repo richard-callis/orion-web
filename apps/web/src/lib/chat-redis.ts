@@ -79,6 +79,32 @@ async function initRedisClient(): Promise<boolean> {
 }
 
 /**
+ * Publish a raw payload to a room's Redis channel for real-time SSE delivery.
+ * Gracefully degrades if Redis is unavailable.
+ */
+export async function publishToRoom(
+  roomId: string,
+  payload: any,
+): Promise<void> {
+  if (!redisAvailable) {
+    const ok = await initRedisClient()
+    if (!ok) return
+  }
+
+  if (!redisPubClient) return
+
+  try {
+    const channel = `chat:room:${roomId}`
+    const payloadStr = JSON.stringify(payload)
+    await redisPubClient.publish(channel, payloadStr)
+  } catch (error) {
+    console.error(`[chat-redis] Failed to publish to ${roomId}:`, error)
+    redisAvailable = false
+    redisPubClient = null
+  }
+}
+
+/**
  * Publish a chat message to Redis for real-time delivery.
  * Called after message is saved to PostgreSQL.
  */
@@ -86,22 +112,7 @@ export async function publishChatMessage(
   roomId: string,
   message: any,
 ): Promise<void> {
-  if (!redisAvailable) {
-    const ok = await initRedisClient()
-    if (!ok) return // Graceful degradation if Redis unavailable
-  }
-
-  if (!redisPubClient) return
-
-  try {
-    const channel = `chat:room:${roomId}`
-    const payload = JSON.stringify(message)
-    await redisPubClient.publish(channel, payload)
-  } catch (error) {
-    console.error(`[chat-redis] Failed to publish message to ${roomId}:`, error)
-    redisAvailable = false
-    redisPubClient = null
-  }
+  await publishToRoom(roomId, message)
 }
 
 /**

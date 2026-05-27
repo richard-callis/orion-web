@@ -21,7 +21,7 @@ import { getToolsForContext, executeRegisteredTool } from './tool-registry'
 import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
 import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, invalidateSnapshotCache, getModelContextLimit } from './agent-context'
-import { compactRoom, publishCompactionWarning } from './compaction'
+import { compactRoom, publishCompactionWarning, publishTokenUpdate } from './compaction'
 import { getPrompt } from './system-prompts'
 import type { AgentGateway } from './agent-gateway'
 import type { GatewayTool } from './agent-runner/types'
@@ -1017,6 +1017,7 @@ export async function triggerRoomAgentReplies(
               await publishCompactionWarning(roomId, pct, currentTokenCount, effectiveLimit).catch(() => null)
             }
           }
+          await publishTokenUpdate(roomId, currentTokenCount, effectiveLimit).catch(() => null)
         }
       }
     } catch (e) {
