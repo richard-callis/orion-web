@@ -76,6 +76,8 @@ export async function GET(
     taskId: room.taskId ?? null,
     featureId: room.featureId ?? null,
     epicId: room.epicId ?? null,
+    tokenCount: room.tokenCount,
+    tokenLimit: room.tokenLimit ?? null,
     createdAt: room.createdAt.toISOString(),
     updatedAt: room.updatedAt.toISOString(),
     members, messages,
