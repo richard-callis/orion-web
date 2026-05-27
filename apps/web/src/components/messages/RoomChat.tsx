@@ -201,7 +201,6 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
             return
           }
 
-          // Handle token update events
           if (message.type === 'token-update') {
             setTokenState({ count: message.tokenCount, limit: message.tokenLimit })
             return
@@ -432,6 +431,13 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     } catch { /* ignore */ }
   }, [room, roomId, loadRoom])
 
+  const handleCompact = useCallback(async () => {
+    try {
+      await fetch(`/api/chatrooms/${roomId}/compact`, { method: 'POST' })
+      await loadRoom()
+    } catch { /* ignore */ }
+  }, [roomId, loadRoom])
+
   // Filter invite list by search
   const filteredUsers = inviteUsers.filter(u =>
     !inviteSearch || (u.name || u.username || '').toLowerCase().includes(inviteSearch.toLowerCase())
@@ -570,6 +576,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       <ContextWindowBar
         tokenCount={tokenState.count}
         tokenLimit={tokenState.limit}
+        onCompact={handleCompact}
       />
 
       {/* Messages */}
