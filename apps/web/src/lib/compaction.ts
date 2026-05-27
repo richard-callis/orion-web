@@ -16,7 +16,7 @@
  */
 
 import { prisma } from './db'
-import { publishChatMessage } from './chat-redis'
+import { publishChatMessage, publishToRoom } from './chat-redis'
 
 // ── Concurrency guard ─────────────────────────────────────────────────────────
 // Prevents two simultaneous compactions for the same room (e.g. two agents both
@@ -245,5 +245,23 @@ export async function publishCompactionWarning(
     attachments: { type: 'compaction-warning', percentage: pct, tokenCount, tokenLimit },
     sender:      { type: 'system', id: null, name: 'System' },
     createdAt:   msg.createdAt instanceof Date ? msg.createdAt.toISOString() : msg.createdAt,
+  })
+}
+
+/**
+ * Publish an ephemeral token update via SSE.
+ * Does NOT write to the database — pure real-time signal for the UI.
+ */
+export async function publishTokenUpdate(
+  roomId: string,
+  tokenCount: number,
+  tokenLimit: number,
+): Promise<void> {
+  const percentage = tokenLimit > 0 ? Math.round((tokenCount / tokenLimit) * 100) : 0
+  await publishToRoom(roomId, {
+    type: 'token-update',
+    tokenCount,
+    tokenLimit,
+    percentage,
   })
 }
