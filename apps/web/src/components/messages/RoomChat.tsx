@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
+import ContextWindowBar from '@/components/messages/ContextWindowBar'
 import {
   Users, Bot, User as UserIcon,
   Hash, Send, X, Loader2, Plus, LogOut, AtSign, BookmarkCheck, Terminal, Layers,
@@ -108,6 +109,10 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   const [showCompleteGoal, setShowCompleteGoal] = useState(false)
   const [goalSummaryInput, setGoalSummaryInput] = useState('')
   const [completingGoal, setCompletingGoal] = useState(false)
+  const [tokenState, setTokenState] = useState<{ count: number; limit: number | null }>({
+    count: 0,
+    limit: null,
+  })
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -154,6 +159,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       const res = await fetch(`/api/chatrooms/${roomId}?messages=${limit ?? messageLimit}`)
       const detail = await res.json()
       setRoom(detail)
+      setTokenState({ count: detail.tokenCount ?? 0, limit: detail.tokenLimit ?? null })
     } catch { /* ignore */ }
     setLoading(false)
   }, [roomId, messageLimit])
@@ -192,6 +198,12 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
           // Skip the initial "connected" message
           if (message.type === 'connected') {
             console.log('[RoomChat] SSE connected for room', roomId)
+            return
+          }
+
+          // Handle token update events
+          if (message.type === 'token-update') {
+            setTokenState({ count: message.tokenCount, limit: message.tokenLimit })
             return
           }
 
@@ -553,6 +565,12 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
           )}
         </div>
       )}
+
+      {/* Context window bar */}
+      <ContextWindowBar
+        tokenCount={tokenState.count}
+        tokenLimit={tokenState.limit}
+      />
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
