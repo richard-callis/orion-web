@@ -1017,7 +1017,7 @@ export async function triggerRoomAgentReplies(
               await publishCompactionWarning(roomId, pct, currentTokenCount, effectiveLimit).catch(() => null)
             }
           }
-          await publishTokenUpdate(roomId, currentTokenCount, effectiveLimit)
+          await publishTokenUpdate(roomId, currentTokenCount, effectiveLimit).catch(() => null)
         }
       }
     } catch (e) {
