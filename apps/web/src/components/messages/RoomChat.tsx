@@ -454,6 +454,11 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
         <Hash size={14} className="text-text-muted flex-shrink-0" />
         <span className="text-sm font-semibold text-text-primary truncate">{room?.name}</span>
         {room && <span className={`px-1.5 py-0.5 rounded text-[9px] flex-shrink-0 ${TYPE_COLORS[room.type] || TYPE_COLORS.general}`}>{room.type}</span>}
+        <ContextWindowBar
+          tokenCount={tokenState.count}
+          tokenLimit={tokenState.limit}
+          onCompact={handleCompact}
+        />
         <div className="flex items-center gap-1 ml-auto flex-shrink-0">
           {/* Invite button */}
           <button
@@ -571,13 +576,6 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
           )}
         </div>
       )}
-
-      {/* Context window bar */}
-      <ContextWindowBar
-        tokenCount={tokenState.count}
-        tokenLimit={tokenState.limit}
-        onCompact={handleCompact}
-      />
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
