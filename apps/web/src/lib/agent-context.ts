@@ -109,6 +109,10 @@ export function invalidateSnapshotCache(): void {
 const CONTEXT_LIMIT_TTL_MS = 10 * 60 * 1000  // 10 minutes
 const contextLimitCache = new Map<string, { value: number; expiresAt: number }>()
 
+export function clearContextLimitCache(baseUrl: string): void {
+  contextLimitCache.delete(baseUrl)
+}
+
 /**
  * Discover the context window size for an OpenAI-compatible model endpoint.
  * Uses llama.cpp's GET /props (returns { n_ctx: number, ... }).
@@ -117,6 +121,19 @@ const contextLimitCache = new Map<string, { value: number; expiresAt: number }>(
 export async function getModelContextLimit(baseUrl: string): Promise<number> {
   const cached = contextLimitCache.get(baseUrl)
   if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  // Check for an explicit contextSize override on the ExternalModel record.
+  // This takes priority over /props discovery so admins can correct wrong values.
+  try {
+    const model = await prisma.externalModel.findFirst({
+      where: { baseUrl, enabled: true },
+      select: { contextSize: true },
+    })
+    if (model?.contextSize && model.contextSize > 0) {
+      contextLimitCache.set(baseUrl, { value: model.contextSize, expiresAt: Date.now() + CONTEXT_LIMIT_TTL_MS })
+      return model.contextSize
+    }
+  } catch { /* ignore — DB error shouldn't block model calls */ }
 
   try {
     const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/props`, {

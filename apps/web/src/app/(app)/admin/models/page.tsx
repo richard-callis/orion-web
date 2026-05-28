@@ -12,6 +12,7 @@ interface ExternalModel {
   enabled: boolean
   timeoutSecs: number
   maxTokens: number | null
+  contextSize: number | null
   temperature: number | null
   topP: number | null
   minP: number | null
@@ -33,6 +34,7 @@ interface ModelForm {
   enabled: boolean
   timeoutSecs: number
   maxTokens: number | null
+  contextSize: number | null
   temperature: number | null
   topP: number | null
   minP: number | null
@@ -40,7 +42,7 @@ interface ModelForm {
   seed: number | null
 }
 
-const EMPTY_FORM: ModelForm = { name: '', provider: 'openai', baseUrl: '', apiKey: '', modelId: '', enabled: true, timeoutSecs: 120, maxTokens: null, temperature: null, topP: null, minP: null, repeatPenalty: null, seed: null }
+const EMPTY_FORM: ModelForm = { name: '', provider: 'openai', baseUrl: '', apiKey: '', modelId: '', enabled: true, timeoutSecs: 120, maxTokens: null, contextSize: null, temperature: null, topP: null, minP: null, repeatPenalty: null, seed: null }
 
 const PROVIDER_LABELS: Record<string, string> = {
   openai: 'OpenAI Compatible',
@@ -103,7 +105,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
   const isNew = model === null
   const [form, setForm] = useState<ModelForm>(
     model
-      ? { name: model.name, provider: model.provider, baseUrl: model.baseUrl, apiKey: '', modelId: model.modelId, enabled: model.enabled, timeoutSecs: model.timeoutSecs ?? 120, maxTokens: model.maxTokens ?? null, temperature: model.temperature ?? null, topP: model.topP ?? null, minP: model.minP ?? null, repeatPenalty: model.repeatPenalty ?? null, seed: model.seed ?? null }
+      ? { name: model.name, provider: model.provider, baseUrl: model.baseUrl, apiKey: '', modelId: model.modelId, enabled: model.enabled, timeoutSecs: model.timeoutSecs ?? 120, maxTokens: model.maxTokens ?? null, contextSize: model.contextSize ?? null, temperature: model.temperature ?? null, topP: model.topP ?? null, minP: model.minP ?? null, repeatPenalty: model.repeatPenalty ?? null, seed: model.seed ?? null }
       : EMPTY_FORM
   )
   const [saving, setSaving]         = useState(false)
@@ -119,7 +121,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
     if (!form.name || !form.baseUrl || !form.modelId) { setError('Name, Base URL, and Model ID are required.'); return }
     setSaving(true); setError(null)
     try {
-      const payload = { name: form.name, provider: form.provider, baseUrl: form.baseUrl, apiKey: form.apiKey || undefined, modelId: form.modelId, enabled: form.enabled, timeoutSecs: form.timeoutSecs, maxTokens: form.maxTokens, temperature: form.temperature, topP: form.topP, minP: form.minP, repeatPenalty: form.repeatPenalty, seed: form.seed }
+      const payload = { name: form.name, provider: form.provider, baseUrl: form.baseUrl, apiKey: form.apiKey || undefined, modelId: form.modelId, enabled: form.enabled, timeoutSecs: form.timeoutSecs, maxTokens: form.maxTokens, contextSize: form.contextSize, temperature: form.temperature, topP: form.topP, minP: form.minP, repeatPenalty: form.repeatPenalty, seed: form.seed }
       const res = model
         ? await fetch(`/api/admin/models/${model.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         : await fetch('/api/admin/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -238,13 +240,23 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
                 className={inputCls}
               />
             </FormField>
-            <FormField label="Max Tokens (blank = unlimited)">
+            <FormField label="Output Token Limit (blank = unlimited)">
               <input
                 type="number"
                 min={1}
                 value={form.maxTokens ?? ''}
                 onChange={e => setForm(f => ({ ...f, maxTokens: e.target.value ? Math.max(1, parseInt(e.target.value)) : null }))}
                 placeholder="unlimited"
+                className={inputCls}
+              />
+            </FormField>
+            <FormField label="Context Limit Override (blank = auto-detect)">
+              <input
+                type="number"
+                min={1}
+                value={form.contextSize ?? ''}
+                onChange={e => setForm(f => ({ ...f, contextSize: e.target.value ? Math.max(1, parseInt(e.target.value)) : null }))}
+                placeholder="auto-detect"
                 className={inputCls}
               />
             </FormField>

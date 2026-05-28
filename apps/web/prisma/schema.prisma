@@ -460,7 +460,8 @@ model ExternalModel {
   modelId       String
   enabled       Boolean  @default(true)
   timeoutSecs   Int      @default(120)
-  maxTokens     Int?
+  maxTokens     Int?     // max output generation tokens; null = model default
+  contextSize   Int?     // context window override; null = auto-discover from /props
   temperature   Float?
   topP          Float?
   minP          Float?
