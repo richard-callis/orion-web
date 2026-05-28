@@ -36,8 +36,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     data: updateData,
   })
 
-  // If contextSize changed, drop the cached limit so the next agent turn re-reads the new value
-  if ('contextSize' in body) clearContextLimitCache(model.baseUrl)
+  // If contextSize changed, drop the cached limit so the next agent turn re-reads the new value.
+  // Cache is keyed by "ext:<id>" (model-level), not baseUrl, so two models at the same server don't bleed.
+  if ('contextSize' in body) clearContextLimitCache(`ext:${params.id}`)
 
   // SOC2: [M-005] Log model update (non-blocking)
   logAudit({
