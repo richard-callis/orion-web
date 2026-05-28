@@ -991,7 +991,7 @@ export async function triggerRoomAgentReplies(
             tokenCount: currentTokenCount,
             updatedAt: new Date(),
             // Cache auto-discovered limit so GET route can return it without re-querying the model
-            ...(room.tokenLimit === null && effectiveLimit > 0 ? { tokenLimit: effectiveLimit } : {}),
+            ...(room?.tokenLimit === null && effectiveLimit > 0 ? { tokenLimit: effectiveLimit } : {}),
           },
         })
         if (effectiveLimit > 0) {
