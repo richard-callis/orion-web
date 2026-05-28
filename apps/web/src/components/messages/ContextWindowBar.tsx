@@ -1,9 +1,12 @@
 'use client'
 
+import { Loader2 } from 'lucide-react'
+
 interface Props {
   tokenCount: number
   tokenLimit: number | null
   onCompact?: () => void
+  compacting?: boolean
 }
 
 function fmt(n: number): string {
@@ -12,7 +15,7 @@ function fmt(n: number): string {
   return String(n)
 }
 
-export default function ContextWindowBar({ tokenCount, tokenLimit, onCompact }: Props) {
+export default function ContextWindowBar({ tokenCount, tokenLimit, onCompact, compacting }: Props) {
   if (!tokenLimit) {
     if (!tokenCount) return null
     return (
@@ -47,10 +50,12 @@ export default function ContextWindowBar({ tokenCount, tokenLimit, onCompact }: 
       {onCompact && (
         <button
           onClick={onCompact}
-          className="text-[10px] px-1.5 py-0.5 rounded bg-bg-raised text-text-muted hover:text-text-primary hover:bg-bg-sidebar transition-colors flex-shrink-0"
+          disabled={compacting}
+          className="text-[10px] px-1.5 py-0.5 rounded bg-bg-raised text-text-muted hover:text-text-primary hover:bg-bg-sidebar transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
           title="Compact conversation history"
         >
-          Compact
+          {compacting && <Loader2 size={10} className="animate-spin" />}
+          {compacting ? 'Compacting…' : 'Compact'}
         </button>
       )}
     </div>

@@ -431,11 +431,15 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     } catch { /* ignore */ }
   }, [room, roomId, loadRoom])
 
+  const [compacting, setCompacting] = useState(false)
   const handleCompact = useCallback(async () => {
+    setCompacting(true)
     try {
       await fetch(`/api/chatrooms/${roomId}/compact`, { method: 'POST' })
       await loadRoom()
-    } catch { /* ignore */ }
+    } catch { /* ignore */ } finally {
+      setCompacting(false)
+    }
   }, [roomId, loadRoom])
 
   // Filter invite list by search
@@ -458,6 +462,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
           tokenCount={tokenState.count}
           tokenLimit={tokenState.limit}
           onCompact={handleCompact}
+          compacting={compacting}
         />
         <div className="flex items-center gap-1 ml-auto flex-shrink-0">
           {/* Invite button */}
