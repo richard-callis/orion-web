@@ -11,12 +11,14 @@
  *     Feature: "Operations"  → ChatRoom for Alpha/Veritas cycle summaries
  *     Feature: "Maintenance" → ChatRoom for scheduled upkeep, upgrades, patches
  *     Feature: "Security"    → ChatRoom for Warden incident triage + action proposals
+ *     Feature: "Execution"   → ChatRoom for tool execution approval gating
  *
  * After seeding, room IDs are stored in SystemSetting:
  *   system.room.health      → ChatRoom ID for the Health feature
  *   system.room.operations  → ChatRoom ID for the Operations feature
  *   system.room.maintenance → ChatRoom ID for the Maintenance feature
  *   system.room.security    → ChatRoom ID for the Security feature
+ *   system.room.execution   → ChatRoom ID for the Execution feature
  *
  * The worker reads these settings and injects them into each watcher's
  * enriched prompt so agents always know where to post.
@@ -54,6 +56,12 @@ const SYSTEM_FEATURES: SystemFeatureDef[] = [
     title:       'Security',
     description: 'SIEM incident management. Warden posts incident triage summaries and proposed actions here.',
     settingKey:  'system.room.security',
+    agents:      ['Warden'],
+  },
+  {
+    title:       'Execution',
+    description: 'Tool execution approval and gating. Warden approves/denies risky tool calls from agents and system services.',
+    settingKey:  'system.room.execution',
     agents:      ['Warden'],
   },
 ]
