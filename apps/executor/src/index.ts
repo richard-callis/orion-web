@@ -13,6 +13,8 @@ const ORION_EXECUTOR_TOKEN = process.env.ORION_EXECUTOR_TOKEN || ''
 const ORION_GATEWAY_TOKEN = process.env.ORION_GATEWAY_TOKEN || ''
 const VECTOR_WEBHOOK_URL = process.env.VECTOR_WEBHOOK_URL || ''
 const HOST_AGENT_WEBHOOK_SECRET = process.env.HOST_AGENT_WEBHOOK_SECRET || ''
+const EXECUTION_APPROVE_TIMEOUT_SECONDS = parseInt(process.env.EXECUTION_APPROVE_TIMEOUT_SECONDS || '90')
+const EXECUTION_ESCALATE_TTL_SECONDS = parseInt(process.env.EXECUTION_ESCALATE_TTL_SECONDS || '3600')
 
 if (!ORION_EXECUTOR_TOKEN) {
   throw new Error('ORION_EXECUTOR_TOKEN environment variable not set')
@@ -21,6 +23,9 @@ if (!ORION_EXECUTOR_TOKEN) {
 const fastify = Fastify({ logger: true })
 const orionClient = new OrionClient(ORION_URL, ORION_GATEWAY_TOKEN)
 const vectorClient = new VectorClient(VECTOR_WEBHOOK_URL, HOST_AGENT_WEBHOOK_SECRET)
+
+// Track active polling tasks — key: executionId, value: AbortController
+const activePolling = new Map<string, AbortController>()
 
 fastify.register(fastifyCors)
 
@@ -35,6 +40,151 @@ const requireExecutorToken = async (request: FastifyRequest, reply: FastifyReply
 fastify.get('/health', async (request, reply) => {
   return { status: 'ok' }
 })
+
+async function executeCommand(
+  executionId: string,
+  tool: string,
+  args: Record<string, unknown>,
+  actorId: string,
+  actorType: string
+): Promise<{ status: string; output?: string; error?: string }> {
+  try {
+    const result = await sandbox.execute(tool, args, {
+      timeoutMs: 30000,
+    })
+
+    const output = redactor.redactOutput(result.stdout + result.stderr)
+    await orionClient.updateExecution(executionId, {
+      status: 'completed',
+      output,
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
+      completedAt: new Date(),
+    })
+
+    await vectorClient.emit({
+      executionId,
+      tool,
+      actorId,
+      actorType,
+      riskTier: 'auto',
+      status: 'completed',
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
+    })
+
+    return { status: 'completed', output }
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+    await orionClient.updateExecution(executionId, {
+      status: 'failed',
+      output: errorMsg,
+      completedAt: new Date(),
+    })
+
+    await vectorClient.emit({
+      executionId,
+      tool,
+      actorId,
+      actorType,
+      riskTier: 'auto',
+      status: 'failed',
+    })
+
+    return { status: 'failed', error: errorMsg }
+  }
+}
+
+async function pollForApproval(
+  executionId: string,
+  execution: any,
+  timeoutSeconds: number,
+  autoApproveIfEscalate: boolean = false
+): Promise<void> {
+  const controller = new AbortController()
+  activePolling.set(executionId, controller)
+
+  const startTime = Date.now()
+  const timeoutMs = timeoutSeconds * 1000
+
+  try {
+    while (!controller.signal.aborted) {
+      const current = await orionClient.getExecution(executionId)
+
+      // Check if decision was made
+      if (current.reviewDecision) {
+        activePolling.delete(executionId)
+
+        if (current.reviewDecision === 'approved') {
+          // Execute the approved command
+          const result = await executeCommand(
+            executionId,
+            execution.tool,
+            execution.args,
+            execution.actorId,
+            execution.actorType
+          )
+
+          await vectorClient.emit({
+            executionId,
+            tool: execution.tool,
+            actorId: execution.actorId,
+            actorType: execution.actorType,
+            riskTier: execution.riskTier,
+            status: result.status,
+            reviewDecision: 'approved',
+            exitCode: result.status === 'completed' ? 0 : 1,
+          })
+        }
+        return
+      }
+
+      // Check timeout
+      if (Date.now() - startTime > timeoutMs) {
+        activePolling.delete(executionId)
+
+        // Auto-deny
+        await orionClient.updateExecution(executionId, {
+          status: 'denied',
+          reviewDecision: 'denied',
+          reviewedAt: new Date(),
+          completedAt: new Date(),
+        })
+
+        await vectorClient.emit({
+          executionId,
+          tool: execution.tool,
+          actorId: execution.actorId,
+          actorType: execution.actorType,
+          riskTier: execution.riskTier,
+          status: 'denied',
+          reviewDecision: 'denied',
+        })
+
+        // Notify execution room of timeout
+        try {
+          const roomSetting = await orionClient.getSystemSetting('system.room.execution')
+          if (roomSetting) {
+            await orionClient.notifyRoom(
+              roomSetting,
+              `⏱ Execution ${executionId} auto-denied after ${timeoutSeconds}s timeout`
+            )
+          }
+        } catch (err) {
+          fastify.log.error(`Failed to notify timeout: ${err}`)
+        }
+
+        return
+      }
+
+      // Poll every 2 seconds
+      await new Promise(resolve => setTimeout(resolve, 2000))
+    }
+  } catch (error) {
+    fastify.log.error(`Polling error for ${executionId}:`, error)
+    activePolling.delete(executionId)
+  }
+}
 
 fastify.post<{
   Body: {
@@ -68,54 +218,35 @@ fastify.post<{
 
   if (riskTier === 'auto') {
     // Execute immediately
-    try {
-      const result = await sandbox.execute(tool, args, {
-        timeoutMs: 30000,
-      })
-
-      const output = redactor.redactOutput(result.stdout + result.stderr)
-      await orionClient.updateExecution(execution.id, {
-        status: 'completed',
-        output,
-        exitCode: result.exitCode,
-        durationMs: result.durationMs,
-        completedAt: new Date(),
-      })
-
-      await vectorClient.emit({
-        executionId: execution.id,
-        tool,
-        actorId,
-        actorType,
-        riskTier,
-        status: 'completed',
-        exitCode: result.exitCode,
-        durationMs: result.durationMs,
-      })
-
-      return { executionId: execution.id, status: 'completed', output }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
-      await orionClient.updateExecution(execution.id, {
-        status: 'failed',
-        output: errorMsg,
-        completedAt: new Date(),
-      })
-
-      await vectorClient.emit({
-        executionId: execution.id,
-        tool,
-        actorId,
-        actorType,
-        riskTier,
-        status: 'failed',
-      })
-
-      reply.status(500).send({ error: errorMsg })
-    }
+    const result = await executeCommand(executionId, tool, args, actorId, actorType)
+    return { executionId: execution.id, ...result }
   } else {
-    // Approval/escalation pending — will be gated by Warden
-    return { executionId: execution.id, status: 'pending', message: 'Awaiting approval' }
+    // Approval/escalation pending — notify Warden
+    const timeoutSeconds = riskTier === 'escalate' ? EXECUTION_ESCALATE_TTL_SECONDS : EXECUTION_APPROVE_TIMEOUT_SECONDS
+
+    const expiresAt = new Date(Date.now() + timeoutSeconds * 1000)
+    await orionClient.updateExecution(execution.id, { expiresAt })
+
+    // Post notification to execution room
+    try {
+      const roomSetting = await orionClient.getSystemSetting('system.room.execution')
+      if (roomSetting) {
+        const action = riskTier === 'escalate' ? 'ESCALATE' : 'APPROVE'
+        await orionClient.notifyRoom(
+          roomSetting,
+          `⚡ EXECUTION REQUEST [${riskTier}]\n  ID: ${executionId}\n  Tool: ${tool}\n  Actor: ${actorId} (${actorType})\n  Risk Tier: ${riskTier}\n\nCall approve_execution("${executionId}", reason) or deny_execution("${executionId}", reason)`
+        )
+      }
+    } catch (err) {
+      fastify.log.error(`Failed to notify execution room: ${err}`)
+    }
+
+    // Start polling for approval in background
+    pollForApproval(execution.id, execution, timeoutSeconds).catch(err => {
+      fastify.log.error(`Polling error: ${err}`)
+    })
+
+    return { executionId: execution.id, status: 'pending', message: `Awaiting ${riskTier} decision` }
   }
 })
 
@@ -137,66 +268,79 @@ fastify.post<{
   const { id } = request.params
   const { decision, reason } = request.body
 
+  const execution = await orionClient.getExecution(id)
+
   if (decision === 'denied') {
     await orionClient.updateExecution(id, {
       status: 'denied',
       reviewDecision: 'denied',
       reviewedAt: new Date(),
+      completedAt: new Date(),
     })
     return { status: 'denied' }
   }
 
   if (decision === 'approved') {
-    // Execution is approved — execute now
-    const execution = await orionClient.getExecution(id)
-    try {
-      const result = await sandbox.execute(execution.tool, execution.args, {
-        timeoutMs: 30000,
-      })
-
-      const output = redactor.redactOutput(result.stdout + result.stderr)
-      await orionClient.updateExecution(id, {
-        status: 'completed',
-        output,
-        exitCode: result.exitCode,
-        durationMs: result.durationMs,
-        reviewDecision: 'approved',
-        reviewedAt: new Date(),
-        completedAt: new Date(),
-      })
-
-      await vectorClient.emit({
-        executionId: id,
-        tool: execution.tool,
-        actorId: execution.actorId,
-        actorType: execution.actorType,
-        riskTier: execution.riskTier,
-        status: 'completed',
-        reviewDecision: 'approved',
-        exitCode: result.exitCode,
-        durationMs: result.durationMs,
-      })
-
-      return { status: 'completed', output }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
-      await orionClient.updateExecution(id, {
-        status: 'failed',
-        output: errorMsg,
-        reviewDecision: 'approved',
-        reviewedAt: new Date(),
-        completedAt: new Date(),
-      })
-
-      reply.status(500).send({ error: errorMsg })
-    }
+    // Mark as approved
+    await orionClient.updateExecution(id, {
+      reviewDecision: 'approved',
+      reviewedAt: new Date(),
+    })
+    // Polling task will execute and complete the record
+    return { status: 'processing' }
   }
 })
 
-fastify.listen({ port: PORT, host: '0.0.0.0' }, (err, address) => {
+// Startup: rehydrate pending executions
+async function rehydratePendingExecutions() {
+  try {
+    fastify.log.info('Rehydrating pending executions...')
+    const pending = await orionClient.listExecutions({ status: 'pending' })
+    const now = Date.now()
+    let resumed = 0
+    let autoDenied = 0
+
+    for (const exec of pending) {
+      if (exec.expiresAt && new Date(exec.expiresAt as unknown as string).getTime() <= now) {
+        // Expired — auto-deny immediately
+        await orionClient.updateExecution(exec.id, {
+          status: 'denied',
+          reviewDecision: 'denied',
+          reviewedAt: new Date(),
+          completedAt: new Date(),
+        })
+        try {
+          const roomId = await orionClient.getSystemSetting('system.room.execution')
+          if (roomId) {
+            await orionClient.notifyRoom(roomId, `⏱ Execution ${exec.executionId} auto-denied on restart — TTL expired`)
+          }
+        } catch { /* best-effort notify */ }
+        autoDenied++
+      } else {
+        // Still valid — resume polling
+        const remainingSeconds = exec.expiresAt
+          ? Math.ceil((new Date(exec.expiresAt as unknown as string).getTime() - now) / 1000)
+          : EXECUTION_APPROVE_TIMEOUT_SECONDS
+        pollForApproval(exec.id, exec, remainingSeconds).catch(err => {
+          fastify.log.error(`Rehydration polling error for ${exec.id}: ${err}`)
+        })
+        resumed++
+      }
+    }
+
+    fastify.log.info(`Rehydration complete — resumed: ${resumed}, auto-denied: ${autoDenied}`)
+  } catch (error) {
+    fastify.log.error('Rehydration failed:', error)
+  }
+}
+
+fastify.listen({ port: PORT, host: '0.0.0.0' }, async (err, address) => {
   if (err) {
     fastify.log.error(err)
     process.exit(1)
   }
   fastify.log.info(`Executor listening at ${address}`)
+
+  // Rehydrate on startup
+  await rehydratePendingExecutions()
 })

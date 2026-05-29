@@ -117,6 +117,9 @@ services:
       ORION_GATEWAY_TOKEN: ${ORION_GATEWAY_TOKEN:-}
       # Shared secret for gateway-to-web security audit channel (PR4)
       GATEWAY_AUDIT_SECRET: ${GATEWAY_AUDIT_SECRET:-}
+      # Executor service — gateway routes shell_exec/file_read/system_info here
+      ORION_EXECUTOR_URL: http://orion-executor:3200
+      ORION_EXECUTOR_TOKEN: ${ORION_EXECUTOR_TOKEN}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - gateway-creds:/gateway-creds
@@ -664,6 +667,43 @@ services:
         limits:
           cpus: '0.25'
           memory: 128M
+
+  # orion-executor — contained localhost execution service with Warden gating.
+  # Receives tool calls from gateway, classifies risk, gates on Warden approval,
+  # executes in this container (limited mounts + resource caps), logs to Orion.
+  orion-executor:
+    build:
+      context: ../apps/executor
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      orion:
+        condition: service_healthy
+    environment:
+      ORION_URL: http://orion:3000
+      ORION_EXECUTOR_TOKEN: ${ORION_EXECUTOR_TOKEN}
+      ORION_GATEWAY_TOKEN: ${ORION_GATEWAY_TOKEN}
+      VECTOR_WEBHOOK_URL: http://orion:3000/api/monitoring/security/webhooks/host-agent
+      HOST_AGENT_WEBHOOK_SECRET: ${HOST_AGENT_WEBHOOK_SECRET}
+      FILE_READ_ALLOWLIST: /var/log,/etc/hosts,/proc/cpuinfo,/proc/meminfo
+      EXECUTION_APPROVE_TIMEOUT_SECONDS: ${EXECUTION_APPROVE_TIMEOUT_SECONDS:-90}
+      EXECUTION_ESCALATE_TTL_SECONDS: ${EXECUTION_ESCALATE_TTL_SECONDS:-3600}
+    volumes:
+      - /var/log/journal:/var/log/journal:ro
+      - /etc/hosts:/etc/hosts:ro
+      - /proc/cpuinfo:/proc/cpuinfo:ro
+      - /proc/meminfo:/proc/meminfo:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3200/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+          pids: 64
 
 volumes:
   gitea-data:
