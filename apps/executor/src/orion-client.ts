@@ -17,6 +17,10 @@ interface ToolExecution {
   completedAt?: Date
 }
 
+function validateId(id: string, label: string): void {
+  if (!/^[\w-]{4,128}$/.test(id)) throw new Error(`Invalid ${label}: must be 4-128 alphanumeric/dash/underscore chars`)
+}
+
 export class OrionClient {
   private client: AxiosInstance
 
@@ -42,6 +46,7 @@ export class OrionClient {
   }
 
   async getExecution(id: string): Promise<ToolExecution> {
+    validateId(id, 'execution id')
     const response = await this.client.get(`/api/executions/${id}`)
     return response.data
   }
@@ -50,6 +55,7 @@ export class OrionClient {
     id: string,
     data: Partial<ToolExecution>
   ): Promise<ToolExecution> {
+    validateId(id, 'execution id')
     const response = await this.client.patch(`/api/executions/${id}`, data)
     return response.data
   }

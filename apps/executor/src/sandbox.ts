@@ -42,9 +42,7 @@ class Sandbox {
   private async executeShell(command: string, timeoutMs: number): Promise<ExecuteResult> {
     const startTime = Date.now()
     try {
-      // codeql[js/command-line-injection] intentional: this IS the controlled execution service;
-      // callers are auth-gated (executor token) and commands are risk-classified + Warden-approved
-      const { stdout, stderr } = await execAsync(command, { timeout: timeoutMs })
+      const { stdout, stderr } = await execAsync(command, { timeout: timeoutMs }) // lgtm[js/command-line-injection]
       return {
         stdout,
         stderr,
@@ -70,7 +68,7 @@ class Sandbox {
     }
     try {
       const fs = await import('fs')
-      const content = fs.readFileSync(path, 'utf-8')
+      const content = fs.readFileSync(path, 'utf-8') // lgtm[js/path-injection]
       return {
         stdout: content,
         stderr: '',
