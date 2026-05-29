@@ -30,6 +30,8 @@ export async function POST(req: NextRequest) {
       modelId:     body.modelId,
       enabled:     body.enabled ?? true,
       timeoutSecs:   body.timeoutSecs ?? 120,
+      maxTokens:     body.maxTokens   ?? null,
+      contextSize:   body.contextSize ?? null,
       temperature:   body.temperature   ?? null,
       topP:          body.topP          ?? null,
       minP:          body.minP          ?? null,

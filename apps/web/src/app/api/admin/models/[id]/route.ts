@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
+import { clearContextLimitCache } from '@/lib/agent-context'
 
 function maskKey(key: string | null): string | null {
   if (!key) return null
@@ -21,7 +22,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (body.modelId     !== undefined) updateData.modelId     = body.modelId
   if (body.enabled     !== undefined) updateData.enabled     = body.enabled
   if (body.timeoutSecs !== undefined) updateData.timeoutSecs = body.timeoutSecs
-  if ('maxTokens' in body)            updateData.maxTokens   = body.maxTokens   // null clears the cap
+  if ('maxTokens'   in body) updateData.maxTokens   = body.maxTokens   // null clears the cap
+  if ('contextSize' in body) updateData.contextSize = body.contextSize // null = auto-detect
   if ('temperature'   in body) updateData.temperature   = body.temperature
   if ('topP'          in body) updateData.topP          = body.topP
   if ('minP'          in body) updateData.minP          = body.minP
@@ -33,6 +35,10 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     where: { id: params.id },
     data: updateData,
   })
+
+  // If contextSize changed, drop the cached limit so the next agent turn re-reads the new value.
+  // Cache is keyed by "ext:<id>" (model-level), not baseUrl, so two models at the same server don't bleed.
+  if ('contextSize' in body) clearContextLimitCache(`ext:${params.id}`)
 
   // SOC2: [M-005] Log model update (non-blocking)
   logAudit({

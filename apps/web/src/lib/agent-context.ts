@@ -109,13 +109,40 @@ export function invalidateSnapshotCache(): void {
 const CONTEXT_LIMIT_TTL_MS = 10 * 60 * 1000  // 10 minutes
 const contextLimitCache = new Map<string, { value: number; expiresAt: number }>()
 
+// Known context window sizes for Claude models. All modern Claude models support 200K tokens.
+export const CLAUDE_CONTEXT_LIMITS: Record<string, number> = {
+  'claude-opus-4-8':              200_000,
+  'claude-opus-4-7':              200_000,
+  'claude-sonnet-4-6':            200_000,
+  'claude-sonnet-4-5':            200_000,
+  'claude-haiku-4-5':             200_000,
+  'claude-haiku-4-5-20251001':    200_000,
+  'claude-3-7-sonnet-20250219':   200_000,
+  'claude-3-5-sonnet-20241022':   200_000,
+  'claude-3-5-haiku-20241022':    200_000,
+  'claude-3-opus-20240229':       200_000,
+  'claude-3-sonnet-20240229':     200_000,
+  'claude-3-haiku-20240307':      200_000,
+}
+const CLAUDE_DEFAULT_LIMIT = 200_000
+
+export function getClaudeContextLimit(modelId: string): number {
+  return CLAUDE_CONTEXT_LIMITS[modelId] ?? CLAUDE_DEFAULT_LIMIT
+}
+
+export function clearContextLimitCache(cacheKey: string): void {
+  contextLimitCache.delete(cacheKey)
+}
+
 /**
  * Discover the context window size for an OpenAI-compatible model endpoint.
- * Uses llama.cpp's GET /props (returns { n_ctx: number, ... }).
- * Result is cached per baseUrl for 10 minutes; falls back to 8192.
+ * Optionally keyed by a stable model ID (extModelId) instead of baseUrl so that
+ * two models sharing the same server don't bleed limits into each other.
+ * Falls back to querying the /props endpoint; result cached 10 min, fallback 8192.
  */
-export async function getModelContextLimit(baseUrl: string): Promise<number> {
-  const cached = contextLimitCache.get(baseUrl)
+export async function getModelContextLimit(baseUrl: string, cacheKey?: string): Promise<number> {
+  const key = cacheKey ?? baseUrl
+  const cached = contextLimitCache.get(key)
   if (cached && cached.expiresAt > Date.now()) return cached.value
 
   try {
@@ -130,13 +157,13 @@ export async function getModelContextLimit(baseUrl: string): Promise<number> {
       const n_ctx = typeof dgs?.n_ctx === 'number' ? dgs.n_ctx
                   : typeof data.n_ctx === 'number'  ? data.n_ctx
                   : 8192
-      contextLimitCache.set(baseUrl, { value: n_ctx, expiresAt: Date.now() + CONTEXT_LIMIT_TTL_MS })
+      contextLimitCache.set(key, { value: n_ctx, expiresAt: Date.now() + CONTEXT_LIMIT_TTL_MS })
       return n_ctx
     }
   } catch { /* ignore — not llama.cpp or unreachable */ }
 
   // Cache the fallback too, but with a shorter TTL so we retry sooner
-  contextLimitCache.set(baseUrl, { value: 8192, expiresAt: Date.now() + 60_000 })
+  contextLimitCache.set(key, { value: 8192, expiresAt: Date.now() + 60_000 })
   return 8192
 }
 
