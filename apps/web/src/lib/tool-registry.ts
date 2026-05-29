@@ -37,6 +37,7 @@ export type ToolCategory =
   | 'knowledge'    // knowledge base: search, write, graph
   | 'environment'  // cluster environments: health, config, bootstrap
   | 'secrets'      // secret management
+  | 'execution'    // tool execution approval gating
   | 'tools'        // meta: tool discovery, tool requests, nova lookup
 
 export interface ToolDefinition {
@@ -2859,5 +2860,123 @@ registerTool({
       `  2. If a new tool is genuinely needed, call propose_tool with a name, description, and inputSchema.`,
       `  3. If this should be a Nova (a custom reusable tool bundle), inform a human to create one.`,
     ].join('\n')
+  },
+})
+
+// ── Execution: Tool Execution Approval Gating ─────────────────────────────────
+
+registerTool({
+  name: 'approve_execution',
+  description: 'Approve a pending tool execution that is waiting for review. Only use this after reviewing the tool, args, and actor. The execution will proceed immediately after approval.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      executionId: {
+        type: 'string',
+        description: 'The ORION execution id (from the notification in system.room.execution)',
+      },
+      reason: {
+        type: 'string',
+        description: 'Why this execution is approved (logged to audit trail)',
+      },
+    },
+    required: ['executionId', 'reason'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'chat',
+  category: 'execution',
+  handler: async (args, ctx) => {
+    try {
+      const { executionId, reason } = parseArgs(args) as { executionId?: string; reason?: string }
+      if (!executionId) return 'Error: executionId is required'
+      if (!reason) return 'Error: reason is required'
+
+      // Call executor service to approve
+      const executorUrl = process.env.ORION_EXECUTOR_URL || 'http://orion-executor:3200'
+      const executorToken = process.env.ORION_EXECUTOR_TOKEN
+
+      if (!executorToken) {
+        return 'Error: executor service token not configured'
+      }
+
+      const response = await fetch(`${executorUrl}/executions/${executionId}/review`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-executor-token': executorToken,
+        },
+        body: JSON.stringify({
+          decision: 'approved',
+          reason,
+        }),
+      })
+
+      if (!response.ok) {
+        return `Error: executor service returned ${response.status}`
+      }
+
+      return `Execution ${executionId} approved. Reason: ${reason}`
+    } catch (e) {
+      return `Error: ${e instanceof Error ? e.message : String(e)}`
+    }
+  },
+})
+
+registerTool({
+  name: 'deny_execution',
+  description: 'Deny a pending tool execution. The calling agent will receive an error. Use when the command looks suspicious, out of scope, or unsafe.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      executionId: {
+        type: 'string',
+        description: 'The ORION execution id',
+      },
+      reason: {
+        type: 'string',
+        description: 'Why this execution is denied (sent back to the calling agent)',
+      },
+    },
+    required: ['executionId', 'reason'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'chat',
+  category: 'execution',
+  handler: async (args, ctx) => {
+    try {
+      const { executionId, reason } = parseArgs(args) as { executionId?: string; reason?: string }
+      if (!executionId) return 'Error: executionId is required'
+      if (!reason) return 'Error: reason is required'
+
+      // Call executor service to deny
+      const executorUrl = process.env.ORION_EXECUTOR_URL || 'http://orion-executor:3200'
+      const executorToken = process.env.ORION_EXECUTOR_TOKEN
+
+      if (!executorToken) {
+        return 'Error: executor service token not configured'
+      }
+
+      const response = await fetch(`${executorUrl}/executions/${executionId}/review`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-executor-token': executorToken,
+        },
+        body: JSON.stringify({
+          decision: 'denied',
+          reason,
+        }),
+      })
+
+      if (!response.ok) {
+        return `Error: executor service returned ${response.status}`
+      }
+
+      return `Execution ${executionId} denied. Reason: ${reason}`
+    } catch (e) {
+      return `Error: ${e instanceof Error ? e.message : String(e)}`
+    }
   },
 })
