@@ -14,6 +14,7 @@ interface ToolExecution {
   durationMs?: number
   reviewDecision?: string
   reviewedAt?: Date
+  expiresAt?: Date
   completedAt?: Date
 }
 
@@ -54,10 +55,26 @@ export class OrionClient {
     return response.data
   }
 
+  async listExecutions(params: { status?: string } = {}): Promise<ToolExecution[]> {
+    const query = params.status ? `?status=${encodeURIComponent(params.status)}` : ''
+    const response = await this.client.get(`/api/executions${query}`)
+    return response.data
+  }
+
   async notifyRoom(roomId: string, message: string): Promise<void> {
-    await this.client.post(`/api/chat-rooms/${roomId}/messages`, {
+    await this.client.post(`/api/chat-rooms/${encodeURIComponent(roomId)}/messages`, {
       content: message,
       senderType: 'system',
     })
+  }
+
+  async getSystemSetting(key: string): Promise<string | null> {
+    try {
+      const response = await this.client.get(`/api/system-settings/${encodeURIComponent(key)}`)
+      return response.data?.value
+    } catch (error) {
+      console.error(`Failed to get system setting ${key}:`, error)
+      return null
+    }
   }
 }
