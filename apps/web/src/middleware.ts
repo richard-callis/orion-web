@@ -227,6 +227,18 @@ export async function middleware(req: NextRequest) {
     return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
   }
 
+  // Executor service calls — x-executor-token header is the auth.
+  // Executor logs execution records and reads them for status polling.
+  // Use constant-time comparison to prevent timing attacks (SOC2 #166)
+  const executorToken = process.env.ORION_EXECUTOR_TOKEN
+  if (
+    pathname.startsWith('/api/executions') &&
+    executorToken &&
+    timingSafeCompare(req.headers.get('x-executor-token') ?? '', executorToken)
+  ) {
+    return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
+  }
+
   // Service token (gateway) calls — accept Bearer token instead of session.
   // Gateway tools need to read/write notes, list agent-groups, etc.
   // Use constant-time comparison to prevent timing attacks (SOC2 #166)
