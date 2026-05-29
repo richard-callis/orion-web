@@ -1,0 +1,9 @@
+name: "Orion CodeQL config"
+
+paths-ignore:
+  # orion-executor/sandbox.ts is the intentional controlled-execution service.
+  # Commands and file paths are gated by executor-token auth, risk classification,
+  # and Warden approval before reaching this file. The container mount allowlist
+  # is the real security boundary. Excluding from CodeQL to prevent false positives
+  # on intentionally-privileged code.
+  - apps/executor/src/sandbox.ts
