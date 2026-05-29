@@ -15,8 +15,10 @@
  *   write_secret        — scaffold a new Vault-backed ExternalSecret
  *   update_secret       — patch namespace/description/keys on an existing secret
  *   delete_secret       — remove an ORION secret record (not the Vault secret)
+ *   generate_secret     — server-side generate random values for a draft secret (value never in LLM context)
  */
 
+import { randomBytes } from 'crypto'
 import { prisma } from './db'
 import { writeVaultSecret } from './vault'
 import { getOrFetch } from './system-cache'
@@ -174,6 +176,21 @@ export const ORION_TOOL_DEFINITIONS = [
         properties: {
           secretId: { type: 'string', description: 'The ORION secret id (from orion_list_secrets)' },
           reason:   { type: 'string', description: 'Why this secret is being deleted (for the audit log)' },
+        },
+        required: ['secretId'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'generate_secret',
+      description: 'Generate cryptographically secure random values server-side for a draft secret and write them directly to Vault. Use this instead of write_secret when the secret values should be auto-generated (e.g. encryption keys, passwords) and must never appear in the conversation. The generated values are written to Vault and never returned to you — you will only receive confirmation. Only works on secrets in draft status.',
+      parameters: {
+        type: 'object',
+        properties: {
+          secretId: { type: 'string', description: 'The ORION secret id (from orion_list_secrets). Must be in draft status.' },
+          keyNames: { type: 'array', items: { type: 'string' }, description: 'Specific key names to generate values for. If omitted, generates values for all keys in the secret.' },
         },
         required: ['secretId'],
       },
@@ -659,6 +676,56 @@ export async function executeTool(
         return `Deleted ORION secret record "${existing.name}" (${secretId}) from namespace "${existing.namespace}".${reason}\nNote: Vault secret and K8s Secret (if applied) were NOT deleted — only the ORION metadata record.`
       }
 
+      case 'generate_secret': {
+        const secretId = String(args.secretId ?? '').trim()
+        if (!secretId) return 'Error: secretId is required'
+
+        const secret = await prisma.managedSecret.findUnique({ where: { id: secretId } })
+        if (!secret) return `Error: secret "${secretId}" not found. Use orion_list_secrets to find the correct id.`
+        if (secret.status === 'applied') {
+          return [
+            `Error: secret "${secret.name}" (${secretId}) is already applied — refusing to overwrite live credentials.`,
+            `If you need to rotate this secret, ask the user to confirm first.`,
+          ].join('\n')
+        }
+
+        // Determine which keys to generate
+        const allKeys = (secret.dataKeys as Array<{ remoteKey: string; secretKey: string }>).map(k => k.remoteKey)
+        const requested = Array.isArray(args.keyNames)
+          ? (args.keyNames as unknown[]).map(String).filter(k => k.trim())
+          : []
+        const keysToGenerate = requested.length > 0 ? requested : allKeys
+
+        const unknown = keysToGenerate.filter(k => !allKeys.includes(k))
+        if (unknown.length > 0) {
+          return `Error: key(s) not found in this secret: ${unknown.join(', ')}. Valid keys: ${allKeys.join(', ')}`
+        }
+
+        // Generate values server-side — values never enter LLM context
+        const generated: Record<string, string> = {}
+        for (const key of keysToGenerate) generated[key] = randomBytes(32).toString('hex')
+
+        try {
+          await writeVaultSecret(secret.remoteRef, generated)
+        } catch (e) {
+          return `Error: failed to write generated values to Vault: ${e instanceof Error ? e.message : String(e)}`
+        }
+
+        await prisma.managedSecret.update({
+          where: { id: secretId },
+          data: { status: 'applied', appliedAt: new Date() },
+        })
+
+        return [
+          `Generated and stored values for secret "${secret.name}" (${secretId}):`,
+          `  Keys generated: ${keysToGenerate.join(', ')}`,
+          `  Vault path:     secret/data/${secret.remoteRef}`,
+          `  Status:         applied`,
+          ``,
+          `Values were written directly to Vault — they were not returned here and are not in this conversation.`,
+        ].join('\n')
+      }
+
       // ── SOC Case Management ──────────────────────────────────────────────
 
       case 'investigation_search': {
@@ -938,7 +1005,8 @@ Do not declare success after opening or merging a PR. You must verify the deploy
 
 **MANDATORY — Secrets:**
 1. Call **orion_list_secrets** before calling **write_secret** — if a secret with that name already exists in any state, do not call write_secret again.
-2. After write_secret, tell the user exactly which secret to fill in and wait for confirmation before proceeding with the deployment.
-3. Never assume a secret is filled in — check its status with **orion_list_secrets** before mounting it.
+2. For secrets whose values should be auto-generated (encryption keys, passwords, tokens): call **write_secret** to scaffold the draft, then immediately call **generate_secret** with the secret id. Do NOT ask the user to fill them in manually and do NOT generate values yourself — generate_secret writes values server-side so they never appear in this conversation.
+3. For secrets whose values must come from an external system (API keys, auth tokens, certificates): after write_secret, tell the user exactly which secret to fill in and wait for confirmation before proceeding.
+4. Never assume a secret is filled in — check its status with **orion_list_secrets** before mounting it.
 
 When you use a tool, report the result back clearly (e.g. "Done — PR #42 opened: 'feat: deploy Tailscale Operator'").`

@@ -20,7 +20,7 @@ import { buildToolDefinitions, TOOLS_SYSTEM_ADDENDUM, executeTool } from './agen
 import { getToolsForContext, executeRegisteredTool } from './tool-registry'
 import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
-import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, invalidateSnapshotCache, getModelContextLimit } from './agent-context'
+import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, invalidateSnapshotCache, getModelContextLimit, getClaudeContextLimit } from './agent-context'
 import { compactRoom, publishCompactionWarning, publishTokenUpdate } from './compaction'
 import { getPrompt } from './system-prompts'
 import type { AgentGateway } from './agent-gateway'
@@ -595,6 +595,40 @@ async function resolveOllamaBaseUrl(): Promise<string> {
   return m?.baseUrl ?? process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434'
 }
 
+/**
+ * Resolve the context window size for a given agent LLM string.
+ * Each model type is keyed independently so models sharing a base URL don't affect each other.
+ *   claude / claude:<model>   → known static limits (all modern Claude models = 200K)
+ *   ext:<id>                  → ExternalModel.contextSize override, else /props discovery keyed by ext:<id>
+ *   ollama:<model>            → /props discovery keyed by Ollama base URL
+ */
+async function resolveAgentContextLimit(llm: string): Promise<number> {
+  if (llm === 'claude' || llm.startsWith('claude:')) {
+    const modelId = llm.startsWith('claude:') ? llm.slice('claude:'.length) : 'claude-haiku-4-5-20251001'
+    return getClaudeContextLimit(modelId)
+  }
+
+  if (llm.startsWith('ext:')) {
+    const extId = llm.slice('ext:'.length)
+    try {
+      const model = await prisma.externalModel.findUnique({
+        where: { id: extId },
+        select: { contextSize: true, baseUrl: true },
+      })
+      if (model?.contextSize && model.contextSize > 0) return model.contextSize
+      if (model?.baseUrl) return getModelContextLimit(model.baseUrl, `ext:${extId}`)
+    } catch { /* ignore */ }
+    return 8192
+  }
+
+  if (llm.startsWith('ollama:')) {
+    const baseUrl = await resolveOllamaBaseUrl()
+    return getModelContextLimit(baseUrl)
+  }
+
+  return 0
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 /**
@@ -746,6 +780,18 @@ export async function triggerRoomAgentReplies(
   // Track token count across agents in this turn; start from room's stored value
   let currentTokenCount = room?.tokenCount ?? 0
   const roomTokenLimit: number | null = room?.tokenLimit ?? null
+
+  // Compute the effective context limit for this room: the smallest limit among all agents' models.
+  // A per-room tokenLimit override takes full priority; otherwise use the model minimum.
+  const agentLlms = triggeredAgents.map((a: any) => {
+    const cc = ((a.metadata ?? {}) as Record<string, unknown>).contextConfig as Record<string, unknown> | undefined
+    return (cc?.llm as string | undefined) ?? 'claude:claude-haiku-4-5-20251001'
+  })
+  const agentContextLimits = await Promise.all(agentLlms.map(resolveAgentContextLimit))
+  const validLimits = agentContextLimits.filter(l => l > 0)
+  const minModelContextLimit = validLimits.length > 0 ? Math.min(...validLimits) : 0
+  const roomEffectiveLimit = roomTokenLimit ?? minModelContextLimit
+
   // Once compaction fires for this room in this turn, skip token writes for subsequent agents
   // (their prompt_tokens reflect pre-compaction context and would re-trigger the threshold)
   let compactedThisTurn = false
@@ -848,7 +894,6 @@ export async function triggerRoomAgentReplies(
 
       let reply: string | null = null
       let tokensUsed = 0
-      let discoveredContextLimit = 0
 
       setTyping(roomId, agent.name)
       try {
@@ -866,13 +911,11 @@ export async function triggerRoomAgentReplies(
             const result = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey ?? null, toolContext, gateway, gatewayTools, activeGoal)
             reply = result.reply
             tokensUsed = result.tokensUsed
-            discoveredContextLimit = result.contextLimit
           } else {
             // openai / custom — OpenAI-compatible (supports tool calling + token tracking)
             const result = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey, toolContext, gateway, gatewayTools, activeGoal)
             reply = result.reply
             tokensUsed = result.tokensUsed
-            discoveredContextLimit = result.contextLimit
           }
         } else if (llm.startsWith('ollama:')) {
           const model   = llm.slice('ollama:'.length)
@@ -883,7 +926,6 @@ export async function triggerRoomAgentReplies(
           const result = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl, null, toolContext, gateway, gatewayTools, activeGoal)
           reply = result.reply
           tokensUsed = result.tokensUsed
-          discoveredContextLimit = result.contextLimit
         } else if (llm.startsWith('gemini:')) {
           // Gemini not yet supported — reject clearly instead of silently falling back to Claude
           console.error(`[room-agents] ${agent.name}: gemini:* models are not yet supported (got "${llm}")`)
@@ -982,21 +1024,21 @@ export async function triggerRoomAgentReplies(
       // Only update when we have actual token usage (OpenAI-compat ext: models).
       // Skip if compaction already fired this turn — subsequent agents' prompt_tokens
       // reflect pre-compaction context and would incorrectly re-trigger the threshold.
+      // roomEffectiveLimit is the min of all agents' model limits (or the room override).
       if (tokensUsed > 0 && !compactedThisTurn) {
         currentTokenCount = tokensUsed  // prompt_tokens is cumulative context size for this turn
-        const effectiveLimit = roomTokenLimit ?? (discoveredContextLimit > 0 ? discoveredContextLimit : 0)
         await prisma.chatRoom.update({
           where: { id: roomId },
           data: {
             tokenCount: currentTokenCount,
             updatedAt: new Date(),
-            // Cache auto-discovered limit so GET route can return it without re-querying the model
-            ...(room?.tokenLimit === null && effectiveLimit > 0 ? { tokenLimit: effectiveLimit } : {}),
+            // Persist effective limit on first use so the GET route can return it immediately
+            ...(room?.tokenLimit === null && roomEffectiveLimit > 0 ? { tokenLimit: roomEffectiveLimit } : {}),
           },
         })
-        if (effectiveLimit > 0) {
-          const pct = currentTokenCount / effectiveLimit
-          console.log(`[room-agents] room ${roomId}: ${currentTokenCount}/${effectiveLimit} tokens (${Math.round(pct * 100)}%)`)
+        if (roomEffectiveLimit > 0) {
+          const pct = currentTokenCount / roomEffectiveLimit
+          console.log(`[room-agents] room ${roomId}: ${currentTokenCount}/${roomEffectiveLimit} tokens (${Math.round(pct * 100)}%)`)
           if (pct >= 0.9) {
             console.warn(`[room-agents] room ${roomId}: context at ${Math.round(pct * 100)}% — auto-compacting`)
             try {
@@ -1019,10 +1061,10 @@ export async function triggerRoomAgentReplies(
             })
             const lastAtt = lastSystemMsg?.attachments as Record<string, unknown> | null
             if (typeof lastAtt?.type !== 'string' || lastAtt.type !== 'compaction-warning') {
-              await publishCompactionWarning(roomId, pct, currentTokenCount, effectiveLimit).catch(() => null)
+              await publishCompactionWarning(roomId, pct, currentTokenCount, roomEffectiveLimit).catch(() => null)
             }
           }
-          await publishTokenUpdate(roomId, currentTokenCount, effectiveLimit).catch(() => null)
+          await publishTokenUpdate(roomId, currentTokenCount, roomEffectiveLimit).catch(() => null)
         }
       }
     } catch (e) {
