@@ -3,13 +3,16 @@
   "private": true,
   "workspaces": [
     "apps/web",
-    "apps/gateway"
+    "apps/gateway",
+    "apps/executor"
   ],
   "scripts": {
     "dev:web": "npm run dev --workspace=apps/web",
     "dev:gateway": "npm run dev --workspace=apps/gateway",
+    "dev:executor": "npm run dev --workspace=apps/executor",
     "build:web": "npm run build --workspace=apps/web",
-    "build:gateway": "npm run build --workspace=apps/gateway"
+    "build:gateway": "npm run build --workspace=apps/gateway",
+    "build:executor": "npm run build --workspace=apps/executor"
   },
   "dependencies": {
     "node-cron": "^4.2.1",

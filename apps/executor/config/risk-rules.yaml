@@ -1,0 +1,53 @@
+# Risk classification rules evaluated top-to-bottom. First match wins.
+# tier: auto | notify | approve | escalate
+
+rules:
+  # Escalate — data destruction / code injection
+  - tier: escalate
+    tool: shell_exec
+    patterns:
+      - 'rm\s+-rf\s+/'
+      - 'mkfs'
+      - 'dd\s+if='
+      - ':\(\)\s*\{\s*:\|:&\s*\}'  # fork bomb
+      - 'curl[^|]*\|\s*(ba)?sh'
+      - 'wget[^|]*\|\s*(ba)?sh'
+      - 'eval\s*["\''`\$]'
+      - 'base64\s+--decode.*\|'
+
+  # Approve — privilege, destructive write, outbound network
+  - tier: approve
+    tool: shell_exec
+    patterns:
+      - 'chmod\s+[0-7]*7[0-7][0-7]'  # world-writable
+      - 'chown\s+root'
+      - '\bsudo\b'
+      - '\bsu\s'
+      - '\brm\s'
+      - '\bmv\s'
+      - 'truncate'
+      - 'systemctl\s+(stop|disable|kill)'
+      - 'kill\s+-9'
+      - 'pkill'
+      - '\bcurl\b'
+      - '\bwget\b'
+      - '\bnc\b'
+      - '\bncat\b'
+      - '>\s*/'  # redirect to absolute path
+
+  # Auto — known-safe read operations
+  - tier: auto
+    tool: shell_exec
+    patterns:
+      - '^(ls|cat|ps|df|du|free|uptime|hostname|date|pwd|which|find|grep|head|tail|wc|stat|id|whoami|uname|lsof|ss|netstat|journalctl|dmesg|top|htop)\b'
+
+  # file_read and system_info are always auto (path allowlist is the real control)
+  - tier: auto
+    tool: file_read
+
+  - tier: auto
+    tool: system_info
+
+  # Default catch-all
+  - tier: notify
+    tool: ''
