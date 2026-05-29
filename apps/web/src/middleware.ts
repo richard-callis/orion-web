@@ -217,6 +217,16 @@ export async function middleware(req: NextRequest) {
     return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
   }
 
+  // MCP service calls — x-mcp-token header is the auth, route handler validates value.
+  const mcpToken = process.env.ORION_MCP_TOKEN
+  if (
+    pathname.startsWith('/api/mcp') &&
+    mcpToken &&
+    timingSafeCompare(req.headers.get('x-mcp-token') ?? '', mcpToken)
+  ) {
+    return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
+  }
+
   // Service token (gateway) calls — accept Bearer token instead of session.
   // Gateway tools need to read/write notes, list agent-groups, etc.
   // Use constant-time comparison to prevent timing attacks (SOC2 #166)
