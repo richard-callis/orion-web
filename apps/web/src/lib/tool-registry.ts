@@ -21,6 +21,8 @@ import tls from 'tls'
 import https from 'https'
 import http from 'http'
 import { DEPLOYMENT_TEMPLATES, getTemplate } from '@/lib/deployment-templates'
+import { writeVaultSecret } from '@/lib/vault'
+import { randomBytes } from 'crypto'
 
 const execAsync = promisify(exec)
 
@@ -2544,6 +2546,67 @@ registerTool({
   availableIn: 'both',
   category: 'secrets',
   handler: handleListSecrets,
+})
+
+registerTool({
+  name: 'generate_secret',
+  description: 'Generate cryptographically secure random values server-side for a draft secret and write them directly to Vault. Use this for secrets whose values should be auto-generated (encryption keys, passwords, tokens) — the values are never returned and never appear in this conversation. Only works on secrets in draft status. Refuses to overwrite already-applied secrets.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      secretId: { type: 'string', description: 'The ORION secret id (from orion_list_secrets). Must be in draft status.' },
+      keyNames: { type: 'array', items: { type: 'string' }, description: 'Specific key names to generate values for. If omitted, generates values for all keys in the secret.' },
+    },
+    required: ['secretId'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'both',
+  category: 'secrets',
+  handler: async (args, ctx) => {
+    const { secretId, keyNames } = args as { secretId: string; keyNames?: string[] }
+    if (!secretId) return 'Error: secretId is required'
+
+    const secret = await ctx.prisma.managedSecret.findUnique({ where: { id: secretId } })
+    if (!secret) return `Error: secret "${secretId}" not found. Use orion_list_secrets to find the correct id.`
+    if (secret.status === 'applied') {
+      return [
+        `Error: secret "${secret.name}" (${secretId}) is already applied — refusing to overwrite live credentials.`,
+        `If you need to rotate this secret, ask the user to confirm first.`,
+      ].join('\n')
+    }
+
+    const allKeys = (secret.dataKeys as Array<{ remoteKey: string; secretKey: string }>).map(k => k.remoteKey)
+    const keysToGenerate = keyNames && keyNames.length > 0 ? keyNames : allKeys
+
+    const unknown = keysToGenerate.filter(k => !allKeys.includes(k))
+    if (unknown.length > 0) {
+      return `Error: key(s) not found in this secret: ${unknown.join(', ')}. Valid keys: ${allKeys.join(', ')}`
+    }
+
+    const generated: Record<string, string> = {}
+    for (const key of keysToGenerate) generated[key] = randomBytes(32).toString('hex')
+
+    try {
+      await writeVaultSecret(secret.remoteRef, generated)
+    } catch (e) {
+      return `Error: failed to write generated values to Vault: ${e instanceof Error ? e.message : String(e)}`
+    }
+
+    await ctx.prisma.managedSecret.update({
+      where: { id: secretId },
+      data: { status: 'applied', appliedAt: new Date() },
+    })
+
+    return [
+      `Generated and stored values for secret "${secret.name}" (${secretId}):`,
+      `  Keys generated: ${keysToGenerate.join(', ')}`,
+      `  Vault path:     secret/data/${secret.remoteRef}`,
+      `  Status:         applied`,
+      ``,
+      `Values were written directly to Vault — they were not returned here and are not in this conversation.`,
+    ].join('\n')
+  },
 })
 
 // ── Deployment templates ───────────────────────────────────────────────────────
