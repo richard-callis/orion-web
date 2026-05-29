@@ -3,6 +3,10 @@ import { promisify } from 'util'
 
 const execAsync = promisify(exec)
 
+const FILE_READ_ALLOWLIST = (process.env.FILE_READ_ALLOWLIST || '/var/log,/etc/hosts,/proc/cpuinfo,/proc/meminfo')
+  .split(',')
+  .map(p => p.trim())
+
 interface ExecuteOptions {
   timeoutMs?: number
 }
@@ -38,6 +42,8 @@ class Sandbox {
   private async executeShell(command: string, timeoutMs: number): Promise<ExecuteResult> {
     const startTime = Date.now()
     try {
+      // codeql[js/command-line-injection] intentional: this IS the controlled execution service;
+      // callers are auth-gated (executor token) and commands are risk-classified + Warden-approved
       const { stdout, stderr } = await execAsync(command, { timeout: timeoutMs })
       return {
         stdout,
@@ -59,6 +65,9 @@ class Sandbox {
 
   private async readFile(path: string): Promise<ExecuteResult> {
     const startTime = Date.now()
+    if (!FILE_READ_ALLOWLIST.some(allowed => path.startsWith(allowed))) {
+      return { stdout: '', stderr: `Error: path '${path}' is not in the allowlist`, exitCode: 1, durationMs: 0 }
+    }
     try {
       const fs = await import('fs')
       const content = fs.readFileSync(path, 'utf-8')

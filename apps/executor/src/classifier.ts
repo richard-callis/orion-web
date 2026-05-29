@@ -43,17 +43,24 @@ class Classifier {
   }
 
   classify(tool: string, args: Record<string, unknown>): 'auto' | 'notify' | 'approve' | 'escalate' {
-    const argsStr = JSON.stringify(args)
+    // Match against the raw command string for shell_exec so that anchored patterns
+    // like `^ls` work correctly. For other tools, stringify the full args object.
+    const matchStr = tool === 'shell_exec' ? String(args.command ?? '') : JSON.stringify(args)
 
     for (const rule of this.config.rules) {
       if (rule.tool !== tool && rule.tool !== '') {
         continue
       }
 
+      // No patterns = unconditional match (e.g. file_read auto, catch-all notify)
+      if (!rule.patterns || rule.patterns.length === 0) {
+        return rule.tier
+      }
+
       for (const pattern of rule.patterns) {
         try {
           const regex = new RegExp(pattern)
-          if (regex.test(argsStr)) {
+          if (regex.test(matchStr)) {
             return rule.tier
           }
         } catch (e) {
