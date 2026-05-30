@@ -154,16 +154,21 @@ function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 12000
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 
-/** Cached binary check — only runs once per process lifetime. */
 let _binaryAvailable = null
+let _binaryCheckedAt = 0
+const BINARY_RECHECK_NEG_MS = 2 * 60 * 1000  // re-check negatives every 2 min
+
 function isBinaryAvailable() {
-  if (_binaryAvailable !== null) return _binaryAvailable
+  const now = Date.now()
+  if (_binaryAvailable === true) return true  // permanent positive cache
+  if (_binaryAvailable === false && (now - _binaryCheckedAt) < BINARY_RECHECK_NEG_MS) return false
   try {
-    execFileSync('claude', ['--version'], { timeout: 5000, stdio: 'pipe' })
+    execFileSync('claude', ['--version'], { timeout: 1500, stdio: 'pipe' })
     _binaryAvailable = true
   } catch {
     _binaryAvailable = false
   }
+  _binaryCheckedAt = now
   return _binaryAvailable
 }
 
@@ -171,21 +176,29 @@ function isBinaryAvailable() {
 let _probeCache = null  // { ok: boolean, error?: string, checkedAt: number }
 const PROBE_TTL_MS = 5 * 60 * 1000
 
+let _probeInFlight = null  // single-flight: deduplicate concurrent probe calls
+
 async function runLiveProbe() {
   const now = Date.now()
   if (_probeCache && (now - _probeCache.checkedAt) < PROBE_TTL_MS) return _probeCache
-  try {
-    const stdout = await runClaude('Reply with exactly: OK', { maxTurns: 1, timeout: 30000 })
-    let text = stdout.trim()
-    try { const p = JSON.parse(stdout); text = p?.result ?? p?.text ?? text } catch {}
-    _probeCache = { ok: !!text, checkedAt: now }
-    console.log('[orion-claude] live probe: OK')
-  } catch (err) {
-    const errMsg = (err instanceof Error ? err.message : String(err)).slice(0, 300)
-    _probeCache = { ok: false, error: errMsg, checkedAt: now }
-    console.warn('[orion-claude] live probe failed:', errMsg)
-  }
-  return _probeCache
+  if (_probeInFlight) return _probeInFlight
+  _probeInFlight = (async () => {
+    try {
+      const stdout = await runClaude('Reply with exactly: OK', { maxTurns: 1, timeout: 30000 })
+      let text = stdout.trim()
+      try { const p = JSON.parse(stdout); text = p?.result ?? p?.text ?? text } catch {}
+      _probeCache = { ok: !!text, checkedAt: Date.now() }
+      console.log('[orion-claude] live probe: OK')
+    } catch (err) {
+      const errMsg = (err instanceof Error ? err.message : String(err)).slice(0, 300)
+      _probeCache = { ok: false, error: errMsg, checkedAt: Date.now() }
+      console.warn('[orion-claude] live probe failed:', errMsg)
+    } finally {
+      _probeInFlight = null
+    }
+    return _probeCache
+  })()
+  return _probeInFlight
 }
 
 function getCredStatus() {
@@ -295,6 +308,7 @@ const server = http.createServer(async (req, res) => {
           } catch (e) {
             console.log('[orion-claude] Could not copy to shared volume:', e.message)
           }
+          _probeCache = null  // force fresh probe after successful login
         } else if (loginStatus !== 'done') {
           loginStatus = 'error'
         }
@@ -384,6 +398,7 @@ const server = http.createServer(async (req, res) => {
       }
       fs.mkdirSync(CLAUDE_HOME, { recursive: true })
       fs.writeFileSync(CREDS_PATH, JSON.stringify(credentials, null, 2), 'utf8')
+      _probeCache = null  // force fresh probe after credential change
       console.log('[orion-claude] Credentials stored via paste')
       return json(res, 200, { ok: true })
     }
