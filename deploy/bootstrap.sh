@@ -281,6 +281,12 @@ if [[ "${GIT_PROVIDER:-gitea-bundled}" == "gitea-bundled" ]]; then
       -H "Authorization: token ${GITEA_ADMIN_TOKEN:-}" \
       2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || echo "")
 
+    # Gitea v1.26+ removed the registration-token API endpoint; fall back to the
+    # static token stored during initial setup.
+    if [[ -z "$REG_TOKEN" ]]; then
+      REG_TOKEN="${GITEA_RUNNER_TOKEN:-}"
+    fi
+
     if [[ -n "$REG_TOKEN" ]]; then
       (cd /opt/orion-runner && /usr/local/bin/act_runner register \
         --no-interactive \
