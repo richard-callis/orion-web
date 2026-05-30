@@ -261,6 +261,46 @@ if [[ "${GIT_PROVIDER:-gitea-bundled}" == "gitea-bundled" ]]; then
   fi
 fi
 
+# ── Register Gitea Actions Runner (bundled profile only) ─────────────────────
+# Registers the host-level act_runner with labels that cover both self-hosted
+# and standard ubuntu-latest workflows (e.g. GitOps / Talos cluster pipelines).
+# Idempotent: re-runs only when ubuntu-latest label is missing from .runner.
+if [[ "${GIT_PROVIDER:-gitea-bundled}" == "gitea-bundled" ]]; then
+  source "$DEPLOY_DIR/.env" 2>/dev/null || true
+  RUNNER_FILE="/opt/orion-runner/.runner"
+  RUNNER_CONFIG="/opt/orion-runner/config.yaml"
+  RUNNER_LABELS="self-hosted:docker:ubuntu:latest,docker:docker:ubuntu:latest,localhost:docker:ubuntu:latest,ubuntu-latest:docker:ubuntu:latest"
+  RUNNER_NAME="orion-runner-localhost"
+
+  if [[ ! -f "$RUNNER_FILE" ]] || ! grep -q "ubuntu-latest" "$RUNNER_FILE" 2>/dev/null; then
+    echo ""
+    echo "Registering Gitea Actions Runner ($RUNNER_NAME)..."
+
+    REG_TOKEN=$(curl -sf \
+      -X GET "http://localhost:3002/api/v1/admin/runners/registration-token" \
+      -H "Authorization: token ${GITEA_ADMIN_TOKEN:-}" \
+      2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || echo "")
+
+    if [[ -n "$REG_TOKEN" ]]; then
+      (cd /opt/orion-runner && /usr/local/bin/act_runner register \
+        --no-interactive \
+        --config "$RUNNER_CONFIG" \
+        --instance "http://localhost:3002" \
+        --token "$REG_TOKEN" \
+        --name "$RUNNER_NAME" \
+        --labels "$RUNNER_LABELS" 2>&1) | grep -v "^$" || true
+
+      systemctl restart orion-runner 2>/dev/null || true
+      echo "Runner registered with labels: $RUNNER_LABELS"
+    else
+      echo "WARNING: Could not get Gitea runner registration token — skipping runner registration."
+      echo "  Re-run bootstrap.sh once Gitea is fully started and GITEA_ADMIN_TOKEN is set."
+    fi
+  else
+    echo "Gitea Actions Runner labels up to date."
+  fi
+fi
+
 # ── Enable Vault file audit device (host-agent telemetry) ───────────────────
 # This creates the audit log at /vault/audit/audit.log which Vector reads.
 # Only runs if Vault is already unsealed and accessible.
