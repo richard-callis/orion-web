@@ -22,6 +22,7 @@ import { runK8sPollerAll } from './jobs/security-poll-k8s'
 import { runElkPollerAll } from './jobs/security-poll-elk'
 import { runNtopngPollerAll } from './jobs/security-poll-ntopng'
 import { runDailyScan, runEventTriggeredScan } from './jobs/security-scan-vulns'
+import { runGoalHeartbeat } from './jobs/goal-heartbeat'
 
 const POLL_INTERVAL_MS = 15_000
 const MAX_CONCURRENT   = 3
@@ -891,6 +892,12 @@ async function main() {
       runDailyScan().catch(e => err(`Daily vuln scan failed: ${e}`))
     }
   }, 60 * 60 * 1000)
+
+  // Goal heartbeat — every 5 min, re-trigger agents in rooms whose active goal
+  // has gone stale (no non-system message for 15 min). See jobs/goal-heartbeat.ts.
+  setInterval(() => {
+    runGoalHeartbeat().catch(e => err(`Goal heartbeat failed: ${e}`))
+  }, 5 * 60_000)
 }
 
 main().catch(e => { err(`Fatal: ${e}`); process.exit(1) })
