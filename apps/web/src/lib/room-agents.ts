@@ -227,10 +227,14 @@ async function callClaude(
     signal: AbortSignal.timeout(useMcp ? 300_000 : 120_000),
   }).catch((e: Error) => { console.error(`[room-agents] orion-claude fetch failed: ${e.message}`); return null })
   if (!res?.ok) {
-    console.error(`[room-agents] orion-claude /run/collect returned HTTP ${res?.status}`)
+    const errBody = await res?.text().catch(() => '')
+    console.error(`[room-agents] orion-claude /run/collect HTTP ${res?.status}: ${errBody?.slice(0, 400)}`)
     return null
   }
-  const data = await res.json() as { text?: string }
+  const data = await res.json() as { text?: string; error?: string }
+  if (data.error) {
+    console.error(`[room-agents] orion-claude /run/collect returned error: ${data.error.slice(0, 400)}`)
+  }
   return data.text?.trim() || null
 }
 

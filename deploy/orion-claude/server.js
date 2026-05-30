@@ -22,7 +22,7 @@ const fs         = require('fs')
 const os         = require('os')
 const path       = require('path')
 const pty        = require('node-pty')
-const { execFile } = require('child_process')
+const { execFile, execFileSync } = require('child_process')
 
 const PORT        = parseInt(process.env.PORT || '3100', 10)
 const CLAUDE_HOME = process.env.CLAUDE_HOME || '/root/.claude'
@@ -141,8 +141,10 @@ function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 12000
       // Always clean up the temp dir
       if (tmpDir) { try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {} }
       if (err) {
-        console.error('[orion-claude] claude CLI error:', err.message, stderr?.slice(0, 300))
-        return reject(err)
+        // Include stderr so callers see the real Claude error (auth failure, bad model, etc.)
+        const detail = (stderr?.trim() || err.message).slice(0, 2000)
+        console.error('[orion-claude] claude CLI error:', detail.slice(0, 400))
+        return reject(new Error(detail))
       }
       resolve(stdout)
     })
@@ -152,6 +154,40 @@ function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 12000
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 
+/** Cached binary check — only runs once per process lifetime. */
+let _binaryAvailable = null
+function isBinaryAvailable() {
+  if (_binaryAvailable !== null) return _binaryAvailable
+  try {
+    execFileSync('claude', ['--version'], { timeout: 5000, stdio: 'pipe' })
+    _binaryAvailable = true
+  } catch {
+    _binaryAvailable = false
+  }
+  return _binaryAvailable
+}
+
+/** Live probe cache — valid for 5 minutes to avoid burning Claude credits on every status poll. */
+let _probeCache = null  // { ok: boolean, error?: string, checkedAt: number }
+const PROBE_TTL_MS = 5 * 60 * 1000
+
+async function runLiveProbe() {
+  const now = Date.now()
+  if (_probeCache && (now - _probeCache.checkedAt) < PROBE_TTL_MS) return _probeCache
+  try {
+    const stdout = await runClaude('Reply with exactly: OK', { maxTurns: 1, timeout: 30000 })
+    let text = stdout.trim()
+    try { const p = JSON.parse(stdout); text = p?.result ?? p?.text ?? text } catch {}
+    _probeCache = { ok: !!text, checkedAt: now }
+    console.log('[orion-claude] live probe: OK')
+  } catch (err) {
+    const errMsg = (err instanceof Error ? err.message : String(err)).slice(0, 300)
+    _probeCache = { ok: false, error: errMsg, checkedAt: now }
+    console.warn('[orion-claude] live probe failed:', errMsg)
+  }
+  return _probeCache
+}
+
 function getCredStatus() {
   try {
     const raw    = fs.readFileSync(CREDS_PATH, 'utf8')
@@ -160,7 +196,7 @@ function getCredStatus() {
     const token  = oauth?.accessToken
     const exp    = oauth?.expiresAt
 
-    if (!token) return { authenticated: false, valid: false, reason: 'No access token' }
+    if (!token) return { authenticated: false, valid: false, reason: 'No access token', binaryAvailable: isBinaryAvailable() }
 
     const valid = !exp || exp > Date.now()
     return {
@@ -168,9 +204,10 @@ function getCredStatus() {
       valid,
       expiresAt: exp ? new Date(exp).toISOString() : null,
       reason: valid ? null : 'Token expired',
+      binaryAvailable: isBinaryAvailable(),
     }
   } catch {
-    return { authenticated: false, valid: false, reason: 'No credentials file' }
+    return { authenticated: false, valid: false, reason: 'No credentials file', binaryAvailable: isBinaryAvailable() }
   }
 }
 
@@ -324,6 +361,17 @@ const server = http.createServer(async (req, res) => {
     if (method === 'POST' && url === '/auth/cancel') {
       resetLogin()
       return json(res, 200, { ok: true })
+    }
+
+    // ── GET /auth/probe ──────────────────────────────────────────────────────
+    // Live end-to-end test: actually invokes the claude CLI and checks it succeeds.
+    // Result is cached for 5 min so repeated calls don't burn credits.
+    if (method === 'GET' && url === '/auth/probe') {
+      if (!isBinaryAvailable()) {
+        return json(res, 200, { ok: false, error: 'claude binary not found in PATH', checkedAt: Date.now() })
+      }
+      const result = await runLiveProbe()
+      return json(res, 200, result)
     }
 
     // ── POST /auth/credentials ───────────────────────────────────────────────
