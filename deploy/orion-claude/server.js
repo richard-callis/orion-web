@@ -191,7 +191,7 @@ async function runLiveProbe() {
       console.log('[orion-claude] live probe: OK')
     } catch (err) {
       const errMsg = (err instanceof Error ? err.message : String(err)).slice(0, 300)
-      _probeCache = { ok: false, error: errMsg, checkedAt: Date.now() }
+      _probeCache = { ok: false, error: 'Live probe failed', checkedAt: Date.now() }
       console.warn('[orion-claude] live probe failed:', errMsg)
     } finally {
       _probeInFlight = null
