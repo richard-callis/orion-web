@@ -1,12 +1,19 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import { CheckCircle, XCircle, AlertCircle, RefreshCw, LogIn, ClipboardPaste, Send, X } from 'lucide-react'
+import { CheckCircle, XCircle, AlertCircle, RefreshCw, LogIn, ClipboardPaste, Send, X, FlaskConical } from 'lucide-react'
 
 interface CredStatus {
   authenticated: boolean
   valid: boolean
   expiresAt: string | null
   reason: string | null
+  binaryAvailable?: boolean
+}
+
+interface ProbeResult {
+  ok: boolean
+  error?: string
+  checkedAt?: number
 }
 
 interface PollData {
@@ -18,6 +25,8 @@ interface PollData {
 
 export default function ClaudeOAuthPage() {
   const [status, setStatus]       = useState<CredStatus | null>(null)
+  const [probe, setProbe]         = useState<ProbeResult | null>(null)
+  const [probing, setProbing]     = useState(false)
   const [tab, setTab]             = useState<'oauth' | 'paste'>('oauth')
   const [poll, setPoll]           = useState<PollData | null>(null)
   const [code, setCode]           = useState('')
@@ -34,6 +43,15 @@ export default function ClaudeOAuthPage() {
   const loadStatus = async () => {
     const res = await fetch('/api/admin/claude/status').catch(() => null)
     if (res?.ok) setStatus(await res.json())
+  }
+
+  const runProbe = async () => {
+    setProbing(true)
+    setProbe(null)
+    const res = await fetch('/api/admin/claude/probe').catch(() => null)
+    if (res?.ok) setProbe(await res.json())
+    else setProbe({ ok: false, error: 'Service unreachable' })
+    setProbing(false)
   }
 
   useEffect(() => { loadStatus() }, [])
@@ -130,35 +148,77 @@ export default function ClaudeOAuthPage() {
       </div>
 
       {/* Status */}
-      <div className="rounded-lg border border-border-subtle bg-bg-card p-4 flex items-center gap-3">
-        {!status ? (
-          <RefreshCw size={16} className="text-text-muted animate-spin" />
-        ) : status.valid ? (
-          <CheckCircle size={16} className="text-status-healthy flex-shrink-0" />
-        ) : status.authenticated ? (
-          <AlertCircle size={16} className="text-status-warning flex-shrink-0" />
-        ) : (
-          <XCircle size={16} className="text-status-error flex-shrink-0" />
-        )}
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-text-primary">
-            {!status ? 'Checking...'
-              : status.valid ? 'Connected'
-              : status.authenticated ? 'Token expired'
-              : 'Not authenticated'}
-          </p>
-          {status?.expiresAt && (
-            <p className="text-xs text-text-muted mt-0.5">
-              Expires {new Date(status.expiresAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+      <div className="rounded-lg border border-border-subtle bg-bg-card p-4 space-y-3">
+        <div className="flex items-center gap-3">
+          {!status ? (
+            <RefreshCw size={16} className="text-text-muted animate-spin" />
+          ) : status.valid ? (
+            <CheckCircle size={16} className="text-status-healthy flex-shrink-0" />
+          ) : status.authenticated ? (
+            <AlertCircle size={16} className="text-status-warning flex-shrink-0" />
+          ) : (
+            <XCircle size={16} className="text-status-error flex-shrink-0" />
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-text-primary">
+              {!status ? 'Checking...'
+                : status.valid ? 'Credentials valid'
+                : status.authenticated ? 'Token expired'
+                : 'Not authenticated'}
             </p>
-          )}
-          {status?.reason && !status.valid && (
-            <p className="text-xs text-text-muted mt-0.5">{status.reason}</p>
-          )}
+            {status?.expiresAt && (
+              <p className="text-xs text-text-muted mt-0.5">
+                Expires {new Date(status.expiresAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+              </p>
+            )}
+            {status?.reason && !status.valid && (
+              <p className="text-xs text-text-muted mt-0.5">{status.reason}</p>
+            )}
+          </div>
+          <button onClick={loadStatus} className="text-text-muted hover:text-text-primary transition-colors" title="Refresh credentials status">
+            <RefreshCw size={13} />
+          </button>
         </div>
-        <button onClick={loadStatus} className="text-text-muted hover:text-text-primary transition-colors">
-          <RefreshCw size={13} />
-        </button>
+
+        {/* Binary + live probe row */}
+        {status && (
+          <div className="flex items-center gap-3 pt-1 border-t border-border-subtle">
+            <div className="flex items-center gap-1.5 text-xs">
+              {status.binaryAvailable === false ? (
+                <XCircle size={13} className="text-status-error flex-shrink-0" />
+              ) : status.binaryAvailable ? (
+                <CheckCircle size={13} className="text-status-healthy flex-shrink-0" />
+              ) : (
+                <AlertCircle size={13} className="text-text-muted flex-shrink-0" />
+              )}
+              <span className="text-text-muted">
+                {status.binaryAvailable === false ? 'claude binary not found' : status.binaryAvailable ? 'claude binary OK' : 'binary unknown'}
+              </span>
+            </div>
+
+            <div className="ml-auto flex items-center gap-2">
+              {probe && (
+                <div className="flex items-center gap-1.5 text-xs">
+                  {probe.ok
+                    ? <CheckCircle size={12} className="text-status-healthy" />
+                    : <XCircle size={12} className="text-status-error" />}
+                  <span className={probe.ok ? 'text-status-healthy' : 'text-status-error'}>
+                    {probe.ok ? 'Live test passed' : (probe.error ?? 'Live test failed')}
+                  </span>
+                </div>
+              )}
+              <button
+                onClick={runProbe}
+                disabled={probing}
+                className="flex items-center gap-1.5 px-3 py-1 rounded text-xs border border-border-subtle text-text-secondary hover:text-text-primary hover:bg-bg-raised transition-colors disabled:opacity-50"
+                title="Run a live end-to-end test — invokes the claude CLI with a minimal prompt"
+              >
+                {probing ? <RefreshCw size={12} className="animate-spin" /> : <FlaskConical size={12} />}
+                {probing ? 'Testing…' : 'Test'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Tabs */}

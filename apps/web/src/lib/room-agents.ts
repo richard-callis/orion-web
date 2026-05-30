@@ -76,6 +76,14 @@ export function parseMentions(content: string): string[] {
 
 const CLAUDE_URL = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
 
+function mapClaudeError(raw: string): string {
+  const lower = raw.toLowerCase()
+  if (lower.includes('auth') || lower.includes('token') || lower.includes('401') || lower.includes('invalid api')) return 'authentication issue'
+  if (lower.includes('credit') || lower.includes('quota') || lower.includes('usage limit')) return 'out of credits'
+  if (lower.includes('enoent') || lower.includes('not found') || lower.includes('command failed')) return 'claude binary not installed'
+  return 'service error'
+}
+
 // ── LLM call helpers ──────────────────────────────────────────────────────────
 
 type HistoryEntry = { name: string; content: string; isSelf: boolean }
@@ -201,7 +209,7 @@ async function callClaude(
   agentId?: string,
   roomId?: string,
   activeGoal?: string,
-): Promise<string | null> {
+): Promise<{ text: string | null; error?: string }> {
   // Always enable MCP when in a room context — Claude should have the same tool access
   // as OpenAI-compatible agents. maxTurns controls depth; hasTools controls prompt framing.
   const useMcp = !!agentId && !!roomId
@@ -226,12 +234,20 @@ async function callClaude(
     // MCP tool calls can take longer — allow 5 min for tool-using sessions
     signal: AbortSignal.timeout(useMcp ? 300_000 : 120_000),
   }).catch((e: Error) => { console.error(`[room-agents] orion-claude fetch failed: ${e.message}`); return null })
-  if (!res?.ok) {
-    console.error(`[room-agents] orion-claude /run/collect returned HTTP ${res?.status}`)
-    return null
+  if (!res) return { text: null, error: 'service unreachable' }
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '')
+    console.error(`[room-agents] orion-claude /run/collect HTTP ${res.status}: ${errBody?.slice(0, 400)}`)
+    return { text: null, error: mapClaudeError(errBody || `HTTP ${res.status}`) }
   }
-  const data = await res.json() as { text?: string }
-  return data.text?.trim() || null
+  const data = await res.json() as { text?: string; error?: string }
+  if (data.error) {
+    console.error(`[room-agents] orion-claude error: ${data.error.slice(0, 400)}`)
+    return { text: null, error: mapClaudeError(data.error) }
+  }
+  const text = data.text?.trim() || null
+  if (!text) console.warn('[room-agents] orion-claude returned empty text')
+  return { text }
 }
 
 /** Ollama native /api/chat endpoint */
@@ -950,11 +966,13 @@ export async function triggerRoomAgentReplies(
           // When tools are enabled, the sidecar writes a per-request .mcp.json so Claude
           // calls ORION tools natively via MCP (ORION is the harness, Claude is the brain).
           const claudeModel = llm.startsWith('claude:') ? llm.slice('claude:'.length) : undefined
-          reply = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel, !!toolContext, agent.id, roomId, activeGoal)
+          const claudeResult = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel, !!toolContext, agent.id, roomId, activeGoal)
+          reply = claudeResult.text
           if (reply === null) {
-            // Claude is unavailable — post a message on the agent's behalf rather than silently skipping
+            // Claude is unavailable — post a notice on the agent's behalf
             console.warn(`[room-agents] ${agent.name}: Claude unavailable, posting unavailability notice`)
-            const notice = `I'm currently unavailable — the Claude service is unreachable or out of credits. Please try again shortly.`
+            const hint = claudeResult.error ? ` (${claudeResult.error})` : ''
+            const notice = `I'm currently unavailable${hint}. Please try again shortly or contact an admin if the issue persists.`
             const msg = await prisma.chatMessage.create({
               data: { roomId, agentId: agent.id, senderType: 'agent', content: notice },
               include: {
