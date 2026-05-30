@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/db'
+import type { Prisma } from '@prisma/client'
 
 export async function GET(
   _req: Request,
@@ -87,7 +88,7 @@ export async function DELETE(
     const meta = (room.metadata ?? {}) as Record<string, unknown>
     if (meta.ringLeaderAgentId === agentId) {
       const { ringLeaderAgentId: _, ...rest } = meta
-      await prisma.chatRoom.update({ where: { id }, data: { metadata: rest } })
+      await prisma.chatRoom.update({ where: { id }, data: { metadata: rest as Prisma.InputJsonValue } })
     }
   }
 
