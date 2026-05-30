@@ -1,5 +1,5 @@
 import Fastify, { FastifyRequest, FastifyReply } from 'fastify'
-import fastifyCors from 'fastify-cors'
+import fastifyCors from '@fastify/cors'
 import { validateExecutorToken } from './auth.js'
 import { classifier } from './classifier.js'
 import { redactor } from './redactor.js'
@@ -46,7 +46,7 @@ async function executeCommand(
   tool: string,
   args: Record<string, unknown>,
   actorId: string,
-  actorType: string
+  actorType: 'agent' | 'human'
 ): Promise<{ status: string; output?: string; error?: string }> {
   try {
     const result = await sandbox.execute(tool, args, {
@@ -181,7 +181,7 @@ async function pollForApproval(
       await new Promise(resolve => setTimeout(resolve, 2000))
     }
   } catch (error) {
-    fastify.log.error(`Polling error for ${executionId}:`, error)
+    fastify.log.error({ err: error }, `Polling error for ${executionId}`)
     activePolling.delete(executionId)
   }
 }
@@ -330,7 +330,7 @@ async function rehydratePendingExecutions() {
 
     fastify.log.info(`Rehydration complete — resumed: ${resumed}, auto-denied: ${autoDenied}`)
   } catch (error) {
-    fastify.log.error('Rehydration failed:', error)
+    fastify.log.error({ err: error }, 'Rehydration failed')
   }
 }
 
