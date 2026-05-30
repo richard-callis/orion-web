@@ -182,8 +182,6 @@ services:
     command:
       - argocd-server
       - --insecure
-      - --static-assets
-      - /shared/app
 
   argocd-repo-server:
     image: quay.io/argoproj/argocd:latest
@@ -210,7 +208,6 @@ services:
       - ${HOME}/.kube:/kubeconfig:ro
     command:
       - argocd-application-controller
-      - --status-process-limit 1
       - --local
 
   argocd-redis:
