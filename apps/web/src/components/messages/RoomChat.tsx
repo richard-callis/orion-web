@@ -2,8 +2,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Users, Bot, User as UserIcon,
-  Hash, Send, X, Loader2, Plus, LogOut, AtSign, BookmarkCheck, Terminal, Layers,
+  Hash, Send, X, Loader2, Plus, LogOut, AtSign, BookmarkCheck, Terminal, Layers, UserMinus,
 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeHighlight from 'rehype-highlight'
+import 'highlight.js/styles/github-dark.css'
 
 /** Render message content with @mention highlighting */
 function MessageContent({ content }: { content: string }) {
@@ -109,7 +113,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   const [goalSummaryInput, setGoalSummaryInput] = useState('')
   const [completingGoal, setCompletingGoal] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
   // Derive all mentionable members from loaded room data
@@ -376,6 +380,16 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     else onMobileBack()
   }, [roomId, onLeave, onMobileBack])
 
+  const handleKick = useCallback(async (member: RoomMember) => {
+    const param = member.agentId
+      ? `agentId=${member.agentId}`
+      : `userId=${member.userId}`
+    try {
+      await fetch(`/api/chatrooms/${roomId}/members?${param}`, { method: 'DELETE' })
+      await loadRoom()
+    } catch { /* ignore */ }
+  }, [roomId, loadRoom])
+
   const handleSetGoal = useCallback(async () => {
     if (!goalInput.trim() || settingGoal) return
     setSettingGoal(true)
@@ -493,10 +507,19 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
         <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border-subtle flex-shrink-0 overflow-x-auto">
           <span className="text-[10px] text-text-muted flex-shrink-0">Members:</span>
           {room.members.map((m, i) => (
-            <span key={i} className="flex items-center gap-1 text-[10px] text-text-secondary bg-bg-raised px-2 py-0.5 rounded-full flex-shrink-0">
+            <span key={i} className="group/member flex items-center gap-1 text-[10px] text-text-secondary bg-bg-raised px-2 py-0.5 rounded-full flex-shrink-0">
               {m.agent ? <Bot size={11} className="text-accent" /> : <UserIcon size={11} />}
               {m.agent?.name || m.user?.name || m.user?.username || 'unknown'}
-              {m.role === 'lead' && <span className="text-accent">.</span>}
+              {m.role === 'lead' && <span className="text-accent">·</span>}
+              {m.agentId && (
+                <button
+                  onClick={() => handleKick(m)}
+                  className="hidden group-hover/member:inline-flex items-center ml-0.5 text-text-muted hover:text-status-error transition-colors"
+                  title={`Remove ${m.agent?.name ?? 'agent'} from room`}
+                >
+                  <UserMinus size={10} />
+                </button>
+              )}
             </span>
           ))}
         </div>
@@ -625,7 +648,50 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
                         </span>
                       )}
                     </div>
-                    <p className="text-xs leading-relaxed whitespace-pre-wrap"><MessageContent content={msg.content} /></p>
+                    {msg.sender?.type === 'human' || msg.sender?.type === 'user' ? (
+                      <p className="text-xs leading-relaxed whitespace-pre-wrap"><MessageContent content={msg.content} /></p>
+                    ) : (
+                      <div className="prose-orion text-xs">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          rehypePlugins={[rehypeHighlight]}
+                          components={{
+                            code({ className, children, ...props }) {
+                              const isBlock = className?.startsWith('language-')
+                              if (isBlock) return <code className={className} {...props}>{children}</code>
+                              return <code className="bg-bg-raised border border-border-subtle rounded px-1 py-0.5 font-mono text-[0.85em] text-accent" {...props}>{children}</code>
+                            },
+                            pre({ children }) {
+                              return <pre className="bg-[#0d1117] border border-border-subtle rounded-lg overflow-x-auto p-3 my-2 text-xs leading-relaxed">{children}</pre>
+                            },
+                            h1({ children }) { return <h1 className="text-base font-bold mt-3 mb-1">{children}</h1> },
+                            h2({ children }) { return <h2 className="text-sm font-bold mt-3 mb-1">{children}</h2> },
+                            h3({ children }) { return <h3 className="text-sm font-semibold mt-2 mb-1">{children}</h3> },
+                            p({ children }) { return <p className="mb-2 last:mb-0">{children}</p> },
+                            ul({ children }) { return <ul className="list-disc list-inside mb-2 space-y-0.5">{children}</ul> },
+                            ol({ children }) { return <ol className="list-decimal list-inside mb-2 space-y-0.5">{children}</ol> },
+                            li({ children }) { return <li className="text-text-primary">{children}</li> },
+                            blockquote({ children }) {
+                              return <blockquote className="border-l-2 border-accent pl-3 my-2 text-text-secondary italic">{children}</blockquote>
+                            },
+                            strong({ children }) { return <strong className="font-semibold text-text-primary">{children}</strong> },
+                            em({ children }) { return <em className="italic">{children}</em> },
+                            hr() { return <hr className="border-border-subtle my-3" /> },
+                            a({ href, children }) {
+                              return <a href={href} target="_blank" rel="noopener noreferrer" className="text-accent underline hover:text-accent/80">{children}</a>
+                            },
+                            table({ children }) {
+                              return <div className="overflow-x-auto my-2"><table className="text-xs border-collapse w-full">{children}</table></div>
+                            },
+                            thead({ children }) { return <thead className="border-b border-border-visible">{children}</thead> },
+                            th({ children }) { return <th className="px-3 py-1.5 text-left font-semibold text-text-secondary">{children}</th> },
+                            td({ children }) { return <td className="px-3 py-1.5 border-t border-border-subtle">{children}</td> },
+                          }}
+                        >
+                          {msg.content}
+                        </ReactMarkdown>
+                      </div>
+                    )}
                     {isPlanningRoom && (autoPlan || hoveredMsgId === msg.id) && !isSaved && (
                       <button
                         onClick={() => saveAsPlan(msg.id, msg.content)}
@@ -683,9 +749,9 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
           </div>
         )}
         <div className="flex gap-2">
-          <div className="flex-1 flex items-center relative">
-            <AtSign size={13} className="absolute left-2.5 text-text-muted pointer-events-none" />
-            <input
+          <div className="flex-1 flex items-start relative">
+            <AtSign size={13} className="absolute left-2.5 top-2.5 text-text-muted pointer-events-none" />
+            <textarea
               ref={inputRef}
               value={message}
               onChange={e => handleMessageChange(e.target.value)}
@@ -694,7 +760,8 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
                 if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage() }
               }}
               placeholder="Type a message… use @ to mention"
-              className="w-full pl-8 pr-3 py-2 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+              rows={2}
+              className="w-full pl-8 pr-3 py-2 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none"
             />
           </div>
           <button onClick={() => { if (message.trim()) handleSendMessage() }} disabled={!message.trim() || sending} className="px-4 py-2 text-xs rounded bg-accent/15 text-accent hover:bg-accent/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 flex-shrink-0"><Send size={14} /><span className="hidden sm:inline">Send</span></button>
