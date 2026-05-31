@@ -37,11 +37,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'publicUrl is required' }, { status: 400 })
   }
 
-  // For 'external': validate the URL is reachable right now (proxy is already running).
-  // For 'docker': skip validation — Traefik won't be running until bootstrap.sh restarts
-  //   with --profile proxy. The stored publicUrl is unverified until then; the UI should
-  //   surface a warning prompting the user to re-verify after bootstrap.sh runs.
-  if (type === 'external' && publicUrl) {
+  // Validate publicUrl format and reject internal addresses.
+  // We do NOT make a server-side reachability fetch — that would be an SSRF
+  // vector regardless of hostname validation. The UI should prompt the operator
+  // to verify reachability after saving (same as the 'docker' type).
+  if ((type === 'external' || type === 'docker') && publicUrl) {
     let parsedUrl: URL
     try {
       parsedUrl = new URL(publicUrl)
@@ -51,19 +51,8 @@ export async function POST(req: NextRequest) {
     if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
       return NextResponse.json({ error: 'publicUrl must use http or https' }, { status: 400 })
     }
-    // Block private/loopback/metadata IPs — this endpoint makes a server-side
-    // request so we must not allow probing internal network addresses.
-    const hostname = parsedUrl.hostname
-    if (isPrivateHost(hostname)) {
+    if (isPrivateHost(parsedUrl.hostname)) {
       return NextResponse.json({ error: 'publicUrl must be a public hostname, not an internal IP' }, { status: 400 })
-    }
-    try {
-      const res = await fetch(`${parsedUrl.origin}/api/health`, { signal: AbortSignal.timeout(5000) })
-      if (!res.ok) {
-        return NextResponse.json({ error: `Public URL returned ${res.status} — check the URL and try again` }, { status: 502 })
-      }
-    } catch {
-      return NextResponse.json({ error: 'Could not reach publicUrl — check URL and try again' }, { status: 502 })
     }
   }
 
