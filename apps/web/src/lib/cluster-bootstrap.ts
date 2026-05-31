@@ -345,7 +345,11 @@ async function deploySwarmStack(
   }
 }
 
-const ORION_URL       = process.env.NEXTAUTH_URL  ?? 'http://localhost:3000'
+const ORION_URL       = (
+  process.env.ORION_CALLBACK_URL ??
+  (process.env.MANAGEMENT_IP ? `http://${process.env.MANAGEMENT_IP}:3000` : null) ??
+  'http://localhost:3000'
+).replace(/\/$/, '')
 const MANAGEMENT_IP   = process.env.MANAGEMENT_IP ?? 'localhost'
 
 export type BootstrapEvent =
