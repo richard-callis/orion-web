@@ -176,6 +176,7 @@ services:
     environment:
       - ARGOCD_SERVER_INSECURE=true
       - ARGOCD_SERVER_INSECURE_HTTP_BASIC_ENABLE=true
+      - KUBECONFIG=/kubeconfig/config
     volumes:
       - argocd-server-data:/home/argocd
       - ${HOME}/.kube:/kubeconfig:ro
@@ -188,6 +189,8 @@ services:
     restart: unless-stopped
     depends_on:
       - argocd-redis
+    environment:
+      - KUBECONFIG=/kubeconfig/config
     volumes:
       - argocd-server-data:/shared
       - ${HOME}/.kube:/kubeconfig:ro
@@ -203,6 +206,8 @@ services:
     restart: unless-stopped
     depends_on:
       - argocd-redis
+    environment:
+      - KUBECONFIG=/kubeconfig/config
     volumes:
       - argocd-server-data:/shared
       - ${HOME}/.kube:/kubeconfig:ro
