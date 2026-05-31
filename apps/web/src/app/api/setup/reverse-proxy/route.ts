@@ -51,8 +51,14 @@ export async function POST(req: NextRequest) {
     if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
       return NextResponse.json({ error: 'publicUrl must use http or https' }, { status: 400 })
     }
+    // Block private/loopback/metadata IPs — this endpoint makes a server-side
+    // request so we must not allow probing internal network addresses.
+    const hostname = parsedUrl.hostname
+    if (isPrivateHost(hostname)) {
+      return NextResponse.json({ error: 'publicUrl must be a public hostname, not an internal IP' }, { status: 400 })
+    }
     try {
-      const res = await fetch(`${publicUrl.replace(/\/$/, '')}/api/health`, { signal: AbortSignal.timeout(5000) })
+      const res = await fetch(`${parsedUrl.origin}/api/health`, { signal: AbortSignal.timeout(5000) })
       if (!res.ok) {
         return NextResponse.json({ error: `Public URL returned ${res.status} — check the URL and try again` }, { status: 502 })
       }
@@ -65,6 +71,22 @@ export async function POST(req: NextRequest) {
   if (publicUrl) await upsert('reverse-proxy.public-url', publicUrl.replace(/\/$/, ''))
 
   return NextResponse.json({ ok: true, type, publicUrl: publicUrl ?? null })
+}
+
+function isPrivateHost(hostname: string): boolean {
+  // Reject loopback, private RFC1918, link-local, and cloud metadata ranges.
+  if (hostname === 'localhost') return true
+  const privatePatterns = [
+    /^127\./,
+    /^10\./,
+    /^192\.168\./,
+    /^172\.(1[6-9]|2\d|3[01])\./,
+    /^169\.254\./,   // link-local / AWS metadata
+    /^::1$/,         // IPv6 loopback
+    /^fc00:/i,       // IPv6 ULA
+    /^fe80:/i,       // IPv6 link-local
+  ]
+  return privatePatterns.some(p => p.test(hostname))
 }
 
 async function upsert(key: string, value: string) {
