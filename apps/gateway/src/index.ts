@@ -59,6 +59,8 @@ import { trivyTools } from './builtin-tools/trivy.js'
 import { discoveryTools } from './builtin-tools/discovery.js'
 import { ArgoCDWatcher } from './argocd-watcher.js'
 import { IngressWatcher } from './ingress-watcher.js'
+import { DockerComposeWatcher } from './docker-compose-watcher.js'
+import { bootstrapArgoCD } from './argocd-bootstrap.js'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -308,6 +310,7 @@ if (process.env.ENABLE_TRIVY === 'true') {
 let orion: OrionClient              // initialised in start()
 let argoCdWatcher:  ArgoCDWatcher  | undefined
 let ingressWatcher: IngressWatcher | undefined
+let dockerWatcher: DockerComposeWatcher | undefined
 let hooksEngine:  HooksEngine  | undefined
 let skillLoader:  SkillLoader | undefined
 
@@ -530,6 +533,11 @@ async function start() {
 
   // Start ArgoCD + Ingress watchers for K8s clusters
   if (GATEWAY_TYPE === 'cluster') {
+    // Bootstrap ArgoCD into the cluster (idempotent — safe on every restart)
+    bootstrapArgoCD(ORION_URL, ENVIRONMENT_ID, GATEWAY_TOKEN).catch(err =>
+      console.error('[gateway] ArgoCD bootstrap failed (non-fatal):', err instanceof Error ? err.message : String(err))
+    )
+
     argoCdWatcher = new ArgoCDWatcher(
       async (apps) => { await orion.reportSyncStatus(apps) },
     )
@@ -539,6 +547,13 @@ async function start() {
       async (ingresses) => { await orion.reportIngresses(ingresses) },
     )
     ingressWatcher.start()
+  }
+
+  if (GATEWAY_TYPE === 'docker' || GATEWAY_TYPE === 'localhost') {
+    dockerWatcher = new DockerComposeWatcher(
+      async (apps) => { await orion.reportSyncStatus(apps) },
+    )
+    dockerWatcher.start()
   }
 
   app.listen(PORT, () => {
@@ -555,6 +570,7 @@ process.on('SIGTERM', () => {
   console.log('[gateway] Shutting down…')
   argoCdWatcher?.stop()
   ingressWatcher?.stop()
+  dockerWatcher?.stop()
   orion.stopHeartbeat()
   hooksEngine?.stop()
   process.exit(0)

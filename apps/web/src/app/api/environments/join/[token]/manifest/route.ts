@@ -6,6 +6,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 
+// SystemSetting.value is a Json column — narrow to string before using
+function settingStr(setting: { value: unknown } | null, fallback: string): string {
+  return typeof setting?.value === 'string' ? setting.value : fallback
+}
+
 export async function GET(req: NextRequest, { params }: { params: { token: string } }) {
   const record = await prisma.environmentJoinToken.findUnique({
     where: { token: params.token },
@@ -31,6 +36,17 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
     process.env.NEXTAUTH_URL ??
     (() => { const u = new URL(req.url); return `${u.protocol}//${u.host}` })()
   ).replace(/\/$/, '')
+
+  // Reverse proxy: if configured, use the public URL for remote gateways so they
+  // can reach Orion and Gitea via the proxy instead of the management IP.
+  const proxyUrlSetting  = await prisma.systemSetting.findUnique({ where: { key: 'reverse-proxy.public-url' } })
+  const proxyPublicUrl   = settingStr(proxyUrlSetting, '')
+
+  const remoteOrionUrl  = proxyPublicUrl || orionUrl
+  const giteaClusterUrl = proxyPublicUrl
+    ? (process.env.GITEA_PUBLIC_URL ?? (managementIp ? `http://${managementIp}:3002` : ''))
+    : (managementIp ? `http://${managementIp}:3002` : '')
+
   const envName = record.environment.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
 
   // Use the environment's configured gatewayUrl if set; otherwise fall back to NodePort default.
@@ -146,7 +162,7 @@ metadata:
     orion/expires-at: "${record.expiresAt.toISOString()}"
 stringData:
   join-token: "${params.token}"
-  orion-url: "${orionUrl}"
+  orion-url: "${remoteOrionUrl}"
   environment-id: ""
   gateway-token: ""
 
@@ -206,6 +222,8 @@ spec:
                   optional: true
             - name: GATEWAY_SECRET_NAME
               value: "orion-gateway-${envName}-join"
+            - name: GITEA_CLUSTER_URL
+              value: "${giteaClusterUrl}"
           livenessProbe:
             httpGet: { path: /health, port: 3001 }
             initialDelaySeconds: 15

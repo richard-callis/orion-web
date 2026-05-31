@@ -165,60 +165,36 @@ services:
           cpus: '2'
           memory: 1G
 
-  # ── ArgoCD (GitOps — runs on host, manages the Talos Cluster externally) ─
-  argocd-server:
-    image: quay.io/argoproj/argocd:latest
+  # ── Traefik — reverse proxy (optional — activate with: docker compose --profile proxy up)
+  # Only needed when exposing Orion to remote gateways on separate networks.
+  # Activated by bootstrap.sh when REVERSE_PROXY_TYPE=docker is set in .env.
+  traefik:
+    profiles: [proxy]
+    image: traefik:v3.0
     restart: unless-stopped
-    depends_on:
-      - argocd-redis
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-admin@example.com}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
     ports:
-      - "8083:8080"
-    environment:
-      - ARGOCD_SERVER_INSECURE=true
-      - ARGOCD_SERVER_INSECURE_HTTP_BASIC_ENABLE=true
-      - KUBECONFIG=/kubeconfig/config
+      - "80:80"
+      - "443:443"
     volumes:
-      - argocd-server-data:/home/argocd
-      - ${HOME}/.kube:/kubeconfig:ro
-    command:
-      - argocd-server
-      - --insecure
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-letsencrypt:/letsencrypt
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
 
-  argocd-repo-server:
-    image: quay.io/argoproj/argocd:latest
-    restart: unless-stopped
-    depends_on:
-      - argocd-redis
-    environment:
-      - KUBECONFIG=/kubeconfig/config
-    volumes:
-      - argocd-server-data:/shared
-      - ${HOME}/.kube:/kubeconfig:ro
-    command:
-      - argocd-repo-server
-
-  argocd-application-controller:
-    image: quay.io/argoproj/argocd:latest
-    restart: unless-stopped
-    depends_on:
-      - argocd-redis
-    environment:
-      - KUBECONFIG=/kubeconfig/config
-    volumes:
-      - argocd-server-data:/shared
-      - ${HOME}/.kube:/kubeconfig:ro
-    command:
-      - argocd-application-controller
-      - --redis
-      - argocd-redis:6379
-
-  argocd-redis:
-    image: docker.io/library/redis:7.4-alpine
-    restart: unless-stopped
-    volumes:
-      - argocd-redis-data:/data
-
-# ── PostgreSQL
+  # ── PostgreSQL
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
@@ -715,6 +691,5 @@ volumes:
   redis-sentinel-1-data:
   redis-sentinel-2-data:
   redis-sentinel-3-data:
-  argocd-server-data:
-  argocd-redis-data:
+  traefik-letsencrypt:
   vault-audit:

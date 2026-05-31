@@ -11,6 +11,12 @@ if [[ "$GIT_PROVIDER" == "gitea-bundled" ]]; then
   PROFILE_FLAGS="--profile gitea"
 fi
 
+# Activate the proxy profile if REVERSE_PROXY_TYPE is docker
+REVERSE_PROXY_TYPE="${REVERSE_PROXY_TYPE:-none}"
+if [[ "$REVERSE_PROXY_TYPE" == "docker" ]]; then
+  PROFILE_FLAGS="$PROFILE_FLAGS --profile proxy"
+fi
+
 COMPOSE="docker compose -f $DEPLOY_DIR/docker-compose.yml --env-file $DEPLOY_DIR/.env $PROFILE_FLAGS"
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
@@ -360,28 +366,6 @@ chown -R 1000:1000 "$DEPLOY_DIR/vector-data" 2>/dev/null || true
 
 echo "Starting Vector host telemetry shipper..."
 $COMPOSE up -d --force-recreate vector 2>/dev/null || echo "NOTE: Vector service failed to start (check compose logs)."
-
-# ── Write kubeconfig for ArgoCD ──────────────────────────────────────────────
-# ArgoCD mounts ${HOME}/.kube as /kubeconfig. Pull the kubeconfig for the
-# Talos Cluster environment from the DB (stored as base64) and write it so
-# ArgoCD can reach the cluster without manual credential management.
-echo ""
-echo "Writing kubeconfig for ArgoCD..."
-KUBE_B64=$(PGPASSWORD="${POSTGRES_PASSWORD}" docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" \
-  deploy-postgres-1 psql -U orion -d orion -t -A \
-  -c "SELECT kubeconfig FROM \"Environment\" WHERE type = 'cluster' AND kubeconfig IS NOT NULL LIMIT 1;" \
-  2>/dev/null | tr -d '[:space:]')
-
-if [[ -n "$KUBE_B64" ]]; then
-  mkdir -p "${HOME}/.kube"
-  echo "$KUBE_B64" | base64 -d > "${HOME}/.kube/config"
-  chmod 600 "${HOME}/.kube/config"
-  echo "Kubeconfig written to ${HOME}/.kube/config — restarting ArgoCD..."
-  $COMPOSE restart argocd-server argocd-application-controller argocd-repo-server 2>/dev/null || true
-else
-  echo "NOTE: No cluster kubeconfig found in DB — ArgoCD will not have cluster access."
-  echo "  Register a cluster environment in Orion to enable ArgoCD sync."
-fi
 
 if [[ -n "${SETUP_TOKEN:-}" ]]; then
   echo ""
