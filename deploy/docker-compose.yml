@@ -196,10 +196,6 @@ services:
       - ${HOME}/.kube:/kubeconfig:ro
     command:
       - argocd-repo-server
-      - /shared/repositories
-      - /shared/generate
-      - /shared/umask
-      - /tmp/argocd
 
   argocd-application-controller:
     image: quay.io/argoproj/argocd:latest
@@ -213,7 +209,8 @@ services:
       - ${HOME}/.kube:/kubeconfig:ro
     command:
       - argocd-application-controller
-      - --local
+      - --redis
+      - argocd-redis:6379
 
   argocd-redis:
     image: docker.io/library/redis:7.4-alpine
