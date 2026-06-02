@@ -86,6 +86,9 @@ export default function ClaudeOAuthPage() {
       if (res?.ok) {
         const data: PollData = await res.json()
         setPoll(data)
+        if (typeof data.output === 'string' && /invalid code/i.test(data.output)) {
+          setCodeErr('Invalid code. Make sure you copied the full authorization code.')
+        }
       }
     }, 1500)
     return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null } }
@@ -111,18 +114,21 @@ export default function ClaudeOAuthPage() {
   const submitCode = async () => {
     if (!code.trim()) return
     setSending(true)
+    setCodeErr(null)
     const res = await fetch('/api/admin/claude/oauth?action=code', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ code: code.trim() }),
     }).catch(() => null)
     const data = await res?.json().catch(() => null)
-    if (res?.ok && data) {
-      setCodeErr(null)
+    if (res?.ok && data && !data.error) {
+      setCode('')
+      if (typeof data.output === 'string' && /invalid code/i.test(data.output)) {
+        setCodeErr('Invalid code. Make sure you copied the full authorization code.')
+      }
       setPoll(prev => prev ? { ...prev, ...data } : data)
     } else {
-      const msg = data?.error ?? 'Failed to submit code — service may be unreachable'
-      setCodeErr(msg)
+      setCodeErr(data?.error ?? 'Failed to submit code — service may be unreachable')
     }
     setSending(false)
   }
@@ -326,8 +332,21 @@ export default function ClaudeOAuthPage() {
             </div>
           )}
 
-          {/* Code input — shown once we have the URL */}
-          {poll?.authUrl && poll.status !== 'done' && poll.status !== 'error' && (
+          {/* Verifying indicator */}
+          {poll?.status === 'completing' && !codeErr && (
+            <div className="flex items-center gap-2 text-sm text-text-secondary">
+              <RefreshCw size={13} className="animate-spin" />
+              Verifying code…
+            </div>
+          )}
+
+          {codeErr && (
+            <p className="text-sm text-status-error">{codeErr}</p>
+          )}
+
+          {/* Code input — hidden while verifying unless there's an error to re-try */}
+          {poll?.authUrl && poll.status !== 'done' && poll.status !== 'error' &&
+            (poll.status !== 'completing' || !!codeErr) && (
             <div className="flex gap-2">
               <input
                 value={code}
