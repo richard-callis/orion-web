@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { ChevronUp, ChevronDown, Search, Loader2 } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { ChevronUp, ChevronDown, Search, Loader2, Settings } from 'lucide-react'
 
 type FlowRow = {
   src_ip: string
@@ -25,15 +25,29 @@ export default function FlowTable() {
   const [flows, setFlows] = useState<FlowRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [errorCode, setErrorCode] = useState<string | null>(null)
   const [sortCol, setSortCol] = useState<keyof FlowRow>('timestamp')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [search, setSearch] = useState('')
+  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
-    fetch('/api/monitoring/security/flows?limit=50')
-      .then(r => r.json())
-      .then(d => { setFlows(d.flows || d || []); setLoading(false) })
-      .catch(e => { setError(e.message); setLoading(false) })
+    abortRef.current = new AbortController()
+
+    fetch('/api/monitoring/security/flows?limit=50', { signal: abortRef.current.signal })
+      .then(r => {
+        if (!r.ok) return r.json().then((d: any) => Promise.reject({ message: d.error || `Error ${r.status}`, code: d.code }))
+        return r.json()
+      })
+      .then(d => { setFlows(d.flows || []); setLoading(false) })
+      .catch((e: any) => {
+        if (e?.name === 'AbortError') return
+        setError(e?.message || 'Failed to load flows')
+        setErrorCode(e?.code ?? null)
+        setLoading(false)
+      })
+
+    return () => abortRef.current?.abort()
   }, [])
 
   if (loading) {
@@ -46,7 +60,21 @@ export default function FlowTable() {
 
   if (error) {
     return (
-      <div className="p-8 text-status-error text-sm">Error loading flows: {error}</div>
+      <div className="p-8 text-center space-y-2">
+        <p className="text-status-error text-sm">{error}</p>
+        {errorCode === 'NO_GATEWAY' && (
+          <p className="text-xs text-text-muted flex items-center justify-center gap-1">
+            <Settings size={12} />
+            ELK not configured — set up sources in the Settings tab
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  if (flows.length === 0) {
+    return (
+      <div className="p-8 text-center text-text-muted text-sm">No flow records available.</div>
     )
   }
 
@@ -111,9 +139,9 @@ export default function FlowTable() {
           <tbody className="divide-y divide-border-subtle">
             {sorted.slice(0, 50).map((flow, i) => (
               <tr key={i} className="hover:bg-bg-raised transition-colors">
-                <td className="px-4 py-2 font-mono text-text-primary">{flow.src_ip}</td>
-                <td className="px-4 py-2 font-mono text-text-primary">{flow.dst_ip}</td>
-                <td className="px-4 py-2 text-text-muted">{flow.protocol}</td>
+                <td className="px-4 py-2 font-mono text-text-primary">{flow.src_ip || '—'}</td>
+                <td className="px-4 py-2 font-mono text-text-primary">{flow.dst_ip || '—'}</td>
+                <td className="px-4 py-2 text-text-muted">{flow.protocol || '—'}</td>
                 <td className="px-4 py-2 text-text-muted">{formatBytes(flow.bytes)}</td>
                 <td className="px-4 py-2 text-text-muted">{flow.packets.toLocaleString()}</td>
                 <td className="px-4 py-2 text-text-muted">{flow.duration}s</td>

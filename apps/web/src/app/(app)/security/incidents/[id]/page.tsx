@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, AlertTriangle, Shield, Clock, CheckCircle, XCircle, MessageSquare, FileText, Loader2 } from 'lucide-react'
+import { ArrowLeft, AlertTriangle, Shield, Clock, CheckCircle, XCircle, MessageSquare, FileText, Loader2, Search, ExternalLink } from 'lucide-react'
+import Link from 'next/link'
 
 interface ActionAudit {
   id: string
@@ -34,6 +35,7 @@ interface IncidentData {
     hostKey: string | null
     openedAt: string
     closedAt: string | null
+    investigationId: string | null
   }
   events: Array<{
     id: string
@@ -54,13 +56,43 @@ export default function IncidentDetailPage() {
   const [data, setData] = useState<IncidentData | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<'events' | 'actions' | 'chat'>('events')
+  const [creatingInvestigation, setCreatingInvestigation] = useState(false)
 
   useEffect(() => {
     fetch(`/api/monitoring/security/incidents/${params.id}`)
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`${r.status}`)
+        return r.json()
+      })
       .then(d => { setData(d); setLoading(false) })
       .catch(() => { setLoading(false) })
   }, [params.id])
+
+  async function handleCreateInvestigation() {
+    setCreatingInvestigation(true)
+    try {
+      const r = await fetch(`/api/monitoring/security/incidents/${params.id}/create-investigation`, {
+        method: 'POST',
+      })
+      if (r.status === 409) {
+        // Already linked — navigate to the existing one
+        const d = await r.json()
+        // Refresh incident data to get the investigationId, then navigate
+        const refreshed = await fetch(`/api/monitoring/security/incidents/${params.id}`).then(r2 => r2.json())
+        if (refreshed.incident?.investigationId) {
+          router.push(`/security/investigations/${refreshed.incident.investigationId}`)
+        }
+        return
+      }
+      if (!r.ok) throw new Error(`${r.status}`)
+      const d = await r.json()
+      router.push(`/security/investigations/${d.investigation.id}`)
+    } catch {
+      // non-critical — user can retry
+    } finally {
+      setCreatingInvestigation(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -83,16 +115,38 @@ export default function IncidentDetailPage() {
   return (
     <div className="p-6 max-w-5xl space-y-4">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <button onClick={() => router.back()} className="p-1 rounded text-text-muted hover:text-text-primary transition-colors">
-          <ArrowLeft size={16} />
-        </button>
-        <div className="flex items-center gap-2">
-          <Shield size={18} className="text-accent" />
-          <h1 className="text-lg font-semibold text-text-primary">
-            {incident.rootCauseSummary || 'Untitled Incident'}
-          </h1>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <button onClick={() => router.back()} className="p-1 rounded text-text-muted hover:text-text-primary transition-colors">
+            <ArrowLeft size={16} />
+          </button>
+          <div className="flex items-center gap-2">
+            <Shield size={18} className="text-accent" />
+            <h1 className="text-lg font-semibold text-text-primary">
+              {incident.rootCauseSummary || 'Untitled Incident'}
+            </h1>
+          </div>
         </div>
+
+        {/* Investigation button */}
+        {incident.investigationId ? (
+          <Link
+            href={`/security/investigations/${incident.investigationId}`}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-accent text-accent hover:bg-accent/10 transition-colors"
+          >
+            <ExternalLink size={12} />
+            View Investigation
+          </Link>
+        ) : (
+          <button
+            onClick={handleCreateInvestigation}
+            disabled={creatingInvestigation}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors"
+          >
+            {creatingInvestigation ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
+            Open Investigation
+          </button>
+        )}
       </div>
 
       {/* Incident header */}
@@ -160,7 +214,11 @@ export default function IncidentDetailPage() {
             <div className="px-4 py-8 text-center text-sm text-text-muted">No events linked to this incident.</div>
           ) : (
             events.map(ev => (
-              <div key={ev.id} className="px-4 py-3 flex items-center gap-3">
+              <Link
+                key={ev.id}
+                href={`/security/alerts/${ev.id}`}
+                className="px-4 py-3 flex items-center gap-3 hover:bg-bg-raised transition-colors"
+              >
                 <span className={`text-xs font-bold w-10 shrink-0 text-center ${
                   ev.severity >= 80 ? 'text-status-error' :
                   ev.severity >= 50 ? 'text-status-warning' :
@@ -172,7 +230,8 @@ export default function IncidentDetailPage() {
                     {ev.source} · {ev.type} · {new Date(ev.createdAt).toLocaleString()}
                   </div>
                 </div>
-              </div>
+                <ExternalLink size={12} className="text-text-muted shrink-0" />
+              </Link>
             ))
           )}
         </div>
