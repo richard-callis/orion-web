@@ -28,7 +28,7 @@ interface AlertEvent {
   severity: number
   title: string
   description: string | null
-  rawEvent: unknown
+  rawEvent: Record<string, unknown> | null
   acknowledged: boolean
   acknowledgedAt: string | null
   dedupKey: string | null
@@ -180,7 +180,7 @@ export default function AlertDetailPage() {
           </button>
           {rawExpanded && (
             <pre className="p-4 text-xs font-mono text-text-secondary overflow-x-auto bg-bg-raised leading-relaxed max-h-96 overflow-y-auto">
-              {JSON.stringify(event.rawEvent as Record<string, unknown>, null, 2)}
+              {JSON.stringify(event.rawEvent, null, 2)}
             </pre>
           )}
         </div>
