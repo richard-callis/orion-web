@@ -22,12 +22,12 @@ async function proxy(path: string, method: string, body?: unknown) {
 }
 
 export async function POST(req: NextRequest) {
-  await requireAdmin()
-
   const url    = new URL(req.url)
   const action = url.searchParams.get('action') ?? 'login'
 
   try {
+    await requireAdmin()
+
     if (action === 'login') {
       const data = await proxy('/auth/login', 'POST')
       return NextResponse.json(data)
@@ -45,23 +45,36 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
-  } catch {
-    return NextResponse.json({ error: 'Claude Code service unreachable' }, { status: 503 })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('[claude-oauth] POST error:', msg)
+    const isAuth = msg === 'Unauthorized'
+    return NextResponse.json(
+      { error: isAuth ? 'Unauthorized' : `Claude Code service unreachable: ${msg}` },
+      { status: isAuth ? 401 : 503 }
+    )
   }
 }
 
 export async function GET(req: NextRequest) {
-  await requireAdmin()
   const url    = new URL(req.url)
   const action = url.searchParams.get('action') ?? 'poll'
 
   try {
+    await requireAdmin()
+
     if (action === 'poll') {
       const data = await proxy('/auth/poll', 'GET')
       return NextResponse.json(data)
     }
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
-  } catch {
-    return NextResponse.json({ error: 'Claude Code service unreachable' }, { status: 503 })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('[claude-oauth] GET error:', msg)
+    const isAuth = msg === 'Unauthorized'
+    return NextResponse.json(
+      { error: isAuth ? 'Unauthorized' : `Claude Code service unreachable: ${msg}` },
+      { status: isAuth ? 401 : 503 }
+    )
   }
 }
