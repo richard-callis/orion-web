@@ -6,6 +6,7 @@ import Link from 'next/link'
 import AlertFeed from './AlertFeed'
 import FlowTable from './FlowTable'
 import SourceHealthPanel from './SourceHealthPanel'
+import SecuritySettings from './SecuritySettings'
 
 function RiskScoreGauge({ score }: { score: number }) {
   const getColor = (s: number) => {
@@ -66,6 +67,7 @@ export default function SecurityDashboard() {
   const loadOverview = useCallback(async () => {
     try {
       const res = await fetch('/api/monitoring/security/overview')
+      if (!res.ok) throw new Error(`${res.status}`)
       const d = await res.json()
       setData(d)
     } catch (e: unknown) {
@@ -284,9 +286,7 @@ export default function SecurityDashboard() {
             <span className="text-sm font-medium text-text-primary">Security Settings</span>
           </div>
           <div className="p-4">
-            <a href="/security/settings" className="text-sm text-accent hover:underline">
-              Configure monitoring sources &rarr;
-            </a>
+            <SecuritySettings />
           </div>
         </div>
       )}

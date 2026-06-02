@@ -1,13 +1,16 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { AlertTriangle, CheckCircle2, XCircle, Loader2, Shield, Globe, Database } from 'lucide-react'
+import Link from 'next/link'
+import { type NotifyMessage } from '@/lib/security/stream-utils'
 
 const sourceIcons: Record<string, React.ElementType> = {
   crowdsec: Shield,
   ntopng: Globe,
   wazuh: Database,
   elk: Database,
+  falco: Shield,
 }
 
 const sourceColors: Record<string, string> = {
@@ -15,6 +18,7 @@ const sourceColors: Record<string, string> = {
   ntopng: 'text-green-400',
   wazuh: 'text-orange-400',
   elk: 'text-purple-400',
+  falco: 'text-red-400',
 }
 
 function SeverityBadge({ severity }: { severity: number }) {
@@ -45,17 +49,34 @@ function SeverityBadge({ severity }: { severity: number }) {
 export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: any[]; compact?: boolean }) {
   const [alerts, setAlerts] = useState(initialAlerts || [])
   const [selected, setSelected] = useState<string[]>([])
+  const mountedRef = useRef(true)
 
   useEffect(() => {
-    const source = new EventSource('/api/monitoring/security/stream')
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
 
-    source.onmessage = (event) => {
-      const parsed = JSON.parse(event.data)
-      if (Array.isArray(parsed)) {
+  useEffect(() => {
+    const source = new EventSource('/api/monitoring/security/stream?channel=events')
+
+    source.onmessage = async (event) => {
+      try {
+        const frame = JSON.parse(event.data) as NotifyMessage
+        if (frame.channel !== 'events' || !frame.payload?.id) return
+
+        // Stream sends id-only frames — fetch the full event
+        const res = await fetch(`/api/monitoring/security/alerts/${frame.payload.id}`)
+        if (!res.ok || !mountedRef.current) return
+        const { event: alertEvent } = await res.json()
+        if (!alertEvent || !mountedRef.current) return
+
         setAlerts(prev => {
-          const all = [...parsed, ...prev]
-          return all.slice(0, 100)
+          // Deduplicate — stream may fire multiple times for the same event
+          if (prev.some((a: any) => a.id === alertEvent.id)) return prev
+          return [alertEvent, ...prev].slice(0, 100)
         })
+      } catch {
+        // Ignore malformed frames
       }
     }
 
@@ -69,7 +90,7 @@ export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids: selected }),
     })
-    setAlerts(prev => prev.map(a => selected.includes(a.id) ? { ...a, acknowledged: true } : a))
+    setAlerts(prev => prev.map((a: any) => selected.includes(a.id) ? { ...a, acknowledged: true } : a))
     setSelected([])
   }
 
@@ -79,6 +100,12 @@ export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: 
         <Loader2 size={20} className="animate-spin mx-auto mb-2 text-accent" />
         Connecting to security stream…
       </div>
+    )
+  }
+
+  if (alerts.length === 0) {
+    return (
+      <div className="p-8 text-center text-text-muted text-sm">No alerts.</div>
     )
   }
 
@@ -94,27 +121,27 @@ export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: 
       )}
 
       <div className="divide-y divide-border-subtle">
-        {alerts.map(alert => {
+        {alerts.map((alert: any) => {
           const Icon = sourceIcons[alert.source] || Shield
           return (
             <div
               key={alert.id}
-              className={`px-4 py-3 flex items-start gap-3 hover:bg-bg-raised transition-colors ${
-                selected.includes(alert.id) ? 'bg-accent/5' : ''
+              className={`px-4 py-3 flex items-start gap-3 transition-colors ${
+                selected.includes(alert.id) ? 'bg-accent/5' : 'hover:bg-bg-raised'
               } ${alert.acknowledged ? 'opacity-50' : ''}`}
             >
               <input
                 type="checkbox"
                 checked={selected.includes(alert.id)}
                 onChange={() => setSelected(prev =>
-                  prev.includes(alert.id) ? prev.filter(id => id !== alert.id) : [...prev, alert.id]
+                  prev.includes(alert.id) ? prev.filter((id: string) => id !== alert.id) : [...prev, alert.id]
                 )}
                 className="mt-1 accent-accent"
               />
               <Icon size={14} className={`flex-shrink-0 mt-0.5 ${sourceColors[alert.source] || 'text-text-muted'}`} />
-              <div className="flex-1 min-w-0">
+              <Link href={`/security/alerts/${alert.id}`} className="flex-1 min-w-0 group">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-text-primary truncate">{alert.title}</span>
+                  <span className="text-xs font-medium text-text-primary truncate group-hover:text-accent transition-colors">{alert.title}</span>
                   <SeverityBadge severity={alert.severity} />
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
@@ -125,7 +152,7 @@ export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: 
                 {!compact && alert.description && (
                   <p className="text-xs text-text-muted mt-1 truncate">{alert.description}</p>
                 )}
-              </div>
+              </Link>
             </div>
           )
         })}
