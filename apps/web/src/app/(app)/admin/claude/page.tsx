@@ -55,7 +55,18 @@ export default function ClaudeOAuthPage() {
     setProbing(false)
   }
 
-  useEffect(() => { loadStatus() }, [])
+  // On mount: load status AND resume any in-progress login (survives page refresh)
+  useEffect(() => {
+    loadStatus()
+    fetch('/api/admin/claude/oauth?action=poll')
+      .then(r => r.ok ? r.json() : null)
+      .then((data: PollData | null) => {
+        if (data && data.status !== 'idle' && data.status !== 'done' && data.status !== 'error') {
+          setPoll(data)
+        }
+      })
+      .catch(() => null)
+  }, [])
 
   // Auto-scroll logs
   useEffect(() => {
