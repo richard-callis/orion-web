@@ -27,6 +27,7 @@ export async function GET(
       openedAt: true,
       closedAt: true,
       environmentId: true,
+      investigationId: true,
     },
   })
 
