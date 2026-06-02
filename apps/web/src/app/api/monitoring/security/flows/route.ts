@@ -16,11 +16,15 @@ interface FlowRow {
 }
 
 function normalizeFlows(raw: unknown): FlowRow[] {
-  // Gateway elk_flow_search returns the raw ES _search response,
-  // sometimes as a JSON string, sometimes already parsed.
+  // Gateway /tools/execute wraps the tool result in { result: <string> }.
+  // elk_flow_search serialises the ES _search response with JSON.stringify,
+  // so we need to unwrap the envelope then parse the inner string.
   let parsed: unknown = raw
-  if (typeof raw === 'string') {
-    try { parsed = JSON.parse(raw) } catch { return [] }
+  if (parsed && typeof parsed === 'object' && 'result' in (parsed as object)) {
+    parsed = (parsed as { result: unknown }).result
+  }
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed) } catch { return [] }
   }
 
   if (!parsed || typeof parsed !== 'object') return []
