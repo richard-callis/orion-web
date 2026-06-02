@@ -30,6 +30,7 @@ export default function ClaudeOAuthPage() {
   const [tab, setTab]             = useState<'oauth' | 'paste'>('oauth')
   const [poll, setPoll]           = useState<PollData | null>(null)
   const [code, setCode]           = useState('')
+  const [codeErr, setCodeErr]     = useState<string | null>(null)
   const [starting, setStarting]   = useState(false)
   const [sending, setSending]     = useState(false)
   const [pasteVal, setPasteVal]   = useState('')
@@ -84,6 +85,7 @@ export default function ClaudeOAuthPage() {
     setSvcErr(null)
     setPoll(null)
     setCode('')
+    setCodeErr(null)
     const res = await fetch('/api/admin/claude/oauth?action=login', { method: 'POST' }).catch(() => null)
     if (!res || !res.ok) {
       setSvcErr('Claude Code service is not reachable. Make sure orion-claude is running.')
@@ -103,9 +105,13 @@ export default function ClaudeOAuthPage() {
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ code: code.trim() }),
     }).catch(() => null)
-    if (res?.ok) {
-      const data: PollData = await res.json()
+    const data = await res?.json().catch(() => null)
+    if (res?.ok && data) {
+      setCodeErr(null)
       setPoll(prev => prev ? { ...prev, ...data } : data)
+    } else {
+      const msg = data?.error ?? 'Failed to submit code — service may be unreachable'
+      setCodeErr(msg)
     }
     setSending(false)
   }
@@ -328,6 +334,10 @@ export default function ClaudeOAuthPage() {
                 Submit
               </button>
             </div>
+          )}
+
+          {codeErr && (
+            <p className="text-sm text-status-error">{codeErr}</p>
           )}
 
           {poll?.status === 'done' && (
