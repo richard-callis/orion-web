@@ -29,7 +29,7 @@ import { prisma } from '@/lib/db'
 import {
   constantTimeCompare,
   isWithinReplayWindow,
-  isLoopbackWebhookRequest,
+  shouldAcceptUnauthenticated,
   warnMissingWebhookSecret,
   checkWebhookBodySize,
   WEBHOOK_MAX_BODY_BYTES,
@@ -85,10 +85,14 @@ export async function POST(req: NextRequest) {
         { status: 500 }
       )
     }
-    if (!isLoopbackWebhookRequest(req)) {
+    if (!shouldAcceptUnauthenticated()) {
       return NextResponse.json({ error: 'Webhook secret not configured' }, { status: 403 })
     }
   } else {
+    // Falcosidekick sends the raw secret as a bearer token (not HMAC — it cannot
+    // compute HMAC of the body). Timing-safe comparison prevents oracle attacks.
+    // The header is named X-Orion-Falco-Signature for historical reasons but is
+    // semantically a bearer token; do not treat it as a body signature.
     if (!constantTimeCompare(signature ?? '', process.env.FALCO_WEBHOOK_SECRET)) {
       return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
     }
