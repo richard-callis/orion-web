@@ -10,15 +10,36 @@
  */
 
 import { prisma } from '@/lib/db'
+import { signDecisionToken } from './decision-token'
 import { type ActionRequest, type ActionDecision, actionRequestSchema, actionDecisionSchema } from './types'
 
 // ── Gateway executor ──────────────────────────────────────────────────────────
 
+// Known error prefixes returned by gateway write tools when the upstream
+// source is unavailable or misconfigured. Used to detect soft failures that
+// arrive as HTTP 200 with an error body (the gateway always returns 200 for
+// tool results, using the body to signal failure).
+const GATEWAY_ERROR_PREFIXES = [
+  '{"error"',
+  'environment variable not configured',
+  'decision token rejected',
+  'security write tool requires',
+  'crowdsec error',
+  'wazuh error',
+  'firewall_api',
+]
+
+function isErrorResult(result: string): boolean {
+  const lower = result.toLowerCase()
+  return GATEWAY_ERROR_PREFIXES.some(p => lower.includes(p.toLowerCase()))
+}
+
 /**
  * Execute a security action via the gateway's tool endpoint.
- * Looks up gateway credentials from the connected environment in the DB
- * (same pattern as the flows route) rather than env vars, so it works
- * regardless of which environment the action targets.
+ *
+ * Mints a short-lived HMAC decision token bound to the audit row, action
+ * type, and target — the gateway write tools refuse calls without one.
+ * The auditId is threaded through via payload.__auditId (set by execute()).
  */
 export async function gatewayExecutor(
   action: ActionRequest,
@@ -44,7 +65,9 @@ export async function gatewayExecutor(
       break
     case 'crowdsec_decision_delete':
       toolName = 'crowdsec_decision_delete'
-      toolArgs = { decisionId: target }
+      // Tool body reads args.ip; token check reads args.decisionId.
+      // Send both so the token binding and the LAPI call both work.
+      toolArgs = { ip: target, decisionId: target }
       break
     case 'wazuh_active_response':
       toolName = 'wazuh_active_response'
@@ -55,11 +78,27 @@ export async function gatewayExecutor(
       toolArgs = { cidr: target, reason: payload?.reason ?? 'Blocked via ORION' }
       break
     case 'investigate':
+      // investigate is a read action — no token required, no write tool called
       toolName = 'elk_flow_search'
       toolArgs = { size: payload?.limit ?? 20 }
       break
     default:
       return { success: false, result: `Unknown action type: ${action.actionType}` }
+  }
+
+  // Mint a decision token for write tools. The auditId is passed via payload
+  // by execute() after the ActionAudit row is created.
+  const auditId = typeof payload?.__auditId === 'string' ? payload.__auditId : ''
+  const isWriteTool = action.actionType !== 'investigate'
+  if (isWriteTool && auditId) {
+    try {
+      toolArgs.__decision_token = signDecisionToken({ auditId, actionType: action.actionType, target })
+    } catch (err) {
+      return {
+        success: false,
+        result: `Decision token signing failed: ${err instanceof Error ? err.message : String(err)}`,
+      }
+    }
   }
 
   const res = await fetch(`${env.gatewayUrl}/tools/execute`, {
@@ -73,7 +112,16 @@ export async function gatewayExecutor(
 
   const data = await res.json() as { result?: unknown }
   if (!res.ok) return { success: false, result: JSON.stringify(data) }
-  return { success: true, result: typeof data.result === 'string' ? data.result : JSON.stringify(data.result) }
+
+  const resultStr = typeof data.result === 'string' ? data.result : JSON.stringify(data.result)
+
+  // Gateway write tools return HTTP 200 even on soft failures (token rejected,
+  // upstream unreachable, env var missing). Detect error bodies explicitly.
+  if (isErrorResult(resultStr)) {
+    return { success: false, result: resultStr }
+  }
+
+  return { success: true, result: resultStr }
 }
 
 // ── Tier resolution ───────────────────────────────────────────────────────────
@@ -329,7 +377,9 @@ export async function execute(
   // 2. Auto-tier: execute immediately
   if (parsedDecision.tier === 'auto') {
     try {
-      const { success, result } = await executor(parsed, parsed.target, parsed.payload ?? {})
+      // Thread audit.id into payload so gatewayExecutor can mint the decision token.
+      const execPayload = { ...(parsed.payload ?? {}), __auditId: audit.id }
+      const { success, result } = await executor(parsed, parsed.target, execPayload)
 
       await prisma.actionAudit.update({
         where: { id: audit.id },
@@ -348,7 +398,9 @@ export async function execute(
   // 3. Approve-tier with approvedBy: execute
   if (parsedDecision.tier === 'approve' && parsedDecision.approvedBy) {
     try {
-      const { success, result } = await executor(parsed, parsed.target, parsed.payload ?? {})
+      // Thread audit.id into payload so gatewayExecutor can mint the decision token.
+      const execPayload = { ...(parsed.payload ?? {}), __auditId: audit.id }
+      const { success, result } = await executor(parsed, parsed.target, execPayload)
 
       await prisma.actionAudit.update({
         where: { id: audit.id },
