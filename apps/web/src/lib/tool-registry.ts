@@ -297,6 +297,21 @@ async function handleCreateAgent(args: unknown, ctx: ToolExecutionContext): Prom
   if (!spec.role?.trim())         return 'Error: role is required'
   if (!spec.systemPrompt?.trim()) return 'Error: systemPrompt is required — agents without a system prompt will not behave correctly'
   if (spec.systemPrompt.trim().length < 20) return 'Error: systemPrompt is too short (minimum 20 characters) — provide a meaningful role description'
+  if (spec.systemPrompt.trim().length > 10_000) return 'Error: systemPrompt exceeds maximum length (10,000 characters)'
+
+  // Cap total non-archived agents to prevent runaway agent-creation loops.
+  const MAX_ACTIVE_AGENTS = 50
+  const activeCount = await ctx.prisma.agent.count({
+    where: {
+      NOT: {
+        metadata: { path: ['archived'], equals: true },
+      },
+    },
+  })
+  if (activeCount >= MAX_ACTIVE_AGENTS) {
+    return `Error: maximum active agent limit (${MAX_ACTIVE_AGENTS}) reached. Archive unused agents before creating new ones.`
+  }
+
 
   const actorId = ctx.agentId ?? ctx.userId
   if (RESERVED_AGENT_NAMES.includes(spec.name.toLowerCase())) {
@@ -1919,15 +1934,28 @@ registerTool({
       })
       if (!env) return `Error: environment "${environment_id}" not found`
       if (!env.kubeconfig) return 'Error: no kubeconfig stored for this environment. Patch it first using orion_patch_environment.'
+      if (env.status === 'connected') return `Environment "${env.name}" is already connected (status: connected). Bootstrapping again would re-deploy the gateway unnecessarily. To force re-bootstrap, first set status to 'pending' via orion_patch_environment.`
+
+      // Check for an already-running or queued bootstrap job (idempotency guard)
+      const existingJob = await ctx.prisma.backgroundJob.findFirst({
+        where: {
+          type: 'cluster-bootstrap',
+          metadata: { path: ['environmentId'], equals: env.id },
+          status: { in: ['queued', 'running'] },
+        },
+        select: { id: true, status: true },
+      })
+      if (existingJob) {
+        return `Error: a bootstrap job is already ${existingJob.status} for environment "${env.name}" (job: ${existingJob.id}). Wait for it to complete before starting another.`
+      }
 
       // x-internal-call header was never checked in middleware — the bootstrap
       // self-call always failed because /api/environments is a BEARER_PATH that
-      // requires Authorization: Bearer. Use ORION_GATEWAY_TOKEN (the local
-      // gateway's token) or ORION_MCP_TOKEN as the service credential.
+      // requires Authorization: Bearer. Use ORION_GATEWAY_TOKEN or ORION_MCP_TOKEN.
       const serviceToken = process.env.ORION_GATEWAY_TOKEN ?? process.env.ORION_MCP_TOKEN ?? ''
-      if (!serviceToken) return 'Error: no service token configured (ORION_GATEWAY_TOKEN or ORION_MCP_TOKEN required for internal bootstrap call)'
+      if (!serviceToken) return 'Error: no service token configured (ORION_GATEWAY_TOKEN or ORION_MCP_TOKEN required)'
       const baseUrl = process.env.ORION_CALLBACK_URL ?? `http://localhost:${process.env.PORT ?? 3000}`
-      const res = await fetch(`${baseUrl}/api/environments/${environment_id}/bootstrap`, {
+      const res = await fetch(`${baseUrl}/api/environments/${env.id}/bootstrap`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

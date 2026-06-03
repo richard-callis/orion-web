@@ -151,6 +151,19 @@ export class OrionClient {
     }
   }
 
+  /** Redact sensitive patterns from tool args/results before transmitting. */
+  private redactForTrace(value: string | undefined): string | undefined {
+    if (!value) return value
+    const MAX_LEN = 4096
+    let redacted = value
+      .replace(/([A-Za-z0-9+/]{40,}={0,2})/g, (m) => m.length > 60 ? '[REDACTED_BASE64]' : m) // long base64
+      .replace(/\b(mcg|mcga|ghp|ghs|glpat)_[A-Za-z0-9]{20,}/g, '[REDACTED_TOKEN]') // PATs
+      .replace(/Bearer\s+[A-Za-z0-9._-]{20,}/g, 'Bearer [REDACTED]')
+      .replace(/password["\s:=]+[^\s"]{8,}/gi, 'password=[REDACTED]')
+    if (redacted.length > MAX_LEN) redacted = redacted.slice(0, MAX_LEN) + '[TRUNCATED]'
+    return redacted
+  }
+
   /** Report an AgentTrace to ORION */
   async reportTrace(data: {
     conversationId?: string
@@ -175,7 +188,12 @@ export class OrionClient {
       {
         method: 'POST',
         headers: this.headers(),
-        body: JSON.stringify(data),
+        body: JSON.stringify({
+          ...data,
+          toolArgs:   this.redactForTrace(data.toolArgs),
+          toolResult: this.redactForTrace(data.toolResult),
+          content:    this.redactForTrace(data.content),
+        }),
       },
     )
     if (!res.ok) {
