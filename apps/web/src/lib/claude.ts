@@ -1020,11 +1020,14 @@ async function handleOrionBootstrapEnvironment(argsRaw: string): Promise<string>
     if (!env) return `Error: environment "${environment_id}" not found`
     if (!env.kubeconfig) return 'Error: no kubeconfig stored for this environment. Patch it first using orion_patch_environment.'
 
-    // Call the bootstrap endpoint internally
+    // Call the bootstrap endpoint with the service token — x-internal-call is
+    // never validated by middleware and the endpoint requires Bearer auth.
+    const serviceToken = process.env.ORION_GATEWAY_TOKEN ?? process.env.ORION_MCP_TOKEN ?? ''
+    if (!serviceToken) return 'Error: no service token configured (ORION_GATEWAY_TOKEN or ORION_MCP_TOKEN required)'
     const baseUrl = process.env.ORION_CALLBACK_URL ?? `http://localhost:${process.env.PORT ?? 3000}`
     const res = await fetch(`${baseUrl}/api/environments/${environment_id}/bootstrap`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-internal-call': '1' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceToken}` },
     })
     if (!res.ok) return `Bootstrap request failed: HTTP ${res.status}`
 

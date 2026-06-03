@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { requireAdmin } from '@/lib/auth'
 
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   const session = await getServerSession(authOptions)
 
   const current = await prisma.ingressRoute.findUniqueOrThrow({ where: { id: params.id } })
