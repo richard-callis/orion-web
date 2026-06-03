@@ -794,12 +794,18 @@ async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Pr
     // any path that still escapes the watched directory (e.g. absolute paths, ../traversal)
     // Live ArgoCD path takes precedence over DB repoPath.
     const repoPath = liveWatchedPath ?? ((env as Record<string, unknown>).repoPath as string | undefined)
-    const normalizedChanges = repoPath
-      ? changes.map(c => ({
-          ...c,
-          path: c.path.startsWith(`${repoPath}/`) ? c.path : `${repoPath}/${c.path}`,
-        }))
-      : changes
+
+    // Fail closed when repoPath cannot be determined: the path escape check only
+    // runs inside `if (repoPath)`, so without it all paths are allowed through
+    // including .github/workflows/, ArgoCD root, and other sensitive directories.
+    if (!repoPath) {
+      return `Error: cannot determine the watched repo path for this environment (ArgoCD unreachable and no repoPath in environment config). Configure repoPath in environment settings or ensure ArgoCD is accessible before proposing changes.`
+    }
+
+    const normalizedChanges = changes.map(c => ({
+      ...c,
+      path: c.path.startsWith(`${repoPath}/`) ? c.path : `${repoPath}/${c.path}`,
+    }))
 
     if (repoPath) {
       const escaping = normalizedChanges.filter(c => !c.path.startsWith(`${repoPath}/`))
