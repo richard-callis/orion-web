@@ -66,6 +66,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
       incidents: investigation.incidents.map(i => ({
         id: i.id, status: i.status, severity: i.severity,
         attackerKey: i.attackerKey, hostKey: i.hostKey, openedAt: i.openedAt,
+        rootCauseSummary: i.rootCauseSummary,
       })),
     },
   })
