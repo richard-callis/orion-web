@@ -146,13 +146,19 @@ export function normalizeNtopngThreatAlert(raw: NtopngThreatAlert): NormalizedSe
 
   const timestamp = parseTimestamp(raw.timestamp ?? '')
 
+  const isPortScan = raw.alert_type === 'port_scan'
+  const eventType = isPortScan ? 'ntopng_port_scan' : 'ntopng_threat'
+  const title = isPortScan
+    ? `Port scan detected from ${sourceIp}`
+    : raw.alert_name ?? raw.alert_type ?? 'ntopng threat detected'
+
   return {
     id: raw.id ?? `ntopng_threat_${Date.now()}`,
     environmentId: null,
-    type: 'ntopng_threat',
+    type: eventType,
     source: 'ntopng',
     severity,
-    title: raw.alert_name ?? raw.alert_type ?? 'ntopng threat detected',
+    title,
     description: raw.description ?? `Alert type: ${raw.alert_type}`,
     rawEvent: raw as any,
     dedupKey,
@@ -173,9 +179,10 @@ export function normalizeNtopngThreatAlert(raw: NtopngThreatAlert): NormalizedSe
 
 function detectFlowEventType(raw: NtopngFlow): string {
   if (raw.application && raw.application.toLowerCase().includes('malware')) return 'ntopng_threat'
-  if (raw.tcp_flags === 'RST' || raw.bytes === 0) return 'ntopng_flow'
   if (raw.bytes && raw.bytes > 100_000_000) return 'ntopng_large_transfer'
   if (raw.source_to_dest_packets && raw.source_to_dest_packets > 1000 && (raw.dest_port === 22 || raw.dest_port === 23)) return 'ntopng_bruteforce'
+  // Port scan heuristic: many small packets spread across many dest ports from same source
+  if (raw.packets && raw.packets < 5 && raw.source_to_dest_packets && raw.source_to_dest_packets >= 1) return 'ntopng_flow'
   return 'ntopng_flow'
 }
 
