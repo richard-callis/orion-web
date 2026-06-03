@@ -22,12 +22,25 @@ function getVaultAgent(): https.Agent | undefined {
   const caPath   = process.env.VAULT_CACERT
   const certPath = process.env.VAULT_CLIENT_CERT
   const keyPath  = process.env.VAULT_CLIENT_KEY
-  if (!caPath && !certPath) { _agent = undefined; return undefined }
+  if (!caPath && !certPath) {
+    // No cert configuration — only allow if VAULT_ADDR is HTTP (dev/local).
+    // In production, VAULT_ADDR should be HTTPS and certs must be configured.
+    const addr = process.env.VAULT_ADDR ?? ''
+    if (addr.startsWith('https://') && process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'Vault mTLS not configured: VAULT_CACERT must be set when VAULT_ADDR uses HTTPS in production. ' +
+        'Refusing to connect without cert verification.'
+      )
+    }
+    _agent = undefined
+    return undefined
+  }
   _agent = new https.Agent({
     ca:   caPath   ? fs.readFileSync(caPath)   : undefined,
     cert: certPath ? fs.readFileSync(certPath) : undefined,
     key:  keyPath  ? fs.readFileSync(keyPath)  : undefined,
-    rejectUnauthorized: !!caPath,
+    // Always verify the server cert — never silently downgrade.
+    rejectUnauthorized: true,
   })
   return _agent
 }
@@ -90,8 +103,11 @@ export async function writeVaultSecret(
   kvPath: string,
   data: Record<string, string>,
 ): Promise<void> {
-  const setting = await prisma.systemSetting.findUnique({ where: { key: 'vault.rootToken' } })
-  if (!setting?.value) throw new Error('Vault root token not configured — has the Vault setup wizard been completed?')
+  // Setup wizard writes 'vault.adminToken', never 'vault.rootToken' (root is
+  // generated once and immediately revoked). Reading 'vault.rootToken' would
+  // always return null, silently breaking every secret write.
+  const setting = await prisma.systemSetting.findUnique({ where: { key: 'vault.adminToken' } })
+  if (!setting?.value) throw new Error('Vault admin token not configured — has the Vault setup wizard been completed?')
   const token = decrypt(String(setting.value))
 
   // Normalise: strip "secret/data/" prefix if the caller included it
