@@ -15,7 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { getGitProvider } from '@/lib/git-provider'
+import { getGitProvider, getGitProviderConfig } from '@/lib/git-provider'
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
@@ -24,12 +24,14 @@ export async function POST(req: NextRequest) {
   const headers: Record<string, string> = {}
   req.headers.forEach((value, key) => { headers[key.toLowerCase()] = value })
 
-  // Load provider config to get webhook secret and verify signature
+  // Load provider config to get webhook secret and verify signature.
+  // Previously read setting.value as a plain object, but it is encrypted
+  // (enc:v1:... string) — the cast to { webhookSecret } always returned
+  // undefined, so secret fell through to '' and HMAC verification was
+  // unconditionally bypassed on this PUBLIC_PATHS endpoint.
   const provider = await getGitProvider()
-  const setting = await prisma.systemSetting.findUnique({ where: { key: 'git.provider.config' } })
-  const secret = (setting?.value as { webhookSecret?: string } | null)?.webhookSecret
-    ?? process.env.GITEA_WEBHOOK_SECRET
-    ?? ''
+  const config = await getGitProviderConfig()
+  const secret = config?.webhookSecret ?? process.env.GITEA_WEBHOOK_SECRET ?? ''
 
   if (!provider.verifyWebhookSignature(rawBody, headers, secret)) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })

@@ -247,7 +247,7 @@ export class GitLabGitProvider implements GitProvider {
 
   verifyWebhookSignature(rawBody: string, headers: Record<string, string>, secret: string): boolean {
     // GitLab uses plain token comparison (not HMAC)
-    if (!secret) return true
+    if (!secret) return false // fail closed — unsigned webhooks on a public endpoint are not trusted
     const token = headers['x-gitlab-token'] ?? ''
     try {
       return timingSafeEqual(Buffer.from(token), Buffer.from(secret))

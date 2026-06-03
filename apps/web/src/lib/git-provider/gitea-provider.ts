@@ -262,7 +262,7 @@ export class GiteaGitProvider implements GitProvider {
 
   verifyWebhookSignature(rawBody: string, headers: Record<string, string>, secret: string): boolean {
     const signature = headers['x-gitea-signature'] ?? ''
-    if (!secret) return true
+    if (!secret) return false // fail closed — unsigned webhooks on a public endpoint are not trusted
     const expected = createHmac('sha256', secret).update(rawBody).digest('hex')
     try {
       return timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'))

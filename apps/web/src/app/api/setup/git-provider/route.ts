@@ -27,6 +27,16 @@ import { encryptJson } from '@/lib/encryption'
 import { randomBytes } from 'crypto'
 import { seedSystemNebula } from '@/lib/seed-system-nebula'
 
+function isPrivateHost(hostname: string): boolean {
+  if (hostname === 'localhost') return true
+  const privatePatterns = [
+    /^127\./, /^10\./, /^192\.168\./,
+    /^172\.(1[6-9]|2\d|3[01])\./, /^169\.254\./,
+    /^::1$/, /^fc00:/i, /^fe80:/i,
+  ]
+  return privatePatterns.some(p => p.test(hostname))
+}
+
 export async function POST(req: NextRequest) {
   if (!await requireWizardSession(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -83,6 +93,29 @@ export async function POST(req: NextRequest) {
     }
     if ((type === 'gitea' || type === 'gitlab') && !url) {
       return NextResponse.json({ error: 'url is required for this provider type' }, { status: 400 })
+    }
+  }
+
+  // ── SSRF validation — block private/internal hosts ───────────────────────
+  // The provider URL is used for a server-side fetch (provider.isHealthy()).
+  // Without this check, an operator can point the provider at an internal
+  // service (169.254.169.254, 10.x.x.x, localhost) and read the response
+  // via error messages. The reverse-proxy endpoint already implements this
+  // protection; applying the same check here.
+  if (url) {
+    try {
+      const parsed = new URL(url)
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        return NextResponse.json({ error: 'Provider URL must use http or https' }, { status: 400 })
+      }
+      if (isPrivateHost(parsed.hostname)) {
+        return NextResponse.json(
+          { error: 'Provider URL must not point to a private/internal host' },
+          { status: 400 }
+        )
+      }
+    } catch {
+      return NextResponse.json({ error: 'Invalid provider URL' }, { status: 400 })
     }
   }
 
