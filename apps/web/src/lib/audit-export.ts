@@ -153,6 +153,7 @@ async function exportLogsToFile(retentionDays: number): Promise<{
   recordCount: number
   startDate: Date
   endDate: Date
+  exportedIds: string[]  // exact IDs written to file — used to scope the delete
 }> {
   const cutoff = new Date(Date.now() - retentionDays * 86400000)
   const endDate = new Date()
@@ -251,6 +252,7 @@ async function exportLogsToFile(retentionDays: number): Promise<{
     recordCount: logs.length,
     startDate: logs[0].createdAt,
     endDate: logs[logs.length - 1].createdAt,
+    exportedIds: logs.map((l: any) => l.id),
   }
 }
 
@@ -370,27 +372,21 @@ export async function uploadToS3(
 /**
  * Delete exported logs from database
  */
-async function deleteExportedLogs(retentionDays: number): Promise<number> {
-  const cutoff = new Date(Date.now() - retentionDays * 86400000)
+// Delete exactly the rows that were exported (by ID), not a re-queried time window.
+// Re-querying by time would delete rows written between the export read and this
+// call that were never included in the export file — permanent audit gap.
+async function deleteExportedLogs(exportedIds: string[]): Promise<number> {
+  if (exportedIds.length === 0) return 0
 
   const BATCH_SIZE = 1000
   let totalDeleted = 0
 
-  while (true) {
-    const batch = await prisma.auditLog.findMany({
-      where: { createdAt: { lt: cutoff } },
-      select: { id: true },
-      take: BATCH_SIZE,
-    })
-
-    if (batch.length === 0) break
-
+  for (let i = 0; i < exportedIds.length; i += BATCH_SIZE) {
+    const batch = exportedIds.slice(i, i + BATCH_SIZE)
     const result = await prisma.auditLog.deleteMany({
-      where: { id: { in: batch.map((r: any) => r.id) } },
+      where: { id: { in: batch } },
     })
-
     totalDeleted += result.count
-    if (result.count === 0) break
   }
 
   return totalDeleted
@@ -423,8 +419,11 @@ export async function exportAuditLogs(config?: Partial<AuditExportConfig>): Prom
     // Get retention period
     const retentionDays = await getRetentionDays()
 
-    // Export logs to temporary gzipped file
-    const { filePath: logsFilePath, recordCount, startDate, endDate } = await exportLogsToFile(
+    // Export logs to temporary gzipped file.
+    // exportLogsToFile returns the exact IDs written; we pass them to
+    // deleteExportedLogs to avoid deleting rows that arrived after the
+    // export query completed but before the delete ran (B2 race).
+    const { filePath: logsFilePath, recordCount, startDate, endDate, exportedIds } = await exportLogsToFile(
       retentionDays
     )
 
@@ -442,8 +441,8 @@ export async function exportAuditLogs(config?: Partial<AuditExportConfig>): Prom
     const manifestPath = `s3://${finalConfig.bucketName}/${finalConfig.manifestPath}manifest-${exportDate}.json`
     await uploadManifestToS3(manifest, manifestPath, finalConfig)
 
-    // Delete exported logs from database
-    const deletedCount = await deleteExportedLogs(retentionDays)
+    // Delete exactly the exported rows (by ID) — not a fresh time-window query
+    const deletedCount = await deleteExportedLogs(exportedIds)
 
     // Store manifest hash for next export (chain)
     await storePreviousManifestHash(manifest.hashChain.manifest)
