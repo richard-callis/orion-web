@@ -5,6 +5,7 @@
  * ntopng provides both flow data and threat intelligence via its REST API.
  */
 
+import crypto from 'crypto'
 import { type NormalizedSecurityEvent } from '../types'
 
 /**
@@ -259,12 +260,5 @@ function parseTimestamp(ts: string): Date {
 }
 
 function createDedupKey(source: string, ...parts: string[]): string {
-  const joined = parts.join(':')
-  let hash = 0
-  for (let i = 0; i < joined.length; i++) {
-    const char = joined.charCodeAt(i)
-    hash = ((hash << 5) - hash) + char
-    hash &= hash
-  }
-  return `${source}_${Math.abs(hash).toString(16)}`
+  return `${source}_${crypto.createHash('sha256').update(parts.join(':')).digest('hex')}`
 }

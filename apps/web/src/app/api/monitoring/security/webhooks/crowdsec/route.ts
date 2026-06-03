@@ -16,7 +16,7 @@ import {
   verifyWebhookHmac,
   isWithinReplayWindow,
   wasAlreadyProcessed,
-  isLoopbackWebhookRequest,
+  shouldAcceptUnauthenticated,
   warnMissingWebhookSecret,
   checkWebhookBodySize,
   WEBHOOK_MAX_BODY_BYTES,
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
         { status: 500 }
       )
     }
-    if (!isLoopbackWebhookRequest(req)) {
+    if (!shouldAcceptUnauthenticated()) {
       return NextResponse.json({ error: 'Webhook secret not configured' }, { status: 403 })
     }
   } else {

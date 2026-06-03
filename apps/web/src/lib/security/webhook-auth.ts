@@ -138,7 +138,14 @@ export function isWithinReplayWindow(timestampHeader: string | null): boolean {
   } else {
     // Try Unix epoch (seconds or milliseconds)
     const epoch = Number(timestampHeader)
-    if (Number.isNaN(epoch)) return true
+    if (Number.isNaN(epoch)) {
+      // A present-but-unparseable timestamp must be treated the same as
+      // missing: reject in prod, accept-with-warning in dev.
+      if (requireTimestampHeader()) return false
+      // eslint-disable-next-line no-console
+      console.warn('[siem] webhook X-Timestamp header is present but unparseable; allowed because WEBHOOK_REQUIRE_TIMESTAMP is not set')
+      return true
+    }
     timestamp = epoch > 1e12 ? epoch : epoch * 1000 // ms
   }
 
@@ -196,67 +203,60 @@ export async function getWebhookSecret(
   return config?.value ?? null
 }
 
-// ── Client-IP / Loopback Trust ────────────────────────────────────────────────
+// ── Dev-mode unauthenticated acceptance ───────────────────────────────────────
 
 /**
- * Loopback IPv4/IPv6 prefixes. An address that starts with one of these is
- * considered "from this host" and is the only case the webhook fallback
- * (used when a webhook secret is not configured) should treat as trusted.
+ * Whether to accept a webhook request that has no configured secret.
+ *
+ * In production this always returns false — missing secret means misconfigured,
+ * and warnMissingWebhookSecret already returned 500 before this is reached.
+ *
+ * In development this returns true so local testing works without configuring
+ * secrets. Previously this used `isLoopbackWebhookRequest` which read `req.ip`,
+ * but `NextRequest.ip` is undefined in the self-hosted Node runtime (not Vercel),
+ * making the loopback check permanently dead. Replaced with a plain NODE_ENV
+ * check — the dev boundary is the deployment boundary, not the network.
+ *
+ * NOTE ON REPLAY PROTECTION (BLOCK-1):
+ * For CrowdSec and Wazuh, the HMAC is computed by the upstream sender over the
+ * raw body only. We cannot include the X-Timestamp in the signed material without
+ * reconfiguring those senders, so timestamp binding is not feasible for those
+ * sources. The replay window provides best-effort protection; the 24h dedupKey
+ * idempotency (backed by SHA-256 for all sources post this PR) is the primary
+ * replay defence. For host-agent, Vector signs body only by default.
  */
-const LOOPBACK_PREFIXES = ['127.', '::1', '::ffff:127.']
-
-function isLoopbackIp(ip: string): boolean {
-  if (!ip) return false
-  const trimmed = ip.trim()
-  if (!trimmed) return false
-  return LOOPBACK_PREFIXES.some((p) => trimmed.startsWith(p))
+export function shouldAcceptUnauthenticated(): boolean {
+  return process.env.NODE_ENV !== 'production'
 }
 
 /**
- * Determine whether the request originates from loopback for the secret-less
- * dev-mode fallback.
- *
- * Hardening (MAJOR-1 follow-up):
- * - The previous implementation read `X-Forwarded-For` / `X-Real-IP` directly,
- *   which any HTTP client can spoof. With `CROWDSEC_WEBHOOK_SECRET` (or the
- *   Wazuh equivalent) unset, spoofing `X-Forwarded-For: 127.0.0.1` was enough
- *   to inject events.
- * - We now prefer the direct TCP source (`req.ip`, populated by the runtime
- *   from the connection). `X-Forwarded-For` is ONLY consulted when the
- *   direct peer IP is itself an allow-listed reverse proxy
- *   (`WEBHOOK_TRUSTED_PROXY_IPS`, comma-separated). When the peer IP is
- *   missing AND no proxy allow-list is configured, we fall back to refusing
- *   trust — the request must use the signed path.
- *
- * Returns `true` only when we are confident the request is from loopback.
+ * @deprecated req.ip is undefined in Next.js Node runtime — this function
+ * always returns false unless WEBHOOK_TRUSTED_PROXY_IPS is configured.
+ * Use shouldAcceptUnauthenticated() instead for the no-secret dev path.
  */
 export function isLoopbackWebhookRequest(req: {
   headers: Headers
   ip?: string | null
 }): boolean {
   const peerIp = req.ip ?? ''
-  if (isLoopbackIp(peerIp)) return true
+  if (!peerIp) return false
+
+  const LOOPBACK_PREFIXES = ['127.', '::1', '::ffff:127.']
+  if (LOOPBACK_PREFIXES.some((p) => peerIp.startsWith(p))) return true
 
   const allowList = (process.env.WEBHOOK_TRUSTED_PROXY_IPS ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
 
-  if (allowList.length === 0) {
-    // No proxy allow-list configured. Do not trust XFF — it is spoofable.
-    return false
-  }
+  if (allowList.length === 0) return false
+  if (!allowList.includes(peerIp)) return false
 
-  const peerTrusted = peerIp && allowList.includes(peerIp)
-  if (!peerTrusted) return false
-
-  // Peer is a known reverse proxy; X-Forwarded-For (left-most entry) is
-  // believable. X-Real-IP is single-valued and easier to forge upstream, but
-  // we accept it when the peer is also trusted.
   const xff = req.headers.get('x-forwarded-for') ?? ''
   const realIp = req.headers.get('x-real-ip') ?? ''
   const clientIp = xff.split(',')[0]?.trim() || realIp.trim()
-  return isLoopbackIp(clientIp)
+  const LOOPBACK_PREFIXES2 = ['127.', '::1', '::ffff:127.']
+  return LOOPBACK_PREFIXES2.some((p) => clientIp.startsWith(p))
 }
 
 // ── Body-size guard ───────────────────────────────────────────────────────────
