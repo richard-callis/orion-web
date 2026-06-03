@@ -246,6 +246,15 @@ export function normalizeHostAgentEvent(
   const timestamp =
     typeof event.timestamp === 'string' ? new Date(event.timestamp) : event.timestamp
 
+  // Extract source IP from SSH log lines so the brute-force rule can group by attackerKey.
+  // Formats: "Failed password for ... from 1.2.3.4 port ..."
+  //          "Invalid user ... from 1.2.3.4 port ..."
+  //          "Connection from 1.2.3.4 port ..."
+  const srcIpMatch = event.category === 'auth'
+    ? event.raw.match(/(?:from|connection from)\s+([\d.a-fA-F:]+)\s+port/i)
+    : null
+  const src_ip = srcIpMatch?.[1] ?? null
+
   return {
     id: undefined, // route assigns UUID via crypto.randomUUID()
     environmentId: null,
@@ -260,6 +269,7 @@ export function normalizeHostAgentEvent(
       source_file: sourceFile,
       raw: event.raw,
       hostname,
+      ...(src_ip ? { src_ip } : {}),
     },
     dedupKey,
     sourceName: hostname,

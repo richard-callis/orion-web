@@ -178,7 +178,7 @@ const DEFAULT_RULES = [
     },
     severity: 90,
     window: 0,
-    enabledByDefault: false,
+    enabledByDefault: true, // high-signal single-event rule; safe to enable by default
   },
 
   // infra.container_shell_storm — ≥2 Falco "Terminal shell in container"

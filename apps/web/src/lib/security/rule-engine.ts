@@ -279,13 +279,13 @@ export function extractGroupValue(event: unknown, field: string): string | null 
       return typeof cursor === 'string' && cursor.length > 0 ? cursor : null
     }
     return (
-      probe(['payload', 'value']) ??
-      probe(['source', 'ip']) ??
-      probe(['alert', 'srcip']) ??
-      probe(['srcip']) ??
-      probe(['source_ip']) ??
-      probe(['src_ip']) ??
-      probe(['cli', 'ip']) ??
+      probe(['payload', 'value']) ??   // CrowdSec: range/ip scope
+      probe(['source', 'ip']) ??        // CrowdSec: source.ip
+      probe(['alert', 'srcip']) ??      // Wazuh: alert.srcip
+      probe(['srcip']) ??               // Wazuh flat
+      probe(['source_ip']) ??           // ntopng / ELK
+      probe(['src_ip']) ??              // ntopng flow / host-agent SSH (extracted)
+      probe(['cli', 'ip']) ??           // ntopng legacy
       null
     )
   }
@@ -317,11 +317,19 @@ async function runThresholdRule(
   params: Extract<RuleParams, { type: 'threshold' }>,
   since: Date
 ): Promise<IncidentDraft | null> {
-  // Find the most recent incident for this rule + group to avoid duplicate incidents
+  // Use the rule's own window, not the correlator's global lookback.
+  // The correlator passes a 600s lookback to find *new* events; each rule
+  // should query its configured window (e.g. 300s for brute_force) so it
+  // counts events in the correct forensic window.
+  const ruleSince = params.window > 0
+    ? new Date(Date.now() - params.window * 1000)
+    : since // window: 0 means "no window" — use the correlator's since
+  const effectiveSince = ruleSince < since ? since : ruleSince
+
   const events = await prisma.securityEvent.findMany({
     where: {
       environmentId: envIdFilter(envId),
-      createdAt: { gte: since },
+      createdAt: { gte: effectiveSince },
       ...(params.sourceFilter?.length ? { source: { in: params.sourceFilter } } : {}),
     },
     orderBy: { createdAt: 'desc' },
@@ -486,10 +494,23 @@ async function runProcessRule(
   try {
     const regex = new RegExp(params.commandPattern)
     for (const event of events) {
-      if (
-        typeof (event.rawEvent as Record<string, unknown>)?.cmd === 'string' &&
-        regex.test(String((event.rawEvent as Record<string, unknown>)?.cmd))
-      ) {
+      const raw = event.rawEvent as Record<string, unknown>
+      const alert = raw?.alert as Record<string, unknown> | undefined
+      const outputFields = raw?.output_fields as Record<string, unknown> | undefined
+      // Check all known process/command field paths across sources:
+      //   rawEvent.cmd               — legacy / generic
+      //   rawEvent.alert.full_log    — Wazuh rootcheck
+      //   rawEvent.alert.output      — Wazuh alert output
+      //   rawEvent.output_fields['proc.name']  — Falco
+      //   rawEvent.output_fields['proc.cmdline'] — Falco
+      const candidates = [
+        raw?.cmd,
+        alert?.full_log,
+        alert?.output,
+        outputFields?.['proc.name'],
+        outputFields?.['proc.cmdline'],
+      ]
+      if (candidates.some(c => typeof c === 'string' && regex.test(c))) {
         matched.push(event)
       }
     }
