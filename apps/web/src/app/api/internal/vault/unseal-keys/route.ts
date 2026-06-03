@@ -9,7 +9,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { encrypt, encryptJson, decryptJson } from '@/lib/encryption'
+import { encrypt, encryptJson, decryptJsonStrict } from '@/lib/encryption'
 
 const UNSEALER_TOKEN = process.env.ORION_UNSEALER_TOKEN
 
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  const keys = decryptJson<string[]>(setting.value)
+  const keys = decryptJsonStrict<string[]>(setting.value, "vault.unsealKeys")
   return NextResponse.json({ keys })
 }
 
