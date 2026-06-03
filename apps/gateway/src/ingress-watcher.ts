@@ -94,10 +94,12 @@ export class IngressWatcher {
     // Only report when something changed
     const snapshot = JSON.stringify(rules.map(r => `${r.host}:${r.paths.join(',')}`).sort())
     if (snapshot === this.lastSnapshot) return
-    this.lastSnapshot = snapshot
 
-    const isFirst = this.lastSnapshot === snapshot && rules.length > 0
+    const isFirst = this.lastSnapshot === ''
     console.log(`[ingress-watcher] ${isFirst ? 'Initial' : 'Changed'}: ${rules.length} ingress rule(s)`)
+    // M6 fix: commit state AFTER a successful onChanged so a failed report
+    // is retried on the next poll instead of being silently lost.
     await this.onChanged(rules)
+    this.lastSnapshot = snapshot
   }
 }

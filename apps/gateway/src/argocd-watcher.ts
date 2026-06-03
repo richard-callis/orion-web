@@ -72,20 +72,25 @@ export class ArgoCDWatcher {
     const apps: ArgoCDApp[] = items.map((item: unknown) => parseApp(item))
     const changed: ArgoCDApp[] = []
 
+    const pendingUpdates: Array<{ key: string; snapshot: string }> = []
     for (const app of apps) {
       const key = app.name
       const snapshot = `${app.syncStatus}:${app.healthStatus}:${app.revision}`
       if (this.lastState.get(key) !== snapshot) {
-        this.lastState.set(key, snapshot)
+        pendingUpdates.push({ key, snapshot })
         changed.push(app)
       }
     }
 
-    // Always report on first poll (lastState is empty); subsequent polls only on change
-    const isFirstPoll = this.lastState.size === apps.length && changed.length === apps.length
+    const isFirstPoll = this.lastState.size === 0 && changed.length > 0
     if (changed.length > 0) {
       console.log(`[argocd-watcher] ${isFirstPoll ? 'Initial state' : 'State changed'}: ${changed.map(a => `${a.name}=${a.syncStatus}/${a.healthStatus}`).join(', ')}`)
+      // M5 fix: commit state AFTER a successful onChanged so a failed report
+      // is retried on the next poll instead of being silently lost.
       await this.onChanged(apps) // send full state, not just changed apps
+      for (const { key, snapshot } of pendingUpdates) {
+        this.lastState.set(key, snapshot)
+      }
     }
   }
 }
