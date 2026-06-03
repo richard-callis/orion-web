@@ -43,6 +43,17 @@ export async function GET(
     return NextResponse.json({ error: 'Room not found' }, { status: 404 })
   }
 
+  // B2 fix: SSE stream only checked that a session exists, not that the user
+  // is a member of this room. Any logged-in user could subscribe to the security
+  // room and receive incident details live. Verify membership.
+  const membership = await prisma.chatRoomMember.findFirst({
+    where: { roomId, userId: session.user.id },
+    select: { userId: true },
+  })
+  if (!membership) {
+    return NextResponse.json({ error: 'Not a member of this room' }, { status: 403 })
+  }
+
   // Create SSE stream
   const encoder = new TextEncoder()
   let unsubscribe: (() => Promise<void>) | null = null
