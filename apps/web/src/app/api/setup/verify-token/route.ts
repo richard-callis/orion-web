@@ -30,8 +30,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid setup token' }, { status: 401 })
   }
 
-  // Issue short-lived wizard session JWT (1 hour)
-  const secret = new TextEncoder().encode(process.env.NEXTAUTH_SECRET ?? 'fallback-secret')
+  // Issue short-lived wizard session JWT (1 hour).
+  // NEXTAUTH_SECRET must be set — 'fallback-secret' would produce forgeable wizard
+  // tokens that grant full setup access to anyone who knows the hardcoded value.
+  const nextAuthSecret = process.env.NEXTAUTH_SECRET
+  if (!nextAuthSecret) {
+    return NextResponse.json({ error: 'Server misconfiguration: NEXTAUTH_SECRET is not set' }, { status: 500 })
+  }
+  const secret = new TextEncoder().encode(nextAuthSecret)
   const wizardJwt = await new SignJWT({ wizard: true })
     .setProtectedHeader({ alg: 'HS256' })
     .setExpirationTime('1h')

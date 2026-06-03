@@ -257,18 +257,21 @@ async function validateSSoHeaderHmac(headers: Headers): Promise<boolean> {
             .update(canonical)
             .digest('hex')
           const expectedPrevBuf = Buffer.from(expectedPrev, 'hex')
-          timingSafeEqual(signatureBuf, expectedPrevBuf)
-          return true  // matched previous secret
+          // timingSafeEqual returns false on mismatch (does NOT throw).
+          // Capture the result — without this the return value was discarded
+          // and return true was always reached, accepting any equal-length signature.
+          return timingSafeEqual(signatureBuf, expectedPrevBuf)
         } catch {
           return false
         }
       }
       return false
     }
-    timingSafeEqual(signatureBuf, expectedBuf)
-    return true  // Signature matches
+    // timingSafeEqual returns false on mismatch (does NOT throw).
+    // The original code discarded the return value and always returned true
+    // for any equal-length signature — a complete HMAC bypass.
+    return timingSafeEqual(signatureBuf, expectedBuf)
   } catch {
-    // timingSafeEqual throws on mismatch
     return false
   }
 }
