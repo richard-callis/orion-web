@@ -1801,7 +1801,7 @@ registerTool({
 
 registerTool({
   name: 'orion_patch_environment',
-  description: 'Update fields on an ORION environment (e.g. save kubeconfig, update gatewayUrl).',
+  description: 'Update fields on an ORION environment (e.g. save kubeconfig, update gatewayUrl). Requires a ToolExecutionGrant because kubeconfig writes grant cluster admin to whoever controls the kubeconfig.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1810,7 +1810,10 @@ registerTool({
     },
     required: ['environment_id', 'body'],
   },
-  tier: 'write',
+  // Upgraded from 'write' to 'destructive': kubeconfig is in the allowed fields
+  // and writing cluster credentials is equivalent to gaining cluster admin. Any
+  // agent calling this must have a one-time ToolExecutionGrant from an operator.
+  tier: 'destructive',
   parallelSafe: false,
   availableIn: 'chat',
   category: 'environment',
@@ -1911,10 +1914,19 @@ registerTool({
       if (!env) return `Error: environment "${environment_id}" not found`
       if (!env.kubeconfig) return 'Error: no kubeconfig stored for this environment. Patch it first using orion_patch_environment.'
 
+      // x-internal-call header was never checked in middleware — the bootstrap
+      // self-call always failed because /api/environments is a BEARER_PATH that
+      // requires Authorization: Bearer. Use ORION_GATEWAY_TOKEN (the local
+      // gateway's token) or ORION_MCP_TOKEN as the service credential.
+      const serviceToken = process.env.ORION_GATEWAY_TOKEN ?? process.env.ORION_MCP_TOKEN ?? ''
+      if (!serviceToken) return 'Error: no service token configured (ORION_GATEWAY_TOKEN or ORION_MCP_TOKEN required for internal bootstrap call)'
       const baseUrl = process.env.ORION_CALLBACK_URL ?? `http://localhost:${process.env.PORT ?? 3000}`
       const res = await fetch(`${baseUrl}/api/environments/${environment_id}/bootstrap`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-internal-call': '1' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${serviceToken}`,
+        },
       })
       if (!res.ok) return `Bootstrap request failed: HTTP ${res.status}`
 
