@@ -58,11 +58,17 @@ async function validateHttpUrl(url: string): Promise<string> {
 }
 
 function isAllowedIp(ip: string): boolean {
-  // Allow public IPs and K8s internal DNS (non-IP hostnames resolve through DNS lookup path)
-  if (!/^\d+\.\d+\.\d+\.\d+$/.test(ip)) return true // not a raw IPv4, skip check
-  // Block IPv6 loopback (::1) and private ranges (fc00::/7, fe80::/10)
-  if (ip === '::1' || ip === '::' || ip.toLowerCase().startsWith('fc') || ip.toLowerCase().startsWith('fd')) return false
-  if (ip.toLowerCase().startsWith('fe80:')) return false // link-local
+  const lower = ip.toLowerCase().replace(/^\[|\]$/g, '') // strip IPv6 brackets
+
+  // IPv6 private/reserved ranges — must be checked BEFORE the early-return for non-IPv4.
+  // The previous code returned true for all non-IPv4 strings on the first line,
+  // making every IPv6 check below it dead code. ::1, fc00::/7, fe80::/10 were never blocked.
+  if (lower === '::1' || lower === '::') return false  // loopback
+  if (lower.startsWith('fc') || lower.startsWith('fd')) return false  // ULA fc00::/7
+  if (lower.startsWith('fe80:')) return false  // link-local fe80::/10
+
+  // Skip further checks for non-IPv4 (DNS-resolved addresses pass as IPv4 from dnsLookup)
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(ip)) return true
 
   const parts = ip.split('.').map(Number)
   if (parts.length !== 4) return false
