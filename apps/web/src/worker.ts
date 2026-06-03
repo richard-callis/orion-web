@@ -102,6 +102,15 @@ const runningTasks = new Set<string>()
 // multiple parallel copies that each issue duplicate mutating tool calls.
 const runningWatchers = new Set<string>()
 
+// Overlap guards for periodic jobs — prevents a slow run stacking on itself
+// (e.g. a 15s ELK poll that takes >15s produces competing cursor updates).
+let runningGitOpsSync = false
+let runningCorrelator = false
+let runningK8sPoller = false
+let runningElkPoller = false
+let runningNtopngPoller = false
+let runningVulnScan = false
+
 const TASK_TIMEOUT_MS = 60 * 60 * 1000 // 60 minutes
 
 function isTransientError(errorMessage: string): boolean {
@@ -857,7 +866,9 @@ async function main() {
 
   // GitOps PR sync — poll Gitea every 60s to catch merges missed by webhooks
   setInterval(() => {
-    syncGitOpsPRs().catch(e => err(`GitOps PR sync failed: ${e}`))
+    if (runningGitOpsSync) return
+    runningGitOpsSync = true
+    syncGitOpsPRs().catch(e => err(`GitOps PR sync failed: ${e}`)).finally(() => { runningGitOpsSync = false })
   }, 60_000)
 
   // Dream — memory consolidation (extraction every 2h, pruning every 24h)
@@ -865,32 +876,37 @@ async function main() {
 
   // Security correlator — poll for uncorrelated events every 30s
   setInterval(() => {
-    runCorrelator().catch(e => err(`Security correlator failed: ${e}`))
+    if (runningCorrelator) return
+    runningCorrelator = true
+    runCorrelator().catch(e => err(`Security correlator failed: ${e}`)).finally(() => { runningCorrelator = false })
   }, 30_000)
 
-  // K8s events poller — every 30s per the Phase 2 plan. Iterates all
-  // type="cluster" environments via runK8sPollerAll(); a single failed env
-  // doesn't block the others (errors captured per-env in K8sPollResult).
+  // K8s events poller — every 30s per the Phase 2 plan.
   setInterval(() => {
-    runK8sPollerAll().catch(e => err(`K8s poller failed: ${e}`))
+    if (runningK8sPoller) return
+    runningK8sPoller = true
+    runK8sPollerAll().catch(e => err(`K8s poller failed: ${e}`)).finally(() => { runningK8sPoller = false })
   }, 30_000)
 
   // ELK poller — every 15s. No-ops if ELK_URL is not set.
   setInterval(() => {
-    runElkPollerAll().catch(e => err(`ELK poller failed: ${e}`))
+    if (runningElkPoller) return
+    runningElkPoller = true
+    runElkPollerAll().catch(e => err(`ELK poller failed: ${e}`)).finally(() => { runningElkPoller = false })
   }, 15_000)
 
   // ntopng poller — every 30s. No-ops if NTOPNG_URL is not set.
   setInterval(() => {
-    runNtopngPollerAll().catch(e => err(`ntopng poller failed: ${e}`))
+    if (runningNtopngPoller) return
+    runningNtopngPoller = true
+    runNtopngPollerAll().catch(e => err(`ntopng poller failed: ${e}`)).finally(() => { runningNtopngPoller = false })
   }, 30_000)
 
   // ── Phase 3: vulnerability scanning ───────────────────────────────────────
-  // Event-triggered: every 60s, pick up new docker.image.pull events and
-  // scan the pulled image. Separate from the 15s main loop — Trivy scans
-  // are heavy and we don't want them to starve agent task polling.
   setInterval(() => {
-    runEventTriggeredScan().catch(e => err(`Event-triggered vuln scan failed: ${e}`))
+    if (runningVulnScan) return
+    runningVulnScan = true
+    runEventTriggeredScan().catch(e => err(`Event-triggered vuln scan failed: ${e}`)).finally(() => { runningVulnScan = false })
   }, 60_000)
 
   // Daily scheduled scan — once a day at 02:00 server time. Implemented as
@@ -914,3 +930,21 @@ async function main() {
 }
 
 main().catch(e => { err(`Fatal: ${e}`); process.exit(1) })
+
+// Graceful shutdown on SIGTERM (container stop / redeploy).
+// Without this, in-flight tasks are killed mid-run and left as 'in_progress'
+// in the DB, requiring recoverStuckTasks on the next startup (up to 30 min).
+// We stop polling new tasks and wait up to 60s for running tasks to drain.
+async function shutdown(signal: string): Promise<void> {
+  log(`Received ${signal} — draining in-flight tasks (max 60s)...`)
+  const deadline = Date.now() + 60_000
+  while ((runningTasks.size > 0 || runningWatchers.size > 0) && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 1000))
+  }
+  if (runningTasks.size > 0) err(`Shutdown: ${runningTasks.size} task(s) still running at deadline — exiting anyway`)
+  log('Shutdown complete')
+  process.exit(0)
+}
+
+process.on('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)) })
+process.on('SIGINT',  () => { shutdown('SIGINT').catch(() => process.exit(1)) })
