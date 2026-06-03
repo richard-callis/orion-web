@@ -414,12 +414,18 @@ export async function executeTool(
   try {
     switch (toolName) {
       case 'create_task': {
+        const VALID_STATUSES = new Set(['pending', 'in_progress', 'pending_validation', 'done', 'failed', 'blocked'])
+        const VALID_PRIORITIES = new Set(['low', 'medium', 'high', 'critical'])
+        const rawStatus = String(args.status ?? 'pending')
+        const rawPriority = String(args.priority ?? 'medium')
+        if (!VALID_STATUSES.has(rawStatus)) return `Error: invalid status '${rawStatus}'. Must be one of: ${[...VALID_STATUSES].join(', ')}`
+        if (!VALID_PRIORITIES.has(rawPriority)) return `Error: invalid priority '${rawPriority}'. Must be one of: ${[...VALID_PRIORITIES].join(', ')}`
         const task = await prisma.task.create({
           data: {
             title:       String(args.title ?? 'Untitled Task'),
             description: args.description ? String(args.description) : undefined,
-            priority:    String(args.priority ?? 'medium'),
-            status:      String(args.status ?? 'pending'),
+            priority:    rawPriority,
+            status:      rawStatus,
             createdBy:   context.callerAgentId,
             assignedAgent: context.callerAgentId,
           },
@@ -432,13 +438,21 @@ export async function executeTool(
         if (!taskId) return 'Error: taskId is required'
         const existing = await prisma.task.findUnique({ where: { id: taskId } })
         if (!existing) return `Error: task ${taskId} not found`
+        const VALID_STATUSES_UPD = new Set(['pending', 'in_progress', 'pending_validation', 'done', 'failed', 'blocked'])
+        const VALID_PRIORITIES_UPD = new Set(['low', 'medium', 'high', 'critical'])
+        if (args.status != null && !VALID_STATUSES_UPD.has(String(args.status))) {
+          return `Error: invalid status '${args.status}'. Must be one of: ${[...VALID_STATUSES_UPD].join(', ')}`
+        }
+        if (args.priority != null && !VALID_PRIORITIES_UPD.has(String(args.priority))) {
+          return `Error: invalid priority '${args.priority}'. Must be one of: ${[...VALID_PRIORITIES_UPD].join(', ')}`
+        }
         const updated = await prisma.task.update({
           where: { id: taskId },
           data: {
             title:       args.title       ? String(args.title)       : undefined,
             description: args.description ? String(args.description) : undefined,
-            status:      args.status      ? String(args.status)      : undefined,
-            priority:    args.priority    ? String(args.priority)    : undefined,
+            status:      args.status != null ? String(args.status)   : undefined,
+            priority:    args.priority != null ? String(args.priority) : undefined,
           },
         })
         return `Task updated: "${updated.title}" (id: ${updated.id}, status: ${updated.status})`
@@ -647,7 +661,21 @@ export async function executeTool(
         const data: Record<string, unknown> = {}
         if (args.namespace        != null) data.namespace        = String(args.namespace).trim()
         if (args.description      != null) data.description      = String(args.description).trim() || null
-        if (args.vaultPath        != null) data.remoteRef        = String(args.vaultPath).trim()
+        if (args.vaultPath != null) {
+          // Enforce vault path prefix on update_secret — the create path enforces this
+          // but update_secret previously skipped it, allowing agents to repoint secrets
+          // to arbitrary Vault paths outside the environment's allowed namespace.
+          const newPath = String(args.vaultPath).trim().replace(/^secret\/data\//, '')
+          if (existing.environmentId) {
+            const envForPrefix = await prisma.environment.findUnique({ where: { id: existing.environmentId }, select: { metadata: true } })
+            const envMetaForPrefix = (envForPrefix?.metadata ?? {}) as Record<string, unknown>
+            const vaultPrefixForUpdate = envMetaForPrefix.vaultPathPrefix as string | undefined
+            if (vaultPrefixForUpdate && !newPath.startsWith(vaultPrefixForUpdate)) {
+              return `Error: vaultPath must be under the environment's vault prefix: "${vaultPrefixForUpdate}". Got: "${newPath}"`
+            }
+          }
+          data.remoteRef = newPath
+        }
         if (args.targetSecretName != null) data.targetSecretName = String(args.targetSecretName).trim() || null
         if (args.refreshInterval  != null) data.refreshInterval  = String(args.refreshInterval).trim() || '1h'
         if (Array.isArray(args.keyNames)) {
@@ -670,6 +698,12 @@ export async function executeTool(
 
         const existing = await prisma.managedSecret.findUnique({ where: { id: secretId } })
         if (!existing) return `Error: secret "${secretId}" not found. Use orion_list_secrets to find the correct id.`
+
+        // O13 fix: don't silently delete the ORION record for live (applied) secrets
+        // without a force flag — this orphans the real Vault secret and K8s Secret.
+        if (existing.status === 'applied' && !args.force) {
+          return `Error: secret "${existing.name}" is applied (live Vault + K8s Secret). Deleting the ORION record will orphan those resources. Pass force: true to proceed if you have already cleaned them up manually.`
+        }
 
         await prisma.managedSecret.delete({ where: { id: secretId } })
         const reason = args.reason ? ` Reason: ${String(args.reason)}` : ''
@@ -763,10 +797,16 @@ export async function executeTool(
           },
         })
         if (args.incidentId) {
-          await prisma.incident.updateMany({
+          const linked = await prisma.incident.updateMany({
             where: { id: String(args.incidentId), investigationId: null },
             data: { investigationId: inv.id },
           })
+          if (linked.count === 0) {
+            // Incident doesn't exist or is already linked to another investigation
+            const inc = await prisma.incident.findUnique({ where: { id: String(args.incidentId) }, select: { investigationId: true } })
+            if (!inc) return `Investigation created: "${inv.name}" (id: ${inv.id}). Warning: incident ${args.incidentId} not found — link skipped.`
+            return `Investigation created: "${inv.name}" (id: ${inv.id}). Warning: incident ${args.incidentId} already linked to investigation ${inc.investigationId} — link skipped.`
+          }
           return `Investigation created: "${inv.name}" (id: ${inv.id}). Incident ${args.incidentId} linked.`
         }
         return `Investigation created: "${inv.name}" (id: ${inv.id}, status: open, severity: ${inv.severity})`
