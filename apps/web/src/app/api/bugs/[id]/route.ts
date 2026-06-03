@@ -12,6 +12,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json(bug)
 }
 
+const VALID_BUG_STATUSES = new Set(['open', 'triaged', 'in_progress', 'resolved', 'wont_fix', 'closed'])
+
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   await requireServiceAuth(req)
   const body = await req.json()
@@ -19,7 +21,16 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (body.title          !== undefined) data.title          = body.title
   if (body.description    !== undefined) data.description    = body.description
   if (body.severity       !== undefined) data.severity       = body.severity
-  if (body.status         !== undefined) data.status         = body.status
+  if (body.status !== undefined) {
+    const s = String(body.status)
+    if (!VALID_BUG_STATUSES.has(s)) {
+      return NextResponse.json(
+        { error: `Invalid status '${s}'. Must be one of: ${[...VALID_BUG_STATUSES].join(', ')}` },
+        { status: 400 }
+      )
+    }
+    data.status = s
+  }
   if (body.area           !== undefined) data.area           = body.area || null
   if (body.assignedUserId !== undefined) data.assignedUserId = body.assignedUserId || null
   const bug = await prisma.bug.update({

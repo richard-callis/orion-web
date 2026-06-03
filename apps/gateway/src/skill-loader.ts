@@ -20,7 +20,15 @@ export class SkillLoader {
     const msgLower = message.toLowerCase()
 
     for (const skill of skills) {
-      const spec = JSON.parse(skill.spec) as { triggerPatterns?: string[]; systemPrompt?: string }
+      // Wrap JSON.parse — a single malformed spec previously threw and aborted
+      // matching for ALL skills in the environment, not just the bad one.
+      let spec: { triggerPatterns?: string[]; systemPrompt?: string }
+      try {
+        spec = JSON.parse(skill.spec) as typeof spec
+      } catch {
+        console.warn(`[skill-loader] Skipping skill "${skill.name}" — malformed spec JSON`)
+        continue
+      }
       if (!spec?.triggerPatterns?.length) continue
 
       for (const pattern of spec.triggerPatterns) {
