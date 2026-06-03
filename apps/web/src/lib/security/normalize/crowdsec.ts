@@ -5,6 +5,7 @@
  * CrowdSec sends decisions via webhook when new bans occur.
  */
 
+import crypto from 'crypto'
 import { type NormalizedSecurityEvent } from '../types'
 
 export interface CrowdSecAlert {
@@ -116,12 +117,5 @@ export function normalizeCrowdSecDecision(
 }
 
 function createDedupKey(source: string, ...parts: string[]): string {
-  const joined = parts.join(':')
-  let hash = 0
-  for (let i = 0; i < joined.length; i++) {
-    const char = joined.charCodeAt(i)
-    hash = ((hash << 5) - hash) + char
-    hash &= hash  // Convert to 32-bit int
-  }
-  return `${source}_${Math.abs(hash).toString(16)}`
+  return `${source}_${crypto.createHash('sha256').update(parts.join(':')).digest('hex')}`
 }
