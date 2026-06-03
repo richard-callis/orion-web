@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { writeFileSync, unlinkSync } from 'fs'
+import { randomUUID } from 'crypto'
 
 const exec = promisify(execFile)
 
@@ -94,6 +95,7 @@ export const kubernetesTools = ([
         resource:  { type: 'string', description: 'Resource type, e.g. pod, deployment, service, deploymentconfig' },
         name:      { type: 'string', description: 'Resource name (omit to delete by selector/file)' },
         namespace: { type: 'string', description: 'Namespace (for namespaced resources)' },
+        selector:  { type: 'string', description: 'Label selector (e.g. app=nginx) — use instead of name to delete multiple resources' },
         ignoreNotFound: { type: 'boolean', description: 'Ignore if resource not found (default true)' },
       },
       required: ['resource'],
@@ -130,8 +132,18 @@ export const kubernetesTools = ([
     async execute(args: Record<string, unknown>) {
       const cmdArgs = ['get', String(args.resource)]
       if (args.name) cmdArgs.push(String(args.name))
-      if (args.namespace) cmdArgs.push('-n', String(args.namespace))
-      else if (!args.name) cmdArgs.push('-A')
+      if (args.namespace) {
+        cmdArgs.push('-n', String(args.namespace))
+      } else if (!args.name) {
+        // Only add -A for namespaced resources — cluster-scoped resources (nodes, pv,
+        // clusterrole, namespace, etc.) error or return nothing with -A.
+        const clusterScoped = ['node', 'nodes', 'persistentvolume', 'pv', 'storageclass',
+          'clusterrole', 'clusterrolebinding', 'namespace', 'ns', 'ingressclass',
+          'priorityclass', 'runtimeclass', 'crd', 'customresourcedefinition']
+        if (!clusterScoped.includes(String(args.resource).toLowerCase())) {
+          cmdArgs.push('-A')
+        }
+      }
       cmdArgs.push('-o', String(args.output ?? 'wide'))
       return kubectl(cmdArgs)
     },
@@ -180,7 +192,23 @@ export const kubernetesTools = ([
       required: ['url'],
     },
     async execute(args: Record<string, unknown>) {
-      const cmdArgs = ['apply', '-f', String(args.url)]
+      const rawUrl = String(args.url)
+      // N9 fix: validate URL to prevent SSRF to internal metadata services.
+      // kubectl fetches the manifest server-side — no validation would allow
+      // an agent to apply manifests from http://169.254.169.254/ or internal hosts.
+      try {
+        const parsed = new URL(rawUrl)
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+          return `Error: URL must use http or https (got '${parsed.protocol}')`
+        }
+        const PRIVATE = [/^127\./, /^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./, /^169\.254\./]
+        if (parsed.hostname === 'localhost' || PRIVATE.some(p => p.test(parsed.hostname))) {
+          return `Error: URL must not point to a private or internal host`
+        }
+      } catch {
+        return `Error: invalid URL '${rawUrl}'`
+      }
+      const cmdArgs = ['apply', '-f', rawUrl]
       if (args.namespace) cmdArgs.push('-n', String(args.namespace))
       return kubectl(cmdArgs, 120_000) // 2 min — large manifests take time to download + apply
     },
@@ -197,7 +225,7 @@ export const kubernetesTools = ([
     },
     async execute(args: Record<string, unknown>) {
       const manifest = String(args.manifest)
-      const tmpFile = `/tmp/orion-manifest-${Date.now()}.yaml`
+      const tmpFile = `/tmp/orion-manifest-${randomUUID()}.yaml`
       writeFileSync(tmpFile, manifest, 'utf8')
       try {
         const { stdout, stderr } = await exec('kubectl', ['apply', '-f', tmpFile], { timeout: 60_000 })
@@ -359,9 +387,15 @@ export const kubernetesTools = ([
       properties: {},
     },
     async execute(_args: Record<string, unknown>) {
-      // Helper: check if a namespace exists
+      // Helper: check if a namespace exists.
+      // kubectl get namespace <ns> --ignore-not-found exits 0 and prints NOTHING
+      // when the namespace is absent, so checking exit code alone always returns true.
+      // Must check that stdout is non-empty to confirm the resource was found.
       async function nsExists(ns: string): Promise<boolean> {
-        try { await kubectl(['get', 'namespace', ns, '--ignore-not-found']); return true } catch { return false }
+        try {
+          const out = await kubectl(['get', 'namespace', ns, '--ignore-not-found', '--no-headers'])
+          return out.trim().length > 0
+        } catch { return false }
       }
 
       const [hasLonghorn, hasCeph] = await Promise.all([
@@ -456,7 +490,7 @@ export const kubernetesTools = ([
       if (args.valuesFile) {
         const { writeFileSync, unlinkSync } = await import('fs')
         const valuesFile = String(args.valuesFile)
-        const tmpFile = `/tmp/helm-values-${Date.now()}.yaml`
+        const tmpFile = `/tmp/helm-values-${randomUUID()}.yaml`
         writeFileSync(tmpFile, valuesFile, 'utf8')
         cmdArgs.push('--values', tmpFile)
         try {
