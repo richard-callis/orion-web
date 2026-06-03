@@ -58,6 +58,25 @@ export function decryptJson<T>(value: unknown): T {
 }
 
 /**
+ * Strict variant of decryptJson — throws if the value is not encrypted with the prefix.
+ *
+ * Use for high-value secrets (vault tokens, git provider config, API keys) where
+ * a missing prefix should be a hard failure, not a silent passthrough. The passthrough
+ * in decryptJson means an attacker who can write a SystemSetting row can substitute
+ * unauthenticated plaintext for a secret without triggering any error.
+ */
+export function decryptJsonStrict<T>(value: unknown, keyName?: string): T {
+  if (typeof value !== 'string' || !value.startsWith(PREFIX)) {
+    throw new Error(
+      `decryptJsonStrict: expected an encrypted value${keyName ? ` for '${keyName}'` : ''} but got ` +
+      `${typeof value === 'string' ? `a plaintext string (len ${value.length})` : typeof value}. ` +
+      `This may indicate a manual DB edit, partial migration, or a substitution attack.`
+    )
+  }
+  return JSON.parse(decrypt(value)) as T
+}
+
+/**
  * Encrypt with a custom key (for key rotation).
  * keyBase64: 32-byte key in base64 format
  */

@@ -14,6 +14,14 @@ export async function GET(
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  // Validate namespace and pod name as DNS-1123 labels to prevent
+  // path-based enumeration of the API server
+  const DNS_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
+  if (!DNS_LABEL.test(params.ns) || !DNS_LABEL.test(params.pod)) {
+    return NextResponse.json({ error: 'Invalid namespace or pod name' }, { status: 400 })
+  }
+
   return createSSEStream((send, close) => {
     ;(async () => {
       try {

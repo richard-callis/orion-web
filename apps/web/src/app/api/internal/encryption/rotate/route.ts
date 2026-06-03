@@ -5,13 +5,26 @@
  * Safe to retry — each record is independent. Encrypted values auto-pass through.
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeEqual } from 'crypto'
 import { prisma } from '@/lib/db'
 import { encrypt, decrypt, encryptWithKey } from '@/lib/encryption'
 
 export async function POST(req: NextRequest) {
-  const auth = req.headers.get('authorization')
-  const currentKey = process.env.ORION_ENCRYPTION_KEY
-  if (!currentKey || auth !== `Bearer ${currentKey}`) {
+  // MAJOR fix: previously authenticated with ORION_ENCRYPTION_KEY itself.
+  // Any caller who knew the encryption key could supply a body.key to re-encrypt
+  // all secrets under an attacker-controlled key — a credential ransom/takeover.
+  // Now uses a separate ORION_ROTATION_TOKEN. The encryption key is a data secret
+  // and must not double as an API credential.
+  const rotationToken = process.env.ORION_ROTATION_TOKEN
+  if (!rotationToken) {
+    return NextResponse.json(
+      { error: 'ORION_ROTATION_TOKEN not configured — key rotation is disabled' },
+      { status: 503 }
+    )
+  }
+  const auth = req.headers.get('authorization') ?? ''
+  const expected = `Bearer ${rotationToken}`
+  if (auth.length !== expected.length || !timingSafeEqual(Buffer.from(auth), Buffer.from(expected))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

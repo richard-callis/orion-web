@@ -183,26 +183,46 @@ async function _compactRoom(roomId: string): Promise<void> {
     throw new Error('[compaction] failed to generate summary — no usable model found')
   }
 
-  // Persist as a compaction message and reset the room's token counter
-  const compactionMsg = await prisma.chatMessage.create({
-    data: {
-      roomId,
-      senderType: 'compaction',
-      content: summary,
-      attachments: { originalMessageCount: messages.length, compactedAt: new Date().toISOString() } as unknown as object,
-    },
+  // Cap summary length to prevent unbounded growth.
+  const MAX_SUMMARY_CHARS = 8000
+  const cappedSummary = summary.length > MAX_SUMMARY_CHARS
+    ? summary.slice(0, MAX_SUMMARY_CHARS) + '\n\n[Summary truncated — exceeded max length]'
+    : summary
+
+  // Transactional idempotency re-check: verify no other process compacted this
+  // window while our LLM call was in flight. Also wraps create+reset atomically.
+  const compactionMsg = await prisma.$transaction(async (tx) => {
+    const currentBoundary = await tx.chatMessage.findFirst({
+      where: { roomId, senderType: 'compaction' },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    })
+    if (currentBoundary?.id !== lastCompaction?.id) {
+      console.warn(`[compaction] room ${roomId}: another worker compacted concurrently — skipping duplicate`)
+      return null
+    }
+    const msg = await tx.chatMessage.create({
+      data: {
+        roomId,
+        senderType: 'compaction',
+        content: cappedSummary,
+        attachments: { originalMessageCount: messages.length, compactedAt: new Date().toISOString() } as unknown as object,
+      },
+    })
+    await tx.chatRoom.update({
+      where: { id: roomId },
+      data: { tokenCount: 0, updatedAt: new Date() },
+    })
+    return msg
   })
 
-  await prisma.chatRoom.update({
-    where: { id: roomId },
-    data: { tokenCount: 0, updatedAt: new Date() },
-  })
+  if (!compactionMsg) return  // concurrent compaction won the race
 
   // Publish via Redis so the UI shows the compaction message live
   await publishChatMessage(roomId, {
     id:          compactionMsg.id,
     senderType:  'compaction',
-    content:     summary,
+    content:     cappedSummary,
     attachments: { originalMessageCount: messages.length, compactedAt: compactionMsg.createdAt instanceof Date ? compactionMsg.createdAt.toISOString() : compactionMsg.createdAt },
     sender:      { type: 'system', id: null, name: 'System' },
     createdAt:   compactionMsg.createdAt instanceof Date ? compactionMsg.createdAt.toISOString() : compactionMsg.createdAt,

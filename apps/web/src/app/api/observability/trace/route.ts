@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireAdmin, requireServiceAuth } from '@/lib/auth'
 import { parseBodyOrError } from '@/lib/validate'
 
 export const dynamic = 'force-dynamic'
@@ -26,14 +26,19 @@ const CreateTraceSchema = z.object({
   costCents: z.number().min(0).optional(),
 })
 
-// GET /api/observability/trace — Query traces
+// GET /api/observability/trace — Query traces (admin only)
 // Query params: conversationId, taskId, limit (default 100), type (optional filter)
 export async function GET(req: Request) {
+  // BLOCKER fix: traces contain toolArgs/toolResult across all conversations —
+  // exposing all system traces to any authenticated user leaks tool outputs.
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   const { searchParams } = new URL(req.url)
   const conversationId = searchParams.get('conversationId')
   const taskId = searchParams.get('taskId')
   const type = searchParams.get('type')
-  const limit = parseInt(searchParams.get('limit') || '100')
+  const limit = Math.min(parseInt(searchParams.get('limit') || '100'), 500)
 
   const where: Record<string, unknown> = {}
   if (conversationId) where.conversationId = conversationId

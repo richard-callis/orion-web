@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { syncDomainDns } from '@/lib/dns-sync'
 
@@ -26,6 +27,7 @@ async function maybeSync(domainId: string) {
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string; recordId: string } }) {
+  try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   const body = await req.json()
   const record = await prisma.dnsRecord.update({
     where: { id: params.recordId },
@@ -41,6 +43,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string; recordId: string } }) {
+  try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   await prisma.dnsRecord.delete({ where: { id: params.recordId } })
   await maybeSync(params.id)
   return new NextResponse(null, { status: 204 })

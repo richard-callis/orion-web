@@ -13,12 +13,11 @@ wrapConsoleLog()
 import { rateLimitRedis } from './lib/rate-limit-redis'
 
 function getRateLimitKey(req: NextRequest): string {
-  // Use X-Forwarded-For if available (behind reverse proxy), else IP
-  const forwarded = req.headers.get('x-forwarded-for')
-  if (forwarded) {
-    // x-forwarded-for can contain multiple IPs: client, proxy1, proxy2
-    return forwarded.split(',')[0].trim()
-  }
+  // X-Forwarded-For is intentionally NOT used: the leftmost IP is client-supplied
+  // and completely spoofable, letting anyone rotate past rate limits by changing
+  // the header. req.ip is set by trusted infrastructure only.
+  // In self-hosted Next.js (Node runtime) req.ip is undefined; all unidentifiable
+  // clients then share one bucket ('unknown') which still bounds brute-force.
   return req.ip ?? 'unknown'
 }
 
@@ -91,7 +90,7 @@ const PUBLIC_PATHS = [
   '/api/setup',
   '/api/auth',
   '/api/health',
-  '/api/notes/embed',       // embed rebuild — bypassed via x-embed-token header
+  '/api/notes/embed/rebuild', // embed rebuild — bypassed via x-embed-token header; scoped to exact path to avoid auto-exempting future /api/notes/embed* routes
   '/api/environments/join', // gateway registration — no session, token IS the auth
   '/api/webhooks',          // git provider webhooks — HMAC signature is the auth
   '/api/monitoring/security/webhooks', // security source webhooks (Falco, CrowdSec, Wazuh) — HMAC is the auth
