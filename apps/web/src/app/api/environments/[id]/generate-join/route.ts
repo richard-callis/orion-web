@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 import { randomBytes } from 'crypto'
 
+// Allowed gateway types — caller-supplied type is validated against this list
+// to prevent type confusion (e.g. forging localhost type to trigger Docker-socket paths)
+const ALLOWED_GATEWAY_TYPES = new Set(['cluster', 'docker', 'localhost'])
+
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  // B3 fix: generate-join previously had no auth — BEARER_PATHS only checked that
+  // the Authorization header started with 'Bearer', not that it was a valid token.
+  // Any caller could mint a join token for any environment. Require admin session.
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   const env = await prisma.environment.findUnique({ where: { id: params.id } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
@@ -20,7 +32,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const body = await req.json().catch(() => ({}))
   const gatewayUrl: string = body.gatewayUrl ?? ''
-  const gatewayType: string = body.gatewayType ?? env.type ?? 'cluster'
+  const requestedType: string = body.gatewayType ?? env.type ?? 'cluster'
+  // M2 fix: validate gatewayType against allowlist to prevent type confusion
+  const gatewayType: string = ALLOWED_GATEWAY_TYPES.has(requestedType) ? requestedType : 'cluster'
 
   // Public URL — prefer the request Host header, but it may be 0.0.0.0 inside Docker.
   // Use x-forwarded-host (set by Traefik) when available, then MANAGEMENT_IP, then request host.
