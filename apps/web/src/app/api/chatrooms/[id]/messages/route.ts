@@ -23,7 +23,18 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // B1 fix: GET had no auth or membership check — any user could read any room,
+  // including system.room.security where Warden posts incident details.
+  const session = await getServerSession(authOptions)
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   const { id } = await params
+  const membership = await getRoomMembership(id, session.user.id)
+  if (!membership.userId && !membership.agentId) {
+    return NextResponse.json({ error: 'Not a member of this room' }, { status: 403 })
+  }
+
   const { searchParams } = new URL(_req.url)
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '50') || 50, 200)
   const before = searchParams.get('before')
@@ -79,7 +90,10 @@ export async function POST(
       roomId: id,
       userId: memberUserId ?? userId,
       agentId,
-      senderType: body.senderType ? String(body.senderType) : (agentId ? 'agent' : 'human'),
+      // M3 fix: senderType was attacker-controlled — callers could post with
+      // senderType:'compaction' to forge a context boundary, or 'system' to
+      // spoof system banners. Only 'human' and 'agent' are allowed from the POST path.
+      senderType: agentId ? 'agent' : 'human',
       content: content.trim(),
       attachments: (body.attachments as any) ?? undefined,
       taskId: taskId ?? null,
