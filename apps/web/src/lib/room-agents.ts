@@ -835,7 +835,13 @@ export async function triggerRoomAgentReplies(
 
       // All messages except the very last are history context.
       // The very last message is what this agent is directly responding to.
-      const historyMsgs = recentMessages.slice(0, -1).filter((m: any) => m.senderType !== 'system')
+      // Exclude system and tool_call messages from history. tool_call rows store
+      // the bare tool name for SSE streaming; if they leak into history they appear
+      // as assistant messages containing only a tool name string (e.g. "kubectl_get"),
+      // which confuses the model and triggers the isFakeToolCall rejection path.
+      const historyMsgs = recentMessages.slice(0, -1).filter(
+        (m: any) => m.senderType !== 'system' && m.senderType !== 'tool_call'
+      )
       const lastMsg     = recentMessages[recentMessages.length - 1]
       const lastSender  = lastMsg?.agent?.name ?? lastMsg?.user?.name ?? lastMsg?.user?.username ?? 'User'
       const latestTurn  = lastMsg ? `${lastSender}: ${lastMsg.content}` : triggerContent
