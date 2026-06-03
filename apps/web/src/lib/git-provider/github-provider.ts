@@ -256,7 +256,7 @@ export class GitHubGitProvider implements GitProvider {
     // GitHub sends: X-Hub-Signature-256: sha256=<hex>
     const header = headers['x-hub-signature-256'] ?? ''
     const signature = header.startsWith('sha256=') ? header.slice(7) : ''
-    if (!secret) return true
+    if (!secret) return false // fail closed — unsigned webhooks on a public endpoint are not trusted
     const expected = createHmac('sha256', secret).update(rawBody).digest('hex')
     try {
       return timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'))
