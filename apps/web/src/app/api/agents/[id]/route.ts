@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { parseBodyOrError, UpdateAgentSchema } from '@/lib/validate'
+import { requireAdmin } from '@/lib/auth'
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const agent = await prisma.agent.findUnique({
@@ -15,6 +16,12 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+  // Require admin — any authenticated user could otherwise overwrite any agent's
+  // systemPrompt or contextConfig (privilege escalation).
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Admin privileges required to modify agents' }, { status: 403 })
+  }
+
   // SOC2 [INPUT-001]: Validate request body with Zod schema
   const result = await parseBodyOrError(req, UpdateAgentSchema)
   if ('error' in result) return result.error
@@ -34,7 +41,11 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json(agent)
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Admin privileges required to delete agents' }, { status: 403 })
+  }
+
   // Unassign tasks first to avoid FK violation
   await prisma.task.updateMany({ where: { assignedAgent: params.id }, data: { assignedAgent: null } })
   await prisma.agent.delete({ where: { id: params.id } })
