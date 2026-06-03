@@ -13,7 +13,10 @@ interface Investigation {
   tags: string[]
   startedAt: string | null
   resolvedAt: string | null
-  _count: { incidents: number; notes: number; observables: number }
+  // API returns flat counts (not _count) — see investigations/route.ts mapper
+  incidentCount: number
+  noteCount: number
+  observableCount: number
 }
 
 export default function InvestigationsPage() {
@@ -135,11 +138,11 @@ export default function InvestigationsPage() {
                     ))}
                   </div>
                   <div className="text-xs text-text-muted flex items-center gap-2">
-                    <span>{inv._count.incidents} incidents</span>
+                    <span>{inv.incidentCount} incidents</span>
                     <span>&middot;</span>
-                    <span>{inv._count.observables} observables</span>
+                    <span>{inv.observableCount} observables</span>
                     <span>&middot;</span>
-                    <span>{inv._count.notes} notes</span>
+                    <span>{inv.noteCount} notes</span>
                     {inv.startedAt && (
                       <>
                         <span>&middot;</span>

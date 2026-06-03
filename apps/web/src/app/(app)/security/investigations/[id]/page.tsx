@@ -72,7 +72,9 @@ export default function InvestigationDetailPage() {
 
   const load = useCallback(async () => {
     try {
-      const data = await fetch(`/api/monitoring/security/investigations/${investigationId}`).then(r => r.json())
+      const res = await fetch(`/api/monitoring/security/investigations/${investigationId}`)
+      if (!res.ok) { router.push('/security/investigations'); return }
+      const data = await res.json()
       setInvestigation(data.investigation ?? data)
       setNewStatus(data.investigation?.status ?? data?.status ?? 'open')
     } catch {
