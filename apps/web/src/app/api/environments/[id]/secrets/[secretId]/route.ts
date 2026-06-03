@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCurrentUser } from '@/lib/auth'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { writeVaultSecret } from '@/lib/vault'
 
@@ -17,8 +17,10 @@ type Params = { params: Promise<{ id: string; secretId: string }> }
  *     — written directly to Vault, NEVER stored in the database
  */
 export async function PATCH(req: NextRequest, { params }: Params) {
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  let user: Awaited<ReturnType<typeof requireAdmin>>
+  try { user = await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
   const { secretId } = await params
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
@@ -110,8 +112,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
  * Delete a managed secret record.
  */
 export async function DELETE(_: NextRequest, { params }: Params) {
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  let user: Awaited<ReturnType<typeof requireAdmin>>
+  try { user = await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
   const { secretId } = await params
 

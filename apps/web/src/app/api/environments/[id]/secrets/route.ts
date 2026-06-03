@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCurrentUser } from '@/lib/auth'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { writeVaultSecret } from '@/lib/vault'
 
@@ -12,8 +12,10 @@ type Params = { params: Promise<{ id: string }> }
  * Returns all managed secrets for this environment (metadata only — no values).
  */
 export async function GET(_: NextRequest, { params }: Params) {
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  let user: Awaited<ReturnType<typeof requireAdmin>>
+  try { user = await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
   const { id: environmentId } = await params
 
@@ -44,8 +46,10 @@ export async function GET(_: NextRequest, { params }: Params) {
  *   3. Store metadata-only ManagedSecret record (dataKeys = key names, no values)
  */
 export async function POST(req: NextRequest, { params }: Params) {
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  let user: Awaited<ReturnType<typeof requireAdmin>>
+  try { user = await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
   const { id: environmentId } = await params
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
