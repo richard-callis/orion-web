@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server'
 import { createSSEStream } from '@/lib/sse'
 import { addSseClient, removeSseClient, getCache, startWatchers } from '@/lib/k8s'
-import { getCurrentUser } from '@/lib/auth'
+import { requireAdmin } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
-// SOC2: CR-003 — K8s events exposed real-time without authentication
+// SOC2: CR-003 — K8s events should be admin-only (cluster internals)
 export async function GET() {
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
   await startWatchers()
 
