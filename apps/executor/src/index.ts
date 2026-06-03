@@ -252,7 +252,7 @@ fastify.post<{
 
 fastify.get<{
   Params: { id: string }
-}>('/executions/:id', async (request, reply) => {
+}>('/executions/:id', { onRequest: requireExecutorToken }, async (request, reply) => {
   const { id } = request.params
   const execution = await orionClient.getExecution(id)
   return execution

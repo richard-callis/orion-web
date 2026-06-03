@@ -1,5 +1,7 @@
 import { exec } from 'child_process'
 import { promisify } from 'util'
+import path from 'path'
+import fs from 'fs'
 
 const execAsync = promisify(exec)
 
@@ -61,14 +63,28 @@ class Sandbox {
     }
   }
 
-  private async readFile(path: string): Promise<ExecuteResult> {
+  private async readFile(rawPath: string): Promise<ExecuteResult> {
     const startTime = Date.now()
-    if (!FILE_READ_ALLOWLIST.some(allowed => path.startsWith(allowed))) {
-      return { stdout: '', stderr: `Error: path '${path}' is not in the allowlist`, exitCode: 1, durationMs: 0 }
+    // Normalise and resolve the path to block traversal attacks.
+    // path.startsWith('/var/log') passes for '/var/log/../../etc/shadow' —
+    // resolving first ensures we compare against the actual target.
+    const resolved = path.resolve(rawPath)
+
+    // Verify the resolved path starts with an allowlisted prefix at a path boundary.
+    const isAllowed = FILE_READ_ALLOWLIST.some(allowed => {
+      const normalizedAllowed = path.resolve(allowed)
+      return resolved === normalizedAllowed || resolved.startsWith(normalizedAllowed + '/')
+    })
+    if (!isAllowed) {
+      return { stdout: '', stderr: `Error: path '${rawPath}' (resolved: '${resolved}') is not in the allowlist`, exitCode: 1, durationMs: 0 }
+    }
+    // Additional guard: refuse /proc and /sys paths that expose secrets,
+    // even if accidentally allowlisted via a misconfigured FILE_READ_ALLOWLIST.
+    if (resolved.startsWith('/proc/') || resolved.startsWith('/sys/')) {
+      return { stdout: '', stderr: `Error: reading '${resolved}' is not permitted`, exitCode: 1, durationMs: 0 }
     }
     try {
-      const fs = await import('fs')
-      const content = fs.readFileSync(path, 'utf-8') // lgtm[js/path-injection]
+      const content = fs.readFileSync(resolved, 'utf-8')
       return {
         stdout: content,
         stderr: '',
