@@ -260,12 +260,18 @@ async function persistCredentials(): Promise<void> {
 
 // ── Built-in tool registry ────────────────────────────────────────────────────
 
+type BuiltinToolCtx = {
+  agentId?: string
+  userId?: string
+  actorType?: 'agent' | 'human'
+}
+
 type BuiltinTool = {
   name: string
   description: string
   category: string
   inputSchema: Record<string, unknown>
-  execute: (args: Record<string, unknown>) => Promise<string>
+  execute: (args: Record<string, unknown>, ctx?: BuiltinToolCtx) => Promise<string>
 }
 
 const BUILTIN_REGISTRY: Record<string, BuiltinTool> = {}
@@ -372,6 +378,14 @@ app.use(express.json())
 // response-time side channels. The === operator short-circuits on the first mismatched
 // byte, allowing an attacker to recover the token byte-by-byte through timing measurements.
 function requireAuth(req: Request, res: Response, next: NextFunction) {
+  // M2 fix: an empty GATEWAY_TOKEN makes expected = 'Bearer ', which any request
+  // with that exact header would pass. Guard here so misconfigured deploys fail
+  // closed rather than accepting all traffic. The startup check below enforces
+  // this before the server begins serving, but defence-in-depth here too.
+  if (!GATEWAY_TOKEN) {
+    res.status(503).json({ error: 'Gateway not configured: GATEWAY_TOKEN not set' })
+    return
+  }
   const auth = req.headers.authorization
   const expected = `Bearer ${GATEWAY_TOKEN}`
   if (!auth || !timingSafeCompare(auth, expected)) {
@@ -414,13 +428,23 @@ app.post('/tools/execute', requireAuth, async (req: Request, res: Response) => {
   const tool = activeTools.find(t => t.name === name)
   const builtin = BUILTIN_REGISTRY[name]
 
-  // Built-in tools are always executable regardless of ORION tool config
+  // B1 fix: built-ins previously ran regardless of ORION's activeTools policy.
+  // ORION disabling a built-in tool (e.g. shell_exec) had no effect on this path.
+  // Now require the tool to appear in activeTools (same as the MCP path does).
+  // If ORION hasn't fetched tools yet (empty activeTools on startup), fall back
+  // to allowing built-ins so the gateway doesn't brick on first-boot.
+  const isActiveToolsLoaded = activeTools.length > 0
+  if (!tool && builtin && isActiveToolsLoaded) {
+    res.status(403).json({ error: `Tool '${name}' is not enabled by ORION tool policy` }); return
+  }
   if (!tool && !builtin) { res.status(404).json({ error: `Unknown tool: ${name}` }); return }
 
   try {
     let result: string
     if (builtin && (!tool || tool.builtIn)) {
-      result = await builtin.execute(args)
+      const callerAgentId = (req as any).agentId ?? req.body?.agent
+      const restCtx: BuiltinToolCtx = { agentId: callerAgentId, actorType: callerAgentId ? 'agent' : 'human' }
+      result = await builtin.execute(args, restCtx)
     } else {
       result = await runTool(tool!, args)
     }
