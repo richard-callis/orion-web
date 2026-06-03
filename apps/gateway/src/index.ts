@@ -271,6 +271,8 @@ type BuiltinTool = {
   description: string
   category: string
   inputSchema: Record<string, unknown>
+  // ctx is optional so tools that don't need attribution still work,
+  // but localhost tools use it for executor actor attribution (B3 fix).
   execute: (args: Record<string, unknown>, ctx?: BuiltinToolCtx) => Promise<string>
 }
 
@@ -348,7 +350,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req: unknown) => {
   let result: string
   try {
     if (tool.builtIn && BUILTIN_REGISTRY[name]) {
-      result = await BUILTIN_REGISTRY[name].execute(args as Record<string, unknown>)
+      const sessionId = (req as any).sessionId ?? (req as any).params?.sessionId ?? 'unknown'
+      const mcpCtx: BuiltinToolCtx = { agentId: sessionId, actorType: 'agent' }
+      result = await BUILTIN_REGISTRY[name].execute(args as Record<string, unknown>, mcpCtx)
     } else {
       result = await runTool(tool, args as Record<string, unknown>)
     }
