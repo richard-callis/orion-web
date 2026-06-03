@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { syncDomainDns } from '@/lib/dns-sync'
 
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   const domain = await prisma.domain.findUnique({ where: { id: params.id } })
   if (!domain) return NextResponse.json({ error: 'Domain not found' }, { status: 404 })
   if (!domain.coreDnsEnvironmentId || domain.coreDnsStatus !== 'bootstrapped') {

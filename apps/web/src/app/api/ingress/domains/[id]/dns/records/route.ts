@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { syncDomainDns } from '@/lib/dns-sync'
 
@@ -22,6 +23,7 @@ async function getGatewayExec(envId: string) {
 }
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   const records = await prisma.dnsRecord.findMany({
     where: { domainId: params.id },
     orderBy: { ip: 'asc' },
@@ -30,6 +32,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   const body = await req.json()
   if (!body.ip || !Array.isArray(body.hostnames) || body.hostnames.length === 0) {
     return NextResponse.json({ error: 'ip and hostnames required' }, { status: 400 })

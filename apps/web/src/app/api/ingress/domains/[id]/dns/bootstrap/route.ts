@@ -8,6 +8,7 @@
  * Streams SSE: { type: 'log', message } | { type: 'done', success, error? }
  */
 import { NextRequest } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { buildZoneFile, syncToKubernetes, syncToDocker } from '@/lib/dns-sync'
 
@@ -166,6 +167,7 @@ export async function POST(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   const domain = await prisma.domain.findUnique({
     where: { id: params.id },
     include: { coreDnsEnvironment: true, dnsRecords: { where: { enabled: true } } },

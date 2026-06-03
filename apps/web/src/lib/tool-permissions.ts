@@ -72,6 +72,44 @@ export async function checkToolPermission(
     }
   }
 
+  // ── AgentGroupToolAccess check ────────────────────────────────────────────
+  // If this tool belongs to any ToolGroup(s) in this environment, an agent may
+  // only call it if it is a member of an AgentGroup granted access to one of
+  // those ToolGroups. Tools in no ToolGroup remain unrestricted.
+  // Previously this mechanism was stored in the DB but never enforced — the
+  // admin UI showed group→tool-group access grants that had zero runtime effect.
+  if (resolvedEnvId) {
+    const groupMemberships = await prisma.toolGroupTool.findMany({
+      where: { tool: { name: toolName, environmentId: resolvedEnvId } },
+      select: { toolGroupId: true },
+    })
+
+    if (groupMemberships.length > 0) {
+      if (!agentId) {
+        return {
+          allowed: false,
+          reason: `\`${toolName}\` belongs to a restricted tool group and requires agent-group authorization, but no agent context is available.`,
+        }
+      }
+
+      const toolGroupIds = groupMemberships.map(m => m.toolGroupId)
+      const grantedAccess = await prisma.agentGroupToolAccess.findFirst({
+        where: {
+          toolGroupId: { in: toolGroupIds },
+          agentGroup:  { members: { some: { agentId } } },
+        },
+        select: { agentGroupId: true },
+      })
+
+      if (!grantedAccess) {
+        return {
+          allowed: false,
+          reason: `\`${toolName}\` belongs to a tool group this agent has not been granted access to. Add the agent to an agent group with access to the tool group.`,
+        }
+      }
+    }
+  }
+
   // ── Tier check from unified tool registry ────────────────────────────────
   const def = getToolDefinition(toolName)
   if (!def) {
