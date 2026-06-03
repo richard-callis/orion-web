@@ -6,9 +6,11 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireServiceAuth } from '@/lib/auth'
 import { callDefaultModel } from '@/lib/default-model'
 
-export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  await requireServiceAuth(req)
   const { id } = await params
 
   const epic = await prisma.epic.findUnique({
