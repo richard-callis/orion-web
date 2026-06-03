@@ -26,6 +26,24 @@ export async function POST(req: NextRequest) {
   }
   const baseUrl = data.baseUrl || defaultBaseUrls[data.provider] || ''
 
+  // M1 fix: validate baseUrl to prevent SSRF. A custom baseUrl would be used for
+  // every subsequent LLM call — pointing it at 169.254.169.254 or internal hosts
+  // would make all agent LLM calls hit internal services.
+  if (baseUrl) {
+    try {
+      const parsed = new URL(baseUrl)
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        return NextResponse.json({ error: 'baseUrl must use http or https' }, { status: 400 })
+      }
+      const PRIVATE = [/^127\./, /^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./, /^169\.254\./]
+      if (parsed.hostname === 'localhost' || PRIVATE.some(p => p.test(parsed.hostname))) {
+        return NextResponse.json({ error: 'baseUrl must not point to a private or internal host' }, { status: 400 })
+      }
+    } catch {
+      return NextResponse.json({ error: 'baseUrl is not a valid URL' }, { status: 400 })
+    }
+  }
+
   const created = await prisma.externalModel.create({
     data: {
       name: data.name,

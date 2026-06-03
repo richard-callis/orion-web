@@ -1,5 +1,6 @@
 import { type NextRequest } from 'next/server'
 import { jwtVerify } from 'jose'
+import { prisma } from './db'
 
 export async function requireWizardSession(req: NextRequest): Promise<boolean> {
   const token = req.cookies.get('__orion_wizard')?.value
@@ -11,7 +12,15 @@ export async function requireWizardSession(req: NextRequest): Promise<boolean> {
   try {
     const secretBytes = new TextEncoder().encode(secret)
     const { payload } = await jwtVerify(token, secretBytes)
-    return payload.wizard === true
+    if (payload.wizard !== true) return false
+
+    // B2 fix: wizard JWT carries no completion binding and lives for 1 hour.
+    // Without this check, a token obtained during install remains valid post-setup
+    // and can re-run any wizard route (re-init Vault, mint admins, repoint git).
+    const completed = await prisma.systemSetting.findUnique({ where: { key: 'setup.completed' } })
+    if (completed?.value) return false
+
+    return true
   } catch {
     return false
   }

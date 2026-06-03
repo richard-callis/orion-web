@@ -15,6 +15,14 @@ export async function POST(req: NextRequest) {
   const username = data.username.trim()
   const password = data.password
 
+  // B1 fix: prevent creating additional admins after setup completes.
+  // No first-admin-only guard existed — any valid wizard cookie could mint
+  // unlimited admin accounts post-setup.
+  const setupCompleted = await prisma.systemSetting.findUnique({ where: { key: 'setup.completed' } })
+  if (setupCompleted?.value) {
+    return NextResponse.json({ error: 'Setup already complete — cannot create additional admins via wizard' }, { status: 403 })
+  }
+
   const existing = await prisma.user.findUnique({ where: { username } })
   if (existing) {
     return NextResponse.json({ error: 'Username already taken' }, { status: 409 })

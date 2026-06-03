@@ -95,6 +95,14 @@ export async function POST(req: NextRequest) {
   const domain = internalDomain.trim().toLowerCase()
   const ip = managementIp.trim()
 
+  // M2 fix: validate that managementIp is a valid IPv4 address before interpolating
+  // it into the CoreDNS zone file. Without validation, arbitrary text (including
+  // newlines and zone-file syntax) could be injected into DNS records.
+  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip) ||
+      ip.split('.').some((o: string) => parseInt(o) > 255)) {
+    return NextResponse.json({ error: 'managementIp must be a valid IPv4 address' }, { status: 400 })
+  }
+
   // Validate domain name (RFC 1035) — prevents path traversal at source
   const validated = validateDomain(domain)
   if (validated !== domain) {
