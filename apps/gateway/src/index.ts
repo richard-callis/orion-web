@@ -260,12 +260,20 @@ async function persistCredentials(): Promise<void> {
 
 // ── Built-in tool registry ────────────────────────────────────────────────────
 
+type BuiltinToolCtx = {
+  agentId?: string
+  userId?: string
+  actorType?: 'agent' | 'human'
+}
+
 type BuiltinTool = {
   name: string
   description: string
   category: string
   inputSchema: Record<string, unknown>
-  execute: (args: Record<string, unknown>) => Promise<string>
+  // ctx is optional so tools that don't need attribution still work,
+  // but localhost tools use it for executor actor attribution (B3 fix).
+  execute: (args: Record<string, unknown>, ctx?: BuiltinToolCtx) => Promise<string>
 }
 
 const BUILTIN_REGISTRY: Record<string, BuiltinTool> = {}
@@ -342,7 +350,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req: unknown) => {
   let result: string
   try {
     if (tool.builtIn && BUILTIN_REGISTRY[name]) {
-      result = await BUILTIN_REGISTRY[name].execute(args as Record<string, unknown>)
+      const sessionId = (req as any).sessionId ?? (req as any).params?.sessionId ?? 'unknown'
+      const mcpCtx: BuiltinToolCtx = { agentId: sessionId, actorType: 'agent' }
+      result = await BUILTIN_REGISTRY[name].execute(args as Record<string, unknown>, mcpCtx)
     } else {
       result = await runTool(tool, args as Record<string, unknown>)
     }
@@ -420,7 +430,9 @@ app.post('/tools/execute', requireAuth, async (req: Request, res: Response) => {
   try {
     let result: string
     if (builtin && (!tool || tool.builtIn)) {
-      result = await builtin.execute(args)
+      const callerAgentId = (req as any).agentId ?? req.body?.agent
+      const restCtx: BuiltinToolCtx = { agentId: callerAgentId, actorType: callerAgentId ? 'agent' : 'human' }
+      result = await builtin.execute(args, restCtx)
     } else {
       result = await runTool(tool!, args)
     }

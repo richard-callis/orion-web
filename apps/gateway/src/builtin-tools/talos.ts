@@ -6,28 +6,15 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { writeFileSync, unlinkSync } from 'fs'
+import { randomUUID } from 'crypto'
 
 const exec = promisify(execFile)
 
-async function talosctl(
-  args: string[],
-  talosConfigB64: string,
-  timeoutMs = 60_000,
-): Promise<string> {
-  const tmpFile = `/tmp/orion-talosconfig-${Date.now()}.yaml`
-  writeFileSync(tmpFile, Buffer.from(talosConfigB64, 'base64').toString('utf8'), 'utf8')
-  try {
-    const { stdout, stderr } = await exec('talosctl', args, { timeout: timeoutMs })
-    return stdout || stderr
-  } finally {
-    try { unlinkSync(tmpFile) } catch { /* ignore */ }
-  }
-}
-
-function withConfig(talosConfigB64: string, args: string[]): string[] {
-  const tmpFile = `/tmp/orion-talosconfig-${Date.now()}.yaml`
-  writeFileSync(tmpFile, Buffer.from(talosConfigB64, 'base64').toString('utf8'), 'utf8')
-  return ['--talosconfig', tmpFile, ...args]
+// Unique temp file name using randomUUID to prevent collision under concurrent
+// calls (Date.now() has ms resolution → two simultaneous calls → same path →
+// cross-actor credential overwrite / ENOENT in the other call's finally).
+function tmpConfig(): string {
+  return `/tmp/orion-talosconfig-${randomUUID()}.yaml`
 }
 
 export const talosTools = ([
@@ -44,7 +31,7 @@ export const talosTools = ([
     },
     async execute(args: Record<string, unknown>) {
       const cfg = String(args.talosConfig)
-      const tmpFile = `/tmp/orion-talosconfig-${Date.now()}.yaml`
+      const tmpFile = tmpConfig()
       writeFileSync(tmpFile, Buffer.from(cfg, 'base64').toString('utf8'), 'utf8')
       try {
         const { stdout, stderr } = await exec('talosctl', [
@@ -72,7 +59,7 @@ export const talosTools = ([
       required: ['nodeIp', 'talosConfig'],
     },
     async execute(args: Record<string, unknown>) {
-      const tmpFile = `/tmp/orion-talosconfig-${Date.now()}.yaml`
+      const tmpFile = tmpConfig()
       writeFileSync(tmpFile, Buffer.from(String(args.talosConfig), 'base64').toString('utf8'), 'utf8')
       try {
         const { stdout, stderr } = await exec('talosctl', [
@@ -101,7 +88,7 @@ export const talosTools = ([
       required: ['nodeIp', 'talosConfig', 'patch'],
     },
     async execute(args: Record<string, unknown>) {
-      const tmpFile = `/tmp/orion-talosconfig-${Date.now()}.yaml`
+      const tmpFile = tmpConfig()
       writeFileSync(tmpFile, Buffer.from(String(args.talosConfig), 'base64').toString('utf8'), 'utf8')
       try {
         const { stdout, stderr } = await exec('talosctl', [
@@ -132,7 +119,7 @@ export const talosTools = ([
       required: ['nodeIp', 'talosConfig', 'installerImage'],
     },
     async execute(args: Record<string, unknown>) {
-      const tmpFile = `/tmp/orion-talosconfig-${Date.now()}.yaml`
+      const tmpFile = tmpConfig()
       writeFileSync(tmpFile, Buffer.from(String(args.talosConfig), 'base64').toString('utf8'), 'utf8')
       const preserve = args.preserve !== false
       try {
@@ -164,7 +151,7 @@ export const talosTools = ([
       required: ['nodeIp', 'talosConfig'],
     },
     async execute(args: Record<string, unknown>) {
-      const tmpFile = `/tmp/orion-talosconfig-${Date.now()}.yaml`
+      const tmpFile = tmpConfig()
       writeFileSync(tmpFile, Buffer.from(String(args.talosConfig), 'base64').toString('utf8'), 'utf8')
       try {
         const { stdout, stderr } = await exec('talosctl', [

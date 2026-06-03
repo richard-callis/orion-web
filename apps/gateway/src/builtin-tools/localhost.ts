@@ -35,7 +35,7 @@ export const localhostTools = ([
       },
       required: ['command'],
     },
-    async execute(args: Record<string, unknown>, ctx: Record<string, unknown>) {
+    async execute(args: Record<string, unknown>, ctx?: { agentId?: string; userId?: string; actorType?: 'agent' | 'human' }) {
       const command = String(args.command ?? '').trim()
       if (!command) return 'Error: command is required'
 
@@ -69,7 +69,7 @@ export const localhostTools = ([
       },
       required: ['path'],
     },
-    async execute(args: Record<string, unknown>, ctx: Record<string, unknown>) {
+    async execute(args: Record<string, unknown>, ctx?: { agentId?: string; userId?: string; actorType?: 'agent' | 'human' }) {
       const filePath = String(args.path ?? '').trim()
       if (!filePath) return 'Error: path is required'
 
@@ -104,7 +104,7 @@ export const localhostTools = ([
       type: 'object',
       properties: {},
     },
-    async execute(args: Record<string, unknown>, ctx: Record<string, unknown>) {
+    async execute(args: Record<string, unknown>, ctx?: { agentId?: string; userId?: string; actorType?: 'agent' | 'human' }) {
       console.log(`[localhost] system_info`)
 
       const executionId = randomUUID()

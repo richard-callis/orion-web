@@ -25,6 +25,7 @@ async function orionFetch(path: string, options?: RequestInit): Promise<unknown>
   const res = await fetch(url, {
     ...options,
     headers: { ...headers, ...(options?.headers as Record<string, string> || {}) },
+    signal: AbortSignal.timeout(10_000), // N3: prevent indefinite hang on slow/unresponsive ORION
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
