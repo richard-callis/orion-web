@@ -161,13 +161,34 @@ interface HostConnection {
   keyPath?: string    // path to SSH key (or use SSH agent)
 }
 
+/**
+ * Validate values that will be interpolated into remote shell commands via SSH/SCP.
+ * These fields come from user-supplied environment metadata; without validation
+ * a crafted value like user='-oProxyCommand=...' causes SSH option injection,
+ * and remotePath='/opt; rm -rf /' causes RCE on the remote host.
+ */
+function validateSshField(value: string, name: string, pattern: RegExp): string {
+  if (!pattern.test(value)) {
+    throw new Error(`Invalid ${name} value '${value}' — must match ${pattern}`)
+  }
+  return value
+}
+
 /** Parse host connection from environment metadata. */
 function parseHostConnection(env: { metadata: unknown; id: string }): HostConnection {
   const meta = env.metadata as Record<string, unknown> | undefined
-  const host = (meta?.host as string) ?? 'localhost'
-  const port = Number((meta?.sshPort as unknown) ?? 22)
-  const user = (meta?.sshUser as string) ?? 'root'
-  const keyPath = meta?.sshKeyPath as string | undefined
+  const rawHost  = (meta?.host     as string) ?? 'localhost'
+  const rawUser  = (meta?.sshUser  as string) ?? 'root'
+  const rawPort  = Number((meta?.sshPort as unknown) ?? 22)
+  const keyPath  = meta?.sshKeyPath as string | undefined
+
+  // Validate before interpolating into SSH/SCP commands
+  const host = validateSshField(rawHost,  'host',    /^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,252}[a-zA-Z0-9])?$/)
+  const user = validateSshField(rawUser,  'sshUser', /^[a-zA-Z0-9_][a-zA-Z0-9_-]{0,31}$/)
+  if (!Number.isFinite(rawPort) || rawPort < 1 || rawPort > 65535) {
+    throw new Error(`Invalid sshPort: ${rawPort}`)
+  }
+  const port = rawPort
   return { host, port, user, keyPath }
 }
 
@@ -199,7 +220,8 @@ async function deployDockerCompose(
   const sshCmd = [
     'ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
     '-t', `${connection.user}@${connection.host}`,
-    `cd ${remotePath} && docker compose up -d`,
+    // remotePath validated: must not contain shell metacharacters to prevent RCE
+    `cd ${validateSshField(remotePath, 'remotePath', /^[a-zA-Z0-9/_.-]{1,256}$/)} && docker compose up -d`,
   ]
   if (connection.port) sshCmd.splice(sshCmd.indexOf(`${connection.user}@${connection.host}`), 0, '-p', String(connection.port))
 

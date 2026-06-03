@@ -18,6 +18,7 @@ import { prisma } from './db'
 import { setTyping, clearTyping } from './typing-state'
 import { buildToolDefinitions, TOOLS_SYSTEM_ADDENDUM, executeTool } from './agent-tools'
 import { getToolsForContext, executeRegisteredTool } from './tool-registry'
+import { checkToolPermission } from './tool-permissions'
 import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
 import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, invalidateSnapshotCache, getModelContextLimit, getClaudeContextLimit } from './agent-context'
@@ -489,7 +490,14 @@ async function callOpenAIChat(
         console.log(`[room-agents] ${agentName} calling tool: ${tc.function.name}`, args)
 
         if (registryToolNames.has(tc.function.name)) {
-          // Registry tool — single source of truth, consistent across all contexts
+          // Gate registry tools through checkToolPermission before execution.
+          // Previously called executeRegisteredTool directly with NO permission check,
+          // allowing room agents to invoke destructive-tier tools without a grant.
+          const agentIdForPerm = toolContext?.agentId ?? null
+          const perm = await checkToolPermission(tc.function.name, agentIdForPerm, null)
+          if (!perm.allowed) {
+            result = `Permission denied: ${perm.reason ?? `tool '${tc.function.name}' is not permitted for this agent`}`
+          } else {
           result = await executeRegisteredTool(tc.function.name, args, {
             agentId: toolContext!.agentId,
             prisma,
@@ -498,6 +506,7 @@ async function callOpenAIChat(
               listTools: () => gateway.client.listTools(),
             } : undefined,
           })
+          }
         } else if (legacyToolNames.has(tc.function.name)) {
           // Legacy agent-tools (create_task, orion_manage_task, etc.)
           result = await executeTool(tc.function.name, args, {

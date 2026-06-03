@@ -183,12 +183,15 @@ async function _compactRoom(roomId: string): Promise<void> {
     throw new Error('[compaction] failed to generate summary — no usable model found')
   }
 
+  // Cap summary length to prevent unbounded growth.
+  const MAX_SUMMARY_CHARS = 8000
+  const cappedSummary = summary.length > MAX_SUMMARY_CHARS
+    ? summary.slice(0, MAX_SUMMARY_CHARS) + '\n\n[Summary truncated — exceeded max length]'
+    : summary
+
   // Transactional idempotency re-check: verify no other process compacted this
-  // window while our LLM call was in flight (compactingRooms only guards within
-  // a single process; multiple Next.js workers can race).
-  // Re-read the boundary inside the transaction and bail if it changed.
+  // window while our LLM call was in flight. Also wraps create+reset atomically.
   const compactionMsg = await prisma.$transaction(async (tx) => {
-    // Re-check that no other worker compacted this room while the LLM was running
     const currentBoundary = await tx.chatMessage.findFirst({
       where: { roomId, senderType: 'compaction' },
       orderBy: { createdAt: 'desc' },
@@ -202,7 +205,7 @@ async function _compactRoom(roomId: string): Promise<void> {
       data: {
         roomId,
         senderType: 'compaction',
-        content: summary,
+        content: cappedSummary,
         attachments: { originalMessageCount: messages.length, compactedAt: new Date().toISOString() } as unknown as object,
       },
     })
@@ -219,7 +222,7 @@ async function _compactRoom(roomId: string): Promise<void> {
   await publishChatMessage(roomId, {
     id:          compactionMsg.id,
     senderType:  'compaction',
-    content:     summary,
+    content:     cappedSummary,
     attachments: { originalMessageCount: messages.length, compactedAt: compactionMsg.createdAt instanceof Date ? compactionMsg.createdAt.toISOString() : compactionMsg.createdAt },
     sender:      { type: 'system', id: null, name: 'System' },
     createdAt:   compactionMsg.createdAt instanceof Date ? compactionMsg.createdAt.toISOString() : compactionMsg.createdAt,

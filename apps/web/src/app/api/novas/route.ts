@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 import { getAllNovae, Nova, NovaCreateRequest } from '@/lib/nebula'
 
 /**
@@ -82,6 +83,9 @@ export async function GET(req: NextRequest) {
  * Only admin users can create user-created Novas.
  */
 export async function POST(req: NextRequest) {
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   const body: NovaCreateRequest = await req.json()
 
   // Validate required fields
