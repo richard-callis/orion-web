@@ -170,14 +170,14 @@ export async function rateLimitRedis(
         return {0, count, reset_ts}
       end
 
-      -- Add current request with a microsecond-precision unique member.
-      -- math.random(1000000) is NOT safe: Redis deterministically seeds Lua's RNG
-      -- per-script, so two concurrent scripts in the same ms get the same member,
-      -- causing ZADD to overwrite the existing entry and undercount the window.
-      -- redis.call('TIME') returns [seconds, microseconds] — unique per Redis op.
-      local t = redis.call('TIME')
-      local member = now .. ':' .. t[1] .. t[2]
-      redis.call('ZADD', key, now, member)
+      -- Add current request with a strictly unique member via monotonic INCR.
+      -- math.random is NOT safe: Redis deterministically re-seeds Lua's RNG per
+      -- EVAL call, so concurrent scripts in the same ms produce identical members.
+      -- redis.call('TIME') microseconds are still collision-prone under heavy load.
+      -- INCR on a per-key sequence counter is collision-free and replication-safe.
+      local seq = redis.call('INCR', key .. ':seq')
+      redis.call('EXPIRE', key .. ':seq', math.ceil((window_ms * 2) / 1000))
+      redis.call('ZADD', key, now, now .. ':' .. seq)
 
       -- Set TTL to 2x window for auto-cleanup
       redis.call('EXPIRE', key, math.ceil((window_ms * 2) / 1000))
