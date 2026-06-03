@@ -1491,6 +1491,19 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
 
         const toolStart = Date.now()
         // ── Management tools — handled server-side by ORION ──────────────────
+        // Gate management tools through the same permission check as gateway tools.
+        // Previously these ran with NO checkToolPermission call, allowing any
+        // authenticated user to invoke orion_patch_environment (overwrites kubeconfig/
+        // gatewayUrl), orion_bootstrap_environment, and gitops_propose (auto-merge PRs).
+        {
+          const mgmtArgs = JSON.parse(tc.argsRaw || '{}') as Record<string, unknown>
+          const mgmtPerm = await checkToolPermission(tc.name, mgmtArgs, environmentId ?? '', conversationId, userId)
+          if (!mgmtPerm.allowed) {
+            result = `Permission denied: ${mgmtPerm.reason}`
+            messages.push({ role: 'tool' as const, content: result, tool_call_id: tc.id })
+            continue
+          }
+        }
         if (tc.name === 'propose_tool') {
           result = await handleProposeTool(tc.argsRaw, environmentId, conversationId)
         } else if (tc.name === 'orion_get_environment') {
