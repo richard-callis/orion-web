@@ -97,6 +97,10 @@ function buildWikiContext(notes: Array<{ title: string; content: string }>): str
 }
 
 const runningTasks = new Set<string>()
+// Guards against concurrent watcher runs: the 60s poll interval is shorter
+// than many watcher runtimes, so without this a slow watcher would launch
+// multiple parallel copies that each issue duplicate mutating tool calls.
+const runningWatchers = new Set<string>()
 
 const TASK_TIMEOUT_MS = 60 * 60 * 1000 // 60 minutes
 
@@ -609,7 +613,14 @@ async function runWatchers() {
     const watchPrompt = (cfg.watchPrompt as string | undefined)
     if (!watchPrompt?.trim()) continue
 
+    // Skip if this watcher is already running (poll interval < typical run time).
+    if (runningWatchers.has(agent.id)) {
+      log(`Skipping watcher "${agent.name}" — still running from previous cycle`)
+      continue
+    }
+
     log(`Running watcher: "${agent.name}"`)
+    runningWatchers.add(agent.id)
 
     const systemPrompt = (meta.systemPrompt as string | undefined) ?? 'You are a monitoring agent.'
     const modelId = await resolveModelId(cfg.llm)
@@ -685,7 +696,15 @@ async function runWatchers() {
         if (event.type === 'error') throw new Error(event.error)
       }
 
-      // Persist last-run timestamp to DB so it survives restarts
+      if (output.trim()) {
+        await postToFeed(agent.id, `👁 **${agent.name}**:\n\n${output.trim().slice(0, 1500)}`)
+      }
+    } catch (e) {
+      err(`Watcher "${agent.name}" failed: ${e}`)
+      await postToFeed(agent.id, `❌ **${agent.name}** watcher error: ${e}`)
+    } finally {
+      // Always update lastRun (even on error) so a failing watcher respects
+      // its interval instead of retrying every 60s until it succeeds.
       await prisma.agent.update({
         where: { id: agent.id },
         data: {
@@ -694,14 +713,8 @@ async function runWatchers() {
             watcherLastRun: Date.now()
           }
         }
-      })
-
-      if (output.trim()) {
-        await postToFeed(agent.id, `👁 **${agent.name}**:\n\n${output.trim().slice(0, 1500)}`)
-      }
-    } catch (e) {
-      err(`Watcher "${agent.name}" failed: ${e}`)
-      await postToFeed(agent.id, `❌ **${agent.name}** watcher error: ${e}`)
+      }).catch(() => { /* non-critical — next run will re-calculate from old lastRun */ })
+      runningWatchers.delete(agent.id)
     }
   }
 }
