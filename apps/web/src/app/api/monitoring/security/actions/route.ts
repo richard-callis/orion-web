@@ -9,71 +9,11 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { decide, execute } from '@/lib/security/action-service'
+import { decide, execute, gatewayExecutor } from '@/lib/security/action-service'
 import { type ActionRequest } from '@/lib/security/types'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
-
-/**
- * Gateway executor — calls the gateway's tool execution endpoint.
- */
-async function gatewayExecutor(
-  action: ActionRequest,
-  target: string,
-  payload: Record<string, unknown> | undefined
-): Promise<{ success: boolean; result: string }> {
-  const gatewayUrl = process.env.GATEWAY_URL
-  const gatewayToken = process.env.GATEWAY_TOKEN
-
-  if (!gatewayUrl || !gatewayToken) {
-    return { success: false, result: 'Gateway not configured' }
-  }
-
-  let toolName = ''
-  let toolArgs: Record<string, unknown> = {}
-
-  switch (action.actionType) {
-    case 'crowdsec_decision_create':
-      toolName = 'crowdsec_decision_create'
-      toolArgs = { ip: target, reason: payload?.reason as string ?? 'Blocked via ORION' }
-      break
-    case 'crowdsec_decision_delete':
-      toolName = 'crowdsec_decision_delete'
-      toolArgs = { decisionId: target }
-      break
-    case 'wazuh_active_response':
-      toolName = 'wazuh_active_response'
-      toolArgs = { agent: target, command: (payload?.command as string) ?? '', args: payload?.args }
-      break
-    case 'firewall_block':
-      toolName = 'firewall_block'
-      toolArgs = { cidr: target, reason: payload?.reason as string ?? 'Blocked via ORION' }
-      break
-    case 'investigate':
-      toolName = 'elk_flow_search'
-      toolArgs = { query: target, limit: (payload?.limit as number) ?? 20 }
-      break
-    default:
-      return { success: false, result: `Unknown action type: ${action.actionType}` }
-  }
-
-  const res = await fetch(`${gatewayUrl}/tools/execute`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${gatewayToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ name: toolName, arguments: toolArgs }),
-  })
-
-  const result = await res.json()
-  if (!res.ok) {
-    return { success: false, result: JSON.stringify(result) }
-  }
-
-  return { success: true, result: JSON.stringify(result) }
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -94,25 +34,21 @@ export async function POST(req: NextRequest) {
     // Decide tier
     const decision = await decide(request, panicMode)
 
-    // If tier is 'escalate' or 'approve' without approval, return pending
-    if (decision.tier === 'escalate' || decision.tier === 'approve') {
-      return NextResponse.json({
-        pending: true,
-        decision,
-        message: decision.tier === 'escalate'
-          ? 'Action requires escalation'
-          : 'Action requires approval',
-      })
-    }
-
-    // Execute if auto
+    // Call execute() for ALL tiers — it creates the ActionAudit row (R9) and
+    // routes correctly: auto→gateway, approve/escalate→pending queue entry,
+    // notify→audit-only. Without this, approve/escalate tiers returned early
+    // with no DB row, leaving the approval queue permanently empty.
     const result = await execute(request, decision, gatewayExecutor)
 
     return NextResponse.json({
-      success: result.status !== 'denied',
+      pending: result.status === 'pending',
+      success: result.status === 'succeeded',
       status: result.status,
       auditId: result.auditId,
       result: result.result,
+      message: result.status === 'pending'
+        ? `Action queued for ${decision.tier === 'escalate' ? 'escalation' : 'approval'}`
+        : undefined,
     })
   } catch (err) {
     return NextResponse.json({ error: `Action failed: ${err instanceof Error ? err.message : String(err)}` }, { status: 500 })
