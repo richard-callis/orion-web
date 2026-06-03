@@ -1,7 +1,14 @@
 /**
  * GET /api/monitoring/security/sources
  *
- * Returns SourceHealth records with computed status.
+ * Returns health status for all security sources, merging both:
+ *   - SourceHealth     — global sources (crowdsec, wazuh, elk, ntopng, host_agent)
+ *                        written by Phase 1 webhook/poller handlers
+ *   - EnvironmentSourceHealth — per-env sources (falco, k8s_events)
+ *                        written by Phase 2 Falco/K8s webhook handlers
+ *
+ * Previously only queried SourceHealth, so Falco (which writes to
+ * EnvironmentSourceHealth) always showed "No sources configured."
  */
 
 import { NextResponse } from 'next/server'
@@ -11,7 +18,10 @@ import { computeSourceStatus } from '@/lib/security/source-health-utils'
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const sources = await prisma.sourceHealth.findMany({
+  const now = Date.now()
+
+  // Global sources (Phase 1)
+  const globalSources = await prisma.sourceHealth.findMany({
     select: {
       source: true,
       lastSeenAt: true,
@@ -21,12 +31,40 @@ export async function GET() {
     },
   })
 
-  const now = Date.now()
+  // Per-environment sources (Phase 2 — Falco, k8s_events)
+  // Group by source name and take the most recent lastSeenAt across all envs
+  // so the panel shows one row per source type, not one per environment.
+  const envSources = await prisma.environmentSourceHealth.findMany({
+    select: {
+      source: true,
+      lastSeenAt: true,
+      lastWatermark: true,
+      staleAfterMs: true,
+      environmentId: true,
+    },
+  })
 
-  const result = sources.map((s: any) => {
+  // Deduplicate per-env sources by name, keeping the most recently seen row
+  const envBySource = new Map<string, typeof envSources[number]>()
+  for (const s of envSources) {
+    const existing = envBySource.get(s.source)
+    const existingTs = existing?.lastSeenAt ? new Date(existing.lastSeenAt).getTime() : 0
+    const thisTs = s.lastSeenAt ? new Date(s.lastSeenAt).getTime() : 0
+    if (!existing || thisTs > existingTs) {
+      envBySource.set(s.source, s)
+    }
+  }
+
+  // Merge: global sources take precedence over env sources with the same name
+  const globalNames = new Set(globalSources.map(s => s.source))
+  const merged = [
+    ...globalSources,
+    ...[...envBySource.values()].filter(s => !globalNames.has(s.source)),
+  ]
+
+  const result = merged.map(s => {
     const lastSeen = s.lastSeenAt ? new Date(s.lastSeenAt).getTime() : 0
     const status = computeSourceStatus(lastSeen, now, s.staleAfterMs)
-
     return {
       source: s.source,
       lastSeenAt: s.lastSeenAt,
