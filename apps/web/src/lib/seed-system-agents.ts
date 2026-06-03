@@ -679,7 +679,7 @@ Details: <brief explanation>
         llm:        'claude',
         tools:      true,
         persistent: true,
-        // Per SIEM_PLAN.md P4: tool whitelist for Warden = security read + chat_post
+        // Per SIEM_PLAN.md P4: tool whitelist for Warden = security_propose_action + SOC case management + orion_send_message
         // + security_propose_action (the single policy-gated write entry point).
         // All write actions route through action-service.decide() which enforces
         // the tier matrix, panic mode, and home-subnet overrides.
@@ -691,25 +691,20 @@ Details: <brief explanation>
         // registry tools down to this list. Agents without `allowedTools` see the
         // full registry as before (backward compatible).
         allowedTools: [
-          // Security read tools
-          'elk_flow_search',
-          'wazuh_alert_search',
-          'ntopng_flow_search',
-          // Policy-gated write entry point (replaces direct tool calls)
+          // Policy-gated write entry point (routes through action-service tier matrix)
           'security_propose_action',
-          // SOC case management
+          // SOC case management (all registered in tool-registry.ts for MCP access)
           'investigation_search',
           'investigation_create',
           'investigation_read',
           'investigation_note',
           'investigation_update',
           'investigation_link_incident',
-          'investigation_merge',
           'observable_add',
           'observable_set_verdict',
           'timeline_add',
-          // Chat
-          'chat_post',
+          // Chat — orion_send_message is the real tool name (chat_post does not exist)
+          'orion_send_message',
         ],
       },
     },
