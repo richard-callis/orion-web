@@ -1,18 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSSEStream } from '@/lib/sse'
 import { coreApi } from '@/lib/k8s'
-import { getCurrentUser } from '@/lib/auth'
+import { requireAdmin } from '@/lib/auth'
 import { redactSensitive } from '@/lib/redact'
 
 export const dynamic = 'force-dynamic'
 
-// SOC2: CR-003 — pod logs exposed without authentication (may contain secrets/tokens)
+// SOC2: CR-003 — pod logs are admin-only (vault-namespace logs contain secrets/tokens)
 export async function GET(
   _req: NextRequest,
   { params }: { params: { ns: string; pod: string } }
 ) {
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   return createSSEStream((send, close) => {
     ;(async () => {
       try {
