@@ -22,6 +22,10 @@ export class GatewayClient {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({ name, arguments: args }),
+      // Per-tool-call timeout — a hung gateway would previously block the entire
+      // agent turn indefinitely (no signal on the fetch). 120s covers slow ops
+      // (kubectl rollout, helm install) without blocking forever on a dead gateway.
+      signal: AbortSignal.timeout(120_000),
     })
     const data = await res.json() as { result?: string; error?: string }
     if (!res.ok || data.error) throw new Error(data.error ?? `Tool ${name} failed: ${res.status}`)
