@@ -183,32 +183,40 @@ async function _compactRoom(roomId: string): Promise<void> {
     throw new Error('[compaction] failed to generate summary — no usable model found')
   }
 
-  // Cap summary length to prevent unbounded growth: summaries are prepended into
-  // each subsequent compaction transcript, so an uncapped summary can grow
-  // monotonically and eventually exceed the model's context window.
+  // Cap summary length to prevent unbounded growth.
   const MAX_SUMMARY_CHARS = 8000
   const cappedSummary = summary.length > MAX_SUMMARY_CHARS
     ? summary.slice(0, MAX_SUMMARY_CHARS) + '\n\n[Summary truncated — exceeded max length]'
     : summary
 
-  // Persist as a compaction message and reset the room's token counter.
-  // Wrapped in a transaction so a partial failure (create succeeds but update fails)
-  // doesn't leave the room wedged with high tokenCount that re-triggers compaction
-  // on every subsequent turn without ever resetting.
-  const [compactionMsg] = await prisma.$transaction([
-    prisma.chatMessage.create({
+  // Transactional idempotency re-check: verify no other process compacted this
+  // window while our LLM call was in flight. Also wraps create+reset atomically.
+  const compactionMsg = await prisma.$transaction(async (tx) => {
+    const currentBoundary = await tx.chatMessage.findFirst({
+      where: { roomId, senderType: 'compaction' },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    })
+    if (currentBoundary?.id !== lastCompaction?.id) {
+      console.warn(`[compaction] room ${roomId}: another worker compacted concurrently — skipping duplicate`)
+      return null
+    }
+    const msg = await tx.chatMessage.create({
       data: {
         roomId,
         senderType: 'compaction',
         content: cappedSummary,
         attachments: { originalMessageCount: messages.length, compactedAt: new Date().toISOString() } as unknown as object,
       },
-    }),
-    prisma.chatRoom.update({
+    })
+    await tx.chatRoom.update({
       where: { id: roomId },
       data: { tokenCount: 0, updatedAt: new Date() },
-    }),
-  ])
+    })
+    return msg
+  })
+
+  if (!compactionMsg) return  // concurrent compaction won the race
 
   // Publish via Redis so the UI shows the compaction message live
   await publishChatMessage(roomId, {
