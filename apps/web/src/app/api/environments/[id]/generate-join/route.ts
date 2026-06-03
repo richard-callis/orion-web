@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
-import { randomBytes } from 'crypto'
+import { randomBytes, createHash } from 'crypto'
+
+/** Hash a join token for safe DB storage — store hash, return raw to the user. */
+function hashJoinToken(raw: string): string {
+  return createHash('sha256').update(raw).digest('hex')
+}
 
 // Allowed gateway types — caller-supplied type is validated against this list
 // to prevent type confusion (e.g. forging localhost type to trigger Docker-socket paths)
@@ -23,12 +28,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     where: { environmentId: params.id, usedAt: null },
   })
 
-  const token = 'mcg_' + randomBytes(24).toString('hex')
+  const rawToken = 'mcg_' + randomBytes(24).toString('hex')
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24h
 
+  // Store SHA-256 hash of token, not the raw value — a DB read or backup
+  // should not yield usable join credentials. The raw token is returned to the
+  // admin and never persisted. Existing plaintext tokens in the DB still work
+  // via the dual-lookup in the join/manifest routes (hash-first, plaintext fallback).
   await prisma.environmentJoinToken.create({
-    data: { token, environmentId: params.id, expiresAt },
+    data: { token: hashJoinToken(rawToken), environmentId: params.id, expiresAt },
   })
+
+  // Replace token reference with rawToken in the commands below
+  const token = rawToken
 
   const body = await req.json().catch(() => ({}))
   const gatewayUrl: string = body.gatewayUrl ?? ''
