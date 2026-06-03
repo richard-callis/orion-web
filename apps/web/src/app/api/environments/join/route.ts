@@ -43,7 +43,14 @@ export async function POST(req: NextRequest) {
   const rawUrl: string | undefined = parsed.data.gatewayUrl
   const gatewayUrl = rawUrl && !rawUrl.startsWith('http') ? `http://${rawUrl}` : rawUrl
 
+  // Dual lookup: try SHA-256 hash first (new tokens), fall back to plaintext
+  // (tokens created before hashing was introduced). Drop plaintext fallback once
+  // all existing tokens expire (24h max lifetime).
+  const tokenHash = createHash('sha256').update(joinToken).digest('hex')
   const record = await prisma.environmentJoinToken.findUnique({
+    where: { token: tokenHash },
+    include: { environment: true },
+  }) ?? await prisma.environmentJoinToken.findUnique({
     where: { token: joinToken },
     include: { environment: true },
   })
