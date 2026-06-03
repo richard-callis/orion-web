@@ -11,6 +11,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getToolsForContext, executeRegisteredTool } from '@/lib/tool-registry'
+import { checkToolPermission } from '@/lib/tool-permissions'
 import { prisma } from '@/lib/db'
 
 const MCP_TOKEN = process.env.ORION_MCP_TOKEN
@@ -32,20 +33,36 @@ function err(id: unknown, code: number, message: string) {
 
 export async function POST(req: NextRequest) {
   // ── Auth ──────────────────────────────────────────────────────────────────
-  if (MCP_TOKEN) {
-    const token = req.headers.get('x-mcp-token')
-    if (token !== MCP_TOKEN) {
-      return NextResponse.json(
-        { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null },
-        { status: 401 },
-      )
-    }
+  // Fail CLOSED when MCP_TOKEN is not configured — the previous code accepted
+  // all requests when the env var was unset, silently disabling auth.
+  if (!MCP_TOKEN) {
+    return NextResponse.json(
+      { jsonrpc: '2.0', error: { code: -32001, message: 'MCP server not configured (ORION_MCP_TOKEN not set)' }, id: null },
+      { status: 503 },
+    )
+  }
+  const token = req.headers.get('x-mcp-token')
+  if (token !== MCP_TOKEN) {
+    return NextResponse.json(
+      { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null },
+      { status: 401 },
+    )
   }
 
   // ── Per-request context (agent and room for tool execution) ───────────────
+  // agentId and roomId come from query params set by the orion-claude sidecar.
+  // We validate agentId against the DB to prevent impersonation by arbitrary
+  // string injection — the sidecar is trusted, but any token holder can set these.
   const { searchParams } = new URL(req.url)
-  const agentId = searchParams.get('agentId') ?? undefined
-  const roomId  = searchParams.get('roomId')  ?? undefined
+  const rawAgentId = searchParams.get('agentId') ?? undefined
+  const roomId     = searchParams.get('roomId')  ?? undefined
+
+  // Verify agentId refers to a real agent (prevents audit-trail forgery)
+  let agentId: string | undefined
+  if (rawAgentId) {
+    const agent = await prisma.agent.findUnique({ where: { id: rawAgentId }, select: { id: true } })
+    agentId = agent?.id  // undefined if not found — tools run with unknown actor
+  }
 
   // ── Parse body ───────────────────────────────────────────────────────────
   let body: JsonRpcRequest
@@ -75,7 +92,7 @@ export async function POST(req: NextRequest) {
     case 'ping':
       return ok(id, {})
 
-    // Tool discovery
+    // Tool discovery — return tools filtered to 'chat' context
     case 'tools/list': {
       const tools = getToolsForContext('chat')
       return ok(id, {
@@ -94,6 +111,19 @@ export async function POST(req: NextRequest) {
       const toolArgs = p?.arguments ?? {}
 
       if (!toolName) return err(id, -32602, 'Missing required param: name')
+
+      // BLOCKER fix: MCP route previously bypassed checkToolPermission entirely.
+      // Every other execution path (openai-runner, ollama-runner, claude.ts) gates
+      // on it first, enforcing ToolAgentRestriction whitelists and destructive-tier
+      // ToolExecutionGrant requirements. Without this check, any MCP token holder
+      // could invoke destructive tools with zero approval.
+      const permission = await checkToolPermission(toolName, agentId ?? null, null)
+      if (!permission.allowed) {
+        return ok(id, {
+          content: [{ type: 'text', text: `Error: Tool '${toolName}' is not permitted for this agent. ${permission.reason ?? ''}` }],
+          isError: true,
+        })
+      }
 
       try {
         const result = await executeRegisteredTool(toolName, toolArgs, {
