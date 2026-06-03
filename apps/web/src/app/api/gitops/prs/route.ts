@@ -10,8 +10,10 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireServiceAuth } from '@/lib/auth'
 
 export async function GET(req: NextRequest) {
+  await requireServiceAuth(req)
   const { searchParams } = new URL(req.url)
   const status        = searchParams.get('status')        ?? undefined
   const environmentId = searchParams.get('environmentId') ?? undefined
