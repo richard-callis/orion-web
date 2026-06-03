@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
+import { gatewayExecutor } from '@/lib/security/action-service'
 import { z } from 'zod'
 
 export const dynamic = 'force-dynamic'
@@ -23,8 +24,6 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  // Approve/deny is a tier-elevation action — only admins. Without this check
-  // anyone reachable on the network can execute pending privileged actions.
   let approver: { id: string; username: string }
   try {
     const user = await requireAdmin()
@@ -35,7 +34,6 @@ export async function POST(
 
   const body = await req.json()
   const parsed = bodySchema.safeParse(body)
-
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid body: action must be "approve" or "deny"' }, { status: 400 })
   }
@@ -43,7 +41,7 @@ export async function POST(
   const { action, note } = parsed.data
   const auditId = params.id
 
-  // Look up the pending audit row
+  // Fetch audit row to get action details for execution
   const audit = await prisma.actionAudit.findUnique({
     where: { id: auditId },
     select: {
@@ -58,59 +56,55 @@ export async function POST(
     },
   })
 
-  if (!audit) {
-    return NextResponse.json({ error: 'Approval not found' }, { status: 404 })
-  }
+  if (!audit) return NextResponse.json({ error: 'Approval not found' }, { status: 404 })
+  if (audit.tier !== 'approve') return NextResponse.json({ error: 'Action tier is not approvable' }, { status: 400 })
 
-  if (audit.status !== 'pending') {
-    return NextResponse.json({ error: 'Action is not pending approval' }, { status: 409 })
-  }
-
-  if (audit.tier !== 'approve') {
-    return NextResponse.json({ error: 'Action tier is not approvable' }, { status: 400 })
-  }
-
-  // Update the audit row.
-  // approvedBy is the resolved admin username — never the literal 'operator',
-  // which would defeat the audit trail (M3/M8).
-  const approverLabel = approver.username
-  const updated = await prisma.actionAudit.update({
-    where: { id: auditId },
+  // Atomic CAS: only transition if still pending. Prevents double-execution
+  // when two operators approve concurrently (M2 — TOCTOU race).
+  const cas = await prisma.actionAudit.updateMany({
+    where: { id: auditId, status: 'pending' },
     data: {
       status: action === 'approve' ? 'attempting' : 'denied',
-      approvedBy: approverLabel,
-    },
-    include: {
-      incident: {
-        select: { id: true, attackerKey: true, rootCauseSummary: true },
-      },
+      approvedBy: approver.username,
+      result: action === 'deny' ? `Denied by operator: ${note ?? 'No reason provided'}` : null,
     },
   })
 
-  if (action === 'approve') {
-    // If auto-executable, mark as succeeded immediately
-    // Actual execution is handled by the action executor
-    // For now, mark as attempting and let the executor pick it up
-    await prisma.actionAudit.update({
-      where: { id: auditId },
-      data: {
-        status: 'attempting',
-        result: note ?? null,
-      },
-    })
-  } else {
-    await prisma.actionAudit.update({
-      where: { id: auditId },
-      data: {
-        status: 'denied',
-        result: `Denied by operator: ${note ?? 'No reason provided'}`,
-      },
-    })
+  if (cas.count === 0) {
+    // Another request already transitioned it
+    return NextResponse.json({ error: 'Action is not pending (already processed or concurrent modification)' }, { status: 409 })
   }
 
-  return NextResponse.json({
-    success: true,
-    id: auditId,
-    status: action === 'approve' ? 'attempting' : 'denied',
-  })
+  if (action === 'deny') {
+    return NextResponse.json({ success: true, id: auditId, status: 'denied' })
+  }
+
+  // Execute the approved action via the gateway (B1 fix — was a dead end before)
+  try {
+    const { success, result } = await gatewayExecutor(
+      {
+        actionType: audit.actionType,
+        target: audit.target,
+        reason: note ?? 'Approved by operator',
+        payload: audit.payload as Record<string, unknown> | null,
+        incidentId: audit.incidentId,
+      },
+      audit.target,
+      audit.payload as Record<string, unknown> | undefined
+    )
+
+    await prisma.actionAudit.update({
+      where: { id: auditId },
+      data: { status: success ? 'succeeded' : 'failed', result },
+    })
+
+    return NextResponse.json({ success, id: auditId, status: success ? 'succeeded' : 'failed', result })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await prisma.actionAudit.update({
+      where: { id: auditId },
+      data: { status: 'failed', result: msg },
+    })
+    return NextResponse.json({ success: false, id: auditId, status: 'failed', result: msg })
+  }
 }

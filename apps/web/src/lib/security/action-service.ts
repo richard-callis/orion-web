@@ -12,6 +12,70 @@
 import { prisma } from '@/lib/db'
 import { type ActionRequest, type ActionDecision, actionRequestSchema, actionDecisionSchema } from './types'
 
+// ── Gateway executor ──────────────────────────────────────────────────────────
+
+/**
+ * Execute a security action via the gateway's tool endpoint.
+ * Looks up gateway credentials from the connected environment in the DB
+ * (same pattern as the flows route) rather than env vars, so it works
+ * regardless of which environment the action targets.
+ */
+export async function gatewayExecutor(
+  action: ActionRequest,
+  target: string,
+  payload?: Record<string, unknown>
+): Promise<{ success: boolean; result: string }> {
+  const env = await prisma.environment.findFirst({
+    where: { status: 'connected', gatewayUrl: { not: null } },
+    select: { gatewayUrl: true, gatewayToken: true },
+  })
+
+  if (!env?.gatewayUrl) {
+    return { success: false, result: 'No connected gateway configured' }
+  }
+
+  let toolName = ''
+  let toolArgs: Record<string, unknown> = {}
+
+  switch (action.actionType) {
+    case 'crowdsec_decision_create':
+      toolName = 'crowdsec_decision_create'
+      toolArgs = { ip: target, reason: payload?.reason ?? 'Blocked via ORION' }
+      break
+    case 'crowdsec_decision_delete':
+      toolName = 'crowdsec_decision_delete'
+      toolArgs = { decisionId: target }
+      break
+    case 'wazuh_active_response':
+      toolName = 'wazuh_active_response'
+      toolArgs = { agent: target, command: payload?.command ?? '', args: payload?.args }
+      break
+    case 'firewall_block':
+      toolName = 'firewall_block'
+      toolArgs = { cidr: target, reason: payload?.reason ?? 'Blocked via ORION' }
+      break
+    case 'investigate':
+      toolName = 'elk_flow_search'
+      toolArgs = { size: payload?.limit ?? 20 }
+      break
+    default:
+      return { success: false, result: `Unknown action type: ${action.actionType}` }
+  }
+
+  const res = await fetch(`${env.gatewayUrl}/tools/execute`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.gatewayToken ?? ''}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ name: toolName, arguments: toolArgs }),
+  })
+
+  const data = await res.json() as { result?: unknown }
+  if (!res.ok) return { success: false, result: JSON.stringify(data) }
+  return { success: true, result: typeof data.result === 'string' ? data.result : JSON.stringify(data.result) }
+}
+
 // ── Tier resolution ───────────────────────────────────────────────────────────
 
 /**
@@ -44,20 +108,22 @@ export async function decide(
 
   let tier = policy.defaultTier
 
-  // 3. Check panic mode — downgrades auto/notify to approve
-  if (panicMode) {
-    if (tier === 'auto' || tier === 'notify') {
-      tier = 'approve'
-    }
-  }
-
-  // 4. Check target-pattern overrides
+  // 3. Check target-pattern overrides
   if (policy.targetPatterns && Array.isArray(policy.targetPatterns)) {
     for (const pattern of policy.targetPatterns as Array<{ pattern: string; tier: string; operator?: string }>) {
       if (matchesPattern(parsed.target, pattern.pattern, pattern.operator ?? 'strict')) {
         tier = pattern.tier
         break
       }
+    }
+  }
+
+  // 4. Check panic mode AFTER overrides — panic must be the final transform.
+  // Overrides running before panic could re-elevate a tier back to 'auto'
+  // during an active emergency (B2 from Opus review 2026-06-03).
+  if (panicMode) {
+    if (tier === 'auto' || tier === 'notify') {
+      tier = 'approve'
     }
   }
 
