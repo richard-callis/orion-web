@@ -183,26 +183,38 @@ async function _compactRoom(roomId: string): Promise<void> {
     throw new Error('[compaction] failed to generate summary — no usable model found')
   }
 
-  // Persist as a compaction message and reset the room's token counter
-  const compactionMsg = await prisma.chatMessage.create({
-    data: {
-      roomId,
-      senderType: 'compaction',
-      content: summary,
-      attachments: { originalMessageCount: messages.length, compactedAt: new Date().toISOString() } as unknown as object,
-    },
-  })
+  // Cap summary length to prevent unbounded growth: summaries are prepended into
+  // each subsequent compaction transcript, so an uncapped summary can grow
+  // monotonically and eventually exceed the model's context window.
+  const MAX_SUMMARY_CHARS = 8000
+  const cappedSummary = summary.length > MAX_SUMMARY_CHARS
+    ? summary.slice(0, MAX_SUMMARY_CHARS) + '\n\n[Summary truncated — exceeded max length]'
+    : summary
 
-  await prisma.chatRoom.update({
-    where: { id: roomId },
-    data: { tokenCount: 0, updatedAt: new Date() },
-  })
+  // Persist as a compaction message and reset the room's token counter.
+  // Wrapped in a transaction so a partial failure (create succeeds but update fails)
+  // doesn't leave the room wedged with high tokenCount that re-triggers compaction
+  // on every subsequent turn without ever resetting.
+  const [compactionMsg] = await prisma.$transaction([
+    prisma.chatMessage.create({
+      data: {
+        roomId,
+        senderType: 'compaction',
+        content: cappedSummary,
+        attachments: { originalMessageCount: messages.length, compactedAt: new Date().toISOString() } as unknown as object,
+      },
+    }),
+    prisma.chatRoom.update({
+      where: { id: roomId },
+      data: { tokenCount: 0, updatedAt: new Date() },
+    }),
+  ])
 
   // Publish via Redis so the UI shows the compaction message live
   await publishChatMessage(roomId, {
     id:          compactionMsg.id,
     senderType:  'compaction',
-    content:     summary,
+    content:     cappedSummary,
     attachments: { originalMessageCount: messages.length, compactedAt: compactionMsg.createdAt instanceof Date ? compactionMsg.createdAt.toISOString() : compactionMsg.createdAt },
     sender:      { type: 'system', id: null, name: 'System' },
     createdAt:   compactionMsg.createdAt instanceof Date ? compactionMsg.createdAt.toISOString() : compactionMsg.createdAt,

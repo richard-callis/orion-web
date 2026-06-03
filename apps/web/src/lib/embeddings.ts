@@ -10,6 +10,7 @@
  */
 
 import { prisma } from './db'
+import { sanitizeContextNote } from './sanitize-context'
 
 // ── Providers ────────────────────────────────────────────────────────────────
 
@@ -292,12 +293,16 @@ export async function retrieveKnowledgeContext(
     const relevant = hits.filter(h => h.score >= minScore)
     if (relevant.length === 0) return ''
 
+    // Sanitize all retrieved notes before injecting into agent system prompts.
+    // Previously this path applied no sanitization — dream-extracted notes and
+    // any user-authored note could inject instructions via vector search.
     return relevant
       .map(h => {
         const typeTag = h.type !== 'note' ? ` [${h.type}]` : ''
-        const body = h.content.length > 1500
-          ? h.content.slice(0, 1500) + '\n[…]'
-          : h.content
+        const sanitizedContent = sanitizeContextNote(h.title, h.content)
+        const body = sanitizedContent.length > 1500
+          ? sanitizedContent.slice(0, 1500) + '\n[…]'
+          : sanitizedContent
         return `### ${h.title}${typeTag}\n${body}`
       })
       .join('\n\n')

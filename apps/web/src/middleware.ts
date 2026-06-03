@@ -90,7 +90,7 @@ const PUBLIC_PATHS = [
   '/api/setup',
   '/api/auth',
   '/api/health',
-  '/api/notes/embed',       // embed rebuild — bypassed via x-embed-token header
+  '/api/notes/embed/rebuild', // embed rebuild — bypassed via x-embed-token header; scoped to exact path to avoid auto-exempting future /api/notes/embed* routes
   '/api/environments/join', // gateway registration — no session, token IS the auth
   '/api/webhooks',          // git provider webhooks — HMAC signature is the auth
   '/api/monitoring/security/webhooks', // security source webhooks (Falco, CrowdSec, Wazuh) — HMAC is the auth

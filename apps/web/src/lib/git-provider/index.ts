@@ -9,7 +9,7 @@
  */
 
 import { prisma } from '@/lib/db'
-import { decryptJson } from '@/lib/encryption'
+import { decryptJson, decryptJsonStrict } from '@/lib/encryption'
 import { GiteaGitProvider } from './gitea-provider'
 import { GitHubGitProvider } from './github-provider'
 import { GitLabGitProvider } from './gitlab-provider'
@@ -170,7 +170,7 @@ export async function getGitProvider(): Promise<GitProvider> {
   })
 
   if (setting) {
-    _cached = createProvider(decryptJson<GitProviderConfig>(setting.value))
+    _cached = createProvider(decryptJsonStrict<GitProviderConfig>(setting.value, 'git.provider.config'))
     return _cached
   }
 
@@ -197,5 +197,5 @@ export async function getGitProviderConfig(): Promise<GitProviderConfig | null> 
     where: { key: 'git.provider.config' },
   })
   if (!setting) return null
-  return decryptJson<GitProviderConfig>(setting.value)
+  return decryptJsonStrict<GitProviderConfig>(setting.value, 'git.provider.config')
 }
