@@ -20,9 +20,12 @@
 import { getGitProvider, type GitProvider } from './git-provider'
 import {
   classifyAndEvaluate,
+  classifyManifest,
+  evaluatePolicy,
   type PolicyConfig,
   type ChangeClassification,
 } from './gitops-policy'
+import path from 'node:path'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -82,11 +85,42 @@ export async function proposeChangeWithProvider(
   provider: GitProvider,
   opts: GitOpsChangeOptions,
 ): Promise<GitOpsChangeResult> {
-  const classification = classifyAndEvaluate(
+  // B2: Reject path traversal before any git operations. Normalise each path
+  // and refuse changes that contain '..' or would escape the repo root.
+  for (const change of opts.changes) {
+    const normalized = path.normalize(change.path)
+    if (normalized.startsWith('..') || normalized.includes('/..') || path.isAbsolute(normalized)) {
+      throw new Error(`Rejected: path '${change.path}' escapes repo root after normalisation ('${normalized}')`)
+    }
+    // Block writes to sensitive infra directories regardless of repoPath
+    const sensitive = ['.github/', '.gitlab/', 'argocd/', '.git/']
+    if (sensitive.some(s => normalized.startsWith(s))) {
+      throw new Error(`Rejected: path '${change.path}' targets sensitive directory. Direct agent writes to CI/CD and ArgoCD paths are not permitted.`)
+    }
+  }
+
+  // B1: Classify from BOTH the agent-supplied description AND the actual manifest
+  // content, and take the most restrictive result. Classifying only from the
+  // description allows an agent to auto-merge a ClusterRoleBinding by mislabelling
+  // it as "scale replicas".
+  const descClassification = classifyAndEvaluate(
     opts.operationDescription,
     opts.policy,
     'description',
   )
+  let classification = descClassification
+
+  for (const change of opts.changes) {
+    if (change.content) {
+      const contentOp = classifyManifest(change.content)
+      const contentClassification = evaluatePolicy(contentOp, opts.policy)
+      // Take the more restrictive: escalate > review > auto
+      const rank = { auto: 0, review: 1, escalate: 2 }
+      if ((rank[contentClassification.decision] ?? 0) > (rank[classification.decision] ?? 0)) {
+        classification = contentClassification
+      }
+    }
+  }
 
   // Unique branch name: orion/auto/scale-nginx-1713000000000
   const slug = opts.title
