@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSSEStream } from '@/lib/sse'
 import { coreApi } from '@/lib/k8s'
-import { getCurrentUser } from '@/lib/auth'
+import { requireAdmin } from '@/lib/auth'
 import { redactSensitive } from '@/lib/redact'
 
 export const dynamic = 'force-dynamic'
@@ -11,8 +11,17 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: { ns: string; pod: string } }
 ) {
-  const user = await getCurrentUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  // Validate namespace and pod name as DNS-1123 labels to prevent
+  // path-based enumeration of the API server
+  const DNS_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
+  if (!DNS_LABEL.test(params.ns) || !DNS_LABEL.test(params.pod)) {
+    return NextResponse.json({ error: 'Invalid namespace or pod name' }, { status: 400 })
+  }
+
   return createSSEStream((send, close) => {
     ;(async () => {
       try {

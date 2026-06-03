@@ -809,12 +809,18 @@ async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Pr
     // any path that still escapes the watched directory (e.g. absolute paths, ../traversal)
     // Live ArgoCD path takes precedence over DB repoPath.
     const repoPath = liveWatchedPath ?? ((env as Record<string, unknown>).repoPath as string | undefined)
-    const normalizedChanges = repoPath
-      ? changes.map(c => ({
-          ...c,
-          path: c.path.startsWith(`${repoPath}/`) ? c.path : `${repoPath}/${c.path}`,
-        }))
-      : changes
+
+    // Fail closed when repoPath cannot be determined: the path escape check only
+    // runs inside `if (repoPath)`, so without it all paths are allowed through
+    // including .github/workflows/, ArgoCD root, and other sensitive directories.
+    if (!repoPath) {
+      return `Error: cannot determine the watched repo path for this environment (ArgoCD unreachable and no repoPath in environment config). Configure repoPath in environment settings or ensure ArgoCD is accessible before proposing changes.`
+    }
+
+    const normalizedChanges = changes.map(c => ({
+      ...c,
+      path: c.path.startsWith(`${repoPath}/`) ? c.path : `${repoPath}/${c.path}`,
+    }))
 
     if (repoPath) {
       const escaping = normalizedChanges.filter(c => !c.path.startsWith(`${repoPath}/`))
@@ -1816,7 +1822,7 @@ registerTool({
 
 registerTool({
   name: 'orion_patch_environment',
-  description: 'Update fields on an ORION environment (e.g. save kubeconfig, update gatewayUrl).',
+  description: 'Update fields on an ORION environment (e.g. save kubeconfig, update gatewayUrl). Requires a ToolExecutionGrant because kubeconfig writes grant cluster admin to whoever controls the kubeconfig.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1825,7 +1831,10 @@ registerTool({
     },
     required: ['environment_id', 'body'],
   },
-  tier: 'write',
+  // Upgraded from 'write' to 'destructive': kubeconfig is in the allowed fields
+  // and writing cluster credentials is equivalent to gaining cluster admin. Any
+  // agent calling this must have a one-time ToolExecutionGrant from an operator.
+  tier: 'destructive',
   parallelSafe: false,
   availableIn: 'chat',
   category: 'environment',
@@ -1927,7 +1936,7 @@ registerTool({
       if (!env.kubeconfig) return 'Error: no kubeconfig stored for this environment. Patch it first using orion_patch_environment.'
       if (env.status === 'connected') return `Environment "${env.name}" is already connected (status: connected). Bootstrapping again would re-deploy the gateway unnecessarily. To force re-bootstrap, first set status to 'pending' via orion_patch_environment.`
 
-      // Check for an already-running or queued bootstrap job
+      // Check for an already-running or queued bootstrap job (idempotency guard)
       const existingJob = await ctx.prisma.backgroundJob.findFirst({
         where: {
           type: 'cluster-bootstrap',
@@ -1940,12 +1949,18 @@ registerTool({
         return `Error: a bootstrap job is already ${existingJob.status} for environment "${env.name}" (job: ${existingJob.id}). Wait for it to complete before starting another.`
       }
 
+      // x-internal-call header was never checked in middleware — the bootstrap
+      // self-call always failed because /api/environments is a BEARER_PATH that
+      // requires Authorization: Bearer. Use ORION_GATEWAY_TOKEN or ORION_MCP_TOKEN.
       const serviceToken = process.env.ORION_GATEWAY_TOKEN ?? process.env.ORION_MCP_TOKEN ?? ''
       if (!serviceToken) return 'Error: no service token configured (ORION_GATEWAY_TOKEN or ORION_MCP_TOKEN required)'
       const baseUrl = process.env.ORION_CALLBACK_URL ?? `http://localhost:${process.env.PORT ?? 3000}`
       const res = await fetch(`${baseUrl}/api/environments/${env.id}/bootstrap`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceToken}` },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${serviceToken}`,
+        },
       })
       if (!res.ok) return `Bootstrap request failed: HTTP ${res.status}`
 

@@ -133,13 +133,16 @@ export async function subscribeToChatRoom(
     }
   }
 
-  if (!redisClient) {
+  // Guard checks redisClient availability but duplicate() calls redisPubClient —
+  // these are separate variables. A publish error can null redisPubClient while
+  // redisClient stays set, causing redisPubClient!.duplicate() to throw.
+  if (!redisClient || !redisPubClient) {
     return async () => {}
   }
 
   try {
     const channel = `chat:room:${roomId}`
-    const subscriber = redisPubClient!.duplicate()
+    const subscriber = redisPubClient.duplicate()
 
     subscriber.on('message', (_channel: string, message: string) => {
       try {

@@ -10,9 +10,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { authOptions, requireAdmin } from '@/lib/auth'
 import { createApiKey, listUserKeys, verifyApiKey } from '@/lib/api-key'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
+import { prisma } from '@/lib/db'
+
+const MAX_KEYS_PER_USER = 20
 
 type User = { id: string }
 
@@ -61,14 +64,28 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST /api/api-keys — create a new API key
+// POST /api/api-keys — create a new API key (admin only)
 export async function POST(req: NextRequest) {
   try {
-    const result = await resolveUser(req)
-    if (result.error) {
-      return NextResponse.json({ error: result.error }, { status: result.status! })
+    // MAJOR fix: the docstring says "Only admins can create API keys" but resolveUser()
+    // accepted any session (including readonly role). Changed to requireAdmin().
+    let adminUser: { id: string }
+    try { adminUser = await requireAdmin() } catch {
+      return NextResponse.json({ error: 'Admin privileges required to create API keys' }, { status: 401 })
     }
+
+    // Cap keys per user to prevent key-spray
+    const existingCount = await prisma.apiKey.count({ where: { userId: adminUser.id, active: true } })
+    if (existingCount >= MAX_KEYS_PER_USER) {
+      return NextResponse.json(
+        { error: `Maximum of ${MAX_KEYS_PER_USER} active API keys per user. Revoke unused keys first.` },
+        { status: 429 }
+      )
+    }
+
     const body = await req.json()
+    // Reuse adminUser.id instead of the generic resolveUser result
+    const resolvedUserId = adminUser.id
 
     // Validate API key creation input
     const parsed = z.object({
@@ -79,11 +96,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
     }
 
-    const apiKeyResult = await createApiKey(result.user!.id, parsed.data.name, parsed.data.expiresInDays)
+    const apiKeyResult = await createApiKey(resolvedUserId, parsed.data.name, parsed.data.expiresInDays)
 
     // SOC2: [M-005] Audit API key creation (non-blocking)
     logAudit({
-      userId: result.user!.id,
+      userId: resolvedUserId,
       action: 'api_key_create',
       target: `api_key:${apiKeyResult.info.id}`,
       detail: { name: apiKeyResult.info.name, expiresInDays: parsed.data.expiresInDays },

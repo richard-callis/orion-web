@@ -8,14 +8,20 @@
  * Both methods require: Authorization: Bearer <ORION_UNSEALER_TOKEN>
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeEqual } from 'crypto'
 import { prisma } from '@/lib/db'
-import { encrypt, encryptJson, decryptJson } from '@/lib/encryption'
+import { encrypt, encryptJson, decryptJsonStrict } from '@/lib/encryption'
 
 const UNSEALER_TOKEN = process.env.ORION_UNSEALER_TOKEN
 
 function authorized(req: NextRequest): boolean {
   if (!UNSEALER_TOKEN) return false
-  return req.headers.get('authorization') === `Bearer ${UNSEALER_TOKEN}`
+  const provided = req.headers.get('authorization') ?? ''
+  const expected = `Bearer ${UNSEALER_TOKEN}`
+  // Constant-time comparison — this guards Vault unseal keys, the most
+  // sensitive secret in the system. Plain === leaks token length as a timing oracle.
+  if (provided.length !== expected.length) return false
+  return timingSafeEqual(Buffer.from(provided), Buffer.from(expected))
 }
 
 export async function GET(req: NextRequest) {
@@ -34,7 +40,7 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  const keys = decryptJson<string[]>(setting.value)
+  const keys = decryptJsonStrict<string[]>(setting.value, "vault.unsealKeys")
   return NextResponse.json({ keys })
 }
 

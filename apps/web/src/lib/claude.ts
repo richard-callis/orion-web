@@ -1020,11 +1020,14 @@ async function handleOrionBootstrapEnvironment(argsRaw: string): Promise<string>
     if (!env) return `Error: environment "${environment_id}" not found`
     if (!env.kubeconfig) return 'Error: no kubeconfig stored for this environment. Patch it first using orion_patch_environment.'
 
-    // Call the bootstrap endpoint internally
+    // Call the bootstrap endpoint with the service token — x-internal-call is
+    // never validated by middleware and the endpoint requires Bearer auth.
+    const serviceToken = process.env.ORION_GATEWAY_TOKEN ?? process.env.ORION_MCP_TOKEN ?? ''
+    if (!serviceToken) return 'Error: no service token configured (ORION_GATEWAY_TOKEN or ORION_MCP_TOKEN required)'
     const baseUrl = process.env.ORION_CALLBACK_URL ?? `http://localhost:${process.env.PORT ?? 3000}`
     const res = await fetch(`${baseUrl}/api/environments/${environment_id}/bootstrap`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-internal-call': '1' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceToken}` },
     })
     if (!res.ok) return `Bootstrap request failed: HTTP ${res.status}`
 
@@ -1491,6 +1494,19 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
 
         const toolStart = Date.now()
         // ── Management tools — handled server-side by ORION ──────────────────
+        // Gate management tools through the same permission check as gateway tools.
+        // Previously these ran with NO checkToolPermission call, allowing any
+        // authenticated user to invoke orion_patch_environment (overwrites kubeconfig/
+        // gatewayUrl), orion_bootstrap_environment, and gitops_propose (auto-merge PRs).
+        {
+          const mgmtArgs = JSON.parse(tc.argsRaw || '{}') as Record<string, unknown>
+          const mgmtPerm = await checkToolPermission(tc.name, mgmtArgs, environmentId ?? '', conversationId, userId)
+          if (!mgmtPerm.allowed) {
+            result = `Permission denied: ${mgmtPerm.reason}`
+            messages.push({ role: 'tool' as const, content: result, tool_call_id: tc.id })
+            continue
+          }
+        }
         if (tc.name === 'propose_tool') {
           result = await handleProposeTool(tc.argsRaw, environmentId, conversationId)
         } else if (tc.name === 'orion_get_environment') {

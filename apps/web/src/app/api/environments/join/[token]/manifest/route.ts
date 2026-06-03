@@ -4,6 +4,7 @@
  * The user pipes this directly to kubectl apply.
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { createHash } from 'crypto'
 import { prisma } from '@/lib/db'
 
 // SystemSetting.value is a Json column — narrow to string before using
@@ -12,7 +13,15 @@ function settingStr(setting: { value: unknown } | null, fallback: string): strin
 }
 
 export async function GET(req: NextRequest, { params }: { params: { token: string } }) {
+  // Dual lookup: hash-first (new tokens stored as SHA-256), plaintext fallback
+  // for tokens created before hashing was introduced. The raw token from the URL
+  // is still embedded in the returned manifest (gateway needs it); hashing only
+  // protects the at-rest DB copy.
+  const tokenHash = createHash('sha256').update(params.token).digest('hex')
   const record = await prisma.environmentJoinToken.findUnique({
+    where: { token: tokenHash },
+    include: { environment: true },
+  }) ?? await prisma.environmentJoinToken.findUnique({
     where: { token: params.token },
     include: { environment: true },
   })
