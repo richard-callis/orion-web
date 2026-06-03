@@ -116,9 +116,14 @@ export async function bootstrapArgoCD(
       const repoUrl = `${gitConfig.url}/${gitConfig.org}`
       const username = gitConfig.type === 'github' ? 'x-access-token' : 'orion'
 
-      const safeRepoUrl  = repoUrl.replace(/[\r\n]/g, '')
-      const safeToken    = gitConfig.token.replace(/[\r\n]/g, '')
-      const safeUsername = username.replace(/[\r\n]/g, '')
+      // B1 fix: YAML injection — the previous code only stripped \r\n but
+      // other YAML metacharacters (colons, leading spaces, anchors, etc.) in
+      // repoUrl/token/username can corrupt the document or inject extra fields.
+      // JSON-encode each value: YAML is a JSON superset so JSON strings are valid
+      // YAML scalars and escape all special characters.
+      const yamlRepoUrl  = JSON.stringify(repoUrl)
+      const yamlToken    = JSON.stringify(gitConfig.token)
+      const yamlUsername = JSON.stringify(username)
 
       const secretYaml = `apiVersion: v1
 kind: Secret
@@ -129,9 +134,9 @@ metadata:
     argocd.argoproj.io/secret-type: repository
 stringData:
   type: git
-  url: ${safeRepoUrl}
-  password: ${safeToken}
-  username: ${safeUsername}`
+  url: ${yamlRepoUrl}
+  password: ${yamlToken}
+  username: ${yamlUsername}`
 
       // Write to a temp file and apply — avoids stdin piping issues with exec
       const tmpDir = mkdtempSync(tmpdir() + '/argocd-bootstrap-')
