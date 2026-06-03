@@ -14,7 +14,7 @@ import { z } from 'zod'
 // Canonical shape for all ingestion sources (webhooks + pollers).
 
 export const normalizedEventSchema = z.object({
-  id:          z.string().uuid().optional(),
+  id:          z.string().optional(), // source systems use non-UUID IDs; DB assigns UUID on insert
   environmentId: z.string().nullable().optional(),
   type:        z.string(),           // e.g. 'crowdsec_block', 'wazuh_alert', 'anomaly', 'source_stale'
   source:      z.string(),           // e.g. 'crowdsec', 'wazuh', 'elk', 'ntopng'
@@ -38,7 +38,7 @@ export const incidentDraftSchema = z.object({
   rootCauseSummary: z.string().nullable().optional(),
   attackerKey:      z.string().nullable().optional(),
   hostKey:          z.string().nullable().optional(),
-  eventIds:         z.array(z.string().uuid()), // SecurityEvent IDs that triggered this
+  eventIds:         z.array(z.string()), // SecurityEvent IDs; source systems may use non-UUID PKs
   ruleName:         z.string(),                  // CorrelationRule.name that matched
   environmentId:    z.string().nullable().optional(),
 })

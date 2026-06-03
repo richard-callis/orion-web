@@ -205,7 +205,7 @@ export async function POST(req: NextRequest) {
         dedupKey: normalized.dedupKey,
         firstSeen: normalized.timestamp ?? now,
         lastSeen: normalized.timestamp ?? now,
-        createdAt: normalized.timestamp ?? now,
+        // createdAt intentionally omitted — let DB @default(now()) set ingestion time.
       },
     })
     inserted = true

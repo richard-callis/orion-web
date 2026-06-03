@@ -42,8 +42,10 @@ export function rulesForEnvironment<R extends { environmentId: string | null }>(
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-/** How far back to look for uncorrelated events (seconds). */
-const LOOKBACK_WINDOW_SEC = 60
+// Lookback must cover the longest rule window (brute_force = 300s) plus a buffer.
+// Previously 60s — shorter than the rule windows, so threshold rules could never
+// accumulate enough events. 600s (10 min) covers all default rules with headroom.
+const LOOKBACK_WINDOW_SEC = 600
 
 /** Max incidents to create per run (guard against spam). */
 const MAX_INCIDENTS_PER_RUN = 10
@@ -276,6 +278,22 @@ async function correlateEnvironment(
   let incidentsCreated = 0
   for (const draft of cappedDrafts) {
     try {
+      // DB-based dedup: skip if an open incident for the same attacker + rule
+      // already exists within the rule's window. The in-run dedup (step 4) guards
+      // within a single run; this guards across runs and survives worker restarts.
+      if (draft.attackerKey && draft.attackerKey !== 'unknown') {
+        const windowMs = 5 * 60 * 1000 // 5 min default — conservative enough for any default rule
+        const existing = await prisma.incident.findFirst({
+          where: {
+            attackerKey: draft.attackerKey,
+            status: { in: ['open', 'triaged'] },
+            openedAt: { gte: new Date(Date.now() - windowMs) },
+          },
+          select: { id: true },
+        })
+        if (existing) continue
+      }
+
       const incidentEnvId = isGlobal ? null : draft.environmentId
       const incident = await prisma.incident.create({
         data: {

@@ -121,7 +121,8 @@ export async function POST(req: NextRequest) {
       dedupKey: parsed.dedupKey,
       firstSeen: parsed.timestamp,
       lastSeen: parsed.timestamp,
-      createdAt: parsed.timestamp,
+      // createdAt intentionally omitted — let DB @default(now()) set ingestion time
+      // so the correlator's window filter works correctly. firstSeen holds the forensic source timestamp.
     },
   })
 
