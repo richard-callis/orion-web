@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
 /** GET — Load security source configuration from SecurityConfig table */
 export async function GET() {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const envId = process.env.ENVIRONMENT_ID || ''
 
   const configs = await prisma.securityConfig.findMany({
@@ -22,6 +25,8 @@ export async function GET() {
 
 /** PUT — Save security source configuration to SecurityConfig table */
 export async function PUT(request: Request) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const envId = process.env.ENVIRONMENT_ID || ''
   const config = await request.json() as Record<string, string>
 

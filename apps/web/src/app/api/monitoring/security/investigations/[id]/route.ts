@@ -7,6 +7,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { z } from 'zod'
 import { recordAudit } from '../_utils'
@@ -44,6 +45,8 @@ function applyWardenConstraints(
 }
 
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const id = (await params).id
 
   const investigation = await prisma.investigation.findUnique({
@@ -73,6 +76,8 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 }
 
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const id = (await params).id
   const raw = await req.json()
   const parsed = updateSchema.safeParse(raw)
@@ -120,6 +125,8 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 }
 
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const id = (await params).id
 
   const existing = await prisma.investigation.findUnique({ where: { id } })

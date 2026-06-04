@@ -12,12 +12,15 @@
  */
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { computeSourceStatus } from '@/lib/security/source-health-utils'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const now = Date.now()
 
   // Global sources (Phase 1)

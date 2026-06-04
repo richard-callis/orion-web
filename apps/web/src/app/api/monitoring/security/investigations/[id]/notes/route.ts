@@ -5,6 +5,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { z } from 'zod'
 import { recordAudit, updateSearchVector } from '../../_utils'
@@ -19,6 +20,8 @@ const createSchema = z.object({
 })
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const id = (await params).id
   const body = createSchema.safeParse(await req.json())
   if (!body.success) {

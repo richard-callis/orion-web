@@ -8,6 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { decide, execute, gatewayExecutor } from '@/lib/security/action-service'
 import { type ActionRequest } from '@/lib/security/types'
@@ -16,6 +17,8 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 export async function POST(req: NextRequest) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   try {
     const body = await req.json()
     const request = body as ActionRequest
