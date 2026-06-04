@@ -49,9 +49,18 @@ export async function PUT(
   if (!existing) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
+  // BLOCKER fix: `{ ...body, isForked: true }` spread raw body into Prisma update,
+  // allowing caller to overwrite environmentId (move instance to another env),
+  // sourceNovaId, category, isInstalled, etc. Whitelist allowed fields only.
+  const updateData: Record<string, unknown> = { isForked: true }
+  if (body.spec !== undefined)        updateData.spec = typeof body.spec === 'string' ? body.spec : JSON.stringify(body.spec)
+  if (body.minimumTier !== undefined) updateData.minimumTier = String(body.minimumTier)
+  if (body.category !== undefined && ['skill', 'hook'].includes(body.category)) updateData.category = body.category
+  if (body.isInstalled !== undefined) updateData.isInstalled = Boolean(body.isInstalled)
+
   const entry = await prisma.nebulaInstance.update({
     where: { id: existing.id },
-    data: { ...body, isForked: true },
+    data: updateData,
   })
   return NextResponse.json(entry)
 }
