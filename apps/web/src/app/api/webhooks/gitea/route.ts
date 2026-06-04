@@ -17,6 +17,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getGitProvider, getGitProviderConfig } from '@/lib/git-provider'
 
+// NOTE: No replay protection — a captured valid signed webhook can be re-delivered within
+// the signature window. Impact is limited to re-applying a PR status transition (closed/merged).
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
 
