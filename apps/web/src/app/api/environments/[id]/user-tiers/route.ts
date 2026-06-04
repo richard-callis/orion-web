@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
+
   const tiers = await prisma.environmentUserTier.findMany({
     where: { environmentId: params.id },
     include: { user: { select: { id: true, username: true, email: true, name: true, role: true } } },
@@ -10,6 +13,8 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
 }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
+
   const { userId, tier } = await req.json()
   if (!userId) return NextResponse.json({ error: 'userId required' }, { status: 400 })
   const valid = ['viewer', 'operator', 'admin']
@@ -25,6 +30,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
+
   const userId = req.nextUrl.searchParams.get('userId')
   if (!userId) return NextResponse.json({ error: 'userId required' }, { status: 400 })
   await prisma.environmentUserTier.deleteMany({ where: { userId, environmentId: params.id } })

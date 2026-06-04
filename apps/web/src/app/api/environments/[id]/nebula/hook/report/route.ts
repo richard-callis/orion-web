@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireServiceAuth } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
 /** POST /api/environments/[id]/nebula/hook/report — Report hook execution result */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  await requireServiceAuth(req).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
+
   const body = await req.json()
   const { nebulaId, triggerEvent, triggerData, actionType, status, output, startedAt, durationMs } = body
 

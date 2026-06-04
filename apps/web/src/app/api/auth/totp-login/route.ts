@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { compare } from 'bcryptjs'
-import { verifyTOTP, verifyRecoveryCode } from '@/lib/totp'
+import { verifyTOTP, verifyRecoveryCode, consumeRecoveryCode } from '@/lib/totp'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, TOTPLoginSchema } from '@/lib/validate'
 
@@ -67,6 +67,13 @@ export async function POST(req: NextRequest) {
       }).catch(() => {})
       return NextResponse.json({ error: 'Invalid recovery code' }, { status: 401 })
     }
+
+    // BLOCKER fix: consume recovery code (make it single-use)
+    const updatedCodes = await consumeRecoveryCode(data.code, hashedCodes)
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { totpRecoveryCodes: JSON.stringify(updatedCodes) },
+    })
 
     // Update last seen
     await prisma.user.update({
