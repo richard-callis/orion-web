@@ -42,6 +42,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
   const admin = await requireAdmin()
+
+  // BLOCKER fix: prevent deleting the last admin or yourself, causing lockout.
+  if (params.id === admin.id) {
+    return NextResponse.json({ error: 'Cannot delete your own account' }, { status: 400 })
+  }
+  const adminCount = await prisma.user.count({ where: { role: 'admin', active: true } })
+  const targetUser = await prisma.user.findUnique({ where: { id: params.id }, select: { role: true, username: true } })
+  if (adminCount <= 1 && targetUser?.role === 'admin') {
+    return NextResponse.json({ error: 'Cannot delete the last admin account — this would lock out all admin access' }, { status: 400 })
+  }
   const user = await prisma.user.findUnique({
     where: { id: params.id },
     select: { username: true },
