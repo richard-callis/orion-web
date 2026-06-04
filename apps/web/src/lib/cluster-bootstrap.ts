@@ -1160,12 +1160,24 @@ async function bootstrapSwarmEnvironment(
 
 // ── Main bootstrap (type-dispatched) ────────────────────────────────────────────
 
+// Module-level in-flight set: prevents concurrent bootstraps for the same environment
+const bootstrapInFlight = new Set<string>()
+
 export async function bootstrapCluster(
   environmentId: string,
   emit: (event: BootstrapEvent) => void,
 ): Promise<void> {
+  // MAJOR fix: no concurrency guard — concurrent POST /bootstrap calls for the same
+  // environment raced on gateway creation, ArgoCD app setup, and Vault AppRole minting,
+  // potentially producing duplicate infra. Use a module-level set as a lightweight lock.
+  if (bootstrapInFlight.has(environmentId)) {
+    emit({ type: 'error', message: 'Bootstrap already in progress for this environment' })
+    throw new Error('Bootstrap already in progress')
+  }
+  bootstrapInFlight.add(environmentId)
+
   const env = await prisma.environment.findUnique({ where: { id: environmentId } })
-  if (!env) throw new Error('Environment not found')
+  if (!env) { bootstrapInFlight.delete(environmentId); throw new Error('Environment not found') }
   console.log(`[bootstrap] Starting for environment ${environmentId} (${env.name}, type: ${env.type})`)
 
   try {
