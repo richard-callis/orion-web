@@ -20,7 +20,21 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const caller = await requireServiceAuth(req)
 
-  const body = await req.json()
+  // M4 fix: previously no validation — malformed JSON threw 500; content/eventType were
+  // unbounded strings written directly to the DB.
+  let body: Record<string, unknown>
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+  if (body.content !== undefined && typeof body.content === 'string' && body.content.length > 10_000) {
+    return NextResponse.json({ error: 'content too long (max 10000 chars)' }, { status: 400 })
+  }
+  const VALID_EVENT_TYPES = new Set(['comment', 'status_change', 'note', 'tool_call', 'tool_result', 'system'])
+  if (body.eventType !== undefined && !VALID_EVENT_TYPES.has(String(body.eventType))) {
+    return NextResponse.json({ error: `Invalid eventType. Must be one of: ${[...VALID_EVENT_TYPES].join(', ')}` }, { status: 400 })
+  }
 
   // Validate status transitions — prevents bypassing Veritas by driving tasks
   // directly to 'done' via this route without going through pending_validation.
@@ -45,8 +59,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const event = await prisma.taskEvent.create({
     data: {
       taskId:    params.id,
-      eventType: body.eventType ?? 'comment',
-      content:   body.content ?? null,
+      eventType: (body.eventType as string) ?? 'comment',
+      content:   (body.content as string) ?? null,
       agentId:   typeof (caller as any)?.agentId === 'string' ? (caller as any).agentId : null,
     },
   })
