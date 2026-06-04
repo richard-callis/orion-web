@@ -1,9 +1,12 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
 import { createSSEStream } from '@/lib/sse'
+import { requireServiceAuth } from '@/lib/auth'
 
 const POLL_INTERVAL_MS = 2_000
-const TERMINAL_STATES  = new Set(['completed', 'failed', 'cancelled'])
+// M3 fix: 'done' is the actual terminal status in the DB; 'completed'/'cancelled' were
+// wrong values that caused the stream to never close for finished tasks (resource leak).
+const TERMINAL_STATES  = new Set(['done', 'failed', 'cancelled', 'completed'])
 
 /**
  * GET /api/tasks/:id/stream
@@ -22,6 +25,9 @@ export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  // B4 fix: route had no auth — any caller could stream any task's events
+  await requireServiceAuth(req).catch(() => { throw Object.assign(new Error('Unauthorized'), { status: 401 }) })
+
   const taskId = params.id
   const afterParam = req.nextUrl.searchParams.get('after') ?? undefined
 

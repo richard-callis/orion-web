@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireServiceAuth } from '@/lib/auth'
 
 export async function handlePlanPatch(
   model: 'task' | 'epic' | 'feature',
   id: string,
   req: NextRequest,
 ): Promise<NextResponse> {
+  // M5 fix: authenticate the caller and use their real id for the audit log.
+  // Previously the route trusted x-user-id from the request header — forgeable.
+  const caller = await requireServiceAuth(req).catch(() => null)
+  if (!caller && !req.headers.get('authorization')?.startsWith('Bearer ')) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const auditUserId = caller?.id ?? 'gateway'
+
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
 
   const existing = await (prisma[model] as any).findUnique({ where: { id } })
@@ -22,7 +31,7 @@ export async function handlePlanPatch(
   if (body.plan !== undefined) {
     await prisma.auditLog.create({
       data: {
-        userId: req.headers.get('x-user-id') ?? 'system',
+        userId: auditUserId,
         action: 'plan.updated',
         target: `${model}:${id}`,
         detail: { field: 'plan', entityType: model, entityId: id },
