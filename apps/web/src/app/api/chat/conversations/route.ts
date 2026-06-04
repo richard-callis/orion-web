@@ -1,11 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import type { Prisma } from '@prisma/client'
+import { getCallerId } from '@/lib/conversation-owner'
 import { CreateConversationSchema } from '@/lib/validate'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // B1 fix: scope list to conversations owned by the caller
+  const callerId = await getCallerId(req)
+  if (!callerId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const convos = await prisma.conversation.findMany({
-    where: { archivedAt: null },
+    where: {
+      archivedAt: null,
+      // Filter by ownerId stored in metadata (added at creation time).
+      // Legacy rows without ownerId won't appear — acceptable; admins can
+      // access those via direct id lookup.
+      metadata: { path: ['ownerId'], equals: callerId },
+    },
     orderBy: { updatedAt: 'desc' },
     take: 50,
     include: { _count: { select: { messages: true } } },
@@ -14,7 +24,10 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  // SOC2: Input validation — validate and sanitize all request body fields
+  // Stamp ownerId at creation so all subsequent reads can be scoped
+  const callerId = await getCallerId(req)
+  if (!callerId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const rawBody = await req.json().catch(() => ({}))
   const body = typeof rawBody === 'object' && rawBody !== null ? rawBody : {}
 
@@ -26,7 +39,9 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const meta: Record<string, unknown> = {}
+  const meta: Record<string, unknown> = {
+    ownerId: callerId,  // B1 fix: stamp owner for future scoping
+  }
   if (parsed.data.initialContext) meta.initialContext = parsed.data.initialContext
   if (parsed.data.planTarget)     meta.planTarget     = parsed.data.planTarget
   if (parsed.data.planModel)      meta.planModel      = parsed.data.planModel
@@ -38,7 +53,7 @@ export async function POST(req: NextRequest) {
   const convo = await prisma.conversation.create({
     data: {
       title: parsed.data.title ? parsed.data.title.slice(0, 200) : null,
-      metadata: Object.keys(meta).length ? (meta as any) : undefined,
+      metadata: meta as any,
     },
     include: { _count: { select: { messages: true } } },
   })
