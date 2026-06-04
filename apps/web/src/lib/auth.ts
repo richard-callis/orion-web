@@ -100,6 +100,11 @@ export const authOptions: NextAuthOptions = {
             if (!code || !(await verifyRecoveryCode(code, hashedCodes))) {
               return { error: 'Invalid recovery code' }
             }
+            // BLOCKER fix: consume the recovery code (single-use)
+            const updatedCodes = await consumeRecoveryCode(code, hashedCodes)
+            if (updatedCodes) {
+              await prisma.user.update({ where: { id: user.id }, data: { totpRecoveryCodes: JSON.stringify(updatedCodes) } })
+            }
           } else {
             // TOTP code login
             const code = credentials.totpCode as string
