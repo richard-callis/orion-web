@@ -39,19 +39,20 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
   // MAJOR fix: raw body was passed directly to Prisma (mass assignment).
   // Whitelist allowed fields to prevent setting arbitrary columns.
-  const name    = String(body.name ?? '').trim()
-  const category = body.category === 'skill' || body.category === 'hook' ? body.category : 'skill'
-  const spec    = typeof body.spec === 'string' ? body.spec : JSON.stringify(body.spec ?? {})
-  const displayName = body.displayName ? String(body.displayName).slice(0, 200) : name
-  const description = body.description ? String(body.description).slice(0, 2000) : undefined
-  const minimumTier = body.minimumTier ? String(body.minimumTier) : undefined
+  const name        = String(body.name ?? '').trim()
+  const category    = body.category === 'skill' || body.category === 'hook' ? body.category : 'skill'
+  const spec        = typeof body.spec === 'string' ? body.spec : JSON.stringify(body.spec ?? {})
+  const title       = body.title ? String(body.title).slice(0, 200) : name
+  const description = body.description ? String(body.description).slice(0, 2000) : ''
+  const version     = body.version ? String(body.version).slice(0, 50) : '1.0'
+  const metadata    = body.metadata ? (typeof body.metadata === 'string' ? body.metadata : JSON.stringify(body.metadata)) : undefined
 
   if (!name) return NextResponse.json({ error: 'name is required' }, { status: 400 })
 
   const nova = await prisma.novaDefinition.upsert({
     where: { name },
-    update: { category, spec, displayName, description, minimumTier },
-    create: { name, category, spec, displayName, description, minimumTier },
+    update: { category, spec, title, description, version, metadata },
+    create: { name, category, spec, title, description, version, metadata },
   })
   return NextResponse.json(nova)
 }
