@@ -1,6 +1,6 @@
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { getToken } from 'next-auth/jwt'
+import { assertConversationOwner } from '@/lib/conversation-owner'
 
 /**
  * GET /api/chat/conversations/[id]/memory
@@ -10,17 +10,9 @@ export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) {
-    return new Response('Unauthorized', { status: 401 })
-  }
-
-  const conversation = await prisma.conversation.findUnique({
-    where: { id: params.id },
-  })
-  if (!conversation) {
-    return new Response('Conversation not found', { status: 404 })
-  }
+  // B2 fix: any user could inject/read memories in any conversation (no ownership check)
+  const check = await assertConversationOwner(req, params.id)
+  if (check instanceof NextResponse) return check
 
   const memories = await prisma.memory.findMany({
     where: { conversationId: params.id },
@@ -38,17 +30,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) {
-    return new Response('Unauthorized', { status: 401 })
-  }
-
-  const conversation = await prisma.conversation.findUnique({
-    where: { id: params.id },
-  })
-  if (!conversation) {
-    return new Response('Conversation not found', { status: 404 })
-  }
+  // B2 fix: any user could inject/read memories in any conversation (no ownership check)
+  const check = await assertConversationOwner(req, params.id)
+  if (check instanceof NextResponse) return check
 
   const { key, value, context } = await req.json()
 
@@ -97,10 +81,8 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) {
-    return new Response('Unauthorized', { status: 401 })
-  }
+  const check = await assertConversationOwner(req, params.id)
+  if (check instanceof NextResponse) return check
 
   const searchParams = req.nextUrl.searchParams
   const key = searchParams.get('key')

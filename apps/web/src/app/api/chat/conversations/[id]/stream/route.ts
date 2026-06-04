@@ -1,3 +1,5 @@
+import { NextResponse } from "next/server"
+import { assertConversationOwner } from "@/lib/conversation-owner"
 import { NextRequest } from 'next/server'
 import { createSSEStream } from '@/lib/sse'
 import { streamClaudeResponse, streamAgentChat, streamOllamaChat, streamGeminiChat, streamOpenAIChat, type AgentContextConfig } from '@/lib/claude'
@@ -23,11 +25,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
   const { id: conversationId } = params
 
+  // B3 fix: stream route had no ownership check — any user could read/write any conversation via streaming
+  const ownerCheck = await assertConversationOwner(req, conversationId)
+  if (ownerCheck instanceof NextResponse) return ownerCheck
+
   // Get the current user from session (used for permission checks in tool loop)
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   const userId = token?.sub as string | undefined
 
-  // Verify conversation exists and get metadata
+  // Conversation already verified by assertConversationOwner above
   const convo = await prisma.conversation.findUnique({ where: { id: conversationId } })
   if (!convo) {
     return new Response('Conversation not found', { status: 404 })
