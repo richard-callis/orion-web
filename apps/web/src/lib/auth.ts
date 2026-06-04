@@ -2,7 +2,7 @@ import { getServerSession, type NextAuthOptions } from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import { compare } from 'bcryptjs'
 import { prisma } from './db'
-import { verifyTOTP, verifyRecoveryCode } from './totp'
+import { verifyTOTP, verifyRecoveryCode, consumeRecoveryCode } from './totp'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { logAudit } from './audit'
 
