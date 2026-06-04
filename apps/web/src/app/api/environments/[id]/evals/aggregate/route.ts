@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 export const dynamic = 'force-dynamic'
 
@@ -6,6 +7,8 @@ export const dynamic = 'force-dynamic'
 // Chart data for eval dashboard.
 // Query params: type=conversation|task|skill|hook, window=7|30|90
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const envId = params.id
 
   const env = await prisma.environment.findUnique({ where: { id: envId } })
