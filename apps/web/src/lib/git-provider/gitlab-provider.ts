@@ -249,11 +249,16 @@ export class GitLabGitProvider implements GitProvider {
     // GitLab uses plain token comparison (not HMAC)
     if (!secret) return false // fail closed — unsigned webhooks on a public endpoint are not trusted
     const token = headers['x-gitlab-token'] ?? ''
-    try {
-      return timingSafeEqual(Buffer.from(token), Buffer.from(secret))
-    } catch {
-      return false
-    }
+    // MINOR fix: timingSafeEqual throws when buffers have different lengths, which
+    // creates a timing/exception side-channel on token length. Pre-pad to equal length.
+    const tokenBuf  = Buffer.from(token)
+    const secretBuf = Buffer.from(secret)
+    const maxLen    = Math.max(tokenBuf.length, secretBuf.length)
+    const a = Buffer.alloc(maxLen)
+    const b = Buffer.alloc(maxLen)
+    tokenBuf.copy(a)
+    secretBuf.copy(b)
+    return timingSafeEqual(a, b) && tokenBuf.length === secretBuf.length
   }
 
   async isHealthy(): Promise<boolean> {

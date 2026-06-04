@@ -604,7 +604,8 @@ async function buildSystemSnapshot(): Promise<string> {
 
 async function runWatchers() {
   const pausedSetting = await prisma.systemSetting.findUnique({ where: { key: 'system.watchers.paused' } })
-  if (pausedSetting?.value === true) {
+  // MINOR fix: SystemSetting.value is a string in the DB; comparing to boolean true never matched
+  if (pausedSetting?.value === true || pausedSetting?.value === 'true') {
     log('Watchers paused — skipping this cycle')
     return
   }

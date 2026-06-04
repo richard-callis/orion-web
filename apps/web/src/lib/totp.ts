@@ -24,7 +24,8 @@ export function generateSecretString(): string {
  * The user scans this URL with their authenticator app.
  */
 export function generateQRCodeUrl(secret: string, username: string): string {
-  return `otpauth://totp/${TOTP_LABEL}:${username}?secret=${secret}&issuer=${TOTP_LABEL}&algorithm=SHA1&digits=6&period=30`
+  // MINOR fix: username with '&' or '?' injected extra otpauth URI parameters
+  return `otpauth://totp/${encodeURIComponent(TOTP_LABEL)}:${encodeURIComponent(username)}?secret=${encodeURIComponent(secret)}&issuer=${encodeURIComponent(TOTP_LABEL)}&algorithm=SHA1&digits=6&period=30`
 }
 
 /**
