@@ -6,7 +6,7 @@ import { redactSensitive } from '@/lib/redact'
 
 export const dynamic = 'force-dynamic'
 
-// SOC2: CR-003 — pod logs exposed without authentication (may contain secrets/tokens)
+// SOC2: CR-003 — pod logs are admin-only (vault-namespace logs contain secrets/tokens)
 export async function GET(
   _req: NextRequest,
   { params }: { params: { ns: string; pod: string } }

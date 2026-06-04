@@ -4,7 +4,28 @@ import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, CreateEnvironmentSchema } from '@/lib/validate'
 
-export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  // BLOCKER fix: GET had no auth — any request with an arbitrary Bearer header
+  // passes through BEARER_PATHS middleware without a session, exposing environment
+  // config (gitOwner/Repo, gatewayUrl, tool list, policyConfig) to unauthenticated callers.
+  // Allow both admin sessions and gateway self-calls (their own Bearer token).
+  const auth = req.headers.get('authorization')
+  if (!auth?.startsWith('Bearer ')) {
+    // Session path — require admin
+    try { await requireAdmin() } catch {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+  }
+  // If Bearer header is present, it will be validated by the gateway-token path
+  // in PUT or by the downstream operation. For GET, validate it matches this env.
+  if (auth?.startsWith('Bearer ')) {
+    const token = auth.slice(7)
+    const envCheck = await prisma.environment.findUnique({ where: { id: params.id }, select: { gatewayToken: true } })
+    if (!envCheck?.gatewayToken || token !== envCheck.gatewayToken) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+  }
+
   const env = await prisma.environment.findUnique({
     where: { id: params.id },
     include: {
