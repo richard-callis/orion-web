@@ -180,14 +180,17 @@ export const UpdateSystemPromptSchema = z.object({
 // ── Agent Schemas ──────────────────────────────────────────────────────────────
 
 export const CreateAgentSchema = z.object({
-  name: z.string().min(1).max(200),
+  // BLOCKER fix: agent name is interpolated unfenced into LLM system prompts in room-agents.ts.
+  // A name containing newlines/control chars injects arbitrary instructions into the prompt.
+  // Restrict to printable non-control chars (no \n, \r, \t, etc.).
+  name: z.string().min(1).max(200).regex(/^[^\x00-\x1f\x7f]+$/, 'Agent name must not contain control characters'),
   type: z.enum(['claude', 'ollama', 'human', 'custom']),
   role: z.string().max(100).optional(),
   metadata: z.record(z.unknown()).optional(),
 })
 
 export const UpdateAgentSchema = z.object({
-  name: z.string().min(1).max(200).optional(),
+  name: z.string().min(1).max(200).regex(/^[^\x00-\x1f\x7f]+$/, 'Agent name must not contain control characters').optional(),
   type: z.enum(['claude', 'ollama', 'human', 'custom']).optional(),
   role: z.string().max(100).optional(),
   metadata: z.record(z.unknown()).optional(),
