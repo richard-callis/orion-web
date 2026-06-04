@@ -11,6 +11,10 @@ export const dynamic = 'force-dynamic'
  *   - category: "skill" | "hook"
  */
 export async function GET(req: NextRequest) {
+  // MAJOR fix: GET had no auth — any logged-in user could enumerate nova definitions
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   const { searchParams } = new URL(req.url)
   const category = searchParams.get('category')
   const where: Record<string, unknown> = {}
@@ -33,10 +37,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   }
   const body = await req.json()
+  // MAJOR fix: raw body was passed directly to Prisma (mass assignment).
+  // Whitelist allowed fields to prevent setting arbitrary columns.
+  const name    = String(body.name ?? '').trim()
+  const category = body.category === 'skill' || body.category === 'hook' ? body.category : 'skill'
+  const spec    = typeof body.spec === 'string' ? body.spec : JSON.stringify(body.spec ?? {})
+  const displayName = body.displayName ? String(body.displayName).slice(0, 200) : name
+  const description = body.description ? String(body.description).slice(0, 2000) : undefined
+  const minimumTier = body.minimumTier ? String(body.minimumTier) : undefined
+
+  if (!name) return NextResponse.json({ error: 'name is required' }, { status: 400 })
+
   const nova = await prisma.novaDefinition.upsert({
-    where: { name: (body as any).name },
-    update: body as any,
-    create: body as any,
+    where: { name },
+    update: { category, spec, displayName, description, minimumTier },
+    create: { name, category, spec, displayName, description, minimumTier },
   })
   return NextResponse.json(nova)
 }

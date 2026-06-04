@@ -120,6 +120,12 @@ async function initRedisClient(): Promise<boolean> {
     // Test the connection
     await redisClient.ping()
     redisAvailable = true
+    // MAJOR fix: clear stale in-memory fallback state on Redis reconnect.
+    // Traffic that accumulated in fallbackStore during an outage is not
+    // double-counted (each request hit exactly one store), but stale entries
+    // linger indefinitely for low-traffic keys that never hit the cleanup
+    // threshold, causing a slow memory leak.
+    if (fallbackStore.size > 0) fallbackStore.clear()
     return true
   } catch (error) {
     redisClient = null
