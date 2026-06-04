@@ -83,16 +83,16 @@ export class GitHubGitProvider implements GitProvider {
   async createBranch(owner: string, repo: string, branch: string, from = 'main'): Promise<void> {
     // Get the SHA of the base branch
     const ref = await this.fetch<{ object: { sha: string } }>(
-      `/repos/${owner}/${repo}/git/ref/heads/${from}`,
+      `/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(from)}`,
     )
     await this.fetch(`/repos/${owner}/${repo}/git/refs`, {
       method: 'POST',
-      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: ref.object.sha }),
+      body: JSON.stringify({ ref: `refs/heads/${encodeURIComponent(branch)}`, sha: ref.object.sha }),
     })
   }
 
   async deleteBranch(owner: string, repo: string, branch: string): Promise<void> {
-    await this.fetch(`/repos/${owner}/${repo}/git/refs/heads/${branch}`, { method: 'DELETE' })
+    await this.fetch(`/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`, { method: 'DELETE' })
   }
 
   // ── Files ──────────────────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ export class GitHubGitProvider implements GitProvider {
   async commitFiles(opts: CommitFilesOptions): Promise<void> {
     // GitHub Trees API for atomic multi-file commit
     const refData = await this.fetch<{ object: { sha: string } }>(
-      `/repos/${opts.owner}/${opts.repo}/git/ref/heads/${opts.branch}`,
+      `/repos/${opts.owner}/${opts.repo}/git/ref/heads/${encodeURIComponent(opts.branch)}`,
     )
     const headSha = refData.object.sha
 
@@ -155,7 +155,7 @@ export class GitHubGitProvider implements GitProvider {
     )
 
     // Update branch ref
-    await this.fetch(`/repos/${opts.owner}/${opts.repo}/git/refs/heads/${opts.branch}`, {
+    await this.fetch(`/repos/${opts.owner}/${opts.repo}/git/refs/heads/${encodeURIComponent(opts.branch)}`, {
       method: 'PATCH',
       body: JSON.stringify({ sha: newCommit.sha, force: false }),
     })
