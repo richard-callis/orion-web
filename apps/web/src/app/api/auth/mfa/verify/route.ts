@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { compare } from 'bcryptjs'
-import { verifyTOTP, verifyRecoveryCode } from '@/lib/totp'
+import { verifyTOTP, verifyRecoveryCode, consumeRecoveryCode } from '@/lib/totp'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, MfaVerifySchema } from '@/lib/validate'
 

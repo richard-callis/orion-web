@@ -2,7 +2,7 @@ import { getServerSession, type NextAuthOptions } from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import { compare } from 'bcryptjs'
 import { prisma } from './db'
-import { verifyTOTP, verifyRecoveryCode } from './totp'
+import { verifyTOTP, verifyRecoveryCode, consumeRecoveryCode } from './totp'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { logAudit } from './audit'
 
@@ -99,6 +99,11 @@ export const authOptions: NextAuthOptions = {
             const hashedCodes: string[] = user.totpRecoveryCodes ? JSON.parse(user.totpRecoveryCodes) : []
             if (!code || !(await verifyRecoveryCode(code, hashedCodes))) {
               return { error: 'Invalid recovery code' }
+            }
+            // BLOCKER fix: consume the recovery code (single-use)
+            const updatedCodes = await consumeRecoveryCode(code, hashedCodes)
+            if (updatedCodes) {
+              await prisma.user.update({ where: { id: user.id }, data: { totpRecoveryCodes: JSON.stringify(updatedCodes) } })
             }
           } else {
             // TOTP code login
