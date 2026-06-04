@@ -9,17 +9,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { embedAllNotes, computeAllSemanticEdges } from '@/lib/embeddings'
 import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
   // Auth check — allow session, OR an embed trigger token set via env
-  const session = await getServerSession()
+  const session = await getServerSession(authOptions)
   const embedToken = process.env.EMBED_TRIGGER_TOKEN
-  const headers = req.headers
-  const hasToken = embedToken && headers.get('x-embed-token') === embedToken
-  if (!session && !hasToken) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const hasToken = embedToken && req.headers.get('x-embed-token') === embedToken
+  // MAJOR fix: embed rebuild re-processes ALL notes with paid API calls. Require admin
+  // role for session callers; the token path is for MCP/internal tooling only.
+  if (!hasToken) {
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    if ((session.user as any)?.role !== 'admin') {
+      return NextResponse.json({ error: 'Admin access required for embed rebuild' }, { status: 403 })
+    }
   }
 
   try {
