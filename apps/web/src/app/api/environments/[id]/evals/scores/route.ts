@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 export const dynamic = 'force-dynamic'
 
 // GET /api/environments/[id]/evals/scores
 // Score overview for all targets in an environment.
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const envId = params.id
 
   const env = await prisma.environment.findUnique({ where: { id: envId } })

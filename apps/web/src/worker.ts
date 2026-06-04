@@ -32,6 +32,7 @@ const MAX_NOTE_LENGTH = 8000
 
 /**
  * Sanitize llm-context note content before injecting into system prompts (SOC2: [C-001]).
+ * Also exported via lib/sanitize-context.ts for use in the vector-search retrieval path.
  *
  * Mitigates prompt injection attacks where a malicious user could inject
  * system-level instructions through note content (e.g., "Ignore previous instructions").
@@ -361,16 +362,20 @@ async function runTask(taskId: string): Promise<void> {
           break
 
         case 'tool_result': {
-          await logTaskEvent(taskId, 'tool_result', event.result.slice(0, 2000), agent.id)
+          // MAJOR fix: redactSecrets was applied only to the room-feed copy; the
+          // logTaskEvent and Message writes stored raw tool results including any
+          // secrets/credentials returned by shell/kubectl/vault tools. Apply
+          // redaction consistently before any write.
+          const redactedResult = redactSecrets(event.result).slice(0, 2000)
+          await logTaskEvent(taskId, 'tool_result', redactedResult, agent.id)
           await prisma.message.create({
             data: {
               conversationId: conversation.id, role: 'user',
-              content: `[tool_result] ${event.tool}: ${event.result.slice(0, 2000)}`,
+              content: `[tool_result] ${event.tool}: ${redactedResult}`,
             },
           }).catch(() => {})
           if (featureRoomId) {
-            // SOC2: redact secrets, truncate to 300 chars before posting to room
-            const safeResult = redactSecrets(event.result).slice(0, 300)
+            const safeResult = redactedResult.slice(0, 300)
             await postToRoom(featureRoomId, agent.id, `↩ \`${event.tool}\`: ${safeResult}`, taskId)
           }
           break
