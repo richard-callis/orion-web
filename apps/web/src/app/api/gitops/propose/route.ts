@@ -16,9 +16,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { proposeChange } from '@/lib/gitops'
+import { requireAdmin } from '@/lib/auth'
 import type { PolicyConfig } from '@/lib/gitops-policy'
 
 export async function POST(req: NextRequest) {
+  // BLOCKER fix: no auth — any authenticated user could trigger auto-merge deploys to any env
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
+  }
   const body = await req.json()
   const { environmentId, title, reasoning, operationDescription, changes } = body
 
