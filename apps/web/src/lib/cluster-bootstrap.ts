@@ -314,12 +314,20 @@ async function setupDockerSwarm(
   // Step 4: Label nodes
   emit({ type: 'step', message: 'Labeling swarm nodes...' })
   for (const node of nodes) {
+    let safeHost: string
+    let safeId: string
+    try {
+      safeHost = validateSshField(node.host, 'node.host', /^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,252}[a-zA-Z0-9])?$/)
+      safeId   = validateSshField(node.nodeId, 'node.nodeId', /^[a-zA-Z0-9][a-zA-Z0-9:_-]{0,63}$/)
+    } catch {
+      continue
+    }
     const labelCmd = [
       'ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
-      '-t', `${connection.user}@${safeNodeHost}`,
-      `docker node update --label-add orion/env=${connection.user} ${safeNodeId}`,
+      '-t', `${connection.user}@${safeHost}`,
+      `docker node update --label-add orion/env=${connection.user} ${safeId}`,
     ]
-    if (connection.port) labelCmd.splice(labelCmd.indexOf(`${connection.user}@${safeNodeHost}`), 0, '-p', String(connection.port))
+    if (connection.port) labelCmd.splice(labelCmd.indexOf(`${connection.user}@${safeHost}`), 0, '-p', String(connection.port))
 
     await runCommand('ssh', labelCmd.slice(1), {}, msg => emit({ type: 'log', message: msg }))
   }
