@@ -277,6 +277,22 @@ async function setupDockerSwarm(
 
   // Step 3: Join additional managers and workers
   for (const node of nodes) {
+    // BLOCKER fix: node.host and node.nodeId come from env.metadata (user-supplied) and were
+    // used directly in SSH target and docker label commands without validation.
+    // A crafted host like '-oProxyCommand=...' yields SSH option injection; a crafted
+    // nodeId like 'x; rm -rf /' yields shell injection in the docker node update command.
+    // Validate both through the same validateSshField function used for the manager host.
+    let safeNodeHost: string
+    let safeNodeId: string
+    try {
+      safeNodeHost = validateSshField(node.host, 'node.host', /^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,252}[a-zA-Z0-9])?$/)
+      safeNodeId   = validateSshField(node.nodeId, 'node.nodeId', /^[a-zA-Z0-9][a-zA-Z0-9:_-]{0,63}$/)
+    } catch (e) {
+      console.error(`[bootstrap] Skipping swarm node with invalid host/nodeId: ${e}`)
+      emit({ type: 'log', message: `Skipped node with invalid host/nodeId: ${e}` })
+      continue
+    }
+
     const isManager = node.role === 'manager'
     const token = isManager ? managerToken : workerToken
     if (!token) {
@@ -284,13 +300,13 @@ async function setupDockerSwarm(
       continue
     }
 
-    emit({ type: 'step', message: `Joining ${node.role} node ${node.host}...` })
+    emit({ type: 'step', message: `Joining ${node.role} node ${safeNodeHost}...` })
     const joinCmd = [
       'ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
-      '-t', `${connection.user}@${node.host}`,
+      '-t', `${connection.user}@${safeNodeHost}`,
       `docker swarm join --token "${token}" ${connection.host}:2377`,
     ]
-    if (connection.port) joinCmd.splice(joinCmd.indexOf(`${connection.user}@${node.host}`), 0, '-p', String(connection.port))
+    if (connection.port) joinCmd.splice(joinCmd.indexOf(`${connection.user}@${safeNodeHost}`), 0, '-p', String(connection.port))
 
     await runCommand('ssh', joinCmd.slice(1), {}, msg => emit({ type: 'log', message: msg }))
   }
@@ -298,12 +314,20 @@ async function setupDockerSwarm(
   // Step 4: Label nodes
   emit({ type: 'step', message: 'Labeling swarm nodes...' })
   for (const node of nodes) {
+    let safeHost: string
+    let safeId: string
+    try {
+      safeHost = validateSshField(node.host, 'node.host', /^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,252}[a-zA-Z0-9])?$/)
+      safeId   = validateSshField(node.nodeId, 'node.nodeId', /^[a-zA-Z0-9][a-zA-Z0-9:_-]{0,63}$/)
+    } catch {
+      continue
+    }
     const labelCmd = [
       'ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
-      '-t', `${connection.user}@${node.host}`,
-      `docker node update --label-add orion/env=${connection.user} ${node.nodeId}`,
+      '-t', `${connection.user}@${safeHost}`,
+      `docker node update --label-add orion/env=${connection.user} ${safeId}`,
     ]
-    if (connection.port) labelCmd.splice(labelCmd.indexOf(`${connection.user}@${node.host}`), 0, '-p', String(connection.port))
+    if (connection.port) labelCmd.splice(labelCmd.indexOf(`${connection.user}@${safeHost}`), 0, '-p', String(connection.port))
 
     await runCommand('ssh', labelCmd.slice(1), {}, msg => emit({ type: 'log', message: msg }))
   }
@@ -993,8 +1017,11 @@ async function bootstrapK8sVaultAndEso(
 
     const policyRes = await vaultRequest(`sys/policies/acl/${policyName}`, rootToken, 'PUT', {
       policy: [
-        `path "secret/data/${env.name}/*" { capabilities = ["read", "list"] }`,
-        `path "secret/metadata/${env.name}/*" { capabilities = ["read", "list"] }`,
+        // MAJOR fix: env.name was used directly in Vault policy paths without slugification.
+        // An env name containing '*' or '/' (e.g. '*') would widen the policy to all secrets.
+        // Use the same slug used for policyName/roleName — consistent and safe.
+        `path "secret/data/${policyName}/*" { capabilities = ["read", "list"] }`,
+        `path "secret/metadata/${policyName}/*" { capabilities = ["read", "list"] }`,
       ].join('\n'),
     })
     if (!policyRes.ok) throw new Error(`Vault policy creation failed (${policyRes.status})`)
