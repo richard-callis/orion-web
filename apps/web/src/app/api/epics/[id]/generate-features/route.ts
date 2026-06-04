@@ -6,11 +6,12 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 import { callDefaultModel } from '@/lib/default-model'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  await requireServiceAuth(req)
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
   const { id } = await params
 
   const epic = await prisma.epic.findUnique({
@@ -20,6 +21,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   if (!epic) return NextResponse.json({ error: 'Epic not found' }, { status: 404 })
   if (!epic.plan) return NextResponse.json({ error: 'Epic has no plan yet — plan with Claude first' }, { status: 400 })
+  // m3 fix: no ownership check — any user could trigger LLM generation against any epic
+  await assertCanModify(caller, isService, (epic as any).createdBy ?? '')
 
   const prompt = `You are extracting features from an epic plan for a software project.
 
@@ -63,8 +66,11 @@ Return ONLY a valid JSON array. No markdown, no explanation, just the JSON array
     return NextResponse.json({ error: 'Model returned an empty or invalid feature list' }, { status: 500 })
   }
 
+  // B2 fix: cap features created per call — unbounded model response wrote arbitrary rows
+  const MAX_GENERATED = 20
   const created = await Promise.all(
     parsed
+      .slice(0, MAX_GENERATED)
       .filter(f => f.title?.trim())
       .map(f =>
         prisma.feature.create({

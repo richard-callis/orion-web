@@ -6,11 +6,12 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 import { callDefaultModel } from '@/lib/default-model'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  await requireServiceAuth(req)
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
   const { id } = await params
 
   const feature = await prisma.feature.findUnique({
@@ -19,6 +20,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   })
 
   if (!feature) return NextResponse.json({ error: 'Feature not found' }, { status: 404 })
+  await assertCanModify(caller, isService, (feature as any).createdBy ?? '')
   if (!feature.plan) return NextResponse.json({ error: 'Feature has no plan yet — plan with Claude first' }, { status: 400 })
 
   const prompt = `You are breaking down a feature plan into concrete backlog tasks for a software project.
@@ -72,6 +74,7 @@ Return ONLY a valid JSON array. No markdown, no explanation, just the JSON:
 
   const created = await Promise.all(
     parsed
+      .slice(0, 20)
       .filter(t => t.title?.trim())
       .map(t =>
         prisma.task.create({
