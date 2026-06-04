@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { compare } from 'bcryptjs'
-import { verifyTOTP, verifyRecoveryCode } from '@/lib/totp'
+import { verifyTOTP, verifyRecoveryCode, consumeRecoveryCode } from '@/lib/totp'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, MfaVerifySchema } from '@/lib/validate'
 
@@ -143,6 +143,10 @@ async function handleRecoveryLogin(username: string, password: string, code?: st
   })
 
   // SOC2: [M-005] Log successful MFA verification via recovery code (non-blocking)
+    // Consume the recovery code (single-use)
+    const updatedCodes = await consumeRecoveryCode(code, hashedCodes)
+    await prisma.user.update({ where: { id: user.id }, data: { totpRecoveryCodes: JSON.stringify(updatedCodes) } })
+
   logAudit({
     userId: user.id, action: 'mfa_verify_success', target: 'mfa:verify',
     detail: { method: 'recovery_code' },

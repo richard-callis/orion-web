@@ -8,6 +8,7 @@
  * Auth: Bearer gatewayToken (same token used for heartbeats).
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { requireServiceAuth } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
 interface ArgoCDApp {
@@ -25,6 +26,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  await requireServiceAuth(req).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
+
   // Verify gateway token
   const auth = req.headers.get('authorization')
   const env = await prisma.environment.findUnique({ where: { id: params.id } })
@@ -96,9 +99,11 @@ export async function POST(
  * Returns the latest ArgoCD sync state for an environment (from metadata).
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  await requireServiceAuth(req).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
+
   const env = await prisma.environment.findUnique({ where: { id: params.id } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 

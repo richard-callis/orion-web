@@ -9,12 +9,15 @@
  * Returns an SSE stream with live progress.
  */
 import { NextRequest } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { bootstrapLocalEnvironment, type LocalBootstrapEvent } from '@/lib/localhost-bootstrap'
 
 export async function POST(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
+
   const encoder = new TextEncoder()
 
   const stream = new ReadableStream({

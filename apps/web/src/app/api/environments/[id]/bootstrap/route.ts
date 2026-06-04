@@ -9,6 +9,7 @@
  * the client stays connected.
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { startJob } from '@/lib/job-runner'
 import { bootstrapCluster } from '@/lib/cluster-bootstrap'
@@ -17,6 +18,8 @@ export async function POST(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
+
   const env = await prisma.environment.findUnique({ where: { id: params.id } })
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
 

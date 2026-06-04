@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { requireServiceAuth } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
@@ -8,9 +9,11 @@ export const dynamic = 'force-dynamic'
  * Combined nebula + eval metrics for monitoring.
  */
 export async function GET(
-  _req: Request,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  await requireServiceAuth(req).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
+
   const entries = await prisma.nebulaInstance.findMany({
     where: { environmentId: params.id, isInstalled: true },
     include: {

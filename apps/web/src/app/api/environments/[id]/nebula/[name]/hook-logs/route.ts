@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireServiceAuth } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
@@ -8,9 +9,11 @@ export const dynamic = 'force-dynamic'
  * Retrieve hook execution logs for a nebula entry.
  */
 export async function GET(
-  _req: Request,
+  req: NextRequest,
   { params }: { params: { id: string; name: string } }
 ) {
+  await requireServiceAuth(req).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
+
   const logs = await prisma.hookExecutionLog.findMany({
     where: { nebula: { environmentId: params.id, name: params.name } },
     orderBy: { startedAt: 'desc' },
@@ -27,6 +30,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string; name: string } }
 ) {
+  await requireServiceAuth(req).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
+
   const body = await req.json()
   const entry = await prisma.nebulaInstance.findFirst({
     where: { environmentId: params.id, name: params.name },
