@@ -489,7 +489,12 @@ async function callOpenAIChat(
       } else {
         console.log(`[room-agents] ${agentName} calling tool: ${tc.function.name}`, args)
 
-        if (registryToolNames.has(tc.function.name)) {
+        // MINOR fix: allowedTools was applied only to the advertised tool list (prompt
+        // layer), not at execution. A jailbroken model emitting a tool name outside the
+        // whitelist still executed it. Enforce at dispatch time.
+        if (allowedTools && allowedTools.size > 0 && !allowedTools.has(tc.function.name)) {
+          result = `Permission denied: tool '${tc.function.name}' is not in this agent's allowed tool list`
+        } else if (registryToolNames.has(tc.function.name)) {
           // Gate registry tools through checkToolPermission before execution.
           // Previously called executeRegisteredTool directly with NO permission check,
           // allowing room agents to invoke destructive-tier tools without a grant.
@@ -524,6 +529,14 @@ async function callOpenAIChat(
             // Auto-correct: call the real tool without burning a round trip
             console.warn(`[room-agents] ${agentName}: auto-correcting hallucinated tool "${tc.function.name}" → "${resolved.name}"`)
             if (registryToolNames.has(resolved.name)) {
+              // MINOR fix: fuzzy-resolved registry tools were executed without checkToolPermission.
+              // A slightly-misspelled destructive tool name that resolved with high confidence
+              // bypassed the permission gate entirely. Apply the same check as the direct path.
+              const agentIdForPerm = toolContext?.agentId ?? null
+              const fuzzyPerm = await checkToolPermission(resolved.name, agentIdForPerm, null)
+              if (!fuzzyPerm.allowed) {
+                result = `Permission denied: ${fuzzyPerm.reason ?? `tool '${resolved.name}' is not permitted`}`
+              } else {
               result = await executeRegisteredTool(resolved.name, args, {
                 agentId: toolContext!.agentId,
                 prisma,
@@ -532,6 +545,7 @@ async function callOpenAIChat(
                   listTools:   () => gateway.client.listTools(),
                 } : undefined,
               })
+              }
             } else if (legacyToolNames.has(resolved.name)) {
               result = await executeTool(resolved.name, args, {
                 roomId:        toolContext!.roomId,
