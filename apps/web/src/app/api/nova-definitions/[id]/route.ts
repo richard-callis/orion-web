@@ -12,6 +12,10 @@ export async function GET(
   _req: Request,
   { params }: { params: { id: string } }
 ) {
+  // MAJOR fix: GET had no auth — any logged-in user could read nova definition specs
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   const nova = await prisma.novaDefinition.findUnique({
     where: { id: params.id },
   })
@@ -35,9 +39,25 @@ export async function PUT(
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   }
   const body = await req.json()
+  // MAJOR fix: raw body was written directly to Prisma (mass assignment)
+  const title       = body.title ? String(body.title).slice(0, 200) : undefined
+  const category    = body.category === 'skill' || body.category === 'hook' ? body.category : undefined
+  const spec        = body.spec !== undefined ? (typeof body.spec === 'string' ? body.spec : JSON.stringify(body.spec)) : undefined
+  const description = body.description ? String(body.description).slice(0, 2000) : undefined
+  const version     = body.version ? String(body.version).slice(0, 50) : undefined
+  const metadata    = body.metadata !== undefined ? (typeof body.metadata === 'string' ? body.metadata : JSON.stringify(body.metadata)) : undefined
+
+  const updateData: Record<string, unknown> = {}
+  if (title !== undefined)       updateData.title = title
+  if (category !== undefined)    updateData.category = category
+  if (spec !== undefined)        updateData.spec = spec
+  if (description !== undefined) updateData.description = description
+  if (version !== undefined)     updateData.version = version
+  if (metadata !== undefined)    updateData.metadata = metadata
+
   const nova = await prisma.novaDefinition.update({
     where: { id: params.id },
-    data: body,
+    data: updateData,
   })
   return NextResponse.json(nova)
 }
