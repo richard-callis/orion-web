@@ -269,7 +269,13 @@ If nothing is worth remembering, return an empty array: []`
   for (const item of extracted) {
     if (!item.title?.trim() || !item.content?.trim()) continue
     try {
-      const existing = await prisma.note.findFirst({ where: { title: item.title.trim() } })
+      // MAJOR fix: scope dream note lookups to dream-owned notes only.
+      // Previously matched by title alone — if a human note shared a title (e.g.
+      // "Networking", "Security"), dream would append/overwrite it. Now we only
+      // touch notes tagged 'dream', preventing cross-contamination with human notes.
+      const existing = await prisma.note.findFirst({
+        where: { title: item.title.trim(), tags: { array_contains: 'dream' } },
+      })
       let note: { id: string; title: string; content: string }
 
       if (existing) {
@@ -280,13 +286,14 @@ If nothing is worth remembering, return an empty array: []`
           data: { content: merged, updatedAt: new Date() },
         })
       } else {
+        const dreamTags = Array.from(new Set(['dream', ...(item.tags ?? [])]))
         note = await prisma.note.create({
           data: {
             title:   item.title.trim(),
             content: item.content.trim(),
             folder:  item.folder ?? 'Agent Lessons',
             type:    'note',
-            tags:    (item.tags ?? []) as any,
+            tags:    dreamTags as any,
           },
         })
       }
@@ -377,7 +384,13 @@ If no hubs are missing, return an empty array: []`
   for (const hub of hubs) {
     if (!hub.title?.trim() || !hub.content?.trim()) continue
     try {
-      const existing = await prisma.note.findFirst({ where: { title: hub.title.trim() } })
+      // MAJOR fix: scope synthesis lookups to dream-tagged notes only.
+      // Synthesis previously matched by title alone — if a human note shared a hub
+      // title, synthesis would wholesale replace its content. Now only dream-owned
+      // notes are updated; a title collision with a human note creates a new note.
+      const existing = await prisma.note.findFirst({
+        where: { title: hub.title.trim(), tags: { array_contains: 'dream' } },
+      })
       if (existing) {
         // Hub already exists — update content to reflect current cluster membership
         const note = await prisma.note.update({
@@ -387,13 +400,14 @@ If no hubs are missing, return an empty array: []`
         const embedded = await embedNote(note).catch(() => false)
         if (embedded) await computeSemanticEdges(note.id).catch(() => {})
       } else {
+        const dreamTags = Array.from(new Set(['dream', 'hub', ...(hub.tags ?? [])]))
         const note = await prisma.note.create({
           data: {
             title:   hub.title.trim(),
             content: hub.content.trim(),
             folder:  hub.folder ?? 'Infrastructure',
             type:    'note',
-            tags:    (hub.tags ?? []) as any,
+            tags:    dreamTags as any,
           },
         })
         const embedded = await embedNote(note).catch(() => false)
