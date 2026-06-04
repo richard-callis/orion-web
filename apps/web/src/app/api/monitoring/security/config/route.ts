@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,6 +23,8 @@ export async function GET() {
 
 /** PUT — Save security source configuration to SecurityConfig table */
 export async function PUT(request: Request) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const envId = process.env.ENVIRONMENT_ID || ''
   const config = await request.json() as Record<string, string>
 

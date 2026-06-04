@@ -10,13 +10,16 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { authOptions, getCurrentUser } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { getPlannerAgentId, getEnvironmentSMEAgentId } from '@/lib/seed-system-agents'
 import { triggerRoomAgentReplies } from '@/lib/room-agents'
 
 // GET /api/chatrooms — list rooms
 export async function GET(req: NextRequest) {
+  const _authCheck = await getCurrentUser()
+  if (!_authCheck) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { searchParams } = new URL(req.url)
   const type = searchParams.get('type') ?? undefined
   const featureId = searchParams.get('featureId') ?? undefined

@@ -6,6 +6,7 @@
  * DELETE — Delete a chat room
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { getCurrentUser } from '@/lib/auth'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/db'
@@ -15,6 +16,9 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const user = await getCurrentUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { id } = await params
   const { searchParams } = new URL(_req.url)
   const messageLimit = Math.min(parseInt(searchParams.get('messages') ?? '50') || 50, 200)
