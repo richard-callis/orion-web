@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { z } from 'zod'
 
@@ -33,6 +34,8 @@ const createSchema = z.object({
 })
 
 export async function GET(req: NextRequest) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const parsed = querySchema.safeParse(Object.fromEntries(req.nextUrl.searchParams))
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid query params' }, { status: 400 })
@@ -78,6 +81,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: Request) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const body = createSchema.safeParse(await req.json())
   if (!body.success) {
     return NextResponse.json({ error: body.error.errors }, { status: 400 })

@@ -4,6 +4,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { z } from 'zod'
 import { recordAudit } from '../../../_utils'
@@ -19,6 +20,8 @@ const updateSchema = z.object({
 })
 
 export async function PATCH(req: Request, { params }: { params: { id: string; obsId: string } }) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const { id, obsId } = await params
   const raw = await req.json()
   const body = updateSchema.safeParse(raw)
@@ -73,6 +76,8 @@ export async function PATCH(req: Request, { params }: { params: { id: string; ob
 }
 
 export async function DELETE(_req: Request, { params }: { params: { id: string; obsId: string } }) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const { id, obsId } = await params
 
   const observable = await prisma.investigationObservable.findUnique({ where: { id: obsId } })

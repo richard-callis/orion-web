@@ -6,11 +6,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const envId = req.nextUrl.searchParams.get('env') || process.env.ENVIRONMENT_ID || ''
 
   const pending = await prisma.actionAudit.findMany({

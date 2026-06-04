@@ -5,12 +5,15 @@
  */
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { recordAudit } from '../../../_utils'
 
 export const dynamic = 'force-dynamic'
 
 export async function DELETE(_req: Request, { params }: { params: { id: string; incidentId: string } }) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const { id, incidentId } = await params
 
   const incident = await prisma.incident.findUnique({ where: { id: incidentId } })

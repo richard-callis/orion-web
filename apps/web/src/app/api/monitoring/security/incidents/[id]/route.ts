@@ -5,6 +5,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
@@ -13,6 +14,8 @@ export async function GET(
   _req: Request,
   { params }: { params: { id: string } }
 ) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const incidentId = params.id
 
   const incident = await prisma.incident.findUnique({

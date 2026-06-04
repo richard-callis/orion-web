@@ -1,3 +1,4 @@
+import { requireAdmin } from '@/lib/auth'
 /**
  * Tests for computeSourceStatus (PR #413 B3).
  *

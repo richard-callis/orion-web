@@ -1,3 +1,4 @@
+import { requireAdmin } from '@/lib/auth'
 /**
  * Shared utilities for investigation API routes.
  */

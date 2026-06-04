@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 
@@ -6,6 +7,8 @@ export const dynamic = 'force-dynamic'
 
 /** GET — Load security source configuration from SecurityConfig table */
 export async function GET() {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const envId = process.env.ENVIRONMENT_ID || ''
 
   const configs = await prisma.securityConfig.findMany({
