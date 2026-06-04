@@ -1,3 +1,4 @@
+import { requireAdmin } from '@/lib/auth'
 import { describe, it, expect, vi } from 'vitest'
 import { buildIdOnlyFrame, type NotifyMessage } from '@/lib/security/stream-utils'
 

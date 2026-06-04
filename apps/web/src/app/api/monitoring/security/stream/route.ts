@@ -17,6 +17,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { TextEncoder } from 'util'
 import { Client, type Notification } from 'pg'
 import { type StreamChannel, type NotifyMessage } from '@/lib/security/stream-utils'
@@ -35,6 +36,8 @@ function pgChannelFor(channel: StreamChannel): string {
 // ── Request handler ───────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const searchParams = request.nextUrl.searchParams
   const channel = (searchParams.get('channel') ?? 'events') as StreamChannel
   const sinceParam = searchParams.get('since')

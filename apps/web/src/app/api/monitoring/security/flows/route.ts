@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
@@ -67,6 +68,8 @@ function normalizeFlows(raw: unknown): FlowRow[] {
 }
 
 export async function GET(request: NextRequest) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const { searchParams } = request.nextUrl
   const query = searchParams.get('q') || '*'
   const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : 50

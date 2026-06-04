@@ -5,6 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
@@ -29,6 +30,8 @@ function checkRateLimit(ip: string, max: number = 10, windowMs: number = 60000):
 }
 
 export async function GET(req: NextRequest) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+
   const ip = req.headers.get('x-forwarded-for') ?? 'unknown'
   if (!checkRateLimit(ip)) {
     return NextResponse.json({ error: 'Rate limit exceeded (10 req/min)' }, { status: 429 })
