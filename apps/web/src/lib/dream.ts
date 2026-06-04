@@ -207,7 +207,25 @@ export async function runExtraction(): Promise<void> {
     return `[${e.eventType}] ${task}${(e.content ?? '').slice(0, 400)}`
   })
 
-  const corpus = [...messageLines, ...eventLines].join('\n').slice(0, 12_000)
+  // BLOCKER fix: build corpus with a budget and track the watermark to only the
+  // last row that actually fit. Previously: all rows were fetched, corpus was
+  // blindly sliced to 12k, but watermark advanced to now() unconditionally —
+  // content past the 12k cut was permanently skipped on the next run.
+  const allRows = [
+    ...messages.map(m => ({ ts: m.createdAt, line: messageLines[messages.indexOf(m)] })),
+    ...events.map(e => ({ ts: e.createdAt, line: eventLines[events.indexOf(e)] })),
+  ].sort((a, b) => a.ts.getTime() - b.ts.getTime())
+
+  let corpusBudget = 0
+  let processedThrough = lastRun
+  const corpusLines: string[] = []
+  for (const row of allRows) {
+    if (corpusBudget + row.line.length + 1 > 12_000) break
+    corpusLines.push(row.line)
+    corpusBudget += row.line.length + 1
+    processedThrough = row.ts
+  }
+  const corpus = corpusLines.join('\n')
 
   const extractionPrompt = `You are a memory consolidation system for an AI agent team managing a Kubernetes homelab cluster.
 
@@ -281,8 +299,10 @@ If nothing is worth remembering, return an empty array: []`
     }
   }
 
-  await setSetting('dream.extractionLastRun', String(now.getTime()))
-  console.log(`[dream] Extraction complete — wrote ${written}/${extracted.length} memories`)
+  // Use the watermark of the last processed row, not now(), to avoid skipping
+  // content that didn't fit in the 12k corpus window
+  await setSetting('dream.extractionLastRun', String(processedThrough.getTime()))
+  console.log(`[dream] Extraction complete — wrote ${written}/${extracted.length} memories (processed through ${processedThrough.toISOString()})`)
 }
 
 // ── Synthesis ─────────────────────────────────────────────────────────────────

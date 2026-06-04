@@ -246,9 +246,15 @@ export async function middleware(req: NextRequest) {
     gatewayToken &&
     timingSafeCompare(req.headers.get('authorization') ?? '', `Bearer ${gatewayToken}`)
   ) {
-    // Gateway can do anything except DELETE on notes (safety)
-    if (req.method === 'DELETE' && pathname.startsWith('/api/notes')) {
-      // fall through to session auth for DELETE on notes
+    // Gateway can do anything except:
+    // - DELETE on notes (safety — prevents gateway from wiping knowledge base)
+    // - DELETE/PUT/POST on bugs (bugs are human tracking, not gateway-owned)
+    // - Any method on admin routes (gateway should not manage users/prompts)
+    const isNotesDelete    = req.method === 'DELETE' && pathname.startsWith('/api/notes')
+    const isBugsMutate     = ['DELETE','PUT','POST','PATCH'].includes(req.method) && pathname.startsWith('/api/bugs')
+    const isAdminMutate    = ['DELETE','PUT','POST','PATCH'].includes(req.method) && pathname.startsWith('/api/admin')
+    if (isNotesDelete || isBugsMutate || isAdminMutate) {
+      // fall through to session auth
     } else {
       return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
     }
