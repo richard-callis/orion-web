@@ -31,8 +31,16 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     }
     data.status = s
   }
-  if (body.area           !== undefined) data.area           = body.area || null
-  if (body.assignedUserId !== undefined) data.assignedUserId = body.assignedUserId || null
+  if (body.area !== undefined) data.area = body.area || null
+  if (body.assignedUserId !== undefined) {
+    const uid = body.assignedUserId || null
+    if (uid) {
+      // MAJOR fix: invalid assignedUserId caused uncaught Prisma P2003 FK error → HTTP 500.
+      const userExists = await prisma.user.findUnique({ where: { id: uid }, select: { id: true } })
+      if (!userExists) return NextResponse.json({ error: 'assignedUserId not found' }, { status: 400 })
+    }
+    data.assignedUserId = uid
+  }
   const bug = await prisma.bug.update({
     where: { id: params.id },
     data,

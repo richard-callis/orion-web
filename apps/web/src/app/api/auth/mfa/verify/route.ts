@@ -13,12 +13,14 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { rateLimitRedis } from '@/lib/rate-limit-redis'
 import { compare } from 'bcryptjs'
 import { verifyTOTP, verifyRecoveryCode, consumeRecoveryCode } from '@/lib/totp'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, MfaVerifySchema } from '@/lib/validate'
 
 export async function POST(req: NextRequest) {
+  // BLOCKER fix: per-account rate limit on MFA verify (5 attempts/15min)
   // SOC2 [INPUT-001]: Validate request body with Zod schema
   const result = await parseBodyOrError(req, MfaVerifySchema)
   if ('error' in result) return result.error
@@ -60,6 +62,13 @@ async function handleTotpLogin(username: string, password: string, code?: string
   }
 
   // Verify TOTP
+  // BLOCKER fix: per-account brute-force protection on MFA verify
+  const userId = user?.id ?? 'unknown'
+  const mfaLimit = await rateLimitRedis(`mfa-attempt:${userId}`, 5, 15 * 60 * 1000)
+  if (!mfaLimit.allowed) {
+    return NextResponse.json({ error: 'Too many MFA attempts. Try again later.' }, { status: 429 })
+  }
+
   if (!(await verifyTOTP(user.totpSecret, code))) {
     // SOC2: [M-005] Log MFA verification failure (non-blocking)
     logAudit({
