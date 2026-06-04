@@ -41,12 +41,23 @@ export function serializeNodeHosts(entries: DnsEntry[]): string {
   return entries.map(e => `${e.ip} ${e.hostnames.join(' ')}`).join('\n') + '\n'
 }
 
+
+// Validate IP and hostnames to prevent Corefile injection via newline/whitespace
+function validateIp(ip: string): boolean {
+  return /^[\d.:a-fA-F]+$/.test(ip)
+}
+function validateHostname(h: string): boolean {
+  return /^[a-zA-Z0-9._-]+$/.test(h) && h.length <= 253
+}
+
+
 export async function getNodeHosts(): Promise<DnsEntry[]> {
   const cm = await getConfigMap('coredns')
   return parseNodeHosts(cm.data?.['NodeHosts'])
 }
 
 export async function upsertNodeHost(ip: string, hostnames: string[]): Promise<void> {
+  if (!validateIp(ip) || !hostnames.every(validateHostname)) throw new Error("Invalid IP or hostname")
   for (let i = 0; i < MAX_RETRIES; i++) {
     try {
       const cm = await getConfigMap('coredns')
@@ -122,6 +133,7 @@ export async function getCustomRecords(): Promise<DnsEntry[]> {
 }
 
 export async function upsertCustomRecord(ip: string, hostnames: string[]): Promise<void> {
+  if (!validateIp(ip) || !hostnames.every(validateHostname)) throw new Error("Invalid IP or hostname")
   for (let i = 0; i < MAX_RETRIES; i++) {
     try {
       const cm = await getOrCreateCustomConfigMap()

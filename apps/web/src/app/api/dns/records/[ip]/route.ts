@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { upsertCustomRecord, deleteCustomRecord } from '@/lib/dns'
+import { requireAdmin } from '@/lib/auth'
 
 export async function PUT(req: NextRequest, { params }: { params: { ip: string } }) {
+  try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
+
   const { ip, hostnames } = await req.json()
   try {
     await upsertCustomRecord(params.ip, hostnames)
@@ -12,6 +15,8 @@ export async function PUT(req: NextRequest, { params }: { params: { ip: string }
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { ip: string } }) {
+  try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
+
   try {
     const deleted = await deleteCustomRecord(params.ip)
     if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 })
