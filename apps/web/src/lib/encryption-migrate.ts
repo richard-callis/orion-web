@@ -4,14 +4,22 @@
  *
  * Run: npx tsx apps/web/src/lib/encryption-migrate.ts
  *
- * Safe to run multiple times — encrypted values pass through decrypt() unchanged.
- * Safe to abort and resume — decrypt() has plaintext passthrough.
+ * Safe to run multiple times — encrypted values have the 'enc:v1:' prefix and
+ * are skipped. Safe to abort and resume.
  *
  * Generate a new key: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
  */
 
-import { prisma } from './db'
-import { encrypt, decrypt } from './encryption'
+import { PrismaClient } from '@prisma/client'
+import { encrypt } from './encryption'
+
+// MAJOR fix: the shared `prisma` client has the auto-encrypt middleware attached,
+// which decrypts values on read. This means the migrate script sees plaintext
+// from the middleware — the `plaintext === env.gatewayToken` detection always
+// returned true, causing every row to be redundantly re-encrypted on every run.
+// Using a raw client (no middleware) lets us see the actual on-disk value and
+// correctly detect which rows are already encrypted via the 'enc:v1:' prefix.
+const raw = new PrismaClient()
 
 async function migrate() {
   const key = process.env.ORION_ENCRYPTION_KEY
@@ -24,7 +32,7 @@ async function migrate() {
   console.log(`Key length: ${key.length} bytes (base64)`)
 
   // ── Migrate Environment fields ──────────────────────────────────────
-  const environments = await prisma.environment.findMany({
+  const environments = await raw.environment.findMany({
     select: { id: true, gatewayToken: true, kubeconfig: true, name: true },
   })
 
@@ -36,37 +44,29 @@ async function migrate() {
   for (const env of environments) {
     const updates: Record<string, string> = {}
 
-    if (env.gatewayToken) {
-      const plaintext = decrypt(env.gatewayToken)
-      // If decrypt() returns the same value, it was plaintext (no enc:v1: prefix) — needs encryption
-      if (plaintext === env.gatewayToken) {
-        updates.gatewayToken = encrypt(plaintext)
-        envMigrated++
-        console.log(`  encrypted gatewayToken for "${env.name}"`)
-      } else {
-        envSkipped++
-      }
+    if (env.gatewayToken && !env.gatewayToken.startsWith('enc:v1:')) {
+      updates.gatewayToken = encrypt(env.gatewayToken)
+      envMigrated++
+      console.log(`  encrypted gatewayToken for "${env.name}"`)
+    } else if (env.gatewayToken) {
+      envSkipped++
     }
 
-    if (env.kubeconfig) {
-      const plaintext = decrypt(env.kubeconfig)
-      // If decrypt() returns the same value, it was plaintext (no enc:v1: prefix) — needs encryption
-      if (plaintext === env.kubeconfig) {
-        updates.kubeconfig = encrypt(plaintext)
-        envMigrated++
-        console.log(`  encrypted kubeconfig for "${env.name}"`)
-      } else {
-        envSkipped++
-      }
+    if (env.kubeconfig && !env.kubeconfig.startsWith('enc:v1:')) {
+      updates.kubeconfig = encrypt(env.kubeconfig)
+      envMigrated++
+      console.log(`  encrypted kubeconfig for "${env.name}"`)
+    } else if (env.kubeconfig) {
+      envSkipped++
     }
 
     if (Object.keys(updates).length > 0) {
-      await prisma.environment.update({ where: { id: env.id }, data: updates })
+      await raw.environment.update({ where: { id: env.id }, data: updates })
     }
   }
 
   // ── Migrate ExternalModel.apiKey ────────────────────────────────────
-  const extModels = await prisma.externalModel.findMany({
+  const extModels = await raw.externalModel.findMany({
     select: { id: true, apiKey: true, name: true },
   })
 
@@ -76,22 +76,19 @@ async function migrate() {
   let extSkipped = 0
 
   for (const ext of extModels) {
-    if (ext.apiKey) {
-      const plaintext = decrypt(ext.apiKey)
-      // If decrypt() returns the same value, it was plaintext (no enc:v1: prefix) — needs encryption
-      if (plaintext === ext.apiKey) {
-        const encrypted = encrypt(plaintext)
-        await prisma.externalModel.update({
-          where: { id: ext.id },
-          data: { apiKey: encrypted },
-        })
-        extMigrated++
-        console.log(`  encrypted apiKey for "${ext.name}"`)
-      } else {
-        extSkipped++
-      }
+    if (ext.apiKey && !ext.apiKey.startsWith('enc:v1:')) {
+      await raw.externalModel.update({
+        where: { id: ext.id },
+        data: { apiKey: encrypt(ext.apiKey) },
+      })
+      extMigrated++
+      console.log(`  encrypted apiKey for "${ext.name}"`)
+    } else if (ext.apiKey) {
+      extSkipped++
     }
   }
+
+  await raw.$disconnect()
 
   console.log(`\n--- Migration complete ---`)
   console.log(`Environment fields: ${envMigrated} migrated, ${envSkipped} skipped (already encrypted)`)
