@@ -4,13 +4,17 @@
  * GET — Fetch the feature chat room for a task, filtered to messages tagged to this task.
  *       Also returns the roomId so the UI can link directly to the full feature room.
  */
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireServiceAuth } from '@/lib/auth'
 
 export async function GET(
-  _req: Request,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  // B3 fix: route had no auth — any caller could read any task's chat room contents
+  await requireServiceAuth(req).catch(() => { throw Object.assign(new Error('Unauthorized'), { status: 401 }) })
+
   const task = await prisma.task.findUnique({
     where: { id: params.id },
     select: { feature: { select: { id: true } } },
