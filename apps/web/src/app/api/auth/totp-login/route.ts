@@ -14,6 +14,7 @@ import { compare } from 'bcryptjs'
 import { verifyTOTP, verifyRecoveryCode, consumeRecoveryCode } from '@/lib/totp'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, TOTPLoginSchema } from '@/lib/validate'
+import { rateLimitRedis } from '@/lib/rate-limit-redis'
 
 export async function POST(req: NextRequest) {
   // SOC2 [INPUT-001]: Validate request body with Zod schema
