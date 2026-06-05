@@ -300,6 +300,46 @@ const DEFAULT_RULES = [
     window: 3600,
     enabledByDefault: false,
   },
+
+  // ── Traffic volume anomaly rules ──────────────────────────────────────────
+  // Detects large data transfers that individual flow threat scores would miss.
+  // 84GB uploaded in a day = data exfiltration scenario the SIEM previously
+  // could not catch because per-flow severity was < 15 and flows were dropped.
+  //
+  // Two rules:
+  //   net.high_egress — total outbound bytes from a single source IP > 10 GB/hr
+  //   net.high_total  — total bytes across ALL flows in the env > 50 GB/hr
+  //
+  // Thresholds are intentionally conservative: tune via SecurityConfig if
+  // this is too noisy for your network baseline.
+
+  {
+    name: 'net.high_egress',
+    ruleType: 'volume_sum',
+    params: {
+      type: 'volume_sum',
+      jsonPath: 'source_to_dest_bytes',
+      thresholdBytes: 10 * 1024 * 1024 * 1024, // 10 GB
+      window: 3600, // 1 hour
+      sourceFilter: ['ntopng'],
+    },
+    severity: 75,
+    window: 3600,
+  },
+
+  {
+    name: 'net.high_total',
+    ruleType: 'volume_sum',
+    params: {
+      type: 'volume_sum',
+      jsonPath: 'bytes',
+      thresholdBytes: 50 * 1024 * 1024 * 1024, // 50 GB
+      window: 3600, // 1 hour
+      sourceFilter: ['ntopng'],
+    },
+    severity: 80,
+    window: 3600,
+  },
 ]
 
 /**

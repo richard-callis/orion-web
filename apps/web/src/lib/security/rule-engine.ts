@@ -34,6 +34,10 @@ export type RuleParams =
   | { type: 'malware'; ruleLevel: number; field: string }
   | { type: 'process'; commandPattern: string; window: number }
   | { type: 'composite'; rules: RuleParams[]; combine: 'all' | 'any'; window: number }
+  // volume_sum: aggregates a numeric JSON field from rawEvent across all matching
+  // events in the window. Fires when the total exceeds `thresholdBytes`.
+  // Designed for high-egress / large-transfer detection from ntopng flows.
+  | { type: 'volume_sum'; jsonPath: string; thresholdBytes: number; window: number; sourceFilter?: string[]; groupBy?: string[] }
 
 // ── Correlation ───────────────────────────────────────────────────────────────
 
@@ -210,6 +214,9 @@ export async function correlateEvents(
           break
         case 'composite':
           result = await runCompositeRule(envId, params, since)
+          break
+        case 'volume_sum':
+          result = await runVolumeSumRule(envId, params, since)
           break
       }
       if (result) {
@@ -567,6 +574,84 @@ async function runCompositeRule(
   }
 }
 
+// ── Volume-sum rule ───────────────────────────────────────────────────────────
+
+/**
+ * Volume-sum rule: aggregate a numeric JSON field from rawEvent across all
+ * matching events in the window. Fires when the total exceeds thresholdBytes.
+ *
+ * Used for high-egress / large-transfer detection. Individual ntopng flows
+ * have low per-flow severity even during a multi-GB exfiltration; this rule
+ * aggregates total bytes across flows so the correlator can detect the pattern.
+ *
+ * jsonPath supports one level of dot-notation (e.g. "bytes" or "metadata.bytes").
+ * Postgres CAST is used to extract numeric values from the rawEvent JSON blob.
+ */
+async function runVolumeSumRule(
+  envId: string,
+  params: Extract<RuleParams, { type: 'volume_sum' }>,
+  since: Date
+): Promise<IncidentDraft | null> {
+  const ruleSince = params.window > 0
+    ? new Date(Date.now() - params.window * 1000)
+    : since
+  const effectiveSince = ruleSince < since ? since : ruleSince
+
+  const envFilter = envIdFilter(envId)
+  const sourceFilter = params.sourceFilter ?? []
+
+  // Build a safe JSON path for Postgres: "rawEvent"->'field' or "rawEvent"->'parent'->>'child'
+  const pathParts = params.jsonPath.split('.')
+  let jsonExtract: string
+  if (pathParts.length === 1) {
+    jsonExtract = `("rawEvent"->>'${pathParts[0]}')`
+  } else {
+    const parent = pathParts.slice(0, -1).map(p => `'${p}'`).join('->')
+    const leaf = pathParts[pathParts.length - 1]
+    jsonExtract = `("rawEvent"->${parent}->>'${leaf}')`
+  }
+
+  // Raw SQL: SUM the JSON field across events in the window.
+  // We group by source IP (attackerKey) when groupBy is specified so a single
+  // high-volume sender can be identified in the incident.
+  const rows = await prisma.$queryRawUnsafe<Array<{ total: string; event_ids: string; top_source: string | null }>>(
+    `
+    SELECT
+      COALESCE(SUM(CAST(NULLIF(${jsonExtract}, '') AS BIGINT)), 0)::text AS total,
+      string_agg(id::text, ',' ORDER BY "createdAt" DESC) AS event_ids,
+      (rawEvent->>'source_ip') AS top_source
+    FROM "SecurityEvent"
+    WHERE
+      "createdAt" >= $1
+      ${envFilter !== null ? 'AND "environmentId" = $2' : 'AND "environmentId" IS NULL'}
+      ${sourceFilter.length > 0 ? `AND source = ANY($${envFilter !== null ? 3 : 2}::text[])` : ''}
+    GROUP BY (rawEvent->>'source_ip')
+    ORDER BY SUM(CAST(NULLIF(${jsonExtract}, '') AS BIGINT)) DESC NULLS LAST
+    LIMIT 1
+    `,
+    ...[effectiveSince, ...(envFilter !== null ? [envFilter] : []), ...(sourceFilter.length > 0 ? [sourceFilter] : [])]
+  )
+
+  if (!rows.length) return null
+
+  const totalBytes = Number(rows[0].total ?? 0)
+  if (totalBytes < params.thresholdBytes) return null
+
+  const eventIds = (rows[0].event_ids ?? '').split(',').filter(Boolean).slice(0, 100)
+  const topSource = rows[0].top_source ?? null
+  const gb = (totalBytes / (1024 ** 3)).toFixed(1)
+  const threshold = (params.thresholdBytes / (1024 ** 3)).toFixed(0)
+
+  return {
+    severity: 75,
+    rootCauseSummary: `High traffic volume: ${gb} GB transferred in ${Math.round(params.window / 60)} min (threshold: ${threshold} GB)`,
+    attackerKey: topSource,
+    eventIds,
+    ruleName: 'volume_sum',
+    environmentId: envId,
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
@@ -583,5 +668,6 @@ async function runSingleRule(
     case 'malware': return runMalwareRule(envId, params, since)
     case 'process': return runProcessRule(envId, params, since)
     case 'composite': return null // handled by runCompositeRule
+    case 'volume_sum': return runVolumeSumRule(envId, params, since)
   }
 }

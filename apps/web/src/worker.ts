@@ -23,6 +23,7 @@ import { runElkPollerAll } from './jobs/security-poll-elk'
 import { runNtopngPollerAll } from './jobs/security-poll-ntopng'
 import { runDailyScan, runEventTriggeredScan } from './jobs/security-scan-vulns'
 import { runGoalHeartbeat } from './jobs/goal-heartbeat'
+import { syncCrowdSecDecisions } from './lib/security/crowdsec-bouncer'
 
 const POLL_INTERVAL_MS = 15_000
 const MAX_CONCURRENT   = 3
@@ -906,6 +907,14 @@ async function main() {
     if (runningNtopngPoller) return
     runningNtopngPoller = true
     runNtopngPollerAll().catch(e => err(`ntopng poller failed: ${e}`)).finally(() => { runningNtopngPoller = false })
+  }, 30_000)
+
+  // CrowdSec decision sync — refresh the application-layer blocklist every 60s.
+  // Runs independently of the ntopng/ELK pollers so a slow LAPI doesn't block
+  // event ingestion. syncCrowdSecDecisions() has its own internal debounce so
+  // calling it on a 30s interval is harmless.
+  setInterval(() => {
+    syncCrowdSecDecisions().catch(e => err(`CrowdSec sync failed: ${e}`))
   }, 30_000)
 
   // ── Phase 3: vulnerability scanning ───────────────────────────────────────
