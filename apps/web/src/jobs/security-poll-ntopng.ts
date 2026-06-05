@@ -114,8 +114,17 @@ export async function runNtopngPoller(envId: string): Promise<PollResult> {
 
           const parsed = normalizedEventSchema.parse(event)
 
-          // Skip low-severity normal flows for performance
-          if (parsed.severity < 15 && parsed.type === 'ntopng_flow') {
+          // Skip low-severity, low-volume flows only. High-bytes flows must
+          // be retained regardless of threat score so the volume_sum correlation
+          // rule can detect large data transfers (e.g. data exfiltration).
+          // 50MB threshold: a single flow moving >50MB is worth recording even
+          // if it isn't flagged as a threat by ntopng's heuristics.
+          const flowBytes =
+            (raw.bytes ?? 0) +
+            (raw.source_to_dest_bytes ?? 0) +
+            (raw.destination_to_source_bytes ?? 0)
+          const isLargeTransfer = flowBytes > 50 * 1024 * 1024 // 50 MB
+          if (parsed.severity < 15 && parsed.type === 'ntopng_flow' && !isLargeTransfer) {
             result.eventsSkipped++
             continue
           }

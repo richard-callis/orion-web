@@ -11,6 +11,7 @@ wrapConsoleLog()
 // See: src/lib/rate-limit-redis.ts
 
 import { rateLimitRedis } from './lib/rate-limit-redis'
+import { isIpBlocked } from './lib/security/crowdsec-bouncer'
 
 function getRateLimitKey(req: NextRequest): string {
   // X-Forwarded-For is intentionally NOT used: the leftmost IP is client-supplied
@@ -204,6 +205,19 @@ export async function middleware(req: NextRequest) {
 
   // ── Generate correlation ID for error tracking (SOC2: [H-002]) ──────────────
   const correlationId = getOrCreateCorrelationId(Object.fromEntries(req.headers))
+
+  // ── CrowdSec IP block check ────────────────────────────────────────────────
+  // Skip for security webhooks (CrowdSec POSTs to us) and health checks —
+  // blocking those would create a feedback loop or break monitoring.
+  const isCrowdSecWebhook = pathname.startsWith('/api/monitoring/security/webhooks')
+  const isHealthCheck     = pathname === '/api/health'
+  if (!isCrowdSecWebhook && !isHealthCheck) {
+    const clientIp = req.ip ?? 'unknown'
+    const blocked = await isIpBlocked(clientIp).catch(() => false)
+    if (blocked) {
+      return new NextResponse('Forbidden', { status: 403 })
+    }
+  }
 
   // SOC2: [M-003] Apply rate limiting before auth check (prevents auth DoS)
   // Public endpoints that are rate-limited still get the check, others skip
