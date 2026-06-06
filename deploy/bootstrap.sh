@@ -205,6 +205,14 @@ echo ""
 echo "Pulling images..."
 GITHUB_ORG="${GITHUB_ORG}" $COMPOSE pull
 
+# ── Rebuild locally-built services ───────────────────────────────────────────
+# These services use build: in docker-compose.yml and are not pushed to a
+# registry, so `pull` is a no-op for them. Rebuild on every deploy so that
+# source changes (e.g. deploy/orion-claude/server.js) are picked up.
+echo ""
+echo "Building local services..."
+GITHUB_ORG="${GITHUB_ORG}" $COMPOSE build vault-unsealer orion-claude claude-refresh orion-executor
+
 # ── Start stack ───────────────────────────────────────────────────────────────
 echo ""
 echo "Starting stack..."
