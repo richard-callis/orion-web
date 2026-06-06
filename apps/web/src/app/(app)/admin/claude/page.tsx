@@ -102,7 +102,14 @@ export default function ClaudeOAuthPage() {
     setCodeErr(null)
     const res = await fetch('/api/admin/claude/oauth?action=login', { method: 'POST' }).catch(() => null)
     if (!res || !res.ok) {
-      setSvcErr('Claude Code service is not reachable. Make sure orion-claude is running.')
+      if (res?.status === 429) {
+        setSvcErr('Too many requests — please wait a moment and try again.')
+      } else if (!res) {
+        setSvcErr('Claude Code service is not reachable. Make sure orion-claude is running.')
+      } else {
+        const detail = await res.json().catch(() => null) as { error?: string } | null
+        setSvcErr(detail?.error ?? `Failed to start login (HTTP ${res.status}).`)
+      }
       setStarting(false)
       return
     }
