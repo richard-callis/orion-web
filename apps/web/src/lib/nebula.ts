@@ -45,6 +45,12 @@ export interface NovaConfig {
   manifests?: string[]
   /** Custom helm values as inline string */
   rawValues?: string
+  /** Namespace labels to apply before installing (map of namespace → labels) */
+  namespaceLabels?: Record<string, Record<string, string>>
+  /** UI icon name (maps to lucide-react icon) */
+  icon?: string
+  /** Post-install instructions shown to the operator */
+  setupNote?: string
   /** Agent system prompt (for agent-type Novas) */
   systemPrompt?: string
   /** Agent context config (for agent-type Novas) */
@@ -88,6 +94,129 @@ export interface NovaImportResponse {
 // ── Bundled Nova definitions ───────────────────────────────────────────────────
 
 export const BUNDLED_NOVAE: Record<string, Nova> = {}
+
+// Bundled middleware Novas — always available without Nebula/git setup.
+// The deploy logic for these lives in apps/web/src/app/api/ingress/points/[id]/bootstrap-middleware/route.ts.
+const BUNDLED_MIDDLEWARE: Nova[] = [
+  {
+    id: 'bundled_crowdsec',
+    name: 'crowdsec',
+    displayName: 'CrowdSec',
+    description: 'Behavioral IPS with Traefik bouncer for automated IP banning',
+    category: 'Other',
+    version: '1.0.0',
+    source: 'bundled',
+    config: {
+      name: 'crowdsec',
+      displayName: 'CrowdSec',
+      description: 'Behavioral IPS with Traefik bouncer for automated IP banning',
+      type: 'service',
+      icon: 'Shield',
+      setupNote: 'After install, generate the bouncer API key:\n  kubectl exec -n crowdsec deploy/crowdsec-lapi -- cscli bouncers add traefik-bouncer -o raw\nThen patch the secret:\n  kubectl create secret generic crowdsec-traefik-bouncer -n crowdsec --from-literal=api_key=<KEY> --dry-run=client -o yaml | kubectl apply -f -',
+    },
+    tags: ['middleware', 'security'],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'bundled_rate-limit',
+    name: 'rate-limit',
+    displayName: 'Rate Limiting',
+    description: 'Per-IP request rate limiting via Traefik — protects against brute force and scrapers',
+    category: 'Other',
+    version: '1.0.0',
+    source: 'bundled',
+    config: {
+      name: 'rate-limit',
+      displayName: 'Rate Limiting',
+      description: 'Per-IP request rate limiting via Traefik',
+      type: 'service',
+      icon: 'Gauge',
+      namespaceLabels: { security: {} },
+      manifests: [
+        'apiVersion: traefik.io/v1alpha1\nkind: Middleware\nmetadata:\n  name: rate-limit\n  namespace: security\nspec:\n  rateLimit:\n    average: 100\n    burst: 50\n    period: 1m\n    sourceCriterion:\n      ipStrategy:\n        depth: 1',
+      ],
+    },
+    tags: ['middleware', 'security'],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'bundled_secure-headers',
+    name: 'secure-headers',
+    displayName: 'Secure Headers',
+    description: 'HSTS, X-Frame-Options, CSP, and other security headers applied via Traefik',
+    category: 'Other',
+    version: '1.0.0',
+    source: 'bundled',
+    config: {
+      name: 'secure-headers',
+      displayName: 'Secure Headers',
+      description: 'HSTS, X-Frame-Options, CSP, and other security headers applied via Traefik',
+      type: 'service',
+      icon: 'ShieldCheck',
+      namespaceLabels: { security: {} },
+      manifests: [
+        'apiVersion: traefik.io/v1alpha1\nkind: Middleware\nmetadata:\n  name: secure-headers\n  namespace: security\nspec:\n  headers:\n    stsSeconds: 31536000\n    stsIncludeSubdomains: true\n    stsPreload: true\n    forceSTSHeader: true\n    frameDeny: true\n    contentTypeNosniff: true\n    browserXssFilter: true\n    referrerPolicy: strict-origin-when-cross-origin\n    customResponseHeaders:\n      X-Robots-Tag: "noindex,nofollow,nosnippet,noarchive"\n      Server: ""',
+      ],
+    },
+    tags: ['middleware', 'security'],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'bundled_ip-allowlist',
+    name: 'ip-allowlist',
+    displayName: 'IP Allowlist',
+    description: 'Restrict access to specific IP ranges — useful for locking down admin services',
+    category: 'Other',
+    version: '1.0.0',
+    source: 'bundled',
+    config: {
+      name: 'ip-allowlist',
+      displayName: 'IP Allowlist',
+      description: 'Restrict access to specific IP ranges',
+      type: 'service',
+      icon: 'Lock',
+      setupNote: 'Edit the sourceRange list after install to add your allowed CIDRs:\n  kubectl edit middleware ip-allowlist -n security',
+      namespaceLabels: { security: {} },
+      manifests: [
+        'apiVersion: traefik.io/v1alpha1\nkind: Middleware\nmetadata:\n  name: ip-allowlist\n  namespace: security\nspec:\n  ipAllowList:\n    sourceRange:\n      - 127.0.0.1/32\n      - 10.0.0.0/8\n      - 192.168.0.0/16',
+      ],
+    },
+    tags: ['middleware', 'security', 'access-control'],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'bundled_basic-auth',
+    name: 'basic-auth',
+    displayName: 'Basic Auth',
+    description: 'Simple username/password protection for services not covered by SSO',
+    category: 'Other',
+    version: '1.0.0',
+    source: 'bundled',
+    config: {
+      name: 'basic-auth',
+      displayName: 'Basic Auth',
+      description: 'Simple username/password protection',
+      type: 'service',
+      icon: 'KeyRound',
+      setupNote: 'Create the auth secret before using:\n  kubectl create secret generic basic-auth -n security \\\n    --from-literal=users=$(htpasswd -nb admin yourpassword)',
+      namespaceLabels: { security: {} },
+      manifests: [
+        'apiVersion: traefik.io/v1alpha1\nkind: Middleware\nmetadata:\n  name: basic-auth\n  namespace: security\nspec:\n  basicAuth:\n    secret: basic-auth\n    removeHeader: true',
+      ],
+    },
+    tags: ['middleware', 'auth'],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+]
+
+for (const nova of BUNDLED_MIDDLEWARE) {
+  BUNDLED_NOVAE[nova.name] = nova
+}
 
 // Convert ProviderConfig entries to Nova definitions
 for (const [key, config] of Object.entries(BUNDLED_PROVIDERS)) {
