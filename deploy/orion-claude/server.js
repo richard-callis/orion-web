@@ -69,6 +69,20 @@ function sanitizeSystemPrompt(systemPrompt) {
   return systemPrompt.slice(0, 20000)
 }
 
+// Linux ARG_MAX is typically 128KB. We reserve headroom for env vars and flags.
+// Prompts exceeding this cause execFile to fail with E2BIG (silently, due to unref).
+const PROMPT_CHAR_LIMIT = 80000
+
+function sanitizePrompt(prompt) {
+  const s = String(prompt || '')
+  if (s.length <= PROMPT_CHAR_LIMIT) return s
+  // Keep the tail (most recent messages) — the model needs recency more than deep history.
+  const truncated = s.slice(s.length - PROMPT_CHAR_LIMIT)
+  // Trim to a clean line boundary so we don't split mid-word.
+  const newline = truncated.indexOf('\n')
+  return newline > 0 ? truncated.slice(newline + 1) : truncated
+}
+
 function sanitizeMaxTurns(maxTurns, fallback = 20) {
   const n = Number(maxTurns)
   if (!Number.isFinite(n)) return fallback
@@ -115,7 +129,8 @@ function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 12000
     const useMcp          = !!agentId
     const safeMaxTurns    = sanitizeMaxTurns(maxTurns, useMcp ? 10 : 1)
 
-    const args = ['-p', String(prompt), '--output-format', 'json']
+    const safePrompt = sanitizePrompt(prompt)
+    const args = ['-p', safePrompt, '--output-format', 'json']
     if (safeModel)        args.push('--model', safeModel)
     if (safeSystemPrompt) args.push('--append-system-prompt', safeSystemPrompt)
     args.push('--max-turns', String(safeMaxTurns))
