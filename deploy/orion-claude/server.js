@@ -339,8 +339,8 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: 'code is required' })
       }
 
-      // Accept only expected device/auth code characters to avoid PTY/control injection.
-      if (!/^[A-Za-z0-9_-]{4,128}$/.test(normalizedCode)) {
+      // Accept code#state format from the Claude OAuth callback page.
+      if (!/^[A-Za-z0-9_#-]{4,256}$/.test(normalizedCode)) {
         return json(res, 400, { error: 'Invalid code format' })
       }
 
