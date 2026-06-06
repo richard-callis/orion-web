@@ -507,14 +507,38 @@ async function handleReopenTask(args: unknown, ctx: ToolExecutionContext): Promi
   return `Reopened task "${task?.title}" — ${reason ?? 'validation failed'}`
 }
 
-async function handleClosePR(args: unknown, ctx: ToolExecutionContext): Promise<string> {
-  const { environment_id, pr_number, reason } = parseArgs(args) as {
-    environment_id?: string
-    pr_number?: number
-    reason?: string
-  }
+async function handleMergePR(args: unknown, ctx: ToolExecutionContext): Promise<string> {
+  const raw = parseArgs(args) as { environment_id?: string; pr_number?: unknown; merge_message?: string }
+  const { environment_id, merge_message } = raw
+  const pr_number = Number(raw.pr_number)
   if (!environment_id) return 'Error: environment_id is required'
-  if (!pr_number) return 'Error: pr_number is required'
+  if (!Number.isInteger(pr_number) || pr_number <= 0) return 'Error: pr_number must be a positive integer'
+
+  const env = await ctx.prisma.environment.findFirst({
+    where: { OR: [{ id: environment_id }, { name: { equals: environment_id, mode: 'insensitive' } }] },
+  })
+  if (!env) return `Error: environment "${environment_id}" not found`
+  if (!env.gitOwner || !env.gitRepo) return 'Error: environment has no git repo'
+
+  const { mergePR } = await import('./gitea')
+  await mergePR({ owner: env.gitOwner, repo: env.gitRepo, index: pr_number, message: merge_message, style: 'merge' })
+
+  await ctx.prisma.gitOpsPR.updateMany({
+    where: { environmentId: env.id, prNumber: pr_number },
+    data: { status: 'merged' },
+  }).catch((e) => console.error(`[gitea_merge_pr] DB update failed for PR #${pr_number}:`, e))
+
+  const msg = `✅ Merged PR #${pr_number} in ${env.gitOwner}/${env.gitRepo}${merge_message ? ` — ${merge_message}` : ''}`
+  await auditLog(ctx.agentId ?? ctx.userId, msg)
+  return `Merged PR #${pr_number} in ${env.gitOwner}/${env.gitRepo}.`
+}
+
+async function handleClosePR(args: unknown, ctx: ToolExecutionContext): Promise<string> {
+  const raw = parseArgs(args) as { environment_id?: string; pr_number?: unknown; reason?: string }
+  const { environment_id, reason } = raw
+  const pr_number = Number(raw.pr_number)
+  if (!environment_id) return 'Error: environment_id is required'
+  if (!Number.isInteger(pr_number) || pr_number <= 0) return 'Error: pr_number must be a positive integer'
 
   const env = await ctx.prisma.environment.findFirst({
     where: { OR: [{ id: environment_id }, { name: { equals: environment_id, mode: 'insensitive' } }] },
@@ -2261,6 +2285,27 @@ For Docker Compose: use self-contained services (no host bind mounts for config 
       return `Error proposing GitOps change: ${e instanceof Error ? e.message : String(e)}`
     }
   },
+})
+
+// ── gitea_merge_pr ────────────────────────────────────────────────────────────
+
+registerTool({
+  name: 'gitea_merge_pr',
+  description: 'Merge an open Gitea pull request into its target branch. The PR must be in a mergeable state.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      environment_id: { type: 'string', description: 'Environment ID or name (e.g. "Talos Cluster")' },
+      pr_number:      { type: 'number', description: 'The PR number to merge' },
+      merge_message:  { type: 'string', description: 'Optional commit message for the merge commit' },
+    },
+    required: ['environment_id', 'pr_number'],
+  },
+  tier: 'write',
+  parallelSafe: false,
+  availableIn: 'both',
+  category: 'gitops',
+  handler: handleMergePR,
 })
 
 // ── gitea_close_pr ────────────────────────────────────────────────────────────

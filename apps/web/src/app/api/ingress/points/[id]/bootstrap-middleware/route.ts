@@ -13,6 +13,7 @@ import { prisma } from '@/lib/db'
 import { startJob, type JobLogger } from '@/lib/job-runner'
 import { GatewayClient } from '@/lib/agent-runner/gateway-client'
 import { requireAdmin } from '@/lib/auth'
+import { getNova } from '@/lib/nebula'
 
 // Nova config shape for Nebula-sourced middleware
 interface MiddlewareNovaConfig {
@@ -130,11 +131,21 @@ async function bootstrapMiddleware(
     return
   }
 
-  // All other Novas: look up config from DB and deploy generically
+  // All other Novas: DB first, then bundled/remote via getNova().
+  // Only middleware-tagged Novas are accepted — this prevents SSO provider configs
+  // (which have a different helm shape) from being accidentally routed here.
   const nova = await prisma.nova.findUnique({ where: { name: cfg.novaName } })
-  if (!nova) throw new Error(`Nova "${cfg.novaName}" not found in catalog`)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let novaConfig: any = nova?.config
+  if (!novaConfig) {
+    const resolved = await getNova(cfg.novaName)
+    if (!resolved?.tags.includes('middleware')) {
+      throw new Error(`Nova "${cfg.novaName}" not found in middleware catalog`)
+    }
+    novaConfig = resolved.config
+  }
 
-  await deployFromNovaConfig(gx, log, nova.config as unknown as MiddlewareNovaConfig)
+  await deployFromNovaConfig(gx, log, novaConfig as MiddlewareNovaConfig)
 }
 
 async function deployFromNovaConfig(
