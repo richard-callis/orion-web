@@ -113,7 +113,11 @@ export async function bootstrapArgoCD(
 
     // Step 6: Register the repo as an ArgoCD repository Secret
     try {
-      const repoUrl = `${gitConfig.url}/${gitConfig.org}`
+      // repo-creds is a credential template — ArgoCD matches it by URL prefix, so
+      // a single Secret covers all repos under gitConfig.url without needing one
+      // Secret per repo. "repository" type requires an exact URL match and would
+      // never match because the Application repoURL includes the repo path.
+      const repoUrl = gitConfig.url
       const username = gitConfig.type === 'github' ? 'x-access-token' : 'orion'
 
       // B1 fix: YAML injection — the previous code only stripped \r\n but
@@ -131,7 +135,7 @@ metadata:
   name: orion-git-repo
   namespace: argocd
   labels:
-    argocd.argoproj.io/secret-type: repository
+    argocd.argoproj.io/secret-type: repo-creds
 stringData:
   type: git
   url: ${yamlRepoUrl}
