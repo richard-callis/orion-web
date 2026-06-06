@@ -42,6 +42,10 @@ const RATE_LIMITS: Record<string, [number, number]> = {
   // UI polling endpoints — high limit (browser polls every few seconds)
   '/api/jobs': [2000, 15 * 60 * 1000],
   '/api/agents': [2000, 15 * 60 * 1000],
+  // Claude auth admin page polls /api/admin/claude/oauth?action=poll every 1.5s
+  // during login. Without a dedicated limit it exhausts the default bucket and
+  // every subsequent call (including ?action=login) gets a 429.
+  '/api/admin/claude': [2000, 15 * 60 * 1000],
 
   // Default — global limit
   'default': [100, 15 * 60 * 1000],
