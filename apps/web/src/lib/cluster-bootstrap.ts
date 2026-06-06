@@ -22,7 +22,7 @@ import { randomBytes } from 'crypto'
 import { prisma } from './db'
 import { decrypt } from './encryption'
 import { bootstrapEnvironmentRepo } from './gitops'
-import { getGitProvider } from './git-provider'
+import { getGitProvider, getGitProviderConfig } from './git-provider'
 import { VAULT_ADDR, vaultFetch } from './vault'
 
 const ARGOCD_SERVER = process.env.ARGOCD_SERVER ?? 'http://host.docker.internal:8083'
@@ -773,9 +773,15 @@ async function ensureGitRepo(env: { name: string; gitOwner: string | null; gitRe
       webhookSecret: randomBytes(32).toString('hex'),
     })
     resolvedGitOwner = createdRepo.fullName.split('/')[0]
-    const cloneUrl = provider.getPRUrl(gitOwner, gitRepo, 0)
-      .replace(/\/pull\/0$/, '')
-      .replace(/\/-\/merge_requests\/0$/, '') + '.git'
+    // Build the cluster-reachable clone URL — must match the base URL registered in
+    // the ArgoCD credential Secret by argocd-bootstrap.ts so ArgoCD can find credentials.
+    // getPRUrl() uses publicUrl (Cloudflare/HTTPS), which ArgoCD can't match. Use the
+    // internal URL instead: management IP for bundled Gitea, config.url for external.
+    const gitCfg = await getGitProviderConfig()
+    const internalBase = gitCfg?.type === 'gitea-bundled'
+      ? `http://${MANAGEMENT_IP}:3002`
+      : (gitCfg?.url ?? 'https://github.com')
+    const cloneUrl = `${internalBase.replace(/\/$/, '')}/${resolvedGitOwner}/${gitRepo}.git`
     emit({ type: 'log', message: `Git repo ready: ${createdRepo.htmlUrl}` })
     return { owner: resolvedGitOwner, repo: gitRepo, url: cloneUrl, healthy: true }
   } catch (err) {
