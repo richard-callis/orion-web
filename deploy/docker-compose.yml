@@ -149,7 +149,7 @@ services:
       GITEA__security__INSTALL_LOCK: "true"
       GITEA__admin__DISABLE_REGULAR_ORG_CREATION: "false"
       GITEA__actions__ENABLED: "true"
-      GITEA__service__REQUIRE_SIGNIN_VIEW: "false"
+      GITEA__service__REQUIRE_SIGNIN_VIEW: "true"
       GITEA__service__DISABLE_REGISTRATION: "true"
       GITEA__service__ALLOW_ONLY_EXTERNAL_REGISTRATION: "false"
     volumes:
