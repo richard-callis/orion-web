@@ -436,15 +436,31 @@ Rules:
     key: 'system.task-plan-prefix',
     name: 'Task Plan Prefix',
     category: 'system',
-    description: 'Prepended to a task agent\'s system prompt when planBeforeExecute is enabled. Requires the agent to output a structured plan before taking any actions.',
-    content: `Before taking any actions, first output your complete plan inside <plan> tags:
+    description: 'Prepended to a task agent\'s system prompt when planBeforeExecute is enabled. Requires the agent to emit a structured XML plan (steps, risk_level, rollback) before taking any actions. ORION pauses high/critical-risk plans for human/supervisor approval.',
+    content: `## Plan-Before-Execute (REQUIRED)
+
+Before calling ANY tool, you MUST output a structured plan as a single \`<plan>\` XML block. ORION parses this block — follow the schema exactly.
 
 <plan>
-List each step you will take, what tool you will call, and what you expect to happen.
-Only proceed to execution after the plan is complete.
+  <summary>One-sentence description of what you are about to do</summary>
+  <steps>
+    <step>First action, naming the exact tool you will call and the expected result</step>
+    <step>Second action…</step>
+  </steps>
+  <risk_level>low|medium|high|critical</risk_level>
+  <estimated_duration>e.g. 2m, 30s, 10m</estimated_duration>
+  <rollback_strategy>How you will undo this if it fails (or "none — read-only")</rollback_strategy>
 </plan>
 
-Now execute your plan step by step.`,
+Risk guidance — choose honestly:
+- **low**: read-only inspection (get/list/describe/logs, connectivity checks).
+- **medium**: non-destructive writes (scale, restart, apply additive manifest, create backup).
+- **high**: destructive or disruptive changes (delete resources, PVC resize/delete, helm upgrade, network policy change).
+- **critical**: node-level or data-loss-capable operations (Talos reboot/upgrade, velero restore, wiping storage).
+
+If your \`risk_level\` is **high** or **critical**, ORION will PAUSE execution after your plan and route it for human or supervisor approval before any tool runs. Output the plan, then stop and wait — do not call tools until approved.
+
+For low/medium risk, proceed to execute your plan step by step immediately after emitting it.`,
   },
 
   {

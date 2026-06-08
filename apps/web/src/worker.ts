@@ -331,6 +331,12 @@ async function runTask(taskId: string): Promise<void> {
     let outputText = ''
     let toolsUsed: string[] = []
 
+    // Plan-before-execute gating: when enabled, the agent emits a <plan> block
+    // up front. If the plan is high/critical risk, we pause the task for human
+    // or supervisor approval before allowing ANY tool to run.
+    const planBeforeExecute = contextConfig.planBeforeExecute === true
+    let pausedForApproval = false
+
     for await (const event of runner.run(ctx)) {
       // Check for task-level abort (60-minute timeout)
       if (taskAbort.signal.aborted) {
@@ -347,6 +353,14 @@ async function runTask(taskId: string): Promise<void> {
           break
 
         case 'tool_call':
+          // Plan gate: a high/critical-risk plan must be approved before tools run.
+          if (planBeforeExecute) {
+            const plan = parsePlan(outputText)
+            if (planRequiresApproval(plan)) {
+              pausedForApproval = true
+              break
+            }
+          }
           toolsUsed.push(event.tool)
           await logTaskEvent(taskId, 'tool_call', `🔧 ${event.tool}(${event.args})`, agent.id)
           await prisma.message.create({
@@ -388,6 +402,30 @@ async function runTask(taskId: string): Promise<void> {
         case 'error':
           throw new Error(event.error)
       }
+
+      // Stop consuming the runner once we've paused for plan approval — no further
+      // tools should execute until a human/supervisor approves the plan.
+      if (pausedForApproval) break
+    }
+
+    // Plan-before-execute: high/critical-risk plan paused for approval.
+    if (pausedForApproval) {
+      const plan = parsePlan(outputText)
+      const risk = plan?.riskLevel ?? 'high'
+      const pauseMsg =
+        `⏸️ **Plan paused for approval** (risk: ${risk})\n\n` +
+        `Task **${task.title}** produced a ${risk}-risk plan and is awaiting human or supervisor approval before any tools run.\n\n` +
+        (plan?.summary ? `Summary: ${plan.summary}\n` : '') +
+        (plan?.rollbackStrategy ? `Rollback: ${plan.rollbackStrategy}\n` : '')
+      await Promise.all([
+        prisma.task.update({ where: { id: taskId }, data: { status: 'pending_validation' } }),
+        logTaskEvent(taskId, 'plan_pending_approval',
+          `Risk=${risk}. ${plan?.summary ?? ''}\n\n${plan?.raw ?? outputText.slice(0, 2000)}`, agent.id),
+        postToFeed(agent.id, pauseMsg, taskId),
+        ...(featureRoomId ? [postToRoom(featureRoomId, agent.id, pauseMsg, taskId)] : []),
+      ])
+      log(`Task "${task.title}" (${taskId}) paused for ${risk}-risk plan approval`)
+      return
     }
 
     const durationSec = Math.round((Date.now() - startedAt) / 1000)
@@ -458,6 +496,49 @@ async function runTask(taskId: string): Promise<void> {
     clearTimeout(timeoutHandle)
     runningTasks.delete(taskId)
   }
+}
+
+// ── Plan-before-execute helpers ──────────────────────────────────────────────
+
+export type PlanRisk = 'low' | 'medium' | 'high' | 'critical'
+
+export interface ParsedPlan {
+  summary: string | null
+  riskLevel: PlanRisk | null
+  estimatedDuration: string | null
+  rollbackStrategy: string | null
+  raw: string
+}
+
+/**
+ * Parse the structured <plan> block emitted by a plan-before-execute agent.
+ * Returns null if no <plan> block is present yet (agent still streaming prose).
+ */
+export function parsePlan(text: string): ParsedPlan | null {
+  const planMatch = text.match(/<plan>([\s\S]*?)<\/plan>/i)
+  if (!planMatch) return null
+  const body = planMatch[1]
+  const tag = (name: string): string | null => {
+    const m = body.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`, 'i'))
+    return m ? m[1].trim() : null
+  }
+  const rawRisk = tag('risk_level')?.toLowerCase() ?? null
+  const riskLevel: PlanRisk | null =
+    rawRisk === 'low' || rawRisk === 'medium' || rawRisk === 'high' || rawRisk === 'critical'
+      ? rawRisk
+      : null
+  return {
+    summary: tag('summary'),
+    riskLevel,
+    estimatedDuration: tag('estimated_duration'),
+    rollbackStrategy: tag('rollback_strategy'),
+    raw: planMatch[0],
+  }
+}
+
+/** High/critical-risk plans must be approved by a human or supervisor before tools run. */
+export function planRequiresApproval(plan: ParsedPlan | null): boolean {
+  return plan?.riskLevel === 'high' || plan?.riskLevel === 'critical'
 }
 
 // ── DB helpers ─────────────────────────────────────────────────────────────────
