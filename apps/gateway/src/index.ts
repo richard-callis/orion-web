@@ -57,8 +57,7 @@ import { knowledgeGraphTools } from './builtin-tools/knowledge-graph.js'
 import { securityTools } from './builtin-tools/security.js'
 import { trivyTools } from './builtin-tools/trivy.js'
 import { discoveryTools } from './builtin-tools/discovery.js'
-import { certificatesTools } from './builtin-tools/certificates.js'
-import { helmTools } from './builtin-tools/helm.js'
+import { sshTools } from './builtin-tools/ssh.js'
 import { backupTools } from './builtin-tools/backup.js'
 import { storageTools } from './builtin-tools/storage.js'
 import { networkTools } from './builtin-tools/network-diagnostics.js'
@@ -287,7 +286,7 @@ function registerBuiltins(tools: BuiltinTool[]) {
   for (const t of tools) BUILTIN_REGISTRY[t.name] = t
 }
 
-if (GATEWAY_TYPE === 'cluster')   { registerBuiltins(kubernetesTools); registerBuiltins(talosTools); registerBuiltins(knowledgeGraphTools); registerBuiltins(discoveryTools); registerBuiltins(certificatesTools); registerBuiltins(helmTools); registerBuiltins(backupTools); registerBuiltins(storageTools); registerBuiltins(networkTools) }
+if (GATEWAY_TYPE === 'cluster')   { registerBuiltins(kubernetesTools); registerBuiltins(talosTools); registerBuiltins(knowledgeGraphTools); registerBuiltins(discoveryTools); registerBuiltins(sshTools); registerBuiltins(backupTools); registerBuiltins(storageTools); registerBuiltins(networkTools) }
 if (GATEWAY_TYPE === 'docker')   { registerBuiltins(dockerTools); registerBuiltins(discoveryTools) }
 // localhost = the gateway co-located with ORION on the management host.
 // It can talk to the local cluster directly, so it gets the full cluster + talos toolset
@@ -299,10 +298,9 @@ if (GATEWAY_TYPE === 'localhost') {
   registerBuiltins(dockerTools)
   registerBuiltins(localhostTools)
   registerBuiltins(discoveryTools)
-  // localhost gateway gets cert-manager, helm, backup, storage and network
-  // diagnostics in addition to the full cluster toolset above.
-  registerBuiltins(certificatesTools)
-  registerBuiltins(helmTools)
+  // localhost gateway can reach the local cluster + remote nodes, so it also
+  // gets SSH, backup, storage and network diagnostics.
+  registerBuiltins(sshTools)
   registerBuiltins(backupTools)
   registerBuiltins(storageTools)
   registerBuiltins(networkTools)
