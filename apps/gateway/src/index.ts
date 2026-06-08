@@ -57,6 +57,7 @@ import { knowledgeGraphTools } from './builtin-tools/knowledge-graph.js'
 import { securityTools } from './builtin-tools/security.js'
 import { trivyTools } from './builtin-tools/trivy.js'
 import { discoveryTools } from './builtin-tools/discovery.js'
+import { backupTools } from './builtin-tools/backup.js'
 import { ArgoCDWatcher } from './argocd-watcher.js'
 import { IngressWatcher } from './ingress-watcher.js'
 import { DockerComposeWatcher } from './docker-compose-watcher.js'
@@ -282,7 +283,7 @@ function registerBuiltins(tools: BuiltinTool[]) {
   for (const t of tools) BUILTIN_REGISTRY[t.name] = t
 }
 
-if (GATEWAY_TYPE === 'cluster')   { registerBuiltins(kubernetesTools); registerBuiltins(talosTools); registerBuiltins(knowledgeGraphTools); registerBuiltins(discoveryTools) }
+if (GATEWAY_TYPE === 'cluster')   { registerBuiltins(kubernetesTools); registerBuiltins(talosTools); registerBuiltins(knowledgeGraphTools); registerBuiltins(discoveryTools); registerBuiltins(backupTools) }
 if (GATEWAY_TYPE === 'docker')   { registerBuiltins(dockerTools); registerBuiltins(discoveryTools) }
 // localhost = the gateway co-located with ORION on the management host.
 // It can talk to the local cluster directly, so it gets the full cluster + talos toolset
@@ -294,6 +295,7 @@ if (GATEWAY_TYPE === 'localhost') {
   registerBuiltins(dockerTools)
   registerBuiltins(localhostTools)
   registerBuiltins(discoveryTools)
+  registerBuiltins(backupTools)
 }
 // Cluster gateways also expose docker if desired
 if (GATEWAY_TYPE === 'cluster' && process.env.ENABLE_DOCKER === 'true') registerBuiltins(dockerTools)

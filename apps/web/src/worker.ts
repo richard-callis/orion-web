@@ -98,6 +98,72 @@ function buildWikiContext(notes: Array<{ title: string; content: string }>): str
   return `\n\n---\n## Trusted Knowledge Base\n${sanitizedNotes}\n---\n## End Trusted Knowledge Base\n\n`
 }
 
+// ── Role-aware tool grouping ────────────────────────────────────────────────────
+// Instead of injecting the full flat tool inventory on every task, detect the task
+// type from its title/description and inject only the relevant groups plus core
+// always-available tools. Falls back to the full inventory when no type matches.
+const TOOL_GROUPS: Record<string, string[]> = {
+  deployment:    ['gitops_propose', 'gitops_ls', 'gitea_merge_pr', 'validate_manifest', 'orion_cluster_health', 'get_deployment_template', 'list_deployment_templates'],
+  investigation: ['knowledge_search', 'orion_get_environment', 'spawn_agent'],
+  incident:      ['security_propose_action', 'observable_add', 'observable_set_verdict', 'investigation_create', 'investigation_update'],
+  coordination:  ['orion_create_task', 'orion_assign_task', 'orion_escalate_task', 'orion_close_task', 'spawn_agent'],
+  knowledge:     ['knowledge_remember', 'knowledge_search', 'knowledge_write', 'knowledge_graph', 'knowledge_load_context'],
+}
+
+// Tools that are always available regardless of detected task type.
+const CORE_TOOLS = ['knowledge_search', 'knowledge_load_context', 'spawn_agent', 'orion_escalate_task']
+
+// Keyword → group detection. First matching group(s) win; multiple can match.
+const TASK_TYPE_KEYWORDS: Record<string, RegExp> = {
+  deployment:    /\b(deploy|rollout|release|manifest|helm|gitops|image tag|argocd|sync)\b/i,
+  incident:      /\b(incident|breach|alert|attack|intrusion|malware|cve|vulnerab|ban|firewall|observable|investigation)\b/i,
+  investigation: /\b(investigate|diagnose|debug|root cause|why is|triage|inspect|analyze)\b/i,
+  coordination:  /\b(assign|delegate|coordinate|schedule|create task|escalate|backlog|prioriti)\b/i,
+  knowledge:     /\b(document|knowledge|runbook|wiki|note|remember|lesson)\b/i,
+}
+
+/**
+ * Build the tool-inventory preamble lines for a task, scoped to the detected task
+ * type(s). Returns the full inventory when nothing matches (preserves prior
+ * behaviour). The flag indicates whether scoping was applied (so a hint about
+ * knowledge_load_context can be added to the preamble).
+ */
+function buildScopedToolList(
+  taskText: string,
+  gatewayAvailable: boolean,
+): { lines: string; scoped: boolean } {
+  const matched = Object.entries(TASK_TYPE_KEYWORDS)
+    .filter(([, re]) => re.test(taskText))
+    .map(([group]) => group)
+
+  const gatewayLine = gatewayAvailable
+    ? ['- (gateway tools available: kubectl_get, shell_exec, and others connected via environment gateway)']
+    : []
+
+  if (matched.length === 0) {
+    // Fallback: full flat inventory (previous behaviour).
+    return {
+      lines: [
+        ...MANAGEMENT_TOOL_DEFS.map((t: any) => `- ${t.name}: ${t.description.split('\n')[0]}`),
+        ...gatewayLine,
+      ].join('\n'),
+      scoped: false,
+    }
+  }
+
+  const allowed = new Set<string>([...CORE_TOOLS])
+  for (const group of matched) for (const name of TOOL_GROUPS[group] ?? []) allowed.add(name)
+
+  const lines = [
+    ...MANAGEMENT_TOOL_DEFS
+      .filter((t: any) => allowed.has(t.name))
+      .map((t: any) => `- ${t.name}: ${t.description.split('\n')[0]}`),
+    ...gatewayLine,
+  ].join('\n')
+
+  return { lines, scoped: true }
+}
+
 const runningTasks = new Set<string>()
 // Guards against concurrent watcher runs: the 60s poll interval is shorter
 // than many watcher runtimes, so without this a slow watcher would launch
@@ -253,12 +319,15 @@ async function runTask(taskId: string): Promise<void> {
     // Inject tool awareness preamble — lists all available tools at runtime
     // This is injected here (not in the agent's stored prompt) so it always reflects
     // the current tool set, not a stale snapshot from when the agent was created.
-    const toolList = [
-      ...MANAGEMENT_TOOL_DEFS.map((t: any) => `- ${t.name}: ${t.description.split('\n')[0]}`),
-      ...(gateway ? ['- (gateway tools available: kubectl_get, shell_exec, and others connected via environment gateway)'] : []),
-    ].join('\n')
+    const { lines: toolList, scoped: toolsScoped } = buildScopedToolList(
+      `${task.title}\n${task.description ?? ''}`,
+      !!gateway,
+    )
+    const toolListWithHint = toolsScoped
+      ? `${toolList}\n\nAdditional context available via knowledge_load_context(query). Other tools exist beyond this scoped list — call knowledge_search or escalate if you need a capability not shown here.`
+      : toolList
     const toolsPreamble = await getPrompt('system.task-runner-tools')
-    const injectedPreamble = toolsPreamble.replace('{{toolList}}', toolList)
+    const injectedPreamble = toolsPreamble.replace('{{toolList}}', toolListWithHint)
 
     // Fetch AGENTS.md from the environment's Gitea repo (if linked)
     const agentsMd = agentGw?.environmentId
@@ -331,6 +400,12 @@ async function runTask(taskId: string): Promise<void> {
     let outputText = ''
     let toolsUsed: string[] = []
 
+    // Plan-before-execute gating: when enabled, the agent emits a <plan> block
+    // up front. If the plan is high/critical risk, we pause the task for human
+    // or supervisor approval before allowing ANY tool to run.
+    const planBeforeExecute = contextConfig.planBeforeExecute === true
+    let pausedForApproval = false
+
     for await (const event of runner.run(ctx)) {
       // Check for task-level abort (60-minute timeout)
       if (taskAbort.signal.aborted) {
@@ -347,6 +422,14 @@ async function runTask(taskId: string): Promise<void> {
           break
 
         case 'tool_call':
+          // Plan gate: a high/critical-risk plan must be approved before tools run.
+          if (planBeforeExecute) {
+            const plan = parsePlan(outputText)
+            if (planRequiresApproval(plan)) {
+              pausedForApproval = true
+              break
+            }
+          }
           toolsUsed.push(event.tool)
           await logTaskEvent(taskId, 'tool_call', `🔧 ${event.tool}(${event.args})`, agent.id)
           await prisma.message.create({
@@ -388,6 +471,32 @@ async function runTask(taskId: string): Promise<void> {
         case 'error':
           throw new Error(event.error)
       }
+
+      // Stop consuming the runner once we've paused for plan approval — no further
+      // tools should execute until a human/supervisor approves the plan.
+      if (pausedForApproval) break
+    }
+
+    // Plan-before-execute: high/critical-risk plan paused for approval.
+    if (pausedForApproval) {
+      const plan = parsePlan(outputText)
+      const risk = plan?.riskLevel ?? 'high'
+      const pauseMsg =
+        `⏸️ **Plan paused for approval** (risk: ${risk})\n\n` +
+        `Task **${task.title}** produced a ${risk}-risk plan and is awaiting human or supervisor approval before any tools run.\n\n` +
+        (plan?.summary ? `Summary: ${plan.summary}\n` : '') +
+        (plan?.rollbackSteps?.length
+          ? `Rollback steps:\n${plan.rollbackSteps.map((s) => `  - ${s}`).join('\n')}\n`
+          : plan?.rollbackStrategy ? `Rollback: ${plan.rollbackStrategy}\n` : '')
+      await Promise.all([
+        prisma.task.update({ where: { id: taskId }, data: { status: 'pending_validation' } }),
+        logTaskEvent(taskId, 'plan_pending_approval',
+          `Risk=${risk}. ${plan?.summary ?? ''}\n\n${plan?.raw ?? outputText.slice(0, 2000)}`, agent.id),
+        postToFeed(agent.id, pauseMsg, taskId),
+        ...(featureRoomId ? [postToRoom(featureRoomId, agent.id, pauseMsg, taskId)] : []),
+      ])
+      log(`Task "${task.title}" (${taskId}) paused for ${risk}-risk plan approval`)
+      return
     }
 
     const durationSec = Math.round((Date.now() - startedAt) / 1000)
@@ -421,6 +530,20 @@ async function runTask(taskId: string): Promise<void> {
       }).catch(() => {}),
     ])
 
+    // Auto-write the task outcome to the knowledge base so future agents learn
+    // from it via vector-search context injection.
+    const envName = agentGw?.environmentId
+      ? (await prisma.environment.findUnique({ where: { id: agentGw.environmentId }, select: { name: true } }).catch(() => null))?.name ?? null
+      : null
+    await writeTaskOutcome({
+      title:           task.title,
+      description:     task.description,
+      status:         'done',
+      outcomeSummary: `Completed in ${durationSec}s using ${toolsUsed.length} tool call(s)${toolsUsed.length ? ` (${[...new Set(toolsUsed)].slice(0, 8).join(', ')})` : ''}. ${summary}`.trim(),
+      environmentId:   agentGw?.environmentId ?? null,
+      environmentName: envName,
+    })
+
     log(`Completed task "${task.title}" (${taskId}) in ${durationSec}s`)
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e)
@@ -428,12 +551,51 @@ async function runTask(taskId: string): Promise<void> {
 
     const failedTask = await prisma.task.findUnique({
       where: { id: taskId },
-      select: { title: true, assignedAgent: true, retryCount: true, maxRetries: true },
+      select: { title: true, description: true, assignedAgent: true, retryCount: true, maxRetries: true, metadata: true },
     }).catch(() => null)
 
-    const canRetry = isTransientError(errMsg) && (failedTask?.retryCount ?? 0) < (failedTask?.maxRetries ?? 3)
+    // ── Remediation loop detection ──────────────────────────────────────────
+    // Track how many times this task has hit the failure path with the same
+    // approach. Once it has failed 2+ times we stop retrying and escalate for
+    // human review instead of looping on a strategy that clearly is not working.
+    const failMeta = (failedTask?.metadata as Record<string, unknown> | null) ?? {}
+    const remediationAttempts = (typeof failMeta.remediation_attempts === 'number' ? failMeta.remediation_attempts : 0) + 1
+    const exhaustedRemediation = remediationAttempts >= 2
 
-    if (canRetry) {
+    const canRetry = !exhaustedRemediation && isTransientError(errMsg) && (failedTask?.retryCount ?? 0) < (failedTask?.maxRetries ?? 3)
+
+    if (exhaustedRemediation) {
+      // Persist the incremented attempt counter and stop retrying.
+      await prisma.task.update({
+        where: { id: taskId },
+        data: {
+          status: 'failed',
+          metadata: { ...failMeta, remediation_attempts: remediationAttempts } as any,
+        },
+      }).catch(() => {})
+      const escalationMsg =
+        `Task '${failedTask?.title ?? taskId}' has failed ${remediationAttempts} times with the same approach. Escalating — human review required. Last error: ${errMsg.slice(0, 300)}`
+      await logTaskEvent(taskId, 'escalated', escalationMsg, failedTask?.assignedAgent ?? undefined)
+      if (failedTask?.assignedAgent) {
+        await postToFeed(failedTask.assignedAgent, `🚨 ${escalationMsg}`, taskId).catch(() => {})
+      }
+      // Escalate to a human operator if one exists (orion_escalate_task needs a user_id).
+      const human = await prisma.user.findFirst({ select: { id: true } }).catch(() => null)
+      if (human && failedTask?.assignedAgent) {
+        await executeManagedTool(
+          'orion_escalate_task',
+          JSON.stringify({ task_id: taskId, user_id: human.id }),
+          failedTask.assignedAgent,
+        ).catch((e) => err(`Auto-escalation failed for ${taskId}: ${e}`))
+      }
+      await writeTaskOutcome({
+        title:           failedTask?.title ?? taskId,
+        description:     failedTask?.description ?? null,
+        status:         'failed',
+        outcomeSummary: `Failed ${remediationAttempts} times with the same approach — escalated for human review.`,
+        errorMessage:    errMsg,
+      })
+    } else if (canRetry) {
       const newRetryCount = (failedTask!.retryCount ?? 0) + 1
       const delayMs = 15000 * Math.pow(2, failedTask!.retryCount ?? 0) // 15s, 30s, 60s
       const nextRetryAt = new Date(Date.now() + delayMs)
@@ -447,17 +609,85 @@ async function runTask(taskId: string): Promise<void> {
       )
     } else {
       await Promise.all([
-        prisma.task.update({ where: { id: taskId }, data: { status: 'failed' } }).catch(() => {}),
+        prisma.task.update({
+          where: { id: taskId },
+          data: { status: 'failed', metadata: { ...failMeta, remediation_attempts: remediationAttempts } as any },
+        }).catch(() => {}),
         logTaskEvent(taskId, 'failed', errMsg, failedTask?.assignedAgent ?? undefined),
       ])
       if (failedTask?.assignedAgent) {
         await postToFeed(failedTask.assignedAgent, `❌ Failed: **${failedTask.title}**\n\n${errMsg}`, taskId).catch(() => {})
       }
+      await writeTaskOutcome({
+        title:           failedTask?.title ?? taskId,
+        description:     failedTask?.description ?? null,
+        status:         'failed',
+        outcomeSummary: `Failed after ${remediationAttempts} attempt(s).`,
+        errorMessage:    errMsg,
+      })
     }
   } finally {
     clearTimeout(timeoutHandle)
     runningTasks.delete(taskId)
   }
+}
+
+// ── Plan-before-execute helpers ──────────────────────────────────────────────
+
+export type PlanRisk = 'low' | 'medium' | 'high' | 'critical'
+
+export interface ParsedPlan {
+  summary: string | null
+  riskLevel: PlanRisk | null
+  estimatedDuration: string | null
+  /** @deprecated prose fallback kept for backwards compat — prefer rollbackSteps */
+  rollbackStrategy: string | null
+  /** How the agent will confirm the action worked (parsed from <verify_steps>). */
+  verifySteps: string[]
+  /** Concrete tool-call steps to undo the change (parsed from <rollback_steps>). */
+  rollbackSteps: string[]
+  raw: string
+}
+
+/**
+ * Parse the structured <plan> block emitted by a plan-before-execute agent.
+ * Returns null if no <plan> block is present yet (agent still streaming prose).
+ */
+export function parsePlan(text: string): ParsedPlan | null {
+  const planMatch = text.match(/<plan>([\s\S]*?)<\/plan>/i)
+  if (!planMatch) return null
+  const body = planMatch[1]
+  const tag = (name: string): string | null => {
+    const m = body.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`, 'i'))
+    return m ? m[1].trim() : null
+  }
+  // Extract a list of <step> elements from a named container tag.
+  const stepList = (containerName: string): string[] => {
+    const container = body.match(new RegExp(`<${containerName}>([\\s\\S]*?)</${containerName}>`, 'i'))
+    if (!container) return []
+    return Array.from(container[1].matchAll(/<step>([\s\S]*?)<\/step>/gi))
+      .map((m) => m[1].trim())
+      .filter((s) => s.length > 0)
+  }
+  const rawRisk = tag('risk_level')?.toLowerCase() ?? null
+  const riskLevel: PlanRisk | null =
+    rawRisk === 'low' || rawRisk === 'medium' || rawRisk === 'high' || rawRisk === 'critical'
+      ? rawRisk
+      : null
+  return {
+    summary: tag('summary'),
+    riskLevel,
+    estimatedDuration: tag('estimated_duration'),
+    rollbackStrategy: tag('rollback_strategy'),
+    verifySteps: stepList('verify_steps'),
+    rollbackSteps: stepList('rollback_steps'),
+    raw: planMatch[0],
+  }
+}
+
+/** High/critical-risk plans must be approved by a human or supervisor before tools run. */
+export function planRequiresApproval(plan: ParsedPlan | null): boolean {
+  return plan?.riskLevel === 'high' || plan?.riskLevel === 'critical'
 }
 
 // ── DB helpers ─────────────────────────────────────────────────────────────────
@@ -476,6 +706,52 @@ async function postToFeed(agentId: string, content: string, taskId?: string) {
       threadId:    taskId,
     },
   }).catch(() => {})
+}
+
+/**
+ * Auto-write a structured task outcome to the knowledge base as an `llm-context`
+ * note. These notes are embedded for vector search and auto-injected into future
+ * agent system prompts, so completed/failed task outcomes become institutional
+ * memory without an agent having to explicitly call knowledge_remember.
+ */
+async function writeTaskOutcome(opts: {
+  title: string
+  description: string | null
+  status: 'done' | 'failed'
+  outcomeSummary: string
+  errorMessage?: string | null
+  environmentId?: string | null
+  environmentName?: string | null
+}): Promise<void> {
+  try {
+    const date = new Date().toISOString().slice(0, 10)
+    const desc = (opts.description ?? '').trim()
+    const parts = [
+      `Task '${opts.title}' ${opts.status} on ${date}: ${desc || '(no description)'}. ${opts.outcomeSummary}`.trim(),
+    ]
+    if (opts.environmentName) parts.push(`\nEnvironment: ${opts.environmentName}`)
+    if (opts.status === 'failed' && opts.errorMessage) parts.push(`\nError: ${opts.errorMessage.slice(0, 1000)}`)
+    const content = redactSecrets(parts.join('')).slice(0, MAX_NOTE_LENGTH)
+
+    const tags: string[] = ['task-outcome', opts.status]
+    if (opts.environmentId) tags.push(opts.environmentId)
+
+    const note = await prisma.note.create({
+      data: {
+        title:   `Task outcome: ${opts.title.slice(0, 120)} (${opts.status} ${date})`,
+        content,
+        folder:  'Task Outcomes',
+        type:    'llm-context',
+        tags:    tags as any,
+      },
+    })
+
+    // Embed immediately so the outcome is retrievable via knowledge_search / RAG.
+    const { embedNote } = await import('./lib/embeddings')
+    await embedNote(note).catch(() => false)
+  } catch (e) {
+    err(`writeTaskOutcome failed for "${opts.title}": ${e}`)
+  }
 }
 
 // ── Chat room helpers ─────────────────────────────────────────────────────────
@@ -603,6 +879,53 @@ async function buildSystemSnapshot(): Promise<string> {
   return lines.join('\n')
 }
 
+// ── Watcher state persistence ───────────────────────────────────────────────────
+// Notes have no agentId column, so watcher state is keyed by a deterministic
+// title. type='watcher-state' keeps these out of the llm-context injection path.
+function watcherStateTitle(agentId: string): string {
+  return `watcher-state:${agentId}`
+}
+
+interface WatcherState {
+  directives: string
+  timestamp: number
+  taskIds: string[]
+}
+
+async function loadWatcherState(agentId: string): Promise<WatcherState | null> {
+  const note = await prisma.note
+    .findFirst({ where: { type: 'watcher-state', title: watcherStateTitle(agentId) } })
+    .catch(() => null)
+  if (!note) return null
+  try {
+    return JSON.parse(note.content) as WatcherState
+  } catch {
+    return null
+  }
+}
+
+async function saveWatcherState(agentId: string, state: WatcherState): Promise<void> {
+  const title = watcherStateTitle(agentId)
+  const content = JSON.stringify(state).slice(0, MAX_NOTE_LENGTH)
+  const existing = await prisma.note
+    .findFirst({ where: { type: 'watcher-state', title } })
+    .catch(() => null)
+  if (existing) {
+    await prisma.note
+      .update({ where: { id: existing.id }, data: { content, tags: ['last-directives'] as any, updatedAt: new Date() } })
+      .catch(() => {})
+  } else {
+    await prisma.note
+      .create({ data: { title, content, folder: 'Watcher State', type: 'watcher-state', tags: ['last-directives'] as any } })
+      .catch(() => {})
+  }
+}
+
+/** Extract task IDs referenced in watcher output (e.g. "[abc123]") for loop-detection. */
+function extractTaskIds(text: string): string[] {
+  return Array.from(new Set(Array.from(text.matchAll(/\[([a-z0-9]{20,})\]/gi)).map((m) => m[1])))
+}
+
 async function runWatchers() {
   const pausedSetting = await prisma.systemSetting.findUnique({ where: { key: 'system.watchers.paused' } })
   // MINOR fix: SystemSetting.value is a string in the DB; comparing to boolean true never matched
@@ -644,10 +967,11 @@ async function runWatchers() {
     const gateway = agentGw ? { url: agentGw.url, token: agentGw.token } : null
 
     // Pre-fetch all context the agent needs — no API calls from the agent side
-    const [contextNotes, snapshot, systemRooms] = await Promise.all([
+    const [contextNotes, snapshot, systemRooms, prevState] = await Promise.all([
       prisma.note.findMany({ where: { type: 'llm-context' }, select: { title: true, content: true } }),
       buildSystemSnapshot(),
       getSystemRooms(),
+      loadWatcherState(agent.id),
     ])
 
     const wikiContext = buildWikiContext(contextNotes)
@@ -682,10 +1006,23 @@ async function runWatchers() {
       ? `\n[System rooms — use these room_id values with orion_send_message]\n${roomLines.join('\n')}`
       : ''
 
+    // Inject the previous run's directives so the watcher does not re-issue the
+    // same assignments in a tight loop (prevents re-assignment churn).
+    let priorDirectivesBlock = ''
+    if (prevState && Date.now() - prevState.timestamp < 5 * 60 * 1000) {
+      priorDirectivesBlock =
+        `\n## Your previous directives (run ${new Date(prevState.timestamp).toISOString()})\n` +
+        `${prevState.directives.slice(0, 2000)}\n` +
+        (prevState.taskIds.length
+          ? `Tasks you already acted on: ${prevState.taskIds.join(', ')}\n`
+          : '') +
+        `Do NOT re-issue directives for tasks you already assigned in the last 5 minutes unless their status has changed.\n`
+    }
+
     // The agent receives all data it needs as context — no outbound calls required.
     // Mutations go through tool calls (orion_assign_task, orion_create_agent, etc.)
     // executed server-side with full attribution (SOC2 [A-001]).
-    const enrichedPrompt = [watchPrompt, roomContext, ``, snapshot].join('\n')
+    const enrichedPrompt = [watchPrompt, roomContext, priorDirectivesBlock, ``, snapshot].join('\n')
 
     const ctx: TaskRunContext = {
       taskId:          `watch:${agent.id}`,
@@ -715,6 +1052,13 @@ async function runWatchers() {
       if (output.trim()) {
         await postToFeed(agent.id, `👁 **${agent.name}**:\n\n${output.trim().slice(0, 1500)}`)
       }
+
+      // Persist this run's directives so the next run can avoid re-assignment loops.
+      await saveWatcherState(agent.id, {
+        directives: output.trim().slice(0, 4000),
+        timestamp:  Date.now(),
+        taskIds:    extractTaskIds(output),
+      })
     } catch (e) {
       err(`Watcher "${agent.name}" failed: ${e}`)
       await postToFeed(agent.id, `❌ **${agent.name}** watcher error: ${e}`)
