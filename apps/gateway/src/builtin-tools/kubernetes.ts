@@ -284,6 +284,30 @@ export const kubernetesTools = ([
     },
   },
   {
+    name: 'kubectl_exec',
+    description: 'Execute a command inside a running pod container',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        namespace: { type: 'string', description: 'Namespace of the pod' },
+        pod:       { type: 'string', description: 'Pod name' },
+        container: { type: 'string', description: 'Container name (omit for default)' },
+        command:   { type: 'array', items: { type: 'string' }, description: 'Command and args, e.g. ["curl", "-s", "http://svc:80"]' },
+      },
+      required: ['namespace', 'pod', 'command'],
+    },
+    async execute(args: Record<string, unknown>) {
+      const ns  = String(args.namespace ?? '').trim()
+      const pod = String(args.pod ?? '').trim()
+      const cmd = Array.isArray(args.command) ? (args.command as string[]) : []
+      if (!ns || !pod || cmd.length === 0) return 'Error: namespace, pod and command are required'
+      const base = ['exec', pod, '-n', ns]
+      if (args.container) base.push('-c', String(args.container))
+      return kubectl([...base, '--', ...cmd], 30_000)
+    },
+  },
+
+  {
     name: 'kubectl_wait_nodes_ready',
     description: 'Wait for cluster nodes to be in Ready condition',
     inputSchema: {
