@@ -285,7 +285,7 @@ export const kubernetesTools = ([
   },
   {
     name: 'kubectl_exec',
-    description: 'Execute a command inside a running pod container',
+    description: 'Execute a read-only diagnostic command inside a running pod. Allowed commands: curl, wget, nslookup, dig, nc, ping, cat, ls, env, ps, df, free, uptime, id, uname, hostname, printenv, head, tail, grep, find.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -297,10 +297,13 @@ export const kubernetesTools = ([
       required: ['namespace', 'pod', 'command'],
     },
     async execute(args: Record<string, unknown>) {
+      const ALLOWED = new Set(['curl','wget','nslookup','dig','nc','ping','cat','ls','env','ps','df','free','uptime','id','uname','hostname','printenv','head','tail','grep','find'])
       const ns  = String(args.namespace ?? '').trim()
       const pod = String(args.pod ?? '').trim()
       const cmd = Array.isArray(args.command) ? (args.command as string[]) : []
       if (!ns || !pod || cmd.length === 0) return 'Error: namespace, pod and command are required'
+      const binary = cmd[0].replace(/^.*\//, '') // strip any path prefix e.g. /bin/cat → cat
+      if (!ALLOWED.has(binary)) return `Error: command '${binary}' is not permitted. Allowed: ${[...ALLOWED].join(', ')}`
       const base = ['exec', pod, '-n', ns]
       if (args.container) base.push('-c', String(args.container))
       return kubectl([...base, '--', ...cmd], 30_000)
