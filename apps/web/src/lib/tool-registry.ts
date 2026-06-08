@@ -2426,6 +2426,32 @@ registerTool({
   },
 })
 
+// ── knowledge_load_context ────────────────────────────────────────────────────
+
+registerTool({
+  name: 'knowledge_load_context',
+  description: 'Progressively load additional relevant knowledge-base context mid-task. Only the top 3 most-relevant notes are injected up front to keep the initial prompt small — call this when you need MORE background on a specific sub-topic. Returns formatted, sanitized note content ready to reason over.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'Natural language description of the context you need' },
+      limit: { type: 'number', description: 'Max additional notes to load (1-10, default 5)' },
+    },
+    required: ['query'],
+  },
+  tier: 'read',
+  parallelSafe: true,
+  availableIn: 'both',
+  category: 'knowledge',
+  handler: async (args) => {
+    const { query, limit = 5 } = args as { query?: string; limit?: number }
+    if (!query) return 'Error: query is required'
+    const { retrieveKnowledgeContext } = await import('@/lib/embeddings')
+    const block = await retrieveKnowledgeContext(query, Math.min(Math.max(limit, 1), 10), 0.2)
+    return block || 'No additional relevant notes found for this query.'
+  },
+})
+
 // ── knowledge_graph ───────────────────────────────────────────────────────────
 
 registerTool({
