@@ -88,7 +88,7 @@ export async function buildAgentContext(query: string): Promise<string> {
   const parts: string[] = []
   if (snapshot) parts.push(snapshot)
   if (knowledge) {
-    parts.push('## Relevant Knowledge Base Notes')
+    parts.push('## Relevant Knowledge Base Notes (top 3 — call knowledge_load_context(query) for more)')
     parts.push(knowledge)
   }
 
