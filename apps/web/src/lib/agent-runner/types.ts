@@ -39,6 +39,7 @@ export type AgentEvent =
   | { type: 'text';        content: string }
   | { type: 'tool_call';   tool: string; args: string }
   | { type: 'tool_result'; tool: string; result: string }
+  | { type: 'usage';       inputTokens: number; outputTokens: number }
   | { type: 'done' }
   | { type: 'error';       error: string }
 
