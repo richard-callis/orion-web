@@ -19,6 +19,7 @@ import { getPrompt } from './lib/system-prompts'
 import { resolveAgentGateway } from './lib/agent-gateway'
 import { getAgentsMd } from './lib/agents-md'
 import { startDream } from './lib/dream'
+import { createTrace } from './lib/langfuse'
 import { runCorrelator } from './workers/security-correlator'
 import { runK8sPollerAll } from './jobs/security-poll-k8s'
 import { runElkPollerAll } from './jobs/security-poll-elk'
@@ -481,9 +482,14 @@ async function runTask(taskId: string): Promise<void> {
     const runner = createRunner(modelId)
     let outputText = ''
     let toolsUsed: string[] = []
-    let pausedForApproval = false
     let totalInputTokens = 0
     let totalOutputTokens = 0
+
+    // Langfuse: create a trace for this task run (no-op when keys are not set)
+    const trace = createTrace({ taskId, taskTitle: task.title, agentId: agent.id, modelId })
+    const mainSpan = trace.startSpan('task-execution', { title: task.title, description: task.description })
+    // FIFO queue of open tool span IDs — tool_call pushes, tool_result shifts
+    const toolSpanQueue: string[] = []
 
     // Plan-before-execute gating: when enabled, the agent emits a <plan> block
     // up front. If the plan is high/critical risk, we pause the task for human
@@ -532,6 +538,8 @@ async function runTask(taskId: string): Promise<void> {
             .update(`${taskId}:${stepIndex}:${event.tool}:${event.args ?? ''}`)
             .digest('hex')
             .slice(0, 16)
+          // Langfuse: start a span for this tool call
+          toolSpanQueue.push(trace.startSpan(`tool:${event.tool}`, { args: event.args }))
           await logTaskEvent(taskId, 'tool_call', `🔧 ${event.tool}(${event.args}) [idem:${idemKey}]`, agent.id)
           await prisma.message.create({
             data: {
@@ -552,6 +560,9 @@ async function runTask(taskId: string): Promise<void> {
           // secrets/credentials returned by shell/kubectl/vault tools. Apply
           // redaction consistently before any write.
           const redactedResult = redactSecrets(event.result).slice(0, 2000)
+          // Langfuse: end the oldest open tool span (FIFO)
+          const openToolSpanId = toolSpanQueue.shift()
+          if (openToolSpanId) trace.endSpan(openToolSpanId, { result: redactedResult.slice(0, 500) })
           await logTaskEvent(taskId, 'tool_result', redactedResult, agent.id)
           // Checkpoint this step so it can be detected on retry.
           stepIndex++
@@ -690,10 +701,20 @@ async function runTask(taskId: string): Promise<void> {
       await runReviewerCheck(taskId, task.title, outputText, agent.id, modelId)
     }
 
+    // Langfuse: close the main span and flush the trace
+    trace.recordGeneration({ model: modelId, input: task.title, output: outputText.slice(0, 1000), inputTokens: totalInputTokens, outputTokens: totalOutputTokens })
+    trace.endSpan(mainSpan, { summary: outputText.slice(0, 500) })
+    trace.complete(outputText.slice(0, 500))
+    await trace.flush()
+
     log(`Completed task "${task.title}" (${taskId}) in ${durationSec}s`)
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e)
     err(`Task ${taskId} failed: ${errMsg}`)
+
+    // Langfuse: flush trace on failure
+    trace.endSpan(mainSpan, undefined, errMsg)
+    await trace.flush().catch(() => {})
 
     const failedTask = await prisma.task.findUnique({
       where: { id: taskId },
@@ -1443,7 +1464,16 @@ async function main() {
     syncGitOpsPRs().catch(e => err(`GitOps PR sync failed: ${e}`)).finally(() => { runningGitOpsSync = false })
   }, 60_000)
 
-  // Dream — memory consolidation (extraction every 2h, pruning every 24h)
+  // Dream — memory consolidation covers three phases:
+  //   extraction (every 2h): scans recent chat messages + task events, extracts durable
+  //     facts/lessons as llm-context notes with [[wikilinks]], immediately embeds them
+  //     for vector search retrieval.
+  //   synthesis (every 12h): identifies missing "hub" notes that connect clusters of
+  //     related specific notes into a coherent knowledge graph.
+  //   pruning (every 24h): reviews notes older than 7 days, flags or deletes stale ones.
+  //   model: configurable via dream.model SystemSetting (falls back to system default).
+  // No additional consolidation pass is needed — episodic→semantic promotion is handled
+  // entirely by the LLM-based extraction pass above.
   startDream()
 
   // Security correlator — poll for uncorrelated events every 30s
