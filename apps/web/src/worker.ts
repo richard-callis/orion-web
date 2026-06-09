@@ -267,6 +267,76 @@ async function resolveModelId(llm: unknown): Promise<string> {
   return llm
 }
 
+// ── Reviewer agent ────────────────────────────────────────────────────────────
+
+/**
+ * Optionally spawns a lightweight reviewer agent after a task completes to
+ * validate output quality. If the reviewer rejects the output, the task is
+ * reopened to `pending` so it gets retried.
+ *
+ * Reviewer failures are non-fatal — any error is logged and ignored so the
+ * task outcome is never affected.
+ */
+async function runReviewerCheck(
+  taskId: string,
+  taskTitle: string,
+  output: string,
+  agentId: string,
+  modelId: string,
+): Promise<void> {
+  if (output.trim().length === 0) return
+
+  try {
+    await logTaskEvent(taskId, 'reviewer_start', 'Reviewer agent checking output quality', agentId)
+
+    const reviewerSystemPrompt =
+      'You are a quality reviewer for AI agent task outputs. Your ONLY job is to check if the task output is complete and sensible. Reply with exactly one of:\n' +
+      '- APPROVED: <one-line reason>\n' +
+      '- REJECTED: <one-line reason explaining what is missing or wrong>\n' +
+      'Do not add any other text.'
+
+    const ctx: TaskRunContext = {
+      taskId,
+      taskTitle,
+      taskDescription: `Task: ${taskTitle}\n\nOutput to review:\n${output.slice(0, 3000)}`,
+      taskPlan:        null,
+      agentId,
+      agentName:       'reviewer',
+      systemPrompt:    reviewerSystemPrompt,
+      modelId,
+      gateway:         null,
+    }
+
+    const runner = createRunner(modelId)
+    let reviewText = ''
+
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Reviewer timed out after 60s')), 60_000)
+    )
+
+    const runReview = async () => {
+      for await (const event of runner.run(ctx)) {
+        if (event.type === 'text') reviewText += event.content
+        if (event.type === 'error') throw new Error(event.error)
+      }
+    }
+
+    await Promise.race([runReview(), timeout])
+
+    const verdict = reviewText.trim()
+    if (verdict.startsWith('REJECTED:')) {
+      const reason = verdict.slice('REJECTED:'.length).trim()
+      await logTaskEvent(taskId, 'reviewer_rejected', reason, agentId)
+      await prisma.task.update({ where: { id: taskId }, data: { status: 'pending' } })
+    } else {
+      const reason = verdict.startsWith('APPROVED:') ? verdict.slice('APPROVED:'.length).trim() : verdict
+      await logTaskEvent(taskId, 'reviewer_approved', reason || 'Output approved', agentId)
+    }
+  } catch (e) {
+    err(`runReviewerCheck for task ${taskId} failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
 // ── Core task runner ───────────────────────────────────────────────────────────
 
 async function runTask(taskId: string): Promise<void> {
@@ -614,6 +684,11 @@ async function runTask(taskId: string): Promise<void> {
 
     // Clean up checkpoints on successful completion — no longer needed.
     await prisma.taskCheckpoint.deleteMany({ where: { taskId } }).catch(() => {})
+
+    // Run reviewer check for non-persistent tasks that produced output.
+    if ((task.metadata as any)?.persistent !== true) {
+      await runReviewerCheck(taskId, task.title, outputText, agent.id, modelId)
+    }
 
     log(`Completed task "${task.title}" (${taskId}) in ${durationSec}s`)
   } catch (e) {
