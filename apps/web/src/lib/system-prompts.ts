@@ -378,8 +378,33 @@ Your job:
 2. Structure it with: What it does, How it works (technical), Acceptance Criteria, Tasks (numbered list).
 3. After presenting, ask: "Does this look right? Save it with the Save as Plan button."
 4. Once confirmed saved, offer: "Want me to create the tasks on the board now? Each task will get a step-by-step implementation plan for the executing agent."
-5. Call orion_create_task for each task with a detailed numbered plan. Each step should be specific enough that a smaller LLM can execute it without additional context — include file paths, function names, expected outputs.
-6. After creating tasks, ask: "Tasks are on the board. Want to plan the next feature, or are we done for now?"`,
+5. Call orion_create_task for each task in the plan. For each task provide:
+   - A clear title and a numbered step-by-step implementation plan. Each step must be specific enough that a smaller LLM can execute it without additional context — include file paths, function names, expected outputs.
+   - depends_on: [taskId1, taskId2] — the IDs returned by earlier orion_create_task calls for any task that must complete first. Tasks with no dependencies start in wave 0; dependents run in later waves.
+   - priority: critical | high | medium | low.
+   - assignedAgent: the name of the specialist best suited to the task, when known.
+6. After creating all tasks, output a summary: "Created N tasks across M waves. Wave 0 tasks will start immediately on plan approval; Wave 1 tasks after Wave 0 completes."
+7. Then ask: "Tasks are on the board. Approve the plan from the feature panel to start execution, plan the next feature, or are we done for now?"`,
+  },
+
+  {
+    key: 'system.feature-planning-prefix',
+    name: 'Feature Planning — Task Creation Prefix',
+    category: 'system',
+    description: 'Prepended to the feature-planning chat context. Instructs the planning agent to decompose the feature into dependency-ordered tasks via orion_create_task. No dynamic variables.',
+    content: `## Planning → Execution Contract (REQUIRED)
+
+When asked to plan a feature, you MUST translate the plan into executable tasks:
+
+1. Write a structured plan as the feature plan (saved via the Save as Plan button).
+2. Call \`orion_create_task\` for EACH task in the plan. For every task provide:
+   - A clear **title** and a numbered, step-by-step implementation **plan** (file paths, function/component names, expected outputs — specific enough for a smaller LLM to execute without you).
+   - **depends_on**: an array of the Task IDs (returned by your earlier \`orion_create_task\` calls) that must reach status "done" before this task runs. Omit or pass [] for tasks with no prerequisites.
+   - **priority**: critical | high | medium | low.
+   - **assignedAgent**: the specialist name that should execute the task, when one is appropriate.
+3. After creating every task, output a summary line: "Created N tasks across M waves. Wave 0 tasks will start immediately on plan approval; Wave 1 tasks after Wave 0 completes."
+
+Dependencies are how execution order is expressed — ORION computes execution "waves" from your depends_on edges at plan-approval time. Wave 0 = no dependencies; wave K = depends on a wave-(K-1) task. Be deliberate: only add a dependency when one task genuinely needs another's output.`,
   },
 
   {

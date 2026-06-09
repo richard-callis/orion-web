@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Trash2, GitBranch, Plus, Sparkles, Loader2, MessageSquare } from 'lucide-react'
+import { Trash2, GitBranch, Plus, Sparkles, Loader2, MessageSquare, Rocket, CheckCircle2 } from 'lucide-react'
 import type { Epic, Feature } from '@/types/tasks'
 import { PlanWithAIButton } from './PlanWithAIButton'
 import { DetailPanelShell } from '../ui/DetailPanelShell'
@@ -26,8 +26,28 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError]   = useState<string | null>(null)
   const [epicPlanningRoom, setEpicPlanningRoom] = useState<{ id: string } | null>(null)
+  const [approving, setApproving]   = useState(false)
+  const [justApproved, setJustApproved] = useState(false)
+
+  // Features that have a plan + tasks but are not yet approved.
+  const unapprovedFeatures = epic.features.filter(
+    f => f.plan && !f.planApprovedAt && (f._count?.tasks ?? 0) > 0
+  )
+
+  const handleApproveAll = async () => {
+    setApproving(true)
+    try {
+      const r = await fetch(`/api/epics/${epic.id}/approve-plan`, { method: 'POST' })
+      if (r.ok) setJustApproved(true)
+    } catch (e) {
+      console.error('[approve-epic]', e)
+    } finally {
+      setApproving(false)
+    }
+  }
 
   useEffect(() => {
+    setJustApproved(false)
     setTitle(epic.title)
     setDesc(epic.description ?? '')
     setPlan(epic.plan ?? '')
@@ -98,6 +118,21 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
             </button>
           )}
           {genError && <p className="text-[10px] text-status-error text-center">{genError}</p>}
+          {unapprovedFeatures.length > 0 && !justApproved && (
+            <button
+              onClick={handleApproveAll}
+              disabled={approving}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded bg-status-healthy/15 text-status-healthy border border-status-healthy/30 text-sm hover:bg-status-healthy/25 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {approving ? <Loader2 size={14} className="animate-spin" /> : <Rocket size={14} />}
+              Approve All Plans ({unapprovedFeatures.length})
+            </button>
+          )}
+          {justApproved && (
+            <p className="text-xs text-status-healthy text-center flex items-center justify-center gap-1.5">
+              <CheckCircle2 size={13} /> Plans approved — agents will begin shortly
+            </p>
+          )}
           <button
             onClick={onDelete}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-border-subtle text-text-muted text-sm hover:border-status-error hover:text-status-error transition-colors"
@@ -170,6 +205,11 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
             >
               <GitBranch size={11} className="text-text-muted flex-shrink-0" />
               <span className="text-xs text-text-primary flex-1 truncate">{f.title}</span>
+              {f.status === 'done'
+                ? <CheckCircle2 size={11} className="text-status-healthy flex-shrink-0" />
+                : f.planApprovedAt
+                  ? <Rocket size={11} className="text-status-healthy flex-shrink-0" />
+                  : null}
               <span className="text-[10px] text-text-muted">{f._count?.tasks ?? 0}</span>
             </div>
           ))}
