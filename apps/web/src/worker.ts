@@ -8,6 +8,7 @@
  * Started by entrypoint.sh as: node worker.js &
  */
 
+import { createHash } from 'crypto'
 import { prisma } from './lib/db'
 import { createRunner } from './lib/agent-runner'
 import type { TaskRunContext } from './lib/agent-runner'
@@ -420,6 +421,16 @@ async function runTask(taskId: string): Promise<void> {
     const planBeforeExecute = contextConfig.planBeforeExecute === true
     let pausedForApproval = false
 
+    // Step-level checkpointing: load any existing checkpoints so we can record
+    // each completed tool_result step and detect retries.
+    const checkpoints = new Map<number, string>() // stepIndex → result
+    const existingCheckpoints = await prisma.taskCheckpoint.findMany({
+      where: { taskId },
+      select: { stepIndex: true, result: true },
+    }).catch(() => [])
+    for (const c of existingCheckpoints) checkpoints.set(c.stepIndex, c.result)
+    let stepIndex = 0
+
     for await (const event of runner.run(ctx)) {
       // Check for task-level abort (60-minute timeout)
       if (taskAbort.signal.aborted) {
@@ -445,7 +456,13 @@ async function runTask(taskId: string): Promise<void> {
             }
           }
           toolsUsed.push(event.tool)
-          await logTaskEvent(taskId, 'tool_call', `🔧 ${event.tool}(${event.args})`, agent.id)
+          // Compute deterministic idempotency key for this tool call to prevent
+          // duplicate side effects on retry.
+          const idemKey = createHash('sha256')
+            .update(`${taskId}:${stepIndex}:${event.tool}:${event.args ?? ''}`)
+            .digest('hex')
+            .slice(0, 16)
+          await logTaskEvent(taskId, 'tool_call', `🔧 ${event.tool}(${event.args}) [idem:${idemKey}]`, agent.id)
           await prisma.message.create({
             data: {
               conversationId: conversation.id, role: 'assistant',
@@ -466,6 +483,18 @@ async function runTask(taskId: string): Promise<void> {
           // redaction consistently before any write.
           const redactedResult = redactSecrets(event.result).slice(0, 2000)
           await logTaskEvent(taskId, 'tool_result', redactedResult, agent.id)
+          // Checkpoint this step so it can be detected on retry.
+          stepIndex++
+          const idemKeyForCheckpoint = createHash('sha256')
+            .update(`${taskId}:${stepIndex}:${event.tool}:`)
+            .digest('hex')
+            .slice(0, 16)
+          await prisma.taskCheckpoint.upsert({
+            where: { taskId_stepIndex: { taskId, stepIndex } },
+            update: { result: redactedResult },
+            create: { taskId, stepIndex, toolName: event.tool, argsHash: idemKeyForCheckpoint, result: redactedResult },
+          }).catch(() => {})
+          checkpoints.set(stepIndex, redactedResult)
           await prisma.message.create({
             data: {
               conversationId: conversation.id, role: 'user',
@@ -583,6 +612,9 @@ async function runTask(taskId: string): Promise<void> {
       environmentName: envName,
     })
 
+    // Clean up checkpoints on successful completion — no longer needed.
+    await prisma.taskCheckpoint.deleteMany({ where: { taskId } }).catch(() => {})
+
     log(`Completed task "${task.title}" (${taskId}) in ${durationSec}s`)
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e)
@@ -634,6 +666,7 @@ async function runTask(taskId: string): Promise<void> {
         outcomeSummary: `Failed ${remediationAttempts} times with the same approach — escalated for human review.`,
         errorMessage:    errMsg,
       })
+      await prisma.taskCheckpoint.deleteMany({ where: { taskId } }).catch(() => {})
     } else if (canRetry) {
       const newRetryCount = (failedTask!.retryCount ?? 0) + 1
       const delayMs = 15000 * Math.pow(2, failedTask!.retryCount ?? 0) // 15s, 30s, 60s
@@ -664,6 +697,7 @@ async function runTask(taskId: string): Promise<void> {
         outcomeSummary: `Failed after ${remediationAttempts} attempt(s).`,
         errorMessage:    errMsg,
       })
+      await prisma.taskCheckpoint.deleteMany({ where: { taskId } }).catch(() => {})
     }
   } finally {
     clearTimeout(timeoutHandle)
