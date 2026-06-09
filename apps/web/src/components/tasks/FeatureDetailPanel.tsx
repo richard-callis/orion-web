@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Trash2, Sparkles, Loader2, MessageSquare } from 'lucide-react'
+import { Trash2, Sparkles, Loader2, MessageSquare, CheckCircle2, Lock, Rocket } from 'lucide-react'
 import type { Feature } from '@/types/tasks'
 import { PlanWithAIButton } from './PlanWithAIButton'
 import { DetailPanelShell } from '../ui/DetailPanelShell'
@@ -26,12 +26,24 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
   const [genError, setGenError]     = useState<string | null>(null)
   const [creatingRoom, setCreatingRoom] = useState(false)
 
+  const [taskCount, setTaskCount]       = useState(feature._count?.tasks ?? 0)
+  const [doneCount, setDoneCount]       = useState(0)
+  const [approvedAt, setApprovedAt]     = useState<string | null>(feature.planApprovedAt ?? null)
+  const [approvedBy, setApprovedBy]     = useState<string | null>(feature.planApprovedBy ?? null)
+  const [approving, setApproving]       = useState(false)
+  const [justApproved, setJustApproved] = useState(false)
+
   useEffect(() => {
     setTitle(feature.title)
     setDesc(feature.description ?? '')
     setPlan(feature.plan ?? '')
     setStatus(feature.status)
     setGenError(null)
+    setApprovedAt(feature.planApprovedAt ?? null)
+    setApprovedBy(feature.planApprovedBy ?? null)
+    setJustApproved(false)
+    setTaskCount(feature._count?.tasks ?? 0)
+    setDoneCount(0)
     // Fetch fresh data — plan may have been saved from the chat screen
     fetch(`/api/features/${feature.id}`)
       .then(r => r.ok ? r.json() : null)
@@ -41,9 +53,38 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
           setPlan(fresh.plan ?? '')
           onUpdate({ plan: fresh.plan ?? null }).catch((e) => console.error("[fetch]", e))
         }
+        setApprovedAt(fresh.planApprovedAt ?? null)
+        setApprovedBy(fresh.planApprovedBy ?? null)
+        if (typeof fresh._count?.tasks === 'number') setTaskCount(fresh._count.tasks)
+      })
+      .catch((e) => console.error("[fetch]", e))
+    // Fetch task completion stats for the progress bar
+    fetch(`/api/tasks?featureId=${feature.id}`)
+      .then(r => r.ok ? r.json() : null)
+      .then((tasks: Array<{ status: string }> | null) => {
+        if (!Array.isArray(tasks)) return
+        setTaskCount(tasks.length)
+        setDoneCount(tasks.filter(t => t.status === 'done').length)
       })
       .catch((e) => console.error("[fetch]", e))
   }, [feature.id])
+
+  const handleApprovePlan = async () => {
+    setApproving(true)
+    try {
+      const r = await fetch(`/api/features/${feature.id}/approve-plan`, { method: 'POST' })
+      if (r.ok) {
+        const now = new Date().toISOString()
+        setApprovedAt(now)
+        setJustApproved(true)
+        onUpdate({ planApprovedAt: now }).catch((e) => console.error('[approve]', e))
+      }
+    } catch (e) {
+      console.error('[approve]', e)
+    } finally {
+      setApproving(false)
+    }
+  }
 
   const handlePlanFeature = async () => {
     setCreatingRoom(true)
@@ -165,8 +206,56 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
         />
       </div>
 
+      {/* ── Plan approval gate ── */}
+      {plan && !approvedAt && taskCount > 0 && (
+        <div className="rounded-lg border border-status-healthy/30 bg-status-healthy/5 p-3 space-y-2">
+          <p className="text-xs font-medium text-text-primary">
+            {taskCount} {taskCount === 1 ? 'task' : 'tasks'} ready to run
+          </p>
+          {justApproved ? (
+            <p className="text-xs text-status-healthy flex items-center gap-1.5">
+              <CheckCircle2 size={13} /> Plan approved — agents will begin shortly
+            </p>
+          ) : (
+            <button
+              onClick={handleApprovePlan}
+              disabled={approving}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded bg-status-healthy/15 text-status-healthy border border-status-healthy/30 text-sm hover:bg-status-healthy/25 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {approving ? <Loader2 size={14} className="animate-spin" /> : <Rocket size={14} />}
+              Approve Plan &amp; Start Execution
+            </button>
+          )}
+        </div>
+      )}
+      {approvedAt && (
+        <p className="text-[11px] text-status-healthy flex items-center gap-1.5">
+          <Lock size={11} /> Plan approved {new Date(approvedAt).toLocaleDateString()}
+          {approvedBy ? ` by ${approvedBy}` : ''}
+        </p>
+      )}
+
+      {/* ── Task progress ── */}
+      {taskCount > 0 && (
+        <div className="space-y-1">
+          <div className="flex items-center justify-between text-[10px] text-text-muted">
+            <span className="flex items-center gap-1">
+              {feature.status === 'done' && <CheckCircle2 size={11} className="text-status-healthy" />}
+              {doneCount} / {taskCount} tasks complete
+            </span>
+            <span>{Math.round((doneCount / taskCount) * 100)}%</span>
+          </div>
+          <div className="h-1.5 w-full rounded-full bg-bg-raised overflow-hidden">
+            <div
+              className="h-full rounded-full bg-status-healthy transition-all"
+              style={{ width: `${taskCount > 0 ? (doneCount / taskCount) * 100 : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center gap-2 text-[10px] text-text-muted">
-        <span>{feature._count?.tasks ?? 0} tasks</span>
+        <span>{taskCount} tasks</span>
         <span>·</span>
         <span>Created {new Date(feature.createdAt).toLocaleDateString()}</span>
       </div>

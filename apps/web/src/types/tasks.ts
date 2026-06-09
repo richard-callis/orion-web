@@ -41,7 +41,9 @@ export interface Feature {
   status: string
   createdAt: string
   updatedAt: string
-  _count?: { tasks: number }
+  planApprovedAt?: string | null
+  planApprovedBy?: string | null
+  _count?: { tasks: number; doneTasks?: number }
 }
 
 export interface Epic {
@@ -52,6 +54,8 @@ export interface Epic {
   status: string
   createdAt: string
   updatedAt: string
+  planApprovedAt?: string | null
+  planApprovedBy?: string | null
   features: Feature[]
 }
 

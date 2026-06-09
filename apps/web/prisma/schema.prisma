@@ -267,6 +267,8 @@ model Task {
   retryCount     Int           @default(0)
   maxRetries     Int           @default(3)
   nextRetryAt    DateTime?
+  dependsOn      String[]      @default([]) // IDs of Task records that must be 'done' before this runs
+  wave           Int? // Execution wave (0 = no deps, 1 = depends on wave-0, etc.) — computed at plan approval time
   events         TaskEvent[]
   metadata       Json?
   chatRooms      ChatRoom[]    @relation("ChatRoomTask")
