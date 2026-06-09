@@ -446,6 +446,16 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
         : `I want to plan this task:\n\n**${target.title}**\n\n${target.description ?? 'No description yet.'}\n\nHelp me break this down into a clear implementation plan.`
     }
 
+    // For feature planning, prepend the task-creation contract so the agent
+    // decomposes the plan into dependency-ordered tasks via orion_create_task.
+    if (target.type === 'feature') {
+      const prefixRes = await fetch(`/api/admin/prompts/${encodeURIComponent('system.feature-planning-prefix')}`)
+      if (prefixRes.ok) {
+        const { content } = await prefixRes.json() as { content: string }
+        if (content?.trim()) initialContext = `${content}\n\n---\n\n${initialContext}`
+      }
+    }
+
     // Prepend parent context as background framing so Claude understands lineage without
     // treating the parent plan as the thing to produce — the specific item stays the ask.
     if (target.type === 'feature' && target.parentContext) {

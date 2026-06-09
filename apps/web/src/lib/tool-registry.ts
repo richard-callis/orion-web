@@ -474,13 +474,21 @@ async function handleCloseTask(args: unknown, ctx: ToolExecutionContext): Promis
   if (!task_id) return 'Error: task_id is required'
   if (!summary?.trim()) return 'Error: summary is required'
 
-  const task = await ctx.prisma.task.findUnique({ where: { id: task_id }, select: { title: true, status: true } })
+  const task = await ctx.prisma.task.findUnique({ where: { id: task_id }, select: { title: true, status: true, featureId: true } })
   if (!task) return `Error: task ${task_id} not found`
   if (task.status !== 'pending_validation') {
     return `Error: task is "${task.status}" — orion_close_task only operates on pending_validation tasks`
   }
 
   await ctx.prisma.task.update({ where: { id: task_id }, data: { status: 'done' } })
+
+  // Completion rollup — if this was the last task of the feature, mark the
+  // feature (and possibly its epic) done and post summaries to their rooms.
+  if (task.featureId) {
+    const { checkFeatureCompletion } = await import('./task-completion')
+    await checkFeatureCompletion(task.featureId, ctx.prisma as unknown as import('@prisma/client').PrismaClient).catch(() => {})
+  }
+
   const msg = `✅ Validated & closed **${task.title}** — ${summary}`
   await auditLog(ctx.agentId ?? ctx.userId, msg)
   return `Closed task "${task.title}"`
@@ -716,17 +724,27 @@ async function handleCreateFeature(args: unknown, ctx: ToolExecutionContext): Pr
 }
 
 async function handleCreateTask(args: unknown, ctx: ToolExecutionContext): Promise<string> {
-  const { featureId, title, description, plan, targetEnvironment, dedup_key } = parseArgs(args) as {
+  const { featureId, title, description, plan, targetEnvironment, dedup_key, depends_on, priority } = parseArgs(args) as {
     featureId?: string
     title?: string
     description?: string
     plan?: string
     dedup_key?: string
+    depends_on?: unknown
+    priority?: string
     targetEnvironment?: { namespace?: string; hostname?: string; storageClass?: string; vaultPath?: string }
   }
   if (!featureId) return 'Error: featureId is required'
   if (!title?.trim()) return 'Error: title is required'
   if (!plan?.trim()) return 'Error: plan is required'
+
+  // Normalize depends_on to a clean string[] of non-empty task IDs.
+  const dependsOn: string[] = Array.isArray(depends_on)
+    ? depends_on.filter((d): d is string => typeof d === 'string' && d.trim().length > 0).map(d => d.trim())
+    : []
+
+  const validPriorities = ['critical', 'high', 'medium', 'low']
+  const taskPriority = priority && validPriorities.includes(priority) ? priority : 'medium'
 
   const feature = await ctx.prisma.feature.findUnique({ where: { id: featureId } })
   if (!feature) return `Error: feature ${featureId} not found`
@@ -756,7 +774,8 @@ async function handleCreateTask(args: unknown, ctx: ToolExecutionContext): Promi
       description: description || null,
       plan:        plan.trim(),
       status:      'pending',
-      priority:    'medium',
+      priority:    taskPriority,
+      dependsOn,
       createdBy:   actorId ?? 'agent',
       metadata:    {
         ...(targetEnvironment ? { targetEnvironment } : {}),
@@ -765,7 +784,7 @@ async function handleCreateTask(args: unknown, ctx: ToolExecutionContext): Promi
     },
   })
   await auditLog(actorId, `📋 Created task **${task.title}** (\`${task.id}\`) under feature \`${featureId}\`${targetEnvironment?.namespace ? ` → namespace: ${targetEnvironment.namespace}` : ''}`)
-  return JSON.stringify({ id: task.id, title: task.title, featureId: task.featureId, plan: task.plan, targetEnvironment: targetEnvironment ?? null }, null, 2)
+  return JSON.stringify({ id: task.id, title: task.title, featureId: task.featureId, plan: task.plan, dependsOn, priority: taskPriority, targetEnvironment: targetEnvironment ?? null }, null, 2)
 }
 
 async function handleProposeGitops(args: unknown, ctx: ToolExecutionContext): Promise<string> {
@@ -1720,6 +1739,16 @@ registerTool({
       dedup_key: {
         type: 'string',
         description: 'Optional deduplication key. If an open task (pending/running/pending_validation) with this exact key already exists under the same feature, creation is skipped and the existing task is returned. Use a stable identifier like "pulse:host:vault-proxy" or "pulse:node:talos-rpi2".',
+      },
+      depends_on: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Optional list of Task IDs that must reach status "done" before this task is allowed to run. Use the IDs returned by previous orion_create_task calls to express ordering (e.g. a deploy task that depends on a build task). Execution waves are computed from these dependencies at plan-approval time.',
+      },
+      priority: {
+        type: 'string',
+        enum: ['critical', 'high', 'medium', 'low'],
+        description: 'Optional task priority. Defaults to "medium". Higher-priority tasks within the same execution wave run first.',
       },
     },
     required: ['featureId', 'title', 'plan'],
