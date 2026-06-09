@@ -272,10 +272,20 @@ async function runTask(taskId: string): Promise<void> {
     // inside createRunner() — no need to fetch them here.
     let systemPrompt = injectedPreamble + '\n\n' + agentSystemPrompt + agentsMdSection + wikiContext
 
-    // Prepend plan-before-execute instruction if configured on this agent
-    if (contextConfig.planBeforeExecute === true) {
+    // Plan-before-execute gating. If a previously-paused plan has been approved
+    // (metadata.planApproved === true, set by /api/tasks/:id/resume-plan), skip
+    // the planning phase entirely and execute the stored plan directly.
+    const taskMeta = (task.metadata ?? {}) as Record<string, unknown>
+    const planAlreadyApproved = taskMeta.planApproved === true
+    const planBeforeExecute = contextConfig.planBeforeExecute === true && !planAlreadyApproved
+    if (planBeforeExecute) {
       const planPrefix = await getPrompt('system.task-plan-prefix')
       systemPrompt = planPrefix + '\n\n' + systemPrompt
+    } else if (planAlreadyApproved) {
+      systemPrompt =
+        '## Plan Approved\n\nYour plan for this task has been reviewed and approved by a human. ' +
+        'Do NOT emit another <plan> block — proceed directly to executing the approved plan step by step.\n\n' +
+        systemPrompt
     }
 
     log(`Starting task "${task.title}" (${taskId}) → agent "${agent.name}" [${modelId}]`)
@@ -330,6 +340,7 @@ async function runTask(taskId: string): Promise<void> {
     const runner = createRunner(modelId)
     let outputText = ''
     let toolsUsed: string[] = []
+    let pausedForApproval = false
 
     for await (const event of runner.run(ctx)) {
       // Check for task-level abort (60-minute timeout)
@@ -347,6 +358,14 @@ async function runTask(taskId: string): Promise<void> {
           break
 
         case 'tool_call':
+          // Plan gate: a high/critical-risk plan must be approved before tools run.
+          if (planBeforeExecute) {
+            const plan = parsePlan(outputText)
+            if (planRequiresApproval(plan)) {
+              pausedForApproval = true
+              break
+            }
+          }
           toolsUsed.push(event.tool)
           await logTaskEvent(taskId, 'tool_call', `🔧 ${event.tool}(${event.args})`, agent.id)
           await prisma.message.create({
@@ -388,6 +407,39 @@ async function runTask(taskId: string): Promise<void> {
         case 'error':
           throw new Error(event.error)
       }
+
+      // Stop consuming the runner once we've paused for plan approval — no
+      // further tools should execute until a human approves the plan.
+      if (pausedForApproval) break
+    }
+
+    // Plan-before-execute: high/critical-risk plan paused for approval. Persist
+    // the risk + plan text into metadata so the approval UI can surface them and
+    // /api/tasks/:id/resume-plan can restore the approved plan.
+    if (pausedForApproval) {
+      const plan = parsePlan(outputText)
+      const risk = plan?.riskLevel ?? 'high'
+      const planText = plan?.raw ?? outputText.slice(0, 4000)
+      const pauseMsg =
+        `⏸️ **Plan paused for approval** (risk: ${risk})\n\n` +
+        `Task **${task.title}** produced a ${risk}-risk plan and is awaiting human approval before any tools run.\n\n` +
+        (plan?.summary ? `Summary: ${plan.summary}\n` : '') +
+        (plan?.rollbackStrategy ? `Rollback: ${plan.rollbackStrategy}\n` : '')
+      await Promise.all([
+        prisma.task.update({
+          where: { id: taskId },
+          data: {
+            status: 'pending_validation',
+            metadata: { ...taskMeta, planRisk: risk, planContent: planText, planApproved: false } as object,
+          },
+        }),
+        logTaskEvent(taskId, 'plan_pending_approval',
+          `Risk=${risk}. ${plan?.summary ?? ''}\n\n${planText}`, agent.id),
+        postToFeed(agent.id, pauseMsg, taskId),
+        ...(featureRoomId ? [postToRoom(featureRoomId, agent.id, pauseMsg, taskId)] : []),
+      ])
+      log(`Task "${task.title}" (${taskId}) paused for ${risk}-risk plan approval`)
+      return
     }
 
     const durationSec = Math.round((Date.now() - startedAt) / 1000)
@@ -458,6 +510,49 @@ async function runTask(taskId: string): Promise<void> {
     clearTimeout(timeoutHandle)
     runningTasks.delete(taskId)
   }
+}
+
+// ── Plan-before-execute helpers ──────────────────────────────────────────────
+
+export type PlanRisk = 'low' | 'medium' | 'high' | 'critical'
+
+export interface ParsedPlan {
+  summary: string | null
+  riskLevel: PlanRisk | null
+  estimatedDuration: string | null
+  rollbackStrategy: string | null
+  raw: string
+}
+
+/**
+ * Parse the structured <plan> block emitted by a plan-before-execute agent.
+ * Returns null if no <plan> block is present yet (agent still streaming prose).
+ */
+export function parsePlan(text: string): ParsedPlan | null {
+  const planMatch = text.match(/<plan>([\s\S]*?)<\/plan>/i)
+  if (!planMatch) return null
+  const body = planMatch[1]
+  const tag = (name: string): string | null => {
+    const m = body.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`, 'i'))
+    return m ? m[1].trim() : null
+  }
+  const rawRisk = tag('risk_level')?.toLowerCase() ?? null
+  const riskLevel: PlanRisk | null =
+    rawRisk === 'low' || rawRisk === 'medium' || rawRisk === 'high' || rawRisk === 'critical'
+      ? rawRisk
+      : null
+  return {
+    summary: tag('summary'),
+    riskLevel,
+    estimatedDuration: tag('estimated_duration'),
+    rollbackStrategy: tag('rollback_strategy'),
+    raw: planMatch[0],
+  }
+}
+
+/** High/critical-risk plans must be approved by a human before tools run. */
+export function planRequiresApproval(plan: ParsedPlan | null): boolean {
+  return plan?.riskLevel === 'high' || plan?.riskLevel === 'critical'
 }
 
 // ── DB helpers ─────────────────────────────────────────────────────────────────
@@ -822,25 +917,59 @@ async function pollOnce() {
   if (runningTasks.size >= MAX_CONCURRENT) return
 
   const available = MAX_CONCURRENT - runningTasks.size
-  const tasks = await prisma.task.findMany({
+
+  // Candidate pending tasks. Two gates beyond status='pending':
+  //  1. feature.planApprovedAt must be set — no feature-scoped task runs until
+  //     its feature plan is approved by a human (the plan-approval gate).
+  //     Tasks with no feature (ad-hoc/system tasks) are exempt.
+  //  2. all task.dependsOn IDs must be 'done' — checked in-memory below because
+  //     Postgres can't relationally filter "every element of this scalar array
+  //     is in a done-set".
+  // Ordered by wave so earlier waves drain before later ones.
+  const pending = await prisma.task.findMany({
     where: {
       status:        'pending',
       assignedAgent: { not: null },
-      OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: new Date() } }],
+      AND: [
+        { OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: new Date() } }] },
+        {
+          OR: [
+            { featureId: null },
+            { feature: { planApprovedAt: { not: null } } },
+          ],
+        },
+      ],
       agent: {
         NOT: {
           metadata: { path: ['archived'], equals: true },
         },
       },
     },
-    orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
-    take: available,
-    select: { id: true },
+    orderBy: [{ wave: 'asc' }, { priority: 'desc' }, { createdAt: 'asc' }],
+    select: { id: true, dependsOn: true },
   })
 
-  for (const { id } of tasks) {
-    if (!runningTasks.has(id)) {
-      runTask(id).catch(e => err(`Unhandled error in runTask(${id}): ${e}`))
+  if (pending.length === 0) return
+
+  // Build the set of completed task IDs referenced by any candidate's deps.
+  const depIds = [...new Set(pending.flatMap(t => t.dependsOn))]
+  const completedTaskIds = new Set<string>()
+  if (depIds.length > 0) {
+    const doneDeps = await prisma.task.findMany({
+      where: { id: { in: depIds }, status: 'done' },
+      select: { id: true },
+    })
+    for (const d of doneDeps) completedTaskIds.add(d.id)
+  }
+
+  let launched = 0
+  for (const task of pending) {
+    if (launched >= available) break
+    // Dependency gate: every depended-upon task must be done.
+    if (!task.dependsOn.every(depId => completedTaskIds.has(depId))) continue
+    if (!runningTasks.has(task.id)) {
+      runTask(task.id).catch(e => err(`Unhandled error in runTask(${task.id}): ${e}`))
+      launched++
     }
   }
 }
