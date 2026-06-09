@@ -1,11 +1,11 @@
 'use client'
 import { useState } from 'react'
-import { ChevronRight, ChevronDown, Plus, Layers, GitBranch, Inbox } from 'lucide-react'
+import { ChevronRight, ChevronDown, Plus, Layers, GitBranch, Inbox, Check } from 'lucide-react'
 import type { Epic, SelectionState } from '@/types/tasks'
 
 interface Props {
   epics: Epic[]
-  tasks: { featureId: string | null }[]
+  tasks: { featureId: string | null; status: string }[]
   selection: SelectionState
   onSelect: (s: SelectionState) => void
   onNewEpic: () => void
@@ -26,6 +26,12 @@ export function EpicTreeNav({ epics, tasks, selection, onSelect, onNewEpic, onNe
 
   const epicTaskCount = (epic: Epic) =>
     epic.features.reduce((n, f) => n + (f._count?.tasks ?? 0), 0)
+
+  // Per-feature completion stats from the live task list.
+  const featureStats = (featureId: string) => {
+    const fTasks = tasks.filter(t => t.featureId === featureId)
+    return { total: fTasks.length, done: fTasks.filter(t => t.status === 'done').length }
+  }
 
   const isActive = (s: SelectionState) => {
     if (s.kind !== selection.kind) return false
@@ -83,15 +89,21 @@ export function EpicTreeNav({ epics, tasks, selection, onSelect, onNewEpic, onNe
                 <div className="ml-3 border-l border-border-subtle pl-2 mb-1">
                   {epic.features.map(f => {
                     const fSel: SelectionState = { kind: 'feature', epicId: epic.id, featureId: f.id }
+                    const stats = featureStats(f.id)
+                    const isDone = f.status === 'done' || (stats.total > 0 && stats.done === stats.total)
                     return (
                       <div
                         key={f.id}
                         onClick={() => onSelect(fSel)}
                         className={`${rowBase} ${isActive(fSel) ? rowActive : rowIdle}`}
                       >
-                        <GitBranch size={11} className="flex-shrink-0 text-text-muted" />
+                        {isDone
+                          ? <Check size={11} className="flex-shrink-0 text-status-healthy" />
+                          : <GitBranch size={11} className="flex-shrink-0 text-text-muted" />}
                         <span className="flex-1 truncate">{f.title}</span>
-                        <span className="text-[10px] text-text-muted">{f._count?.tasks ?? 0}</span>
+                        <span className="text-[10px] text-text-muted">
+                          {stats.total > 0 ? `${stats.done}/${stats.total}` : (f._count?.tasks ?? 0)}
+                        </span>
                       </div>
                     )
                   })}
