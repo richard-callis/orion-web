@@ -11,6 +11,7 @@
 import { prisma } from './lib/db'
 import { createRunner } from './lib/agent-runner'
 import type { TaskRunContext } from './lib/agent-runner'
+import { retrieveKnowledgeContext } from './lib/embeddings'
 import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './lib/management-tools'
 import { getSystemRooms } from './lib/seed-system-epic'
 import { getPrompt } from './lib/system-prompts'
@@ -304,13 +305,13 @@ async function runTask(taskId: string): Promise<void> {
     const agentSystemPrompt = (meta.systemPrompt as string | undefined) ?? 'You are a helpful AI agent.'
     const modelId = await resolveModelId(contextConfig.llm)
 
-    // Inject llm-context wiki notes into every agent's system prompt (SOC2: [C-001])
-    const contextNotes = await prisma.note.findMany({
-      where: { type: 'llm-context' },
-      orderBy: { updatedAt: 'desc' },
-      select: { title: true, content: true },
-    })
-    const wikiContext = buildWikiContext(contextNotes)
+    // Auto-inject task-relevant knowledge: semantic search on task title+description
+    // surfaces the top-5 most relevant notes rather than injecting everything.
+    const taskQuery = `${task.title}\n${task.description ?? ''}`
+    const rawKnowledge = await retrieveKnowledgeContext(taskQuery, 5, 0.2).catch(() => '')
+    const wikiContext = rawKnowledge
+      ? `\n\n---\n## Relevant Knowledge Base Context\n${rawKnowledge}\n---\n\n`
+      : ''
 
     // Resolve gateway from the agent's linked environment
     const agentGw = await resolveAgentGateway(agent.id)
@@ -410,6 +411,8 @@ async function runTask(taskId: string): Promise<void> {
     let outputText = ''
     let toolsUsed: string[] = []
     let pausedForApproval = false
+    let totalInputTokens = 0
+    let totalOutputTokens = 0
 
     // Plan-before-execute gating: when enabled, the agent emits a <plan> block
     // up front. If the plan is high/critical risk, we pause the task for human
@@ -475,6 +478,11 @@ async function runTask(taskId: string): Promise<void> {
           }
           break
         }
+
+        case 'usage':
+          totalInputTokens  += event.inputTokens
+          totalOutputTokens += event.outputTokens
+          break
 
         case 'done':
           break
@@ -542,13 +550,24 @@ async function runTask(taskId: string): Promise<void> {
       prisma.claudeInvocation.create({
         data: {
           conversationId: conversation.id,
-          prompt:   task.title,
+          prompt:     task.title,
           toolsUsed,
+          tokensUsed: totalInputTokens + totalOutputTokens || null,
           durationMs: Date.now() - startedAt,
-          success: true,
+          success:    true,
         },
       }).catch(() => {}),
     ])
+
+    // Log token usage to the task timeline when available.
+    if (totalInputTokens > 0 || totalOutputTokens > 0) {
+      await logTaskEvent(
+        taskId,
+        'usage',
+        `Tokens: ${totalInputTokens} in / ${totalOutputTokens} out (total: ${totalInputTokens + totalOutputTokens})`,
+        agent.id,
+      ).catch(() => {})
+    }
 
     // Auto-write the task outcome to the knowledge base so future agents learn
     // from it via vector-search context injection.
@@ -987,14 +1006,16 @@ async function runWatchers() {
     const gateway = agentGw ? { url: agentGw.url, token: agentGw.token } : null
 
     // Pre-fetch all context the agent needs — no API calls from the agent side
-    const [contextNotes, snapshot, systemRooms, prevState] = await Promise.all([
-      prisma.note.findMany({ where: { type: 'llm-context' }, select: { title: true, content: true } }),
+    const [rawKnowledge, snapshot, systemRooms, prevState] = await Promise.all([
+      retrieveKnowledgeContext(meta.systemPrompt as string ?? agent.name, 5, 0.2).catch(() => ''),
       buildSystemSnapshot(),
       getSystemRooms(),
       loadWatcherState(agent.id),
     ])
 
-    const wikiContext = buildWikiContext(contextNotes)
+    const wikiContext = rawKnowledge
+      ? `\n\n---\n## Relevant Knowledge Base Context\n${rawKnowledge}\n---\n\n`
+      : ''
 
     // Inject tool awareness preamble into watcher system prompt — same as task runner
     const watcherToolList = [
@@ -1182,6 +1203,43 @@ async function syncGitOpsPRs() {
 
 // ── Poll loop ──────────────────────────────────────────────────────────────────
 
+// How long (ms) a task may sit in pending_validation before auto-escalating.
+const APPROVAL_TIMEOUT_MS = parseInt(process.env.APPROVAL_TIMEOUT_MS ?? '') || 30 * 60 * 1000
+
+/**
+ * Escalate tasks that have been waiting for plan approval longer than
+ * APPROVAL_TIMEOUT_MS (default 30 min). Posts to agent feed and assigns to the
+ * first available human so the UI surfaces it as a blocked task.
+ */
+async function escalateStalePendingValidation(): Promise<void> {
+  const cutoff = new Date(Date.now() - APPROVAL_TIMEOUT_MS)
+  const staleTasks = await prisma.task.findMany({
+    where: { status: 'pending_validation', updatedAt: { lt: cutoff } },
+    select: { id: true, title: true, assignedAgent: true, metadata: true, updatedAt: true },
+  })
+  if (staleTasks.length === 0) return
+
+  const human = await prisma.user.findFirst({ select: { id: true } }).catch(() => null)
+
+  for (const t of staleTasks) {
+    const waitMins = Math.round((Date.now() - t.updatedAt.getTime()) / 60_000)
+    const msg = `⏰ **Approval timeout**: Task **${t.title}** has been waiting for plan approval for ${waitMins} minutes. Escalating for human review.`
+    log(`Escalating stale pending_validation task ${t.id} (${waitMins}m)`)
+
+    await Promise.all([
+      logTaskEvent(t.id, 'escalated', msg, t.assignedAgent ?? undefined),
+      t.assignedAgent ? postToFeed(t.assignedAgent, msg, t.id).catch(() => {}) : Promise.resolve(),
+      // Assign to the first human so it appears in their task queue.
+      human
+        ? prisma.task.update({
+            where: { id: t.id },
+            data: { metadata: { ...(t.metadata as object ?? {}), approvalEscalatedAt: new Date().toISOString() } as object },
+          }).catch(() => {})
+        : Promise.resolve(),
+    ])
+  }
+}
+
 async function pollOnce() {
   if (runningTasks.size >= MAX_CONCURRENT) return
 
@@ -1339,6 +1397,12 @@ async function main() {
   // has gone stale (no non-system message for 15 min). See jobs/goal-heartbeat.ts.
   setInterval(() => {
     runGoalHeartbeat().catch(e => err(`Goal heartbeat failed: ${e}`))
+  }, 5 * 60_000)
+
+  // HITL approval timeout escalation — every 5 min, escalate tasks that have
+  // been waiting for plan approval longer than APPROVAL_TIMEOUT_MS (default 30 min).
+  setInterval(() => {
+    escalateStalePendingValidation().catch(e => err(`Approval timeout escalation failed: ${e}`))
   }, 5 * 60_000)
 }
 

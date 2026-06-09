@@ -19,6 +19,7 @@ interface OpenAIResponse {
       tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>
     }
   }>
+  usage?: { prompt_tokens: number; completion_tokens: number }
 }
 
 // ── Context window trimming ───────────────────────────────────────────────────
@@ -106,6 +107,8 @@ export const openaiRunner: AgentRunner = {
 
     const MAX_TURNS = 20
     let turns = 0
+    let totalInputTokens = 0
+    let totalOutputTokens = 0
 
     try {
       while (turns < MAX_TURNS) {
@@ -129,6 +132,10 @@ export const openaiRunner: AgentRunner = {
 
         if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`)
         const data = await res.json() as OpenAIResponse
+        if (data.usage) {
+          totalInputTokens  += data.usage.prompt_tokens
+          totalOutputTokens += data.usage.completion_tokens
+        }
         const assistantMsg = data.choices[0].message
 
         messages.push({ ...assistantMsg, content: assistantMsg.content ?? '' })
@@ -212,6 +219,9 @@ export const openaiRunner: AgentRunner = {
         yield { type: 'text', content: '\n⚠ Reached maximum turns limit.' }
       }
 
+      if (totalInputTokens > 0 || totalOutputTokens > 0) {
+        yield { type: 'usage', inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
+      }
       yield { type: 'done' }
     } catch (err) {
       yield { type: 'error', error: err instanceof Error ? err.message : String(err) }
