@@ -27,6 +27,7 @@ import { runElkPollerAll } from './jobs/security-poll-elk'
 import { runNtopngPollerAll } from './jobs/security-poll-ntopng'
 import { runDailyScan, runEventTriggeredScan } from './jobs/security-scan-vulns'
 import { runGoalHeartbeat } from './jobs/goal-heartbeat'
+import { detectGitOpsDrift } from './jobs/gitops-drift'
 import { syncCrowdSecDecisions } from './lib/security/crowdsec-bouncer'
 
 const POLL_INTERVAL_MS = 15_000
@@ -182,6 +183,7 @@ let runningK8sPoller = false
 let runningElkPoller = false
 let runningNtopngPoller = false
 let runningVulnScan = false
+let runningDriftDetector = false
 
 const TASK_TIMEOUT_MS = 60 * 60 * 1000 // 60 minutes
 
@@ -1585,6 +1587,13 @@ async function main() {
   // been waiting for plan approval longer than APPROVAL_TIMEOUT_MS (default 30 min).
   setInterval(() => {
     escalateStalePendingValidation().catch(e => err(`Approval timeout escalation failed: ${e}`))
+  }, 5 * 60_000)
+
+  // GitOps drift detection — every 5 min, compare live cluster state to desired state.
+  setInterval(() => {
+    if (runningDriftDetector) return
+    runningDriftDetector = true
+    detectGitOpsDrift().catch(e => err(`GitOps drift detection failed: ${e}`)).finally(() => { runningDriftDetector = false })
   }, 5 * 60_000)
 }
 
