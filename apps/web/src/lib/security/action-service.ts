@@ -45,7 +45,7 @@ export async function gatewayExecutor(
   action: ActionRequest,
   target: string,
   payload?: Record<string, unknown>,
-  environmentId?: string | null
+  environmentId?: string | null,
 ): Promise<{ success: boolean; result: string }> {
   const where = {
     status: 'connected',
