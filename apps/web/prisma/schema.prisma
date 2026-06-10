@@ -1683,7 +1683,6 @@ model ToolExecution {
   @@index([expiresAt])              // for expiry sweep job
 }
 
-<<<<<<< HEAD
 // ── Agent Benchmark Harness ────────────────────────────────────────────────────
 // Define test suites with golden prompts and assertions, run an agent against
 // them, score results with LLM-as-judge, and track performance over time.
@@ -1789,4 +1788,19 @@ model WebhookTrigger {
   createdAt   DateTime  @default(now())
 
   @@index([agentId])
+}
+
+// ── Notification Channels ──────────────────────────────────────────────────────
+// Slack / Discord / generic webhook endpoints that receive notifications for
+// task lifecycle events (completed, failed, plan approval needed).
+
+model NotificationChannel {
+  id          String   @id @default(cuid())
+  name        String
+  type        String   // slack | discord | webhook
+  webhookUrl  String
+  events      String   @default("[\"task_completed\",\"task_failed\"]") // JSON array
+  agentFilter String?  // JSON array of agent IDs to filter on, null = all agents
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
 }
