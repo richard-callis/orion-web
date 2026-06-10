@@ -100,6 +100,10 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     if (data.kubeconfig !== undefined && data.kubeconfig !== '••••') {
       updateData.kubeconfig = data.kubeconfig || null
     }
+    if (data.federationRole  !== undefined) updateData.federationRole  = data.federationRole  === 'standalone' ? null : (data.federationRole ?? null)
+    if (data.federationToken !== undefined) updateData.federationToken = data.federationToken ?? null
+    if (data.spokeUrl        !== undefined) updateData.spokeUrl        = data.spokeUrl        ?? null
+    if (data.hubUrl          !== undefined) updateData.hubUrl          = data.hubUrl          ?? null
 
     const env = await prisma.environment.update({
       where: { id: params.id },
