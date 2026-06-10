@@ -73,6 +73,8 @@ model Agent {
   metadata         Json? // { systemPrompt?: string }
   novaId           String? // Reference to the Nova definition this agent was imported from
   nova             Nova?                  @relation(fields: [novaId], references: [id], onDelete: SetNull)
+  tokenBudgetDay   Int? // max tokens per day (input+output combined), null = unlimited
+  tokenBudgetMonth Int? // max tokens per calendar month, null = unlimited
   messages         AgentMessage[]
   tasks            Task[]                 @relation("AssignedTasks")
   environments     AgentEnvironment[]
@@ -85,6 +87,20 @@ model Agent {
   knowledge        AgentKnowledge[]
   evalSuites       EvalSuite[]            @relation("EvalSuiteAgent")
   evalRuns         EvalRun[]              @relation("EvalRunAgent")
+  tokenUsage       AgentTokenUsage[]
+}
+
+model AgentTokenUsage {
+  id           String   @id @default(cuid())
+  agentId      String
+  agent        Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  taskId       String
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  recordedAt   DateTime @default(now())
+
+  @@index([agentId, recordedAt])
+  @@index([taskId])
 }
 
 model Environment {
@@ -112,6 +128,12 @@ model Environment {
   policyConfig    Json? // PolicyConfig: { reviewAll?, overrides? }
   kubeconfig      String? @db.Text // base64 kubeconfig (K8s clusters only)
 
+  // Federation fields
+  federationRole  String? // 'hub' | 'spoke' | null (standalone)
+  federationToken String? // shared secret for hub↔spoke auth
+  spokeUrl        String? // for spokes: their own base URL (so hub can reach them)
+  hubUrl          String? // for spokes: URL of their hub
+
   tools                    McpTool[]
   agents                   AgentEnvironment[]
   joinTokens               EnvironmentJoinToken[]
@@ -136,6 +158,7 @@ model Environment {
   vulnerabilityFindings    VulnerabilityFinding[]
   suppressions             Suppression[]
   toolExecutions           ToolExecution[]
+  driftReports             DriftReport[]
 }
 
 /// Tracks every PR opened by the GitOps loop — open, auto-merged, or awaiting review.
@@ -271,10 +294,25 @@ model Task {
   nextRetryAt    DateTime?
   dependsOn      String[]      @default([]) // IDs of Task records that must be 'done' before this runs
   wave           Int? // Execution wave (0 = no deps, 1 = depends on wave-0, etc.) — computed at plan approval time
-  events         TaskEvent[]
-  metadata       Json?
-  chatRooms      ChatRoom[]    @relation("ChatRoomTask")
-  chatMessages   ChatMessage[]
+  events             TaskEvent[]
+  metadata           Json?
+  chatRooms          ChatRoom[]         @relation("ChatRoomTask")
+  chatMessages       ChatMessage[]
+  federatedDispatch  FederatedDispatch?
+}
+
+model FederatedDispatch {
+  id             String    @id @default(cuid())
+  taskId         String    @unique
+  task           Task      @relation(fields: [taskId], references: [id])
+  targetEnvId    String    // which environment the task was routed to
+  spokeUrl       String    // URL of the spoke that received it
+  status         String    @default("dispatched") // dispatched | acknowledged | completed | failed
+  dispatchedAt   DateTime  @default(now())
+  acknowledgedAt DateTime?
+  completedAt    DateTime?
+
+  @@index([targetEnvId])
 }
 
 model TaskEvent {
@@ -1643,6 +1681,7 @@ model ToolExecution {
   @@index([expiresAt])              // for expiry sweep job
 }
 
+<<<<<<< HEAD
 // ── Agent Benchmark Harness ────────────────────────────────────────────────────
 // Define test suites with golden prompts and assertions, run an agent against
 // them, score results with LLM-as-judge, and track performance over time.

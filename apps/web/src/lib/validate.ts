@@ -194,6 +194,8 @@ export const UpdateAgentSchema = z.object({
   type: z.enum(['claude', 'ollama', 'human', 'custom']).optional(),
   role: z.string().max(100).optional(),
   metadata: z.record(z.unknown()).optional(),
+  tokenBudgetDay: z.number().int().positive().nullable().optional(),
+  tokenBudgetMonth: z.number().int().positive().nullable().optional(),
 })
 
 // ── Task Schemas ──────────────────────────────────────────────────────────────
