@@ -1564,6 +1564,14 @@ async function main() {
   }, 5 * 60_000)
 }
 
+process.on('unhandledRejection', (reason, promise) => {
+  process.stderr.write(`[orchestrator] Unhandled rejection at: ${promise}\nReason: ${reason}\n`)
+})
+process.on('uncaughtException', (err) => {
+  process.stderr.write(`[orchestrator] Uncaught exception: ${err.message}\n${err.stack ?? ''}\n`)
+  process.exit(1)
+})
+
 main().catch(e => { err(`Fatal: ${e}`); process.exit(1) })
 
 // Graceful shutdown on SIGTERM (container stop / redeploy).

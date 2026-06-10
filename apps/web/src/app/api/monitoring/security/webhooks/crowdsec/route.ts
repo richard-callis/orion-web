@@ -31,6 +31,15 @@ export const maxDuration = 30
 export async function POST(req: NextRequest) {
   const envId = req.nextUrl.searchParams.get('env') || process.env.ENVIRONMENT_ID || ''
 
+  // 0a. Validate environment exists before doing any processing.
+  if (!envId) {
+    return NextResponse.json({ error: 'env query parameter or ENVIRONMENT_ID env var required' }, { status: 400 })
+  }
+  const env = await prisma.environment.findUnique({ where: { id: envId }, select: { id: true } })
+  if (!env) {
+    return NextResponse.json({ error: `Environment '${envId}' not found` }, { status: 404 })
+  }
+
   // 0. Body-size guard (rejects oversize/unsized requests BEFORE HMAC work).
   const sizeCheck = checkWebhookBodySize(req)
   if (!sizeCheck.ok) {
