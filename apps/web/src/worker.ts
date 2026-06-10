@@ -10,6 +10,7 @@
 
 import { createHash } from 'crypto'
 import { prisma } from './lib/db'
+import { notify } from './lib/notifications'
 import { createRunner } from './lib/agent-runner'
 import type { TaskRunContext } from './lib/agent-runner'
 import { retrieveKnowledgeContext } from './lib/embeddings'
@@ -28,6 +29,7 @@ import { runNtopngPollerAll } from './jobs/security-poll-ntopng'
 import { runDailyScan, runEventTriggeredScan } from './jobs/security-scan-vulns'
 import { runGoalHeartbeat } from './jobs/goal-heartbeat'
 import { detectGitOpsDrift } from './jobs/gitops-drift'
+import { runScheduler } from './jobs/task-scheduler'
 import { syncCrowdSecDecisions } from './lib/security/crowdsec-bouncer'
 
 const POLL_INTERVAL_MS = 15_000
@@ -184,6 +186,7 @@ let runningElkPoller = false
 let runningNtopngPoller = false
 let runningVulnScan = false
 let runningDriftDetector = false
+let runningScheduler = false
 
 const TASK_TIMEOUT_MS = 60 * 60 * 1000 // 60 minutes
 
@@ -697,6 +700,7 @@ async function runTask(taskId: string): Promise<void> {
         postToFeed(agent.id, pauseMsg, taskId),
         ...(featureRoomId ? [postToRoom(featureRoomId, agent.id, pauseMsg, taskId)] : []),
       ])
+      notify({ type: 'plan_approval_needed', taskId, taskTitle: task.title, agentId: agent.id, riskLevel: risk }).catch(() => {})
       log(`Task "${task.title}" (${taskId}) paused for ${risk}-risk plan approval`)
       return
     }
@@ -732,6 +736,8 @@ async function runTask(taskId: string): Promise<void> {
         },
       }).catch(e => err(`[worker] claudeInvocation write failed for task ${taskId}: ${e instanceof Error ? e.message : e}`)),
     ])
+
+    notify({ type: 'task_completed', taskId, taskTitle: task.title, agentId: agent.id, agentName: agent.name }).catch(() => {})
 
     // Log token usage to the task timeline when available.
     if (totalInputTokens > 0 || totalOutputTokens > 0) {
@@ -852,6 +858,7 @@ async function runTask(taskId: string): Promise<void> {
       if (failedTask?.assignedAgent) {
         await postToFeed(failedTask.assignedAgent, `❌ Failed: **${failedTask.title}**\n\n${errMsg}`, taskId).catch(() => {})
       }
+      notify({ type: 'task_failed', taskId, taskTitle: failedTask?.title ?? taskId, agentId: failedTask?.assignedAgent ?? '', agentName: '', error: errMsg }).catch(() => {})
       await writeTaskOutcome({
         title:           failedTask?.title ?? taskId,
         description:     failedTask?.description ?? null,
@@ -1606,6 +1613,13 @@ async function main() {
   setInterval(() => {
     runGoalHeartbeat().catch(e => err(`Goal heartbeat failed: ${e}`))
   }, 5 * 60_000)
+
+  // Cron scheduler — check every 60s for scheduled tasks due to run
+  setInterval(() => {
+    if (runningScheduler) return
+    runningScheduler = true
+    runScheduler().catch(e => err(`Task scheduler failed: ${e}`)).finally(() => { runningScheduler = false })
+  }, 60_000)
 
   // HITL approval timeout escalation — every 5 min, escalate tasks that have
   // been waiting for plan approval longer than APPROVAL_TIMEOUT_MS (default 30 min).
