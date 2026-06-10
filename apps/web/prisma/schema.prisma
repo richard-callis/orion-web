@@ -83,6 +83,8 @@ model Agent {
   chatMessages     ChatMessage[]
   profiles         AgentProfile[]
   knowledge        AgentKnowledge[]
+  evalSuites       EvalSuite[]            @relation("EvalSuiteAgent")
+  evalRuns         EvalRun[]              @relation("EvalRunAgent")
 }
 
 model Environment {
@@ -1639,4 +1641,76 @@ model ToolExecution {
   @@index([status, createdAt])
   @@index([tool, createdAt])
   @@index([expiresAt])              // for expiry sweep job
+}
+
+// ── Agent Benchmark Harness ────────────────────────────────────────────────────
+// Define test suites with golden prompts and assertions, run an agent against
+// them, score results with LLM-as-judge, and track performance over time.
+
+model EvalSuite {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  description String?
+  agentId     String?
+  agent       Agent?     @relation("EvalSuiteAgent", fields: [agentId], references: [id])
+  cases       EvalCase[]
+  runs        EvalRun[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([agentId])
+}
+
+model EvalCase {
+  id             String           @id @default(cuid())
+  suiteId        String
+  suite          EvalSuite        @relation(fields: [suiteId], references: [id], onDelete: Cascade)
+  title          String
+  prompt         String           @db.Text
+  expectedOutput String?          @db.Text
+  assertions     String           @db.Text // JSON array of assertion objects
+  weight         Int              @default(1)
+  createdAt      DateTime         @default(now())
+  results        EvalCaseResult[]
+
+  @@index([suiteId])
+}
+
+model EvalRun {
+  id          String           @id @default(cuid())
+  suiteId     String
+  suite       EvalSuite        @relation(fields: [suiteId], references: [id])
+  agentId     String
+  agent       Agent            @relation("EvalRunAgent", fields: [agentId], references: [id])
+  modelId     String
+  status      String           @default("pending")
+  scoreTotal  Float?
+  passCount   Int              @default(0)
+  failCount   Int              @default(0)
+  results     EvalCaseResult[]
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime         @default(now())
+
+  @@index([suiteId])
+  @@index([agentId])
+}
+
+model EvalCaseResult {
+  id          String   @id @default(cuid())
+  runId       String
+  run         EvalRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  caseId      String
+  case        EvalCase @relation(fields: [caseId], references: [id])
+  taskId      String?
+  passed      Boolean?
+  score       Float?
+  output      String?  @db.Text
+  assertions  String   @db.Text // JSON: assertion results
+  judgeReason String?  @db.Text
+  durationMs  Int?
+  createdAt   DateTime @default(now())
+
+  @@index([runId])
+  @@index([caseId])
 }
