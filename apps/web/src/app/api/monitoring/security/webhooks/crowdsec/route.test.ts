@@ -15,6 +15,7 @@ import { NextRequest } from 'next/server'
 // ── Prisma double ────────────────────────────────────────────────────────────
 const environment_findUnique = vi.fn(async () => ({ id: 'env-1' } as unknown))
 const securityEvent_create = vi.fn(async () => ({}))
+const securityEvent_count = vi.fn(async () => 0)
 const sourceHealth_upsert = vi.fn(async () => ({}))
 const securityEvent_findFirst = vi.fn(async () => null as unknown)
 
@@ -25,6 +26,7 @@ vi.mock('@/lib/db', () => ({
     },
     securityEvent: {
       create: (...a: unknown[]) => securityEvent_create(a[0]),
+      count: (...a: unknown[]) => securityEvent_count(a[0]),
       findFirst: (...a: unknown[]) => securityEvent_findFirst(a[0]),
     },
     sourceHealth: {
@@ -39,34 +41,28 @@ function sign(body: string, key = SECRET): string {
   return `sha256=${createHmac('sha256', key).update(body).digest('hex')}`
 }
 
-// Minimal valid CrowdSec alert payload
+// Minimal valid CrowdSec alert payload (matches CrowdSecAlert interface)
 const validAlert = {
-  decisions: [
+  id: `crowdsec-test-${Date.now()}`,
+  stream: 'alert',
+  name: 'crowdsecurity/ssh-bf',
+  ts: { sec: Math.floor(Date.now() / 1000), nsec: 0, unix: Math.floor(Date.now() / 1000), unix_nsec: 0 },
+  payload: {
+    '@type': 'crowdsec.types.Alert',
+    '@id': `alert-${Date.now()}`,
+    scope: 'Ip',
+    value: '203.0.113.5',
+  },
+  severity: 30,
+  events: [
     {
-      id: 1,
-      origin: 'crowdsec',
-      type: 'ban',
-      scope: 'Ip',
-      value: '203.0.113.5',
-      duration: '24h',
+      reason: 'crowdsecurity/ssh-bf',
+      ts: { sec: Math.floor(Date.now() / 1000), unix: Math.floor(Date.now() / 1000) },
+      payloads: {},
       scenario: 'crowdsecurity/ssh-bf',
-      simulated: false,
+      scope: 'Ip',
     },
   ],
-  source: { ip: '203.0.113.5', scope: 'Ip', value: '203.0.113.5' },
-  start_at: new Date().toISOString(),
-  stop_at: new Date().toISOString(),
-  scenario: 'crowdsecurity/ssh-bf',
-  scenario_hash: 'abc123',
-  scenario_version: '0.0.1',
-  capacity: -1,
-  leakspeed: '0',
-  simulated: false,
-  events_count: 1,
-  events: [],
-  labels: null,
-  machine_id: 'test-machine',
-  uuid: `dedup-${Date.now()}`,
 }
 
 function buildReq(opts: {
@@ -97,6 +93,7 @@ beforeEach(() => {
 
   environment_findUnique.mockReset().mockResolvedValue({ id: 'env-1' })
   securityEvent_create.mockReset().mockResolvedValue({})
+  securityEvent_count.mockReset().mockResolvedValue(0)
   sourceHealth_upsert.mockReset().mockResolvedValue({})
   securityEvent_findFirst.mockReset().mockResolvedValue(null)
 })

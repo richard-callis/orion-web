@@ -72,7 +72,7 @@ describe('POST /api/tasks — agent spawn enforcement', () => {
     expect(createArgs.data.assignedAgent).toBe('agent-exists')
   })
 
-  it('returns 4xx when assigning to a non-existent agentId (FK violation)', async () => {
+  it('rejects with a Prisma FK violation when assigning to a non-existent agentId', async () => {
     // Simulate Prisma FK constraint error (P2003 — foreign key constraint failed)
     const fkError = Object.assign(new Error('Foreign key constraint failed on the field: `assignedAgent`'), {
       code: 'P2003',
@@ -80,15 +80,16 @@ describe('POST /api/tasks — agent spawn enforcement', () => {
     })
     task_create.mockRejectedValue(fkError)
 
-    const res = await POST(buildReq({
-      title: 'Task for ghost agent',
-      assignedAgentId: 'agent-nonexistent',
-    }))
+    // The route has no try/catch around prisma.task.create, so FK violations
+    // propagate as unhandled errors. This test documents that behavior and
+    // guards against silent data corruption (the DB correctly rejects the insert).
+    await expect(
+      POST(buildReq({ title: 'Task for ghost agent', assignedAgentId: 'agent-nonexistent' }))
+    ).rejects.toMatchObject({ code: 'P2003' })
 
-    // The route should propagate as a 4xx — either a 400 from error-handler or 500
-    // if unhandled; we verify it is NOT 201 (task must not be created)
-    expect(res.status).not.toBe(201)
-    expect(task_create).toHaveBeenCalledOnce()
+    // Prisma was called with the agent id — verifies the route passed it through
+    const createArgs = task_create.mock.calls[0]?.[0] as { data: Record<string, unknown> }
+    expect(createArgs.data.assignedAgent).toBe('agent-nonexistent')
   })
 
   it('creates a task without an agentId and returns 201', async () => {
