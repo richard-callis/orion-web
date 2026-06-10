@@ -360,9 +360,20 @@ export async function execute(
       ? 'attempting'
       : 'pending'
 
+  // Resolve environmentId from the linked incident when available.
+  let resolvedEnvironmentId: string | null = null
+  const incidentId = parsedDecision.incidentId ?? parsed.incidentId ?? null
+  if (incidentId) {
+    const incident = await prisma.incident.findUnique({
+      where: { id: incidentId },
+      select: { environmentId: true },
+    })
+    resolvedEnvironmentId = incident?.environmentId ?? null
+  }
+
   const audit = await prisma.actionAudit.create({
     data: {
-      environmentId: null, // TODO: resolve from context
+      environmentId: resolvedEnvironmentId,
       incidentId: parsedDecision.incidentId ?? null,
       actionType: parsed.actionType,
       target: parsed.target,

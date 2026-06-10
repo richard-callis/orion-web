@@ -736,7 +736,6 @@ export async function triggerRoomAgentReplies(
   // delegate to specialists or answer directly.
   const roomMeta = (room?.metadata ?? {}) as Record<string, unknown>
   const ringLeaderId = roomMeta?.ringLeaderAgentId as string | undefined
-  // TODO: remove metadata.activeGoal fallback — deprecated in favour of RoomGoal table
   const activeGoalRecord = await prisma.roomGoal.findFirst({
     where: { roomId, status: 'active' },
     orderBy: { createdAt: 'desc' },
