@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { X, Plus, Trash2, Bot, User, Cpu, MessageSquarePlus, MessageSquare, Rocket, Loader2, Check, Send, Square, Archive } from 'lucide-react'
+import { X, Plus, Trash2, Bot, User, Cpu, MessageSquarePlus, MessageSquare, Rocket, Loader2, Check, Send, Square, Archive, Coins } from 'lucide-react'
 import type { Agent } from '@/types/tasks'
 import { NovaBrowser } from '@/components/nova/NovaBrowser'
 
@@ -56,6 +56,92 @@ function modelDisplayLabel(llm: unknown, models: Array<{id: string; name: string
   if (llm.startsWith('ollama:')) return `Ollama · ${llm.slice('ollama:'.length)}`
   if (llm.startsWith('gemini:')) return `Gemini · ${llm.slice('gemini:'.length)}`
   return llm
+}
+
+interface TokenUsageData {
+  today: { inputTokens: number; outputTokens: number; total: number; budget: number | null; pct: number | null }
+  month: { inputTokens: number; outputTokens: number; total: number; budget: number | null; pct: number | null }
+  sparkline: Array<{ date: string; tokens: number }>
+}
+
+function TokenUsageSection({ agentId }: { agentId: string }) {
+  const [data, setData] = useState<TokenUsageData | null>(null)
+  useEffect(() => {
+    fetch(`/api/agents/${agentId}/token-usage`)
+      .then(r => r.json())
+      .then(setData)
+      .catch(() => { /* ignore */ })
+  }, [agentId])
+
+  if (!data) return null
+
+  const sparkMax = Math.max(...data.sparkline.map(s => s.tokens), 1)
+
+  return (
+    <div className="rounded-lg border border-border-subtle p-3 space-y-2">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-text-primary mb-1">
+        <Coins size={12} className="text-accent" />
+        Token Usage
+      </div>
+      <div>
+        <div className="flex justify-between text-[10px] text-text-muted mb-1">
+          <span>Today</span>
+          <span>
+            {data.today.total.toLocaleString()}
+            {data.today.budget != null && ` / ${data.today.budget.toLocaleString()}`}
+            {data.today.pct != null && ` (${data.today.pct}%)`}
+          </span>
+        </div>
+        {data.today.budget != null && (
+          <div className="w-full bg-bg-raised rounded-full h-1.5">
+            <div
+              className={`h-1.5 rounded-full transition-all ${
+                (data.today.pct ?? 0) >= 90 ? 'bg-red-500' :
+                (data.today.pct ?? 0) >= 70 ? 'bg-yellow-500' : 'bg-accent'
+              }`}
+              style={{ width: `${data.today.pct ?? 0}%` }}
+            />
+          </div>
+        )}
+      </div>
+      <div>
+        <div className="flex justify-between text-[10px] text-text-muted mb-1">
+          <span>This month</span>
+          <span>
+            {data.month.total.toLocaleString()}
+            {data.month.budget != null && ` / ${data.month.budget.toLocaleString()}`}
+            {data.month.pct != null && ` (${data.month.pct}%)`}
+          </span>
+        </div>
+        {data.month.budget != null && (
+          <div className="w-full bg-bg-raised rounded-full h-1.5">
+            <div
+              className={`h-1.5 rounded-full transition-all ${
+                (data.month.pct ?? 0) >= 90 ? 'bg-red-500' :
+                (data.month.pct ?? 0) >= 70 ? 'bg-yellow-500' : 'bg-accent'
+              }`}
+              style={{ width: `${data.month.pct ?? 0}%` }}
+            />
+          </div>
+        )}
+      </div>
+      {data.sparkline.length > 0 && (
+        <div>
+          <div className="text-[10px] text-text-muted mb-1">Last 7 days</div>
+          <div className="flex items-end gap-px h-6">
+            {data.sparkline.map((s, i) => (
+              <div
+                key={i}
+                className="flex-1 bg-accent/50 rounded-sm"
+                style={{ height: `${Math.max(s.tokens > 0 ? 15 : 0, (s.tokens / sparkMax) * 100)}%` }}
+                title={`${s.date}: ${s.tokens.toLocaleString()}`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 interface Props {
@@ -694,6 +780,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
                   </div>
                 </>
               )}
+              <TokenUsageSection agentId={modalAgent.id} />
             </div>
 
             {/* Footer */}
