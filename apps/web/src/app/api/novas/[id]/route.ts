@@ -38,7 +38,9 @@ export async function PUT(
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-  const body = await req.json()
+  let bodyRaw: Record<string, unknown>
+  try { bodyRaw = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
+  const body = bodyRaw as { name?: string; displayName?: string; description?: string | null; category?: string; version?: string; config?: unknown; tags?: unknown; reasoning?: string }
   const nova = await prisma.nova.findUnique({
     where: { id: params.id },
   })

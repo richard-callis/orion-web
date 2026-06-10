@@ -32,8 +32,9 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await req.json()
-  const parsed = bodySchema.safeParse(body)
+  let rawBody: unknown
+  try { rawBody = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
+  const parsed = bodySchema.safeParse(rawBody)
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid body: action must be "approve" or "deny"' }, { status: 400 })
   }

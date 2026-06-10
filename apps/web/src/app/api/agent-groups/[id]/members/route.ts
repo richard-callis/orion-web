@@ -4,7 +4,9 @@ import { requireAdmin } from '@/lib/auth'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   await requireAdmin()
-  const { agentId } = await req.json()
+  let parsed: unknown
+  try { parsed = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
+  const { agentId } = parsed as { agentId?: string }
   if (!agentId || typeof agentId !== 'string' || !agentId.trim()) {
     return NextResponse.json({ error: 'agentId is required' }, { status: 400 })
   }
