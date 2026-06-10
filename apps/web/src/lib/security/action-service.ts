@@ -41,12 +41,23 @@ function isErrorResult(result: string): boolean {
  * type, and target — the gateway write tools refuse calls without one.
  * The auditId is threaded through via payload.__auditId (set by execute()).
  */
+/**
+ * Structured error type for gateway executor results.
+ * Callers (e.g. the correlator) can inspect `errorType` to route failures:
+ *   'network'        — transient, safe to retry
+ *   'infrastructure' — upstream 5xx, may be worth retrying after backoff
+ *   'auth'           — 401/403, escalate rather than retry (bad token/config)
+ *   'validation'     — 400/422, fix the call arguments rather than retrying
+ *   'unknown'        — unexpected status or format
+ */
+export type GatewayErrorType = 'network' | 'auth' | 'validation' | 'infrastructure' | 'unknown'
+
 export async function gatewayExecutor(
   action: ActionRequest,
   target: string,
   payload?: Record<string, unknown>,
   environmentId?: string | null,
-): Promise<{ success: boolean; result: string }> {
+): Promise<{ success: boolean; result: string; errorType?: GatewayErrorType }> {
   const where = {
     status: 'connected',
     gatewayUrl: { not: null },
@@ -107,17 +118,41 @@ export async function gatewayExecutor(
     }
   }
 
-  const res = await fetch(`${env.gatewayUrl}/tools/execute`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${env.gatewayToken ?? ''}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ name: toolName, arguments: toolArgs }),
-  })
+  let res: Response
+  try {
+    res = await fetch(`${env.gatewayUrl}/tools/execute`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.gatewayToken ?? ''}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name: toolName, arguments: toolArgs }),
+    })
+  } catch (err) {
+    // Network-level failure (DNS, connection refused, timeout, etc.)
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(`[gateway-executor] network error calling ${env.gatewayUrl}/tools/execute: ${msg}`)
+    return { success: false, result: `Gateway network error: ${msg}`, errorType: 'network' }
+  }
+
+  if (!res.ok) {
+    const rawBody = await res.text().catch(() => '')
+    const truncated = rawBody.slice(0, 500)
+    console.error(`[gateway-executor] HTTP ${res.status} from gateway — body: ${truncated}`)
+    let errorType: GatewayErrorType
+    if (res.status === 401 || res.status === 403) {
+      errorType = 'auth'
+    } else if (res.status === 400 || res.status === 422) {
+      errorType = 'validation'
+    } else if (res.status >= 500 && res.status < 600) {
+      errorType = 'infrastructure'
+    } else {
+      errorType = 'unknown'
+    }
+    return { success: false, result: rawBody || `HTTP ${res.status}`, errorType }
+  }
 
   const data = await res.json() as { result?: unknown }
-  if (!res.ok) return { success: false, result: JSON.stringify(data) }
 
   const resultStr = typeof data.result === 'string' ? data.result : JSON.stringify(data.result)
 
@@ -348,7 +383,12 @@ export function extractPrefixLength(s: string): number | null {
 export async function execute(
   request: ActionRequest,
   decision: ActionDecision,
-  executor: (action: ActionRequest, target: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; result: string }>
+  // NOTE: `errorType` on the executor result is available for routing decisions.
+  // Callers can inspect it to distinguish retryable failures (network/infrastructure)
+  // from configuration errors (auth) and bad inputs (validation). The execute()
+  // function surfaces it via the returned `result` string; extend the return type
+  // if callers need programmatic access to errorType in the future.
+  executor: (action: ActionRequest, target: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; result: string; errorType?: GatewayErrorType }>
 ): Promise<{ auditId: string; status: string; result?: string }> {
   const parsed = actionRequestSchema.parse(request)
   const parsedDecision = actionDecisionSchema.parse(decision)
