@@ -14,6 +14,19 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   const admin = await requireAdmin()
   const body = await req.json()
 
+  // Validate numeric and URL fields
+  if (body.timeoutSecs !== undefined && (typeof body.timeoutSecs !== 'number' || body.timeoutSecs < 1 || body.timeoutSecs > 600)) {
+    return NextResponse.json({ error: 'timeoutSecs must be a number between 1 and 600' }, { status: 400 })
+  }
+  if (body.maxTokens !== undefined && body.maxTokens !== null && (typeof body.maxTokens !== 'number' || body.maxTokens < 1)) {
+    return NextResponse.json({ error: 'maxTokens must be a positive number' }, { status: 400 })
+  }
+  if (body.baseUrl !== undefined && body.baseUrl !== null) {
+    try { new URL(body.baseUrl) } catch {
+      return NextResponse.json({ error: 'baseUrl must be a valid URL' }, { status: 400 })
+    }
+  }
+
   // Only update apiKey if a new one was provided
   const updateData: Record<string, unknown> = {}
   if (body.name        !== undefined) updateData.name        = body.name

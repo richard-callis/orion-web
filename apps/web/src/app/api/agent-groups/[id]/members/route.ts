@@ -5,7 +5,11 @@ import { requireAdmin } from '@/lib/auth'
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   await requireAdmin()
   const { agentId } = await req.json()
-  if (!agentId) return NextResponse.json({ error: 'agentId required' }, { status: 400 })
+  if (!agentId || typeof agentId !== 'string' || !agentId.trim()) {
+    return NextResponse.json({ error: 'agentId is required' }, { status: 400 })
+  }
+  const agentExists = await prisma.agent.findUnique({ where: { id: agentId }, select: { id: true } })
+  if (!agentExists) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
   await prisma.agentGroupMember.create({ data: { agentGroupId: params.id, agentId } })
   return NextResponse.json({ ok: true })
 }

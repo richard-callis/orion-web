@@ -5,6 +5,9 @@ import { requireAdmin } from '@/lib/auth'
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   await requireAdmin()
   const body = await req.json()
+  if (body.name !== undefined && (!body.name || typeof body.name !== 'string' || !body.name.trim())) {
+    return NextResponse.json({ error: 'name must be a non-empty string' }, { status: 400 })
+  }
   const g = await prisma.agentGroup.update({
     where: { id: params.id },
     data: {
