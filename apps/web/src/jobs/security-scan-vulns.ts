@@ -60,12 +60,14 @@ export async function runDailyScan(): Promise<ScanResult[]> {
   // 2. Per-env scans.
   const envs = await prisma.environment.findMany({
     where: { status: 'connected' },
-    select: { id: true, type: true, gatewayUrl: true, gatewayToken: true },
+    select: { id: true, type: true, gatewayUrl: true, gatewayToken: true, monitoringConfig: true },
   })
 
   for (const env of envs) {
     if (!env.gatewayUrl) continue
     const client = new GatewayClient(env.gatewayUrl, env.gatewayToken ?? '')
+    const monCfg = (env.monitoringConfig ?? {}) as { isInternetFacing?: boolean }
+    const isInternetFacing = monCfg.isInternetFacing ?? false
 
     // List running images via the existing kubectl/docker tools.
     let images: string[] = []
@@ -84,7 +86,7 @@ export async function runDailyScan(): Promise<ScanResult[]> {
     }
 
     for (const image of images) {
-      results.push(await scanImage(client, env.id, image, kev))
+      results.push(await scanImage(client, env.id, image, kev, isInternetFacing))
     }
 
     if (env.type === 'cluster') {
@@ -95,11 +97,12 @@ export async function runDailyScan(): Promise<ScanResult[]> {
   // 3. Host scan — runs via the localhost gateway.
   const localhost = await prisma.environment.findFirst({
     where: { name: 'localhost' },
-    select: { id: true, gatewayUrl: true, gatewayToken: true },
+    select: { id: true, gatewayUrl: true, gatewayToken: true, monitoringConfig: true },
   })
   if (localhost?.gatewayUrl) {
     const client = new GatewayClient(localhost.gatewayUrl, localhost.gatewayToken ?? '')
-    results.push(await scanHost(client, localhost.id, kev))
+    const localhostMonCfg = (localhost.monitoringConfig ?? {}) as { isInternetFacing?: boolean }
+    results.push(await scanHost(client, localhost.id, kev, localhostMonCfg.isInternetFacing ?? false))
   }
 
   return results
@@ -149,12 +152,13 @@ export async function runEventTriggeredScan(): Promise<ScanResult[]> {
 
     const env = await prisma.environment.findUnique({
       where: { id: event.environmentId },
-      select: { id: true, gatewayUrl: true, gatewayToken: true },
+      select: { id: true, gatewayUrl: true, gatewayToken: true, monitoringConfig: true },
     })
     if (!env?.gatewayUrl) continue
 
     const client = new GatewayClient(env.gatewayUrl, env.gatewayToken ?? '')
-    const result = await scanImage(client, env.id, image, kev)
+    const evtMonCfg = (env.monitoringConfig ?? {}) as { isInternetFacing?: boolean }
+    const result = await scanImage(client, env.id, image, kev, evtMonCfg.isInternetFacing ?? false)
     results.push(result)
 
     // Mark scanned regardless of scan outcome — a failed scan is "we tried,
@@ -175,7 +179,8 @@ async function scanImage(
   client: GatewayClient,
   environmentId: string,
   image: string,
-  kev: { cves: Set<string>; dueDates: Map<string, string> }
+  kev: { cves: Set<string>; dueDates: Map<string, string> },
+  isInternetFacing = false
 ): Promise<ScanResult> {
   const target = `image:${image}`
   const result: ScanResult = {
@@ -195,14 +200,15 @@ async function scanImage(
   }
 
   const candidates = parseTrivyImageOutput(trivyOutput, environmentId, target)
-  await persistFindings(candidates, kev, result)
+  await persistFindings(candidates, kev, result, isInternetFacing)
   return result
 }
 
 async function scanHost(
   client: GatewayClient,
   environmentId: string,
-  kev: { cves: Set<string>; dueDates: Map<string, string> }
+  kev: { cves: Set<string>; dueDates: Map<string, string> },
+  isInternetFacing = false
 ): Promise<ScanResult> {
   const target = 'host'
   const result: ScanResult = {
@@ -221,7 +227,7 @@ async function scanHost(
     return result
   }
   const candidates = parseTrivyImageOutput(out, environmentId, target)
-  await persistFindings(candidates, kev, result)
+  await persistFindings(candidates, kev, result, isInternetFacing)
   return result
 }
 
@@ -278,7 +284,8 @@ async function scanK8sMisconfigs(
 async function persistFindings(
   candidates: VulnerabilityFindingCandidate[],
   kev: { cves: Set<string>; dueDates: Map<string, string> },
-  result: ScanResult
+  result: ScanResult,
+  isInternetFacing = false
 ) {
   if (candidates.length === 0) return
 
@@ -310,7 +317,7 @@ async function persistFindings(
         isKev,
         epssScore: epss?.score ?? null,
         attackVector,
-        isInternetFacing: false, // TODO: derive from Environment.monitoringConfig in a follow-up
+        isInternetFacing,
       })
 
       const existing = await prisma.vulnerabilityFinding.findUnique({
