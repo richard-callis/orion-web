@@ -97,6 +97,11 @@ export const CreateEnvironmentSchema = z.object({
   policyConfig: z.record(z.unknown()).optional(),
   kubeconfig: z.string().max(50000).optional(),
   metadata: z.record(z.unknown()).optional(),
+  // Federation fields
+  federationRole:  z.enum(['hub', 'spoke', 'standalone']).nullable().optional(),
+  federationToken: z.string().max(500).nullable().optional(),
+  spokeUrl:        z.string().url().nullable().optional(),
+  hubUrl:          z.string().url().nullable().optional(),
 })
 
 // ── Note Schemas ──────────────────────────────────────────────────────────────
