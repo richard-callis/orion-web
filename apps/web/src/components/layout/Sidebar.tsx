@@ -5,7 +5,7 @@ import { useState } from 'react'
 import {
   Server, MessageSquare, Bot,
   Bell, ClipboardList,
-  ChevronLeft, ChevronRight, BookOpen, Settings2, Sparkles, Shield, FlaskConical, Coins,
+  ChevronLeft, ChevronRight, BookOpen, Settings2, Sparkles, Shield, FlaskConical, Coins, Webhook, BellRing,
 } from 'lucide-react'
 import { usePendingTools } from '@/hooks/usePendingTools'
 import { useUnackAlertCount } from '@/hooks/useSecurityAlerts'
@@ -20,7 +20,9 @@ const nav = [
   { href: '/notes',          icon: BookOpen, label: 'Wiki' },
   { href: '/nova',           icon: Sparkles, label: 'Nova' },
   { href: '/evals',          icon: FlaskConical, label: 'Evals' },
-  { href: '/cost',           icon: Coins,        label: 'Usage' },
+  { href: '/cost',                  icon: Coins,    label: 'Usage' },
+  { href: '/webhook-triggers',      icon: Webhook,  label: 'Webhooks' },
+  { href: '/notification-channels', icon: BellRing, label: 'Notifications' },
 ]
 
 export function Sidebar() {

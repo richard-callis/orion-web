@@ -88,6 +88,8 @@ model Agent {
   evalSuites       EvalSuite[]            @relation("EvalSuiteAgent")
   evalRuns         EvalRun[]              @relation("EvalRunAgent")
   tokenUsage       AgentTokenUsage[]
+  webhookTriggers  WebhookTrigger[]           @relation("WebhookTriggerAgent")
+  scheduledTasks   ScheduledTask[]            @relation("ScheduledTaskAgent")
 }
 
 model AgentTokenUsage {
@@ -1681,7 +1683,6 @@ model ToolExecution {
   @@index([expiresAt])              // for expiry sweep job
 }
 
-<<<<<<< HEAD
 // ── Agent Benchmark Harness ────────────────────────────────────────────────────
 // Define test suites with golden prompts and assertions, run an agent against
 // them, score results with LLM-as-judge, and track performance over time.
@@ -1765,4 +1766,41 @@ model DriftReport {
   scannedAt     DateTime    @default(now())
 
   @@index([environmentId, scannedAt])
+}
+
+// ── Webhook Triggers ───────────────────────────────────────────────────────────
+// Inbound webhook endpoints that create tasks when called by external systems
+// (GitHub, Prometheus, PagerDuty, custom sources). Each trigger has a shared
+// secret for HMAC verification and maps to a single agent.
+
+model WebhookTrigger {
+  id          String    @id @default(cuid())
+  name        String
+  agentId     String
+  agent       Agent     @relation("WebhookTriggerAgent", fields: [agentId], references: [id], onDelete: Cascade)
+  secret      String
+  source      String    @default("custom") // github | prometheus | custom
+  taskTitle   String
+  taskDesc    String?
+  enabled     Boolean   @default(true)
+  lastFiredAt DateTime?
+  fireCount   Int       @default(0)
+  createdAt   DateTime  @default(now())
+
+  @@index([agentId])
+}
+
+// ── Notification Channels ──────────────────────────────────────────────────────
+// Slack / Discord / generic webhook endpoints that receive notifications for
+// task lifecycle events (completed, failed, plan approval needed).
+
+model NotificationChannel {
+  id          String   @id @default(cuid())
+  name        String
+  type        String   // slack | discord | webhook
+  webhookUrl  String
+  events      String   @default("[\"task_completed\",\"task_failed\"]") // JSON array
+  agentFilter String?  // JSON array of agent IDs to filter on, null = all agents
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
 }
