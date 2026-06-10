@@ -31,6 +31,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (validatedData.name        !== undefined) data.name        = validatedData.name
   if (validatedData.type        !== undefined) data.type        = validatedData.type
   if (validatedData.role        !== undefined) data.role        = validatedData.role
+  if (validatedData.tokenBudgetDay   !== undefined) data.tokenBudgetDay   = validatedData.tokenBudgetDay
+  if (validatedData.tokenBudgetMonth !== undefined) data.tokenBudgetMonth = validatedData.tokenBudgetMonth
   if (validatedData.metadata !== undefined) {
     // Deep merge metadata so callers can update contextConfig without wiping systemPrompt
     const existing = await prisma.agent.findUnique({ where: { id: params.id }, select: { metadata: true } })

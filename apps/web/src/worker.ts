@@ -20,6 +20,7 @@ import { resolveAgentGateway } from './lib/agent-gateway'
 import { getAgentsMd } from './lib/agents-md'
 import { startDream } from './lib/dream'
 import { createTrace } from './lib/langfuse'
+import { checkAgentBudget, recordTokenUsage } from './lib/token-budget'
 import { runCorrelator } from './workers/security-correlator'
 import { runK8sPollerAll } from './jobs/security-poll-k8s'
 import { runElkPollerAll } from './jobs/security-poll-elk'
@@ -442,6 +443,27 @@ async function runTask(taskId: string): Promise<void> {
 
     log(`Starting task "${task.title}" (${taskId}) → agent "${agent.name}" [${modelId}]`)
 
+    // ── Budget gate ────────────────────────────────────────────────────────────
+    // Check whether this agent has exceeded its daily or monthly token budget
+    // before starting the task. If over budget, pause the task immediately.
+    const budgetCheck = await checkAgentBudget(agent.id)
+    if (!budgetCheck.allowed) {
+      const budgetMsg = `Budget gate: ${budgetCheck.reason} — task paused until budget resets or limit is increased.`
+      await Promise.all([
+        prisma.task.update({
+          where: { id: taskId },
+          data: {
+            status: 'pending_validation',
+            metadata: { ...taskMeta, budgetExceeded: true, budgetReason: budgetCheck.reason } as object,
+          },
+        }),
+        logTaskEvent(taskId, 'budget_gate', budgetMsg, agent.id),
+        postToFeed(agent.id, `⛔ ${budgetMsg}`, taskId),
+      ])
+      log(`Task "${task.title}" (${taskId}) paused — ${budgetCheck.reason}`)
+      return
+    }
+
     // Mark task as in progress
     await prisma.task.update({ where: { id: taskId }, data: { status: 'in_progress' } })
 
@@ -693,6 +715,8 @@ async function runTask(taskId: string): Promise<void> {
         `Tokens: ${totalInputTokens} in / ${totalOutputTokens} out (total: ${totalInputTokens + totalOutputTokens})`,
         agent.id,
       ).catch(() => {})
+      // Record token spend for budget tracking
+      await recordTokenUsage(agent.id, taskId, totalInputTokens, totalOutputTokens).catch(() => {})
     }
 
     // Auto-write the task outcome to the knowledge base so future agents learn
