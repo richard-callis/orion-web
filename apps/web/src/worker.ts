@@ -529,7 +529,7 @@ async function runTask(taskId: string): Promise<void> {
           // Store message in conversation
           await prisma.message.create({
             data: { conversationId: conversation.id, role: 'assistant', content: event.content },
-          }).catch(() => {})
+          }).catch(e => err(`[worker] conversation message write failed: ${e instanceof Error ? e.message : e}`))
           break
 
         case 'tool_call':
@@ -557,7 +557,7 @@ async function runTask(taskId: string): Promise<void> {
               content: `[tool_call] ${event.tool}`,
               metadata: { toolCall: { name: event.tool, args: event.args } } as any,
             },
-          }).catch(() => {})
+          }).catch(e => err(`[worker] tool_call message write failed: ${e instanceof Error ? e.message : e}`))
           if (featureRoomId) {
             const argsSummary = String(event.args ?? '').slice(0, 200)
             await postToRoom(featureRoomId, agent.id, `🔧 \`${event.tool}\`(${argsSummary})`, taskId)
@@ -584,14 +584,14 @@ async function runTask(taskId: string): Promise<void> {
             where: { taskId_stepIndex: { taskId, stepIndex } },
             update: { result: redactedResult },
             create: { taskId, stepIndex, toolName: event.tool, argsHash: idemKeyForCheckpoint, result: redactedResult },
-          }).catch(() => {})
+          }).catch(e => err(`[worker] checkpoint upsert failed for task ${taskId} step ${stepIndex}: ${e instanceof Error ? e.message : e}`))
           checkpoints.set(stepIndex, redactedResult)
           await prisma.message.create({
             data: {
               conversationId: conversation.id, role: 'user',
               content: `[tool_result] ${event.tool}: ${redactedResult}`,
             },
-          }).catch(() => {})
+          }).catch(e => err(`[worker] tool_result message write failed: ${e instanceof Error ? e.message : e}`))
           if (featureRoomId) {
             const safeResult = redactedResult.slice(0, 300)
             await postToRoom(featureRoomId, agent.id, `↩ \`${event.tool}\`: ${safeResult}`, taskId)
@@ -682,7 +682,7 @@ async function runTask(taskId: string): Promise<void> {
           durationMs: Date.now() - startedAt,
           success:    true,
         },
-      }).catch(() => {}),
+      }).catch(e => err(`[worker] claudeInvocation write failed for task ${taskId}: ${e instanceof Error ? e.message : e}`)),
     ])
 
     // Log token usage to the task timeline when available.
@@ -755,7 +755,7 @@ async function runTask(taskId: string): Promise<void> {
           status: 'failed',
           metadata: { ...failMeta, remediation_attempts: remediationAttempts } as any,
         },
-      }).catch(() => {})
+      }).catch(e => err(`[worker] task status update failed for ${taskId}: ${e instanceof Error ? e.message : e}`))
       const escalationMsg =
         `Task '${failedTask?.title ?? taskId}' has failed ${remediationAttempts} times with the same approach. Escalating — human review required. Last error: ${errMsg.slice(0, 300)}`
       await logTaskEvent(taskId, 'escalated', escalationMsg, failedTask?.assignedAgent ?? undefined)
@@ -786,7 +786,7 @@ async function runTask(taskId: string): Promise<void> {
       await prisma.task.update({
         where: { id: taskId },
         data: { status: 'pending', retryCount: newRetryCount, nextRetryAt },
-      }).catch(() => {})
+      }).catch(e => err(`[worker] task retry status update failed for ${taskId}: ${e instanceof Error ? e.message : e}`))
       await logTaskEvent(taskId, 'system',
         `Transient failure (${errMsg.slice(0, 100)}) — retry ${newRetryCount}/${failedTask!.maxRetries ?? 3} scheduled in ${delayMs / 1000}s`,
         failedTask?.assignedAgent ?? undefined,
@@ -881,7 +881,7 @@ export function planRequiresApproval(plan: ParsedPlan | null): boolean {
 // ── DB helpers ─────────────────────────────────────────────────────────────────
 
 async function logTaskEvent(taskId: string, eventType: string, content: string, agentId?: string) {
-  await prisma.taskEvent.create({ data: { taskId, eventType, content, agentId: agentId ?? null } }).catch(() => {})
+  await prisma.taskEvent.create({ data: { taskId, eventType, content, agentId: agentId ?? null } }).catch(e => err(`[worker] logTaskEvent failed for task ${taskId}: ${e instanceof Error ? e.message : e}`))
 }
 
 async function postToFeed(agentId: string, content: string, taskId?: string) {

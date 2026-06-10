@@ -81,7 +81,10 @@ async function fetchSnapshot(): Promise<string> {
  */
 export async function buildAgentContext(query: string): Promise<string> {
   const [snapshot, knowledge] = await Promise.all([
-    getOrFetch('snapshot', 'cache.snapshot.ttl', fetchSnapshot).catch(() => ''),
+    getOrFetch('snapshot', 'cache.snapshot.ttl', fetchSnapshot).catch(e => {
+      console.error('[agent-context] Failed to build context:', e instanceof Error ? e.message : e)
+      return '' // still return empty string as fallback — don't crash the agent
+    }),
     retrieveKnowledgeContext(query, 3, 0.4),
   ])
 
