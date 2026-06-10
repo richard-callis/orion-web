@@ -66,12 +66,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const approvedBy = caller?.id ?? 'gateway'
+  const approvedAt = new Date()
   const waveMap = computeWaves(feature.tasks)
+
+  const planSnippet = (feature.plan ?? '').slice(0, 2000)
+  const auditContent = `Plan approved by ${approvedBy} at ${approvedAt.toISOString()}\n\n${planSnippet}`
 
   await prisma.$transaction([
     prisma.feature.update({
       where: { id: feature.id },
-      data: { planApprovedAt: new Date(), planApprovedBy: approvedBy },
+      data: { planApprovedAt: approvedAt, planApprovedBy: approvedBy },
     }),
     ...feature.tasks.map(t =>
       prisma.task.update({
@@ -79,6 +83,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         data: { wave: waveMap.get(t.id) ?? 0 },
       })
     ),
+    prisma.taskEvent.createMany({
+      data: feature.tasks.map(t => ({
+        taskId: t.id,
+        eventType: 'plan_approved',
+        content: auditContent,
+        agentId: null,
+      })),
+    }),
   ])
 
   const waveCount = new Set(waveMap.values()).size

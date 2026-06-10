@@ -8,6 +8,7 @@
  * Started by entrypoint.sh as: node worker.js &
  */
 
+import { createHash } from 'crypto'
 import { prisma } from './lib/db'
 import { createRunner } from './lib/agent-runner'
 import type { TaskRunContext } from './lib/agent-runner'
@@ -18,6 +19,7 @@ import { getPrompt } from './lib/system-prompts'
 import { resolveAgentGateway } from './lib/agent-gateway'
 import { getAgentsMd } from './lib/agents-md'
 import { startDream } from './lib/dream'
+import { createTrace } from './lib/langfuse'
 import { runCorrelator } from './workers/security-correlator'
 import { runK8sPollerAll } from './jobs/security-poll-k8s'
 import { runElkPollerAll } from './jobs/security-poll-elk'
@@ -266,6 +268,76 @@ async function resolveModelId(llm: unknown): Promise<string> {
   return llm
 }
 
+// ── Reviewer agent ────────────────────────────────────────────────────────────
+
+/**
+ * Optionally spawns a lightweight reviewer agent after a task completes to
+ * validate output quality. If the reviewer rejects the output, the task is
+ * reopened to `pending` so it gets retried.
+ *
+ * Reviewer failures are non-fatal — any error is logged and ignored so the
+ * task outcome is never affected.
+ */
+async function runReviewerCheck(
+  taskId: string,
+  taskTitle: string,
+  output: string,
+  agentId: string,
+  modelId: string,
+): Promise<void> {
+  if (output.trim().length === 0) return
+
+  try {
+    await logTaskEvent(taskId, 'reviewer_start', 'Reviewer agent checking output quality', agentId)
+
+    const reviewerSystemPrompt =
+      'You are a quality reviewer for AI agent task outputs. Your ONLY job is to check if the task output is complete and sensible. Reply with exactly one of:\n' +
+      '- APPROVED: <one-line reason>\n' +
+      '- REJECTED: <one-line reason explaining what is missing or wrong>\n' +
+      'Do not add any other text.'
+
+    const ctx: TaskRunContext = {
+      taskId,
+      taskTitle,
+      taskDescription: `Task: ${taskTitle}\n\nOutput to review:\n${output.slice(0, 3000)}`,
+      taskPlan:        null,
+      agentId,
+      agentName:       'reviewer',
+      systemPrompt:    reviewerSystemPrompt,
+      modelId,
+      gateway:         null,
+    }
+
+    const runner = createRunner(modelId)
+    let reviewText = ''
+
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Reviewer timed out after 60s')), 60_000)
+    )
+
+    const runReview = async () => {
+      for await (const event of runner.run(ctx)) {
+        if (event.type === 'text') reviewText += event.content
+        if (event.type === 'error') throw new Error(event.error)
+      }
+    }
+
+    await Promise.race([runReview(), timeout])
+
+    const verdict = reviewText.trim()
+    if (verdict.startsWith('REJECTED:')) {
+      const reason = verdict.slice('REJECTED:'.length).trim()
+      await logTaskEvent(taskId, 'reviewer_rejected', reason, agentId)
+      await prisma.task.update({ where: { id: taskId }, data: { status: 'pending' } })
+    } else {
+      const reason = verdict.startsWith('APPROVED:') ? verdict.slice('APPROVED:'.length).trim() : verdict
+      await logTaskEvent(taskId, 'reviewer_approved', reason || 'Output approved', agentId)
+    }
+  } catch (e) {
+    err(`runReviewerCheck for task ${taskId} failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
 // ── Core task runner ───────────────────────────────────────────────────────────
 
 async function runTask(taskId: string): Promise<void> {
@@ -410,15 +482,30 @@ async function runTask(taskId: string): Promise<void> {
     const runner = createRunner(modelId)
     let outputText = ''
     let toolsUsed: string[] = []
-    let pausedForApproval = false
     let totalInputTokens = 0
     let totalOutputTokens = 0
+
+    // Langfuse: create a trace for this task run (no-op when keys are not set)
+    const trace = createTrace({ taskId, taskTitle: task.title, agentId: agent.id, modelId })
+    const mainSpan = trace.startSpan('task-execution', { title: task.title, description: task.description })
+    // FIFO queue of open tool span IDs — tool_call pushes, tool_result shifts
+    const toolSpanQueue: string[] = []
 
     // Plan-before-execute gating: when enabled, the agent emits a <plan> block
     // up front. If the plan is high/critical risk, we pause the task for human
     // or supervisor approval before allowing ANY tool to run.
     const planBeforeExecute = contextConfig.planBeforeExecute === true
     let pausedForApproval = false
+
+    // Step-level checkpointing: load any existing checkpoints so we can record
+    // each completed tool_result step and detect retries.
+    const checkpoints = new Map<number, string>() // stepIndex → result
+    const existingCheckpoints = await prisma.taskCheckpoint.findMany({
+      where: { taskId },
+      select: { stepIndex: true, result: true },
+    }).catch(() => [])
+    for (const c of existingCheckpoints) checkpoints.set(c.stepIndex, c.result)
+    let stepIndex = 0
 
     for await (const event of runner.run(ctx)) {
       // Check for task-level abort (60-minute timeout)
@@ -445,7 +532,15 @@ async function runTask(taskId: string): Promise<void> {
             }
           }
           toolsUsed.push(event.tool)
-          await logTaskEvent(taskId, 'tool_call', `🔧 ${event.tool}(${event.args})`, agent.id)
+          // Compute deterministic idempotency key for this tool call to prevent
+          // duplicate side effects on retry.
+          const idemKey = createHash('sha256')
+            .update(`${taskId}:${stepIndex}:${event.tool}:${event.args ?? ''}`)
+            .digest('hex')
+            .slice(0, 16)
+          // Langfuse: start a span for this tool call
+          toolSpanQueue.push(trace.startSpan(`tool:${event.tool}`, { args: event.args }))
+          await logTaskEvent(taskId, 'tool_call', `🔧 ${event.tool}(${event.args}) [idem:${idemKey}]`, agent.id)
           await prisma.message.create({
             data: {
               conversationId: conversation.id, role: 'assistant',
@@ -465,7 +560,22 @@ async function runTask(taskId: string): Promise<void> {
           // secrets/credentials returned by shell/kubectl/vault tools. Apply
           // redaction consistently before any write.
           const redactedResult = redactSecrets(event.result).slice(0, 2000)
+          // Langfuse: end the oldest open tool span (FIFO)
+          const openToolSpanId = toolSpanQueue.shift()
+          if (openToolSpanId) trace.endSpan(openToolSpanId, { result: redactedResult.slice(0, 500) })
           await logTaskEvent(taskId, 'tool_result', redactedResult, agent.id)
+          // Checkpoint this step so it can be detected on retry.
+          stepIndex++
+          const idemKeyForCheckpoint = createHash('sha256')
+            .update(`${taskId}:${stepIndex}:${event.tool}:`)
+            .digest('hex')
+            .slice(0, 16)
+          await prisma.taskCheckpoint.upsert({
+            where: { taskId_stepIndex: { taskId, stepIndex } },
+            update: { result: redactedResult },
+            create: { taskId, stepIndex, toolName: event.tool, argsHash: idemKeyForCheckpoint, result: redactedResult },
+          }).catch(() => {})
+          checkpoints.set(stepIndex, redactedResult)
           await prisma.message.create({
             data: {
               conversationId: conversation.id, role: 'user',
@@ -583,10 +693,28 @@ async function runTask(taskId: string): Promise<void> {
       environmentName: envName,
     })
 
+    // Clean up checkpoints on successful completion — no longer needed.
+    await prisma.taskCheckpoint.deleteMany({ where: { taskId } }).catch(() => {})
+
+    // Run reviewer check for non-persistent tasks that produced output.
+    if ((task.metadata as any)?.persistent !== true) {
+      await runReviewerCheck(taskId, task.title, outputText, agent.id, modelId)
+    }
+
+    // Langfuse: close the main span and flush the trace
+    trace.recordGeneration({ model: modelId, input: task.title, output: outputText.slice(0, 1000), inputTokens: totalInputTokens, outputTokens: totalOutputTokens })
+    trace.endSpan(mainSpan, { summary: outputText.slice(0, 500) })
+    trace.complete(outputText.slice(0, 500))
+    await trace.flush()
+
     log(`Completed task "${task.title}" (${taskId}) in ${durationSec}s`)
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e)
     err(`Task ${taskId} failed: ${errMsg}`)
+
+    // Langfuse: flush trace on failure
+    trace.endSpan(mainSpan, undefined, errMsg)
+    await trace.flush().catch(() => {})
 
     const failedTask = await prisma.task.findUnique({
       where: { id: taskId },
@@ -634,6 +762,7 @@ async function runTask(taskId: string): Promise<void> {
         outcomeSummary: `Failed ${remediationAttempts} times with the same approach — escalated for human review.`,
         errorMessage:    errMsg,
       })
+      await prisma.taskCheckpoint.deleteMany({ where: { taskId } }).catch(() => {})
     } else if (canRetry) {
       const newRetryCount = (failedTask!.retryCount ?? 0) + 1
       const delayMs = 15000 * Math.pow(2, failedTask!.retryCount ?? 0) // 15s, 30s, 60s
@@ -664,6 +793,7 @@ async function runTask(taskId: string): Promise<void> {
         outcomeSummary: `Failed after ${remediationAttempts} attempt(s).`,
         errorMessage:    errMsg,
       })
+      await prisma.taskCheckpoint.deleteMany({ where: { taskId } }).catch(() => {})
     }
   } finally {
     clearTimeout(timeoutHandle)
@@ -1334,7 +1464,16 @@ async function main() {
     syncGitOpsPRs().catch(e => err(`GitOps PR sync failed: ${e}`)).finally(() => { runningGitOpsSync = false })
   }, 60_000)
 
-  // Dream — memory consolidation (extraction every 2h, pruning every 24h)
+  // Dream — memory consolidation covers three phases:
+  //   extraction (every 2h): scans recent chat messages + task events, extracts durable
+  //     facts/lessons as llm-context notes with [[wikilinks]], immediately embeds them
+  //     for vector search retrieval.
+  //   synthesis (every 12h): identifies missing "hub" notes that connect clusters of
+  //     related specific notes into a coherent knowledge graph.
+  //   pruning (every 24h): reviews notes older than 7 days, flags or deletes stale ones.
+  //   model: configurable via dream.model SystemSetting (falls back to system default).
+  // No additional consolidation pass is needed — episodic→semantic promotion is handled
+  // entirely by the LLM-based extraction pass above.
   startDream()
 
   // Security correlator — poll for uncorrelated events every 30s
