@@ -36,7 +36,8 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   }
-  const body = await req.json()
+  let body: Record<string, unknown>
+  try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
   // MAJOR fix: raw body was passed directly to Prisma (mass assignment).
   // Whitelist allowed fields to prevent setting arbitrary columns.
   const name        = String(body.name ?? '').trim()
