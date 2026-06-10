@@ -1633,6 +1633,12 @@ async function main() {
     runningDriftDetector = true
     detectGitOpsDrift().catch(e => err(`GitOps drift detection failed: ${e}`)).finally(() => { runningDriftDetector = false })
   }, 5 * 60_000)
+
+  setInterval(() => {
+    if (runningScheduler) return
+    runningScheduler = true
+    runScheduler().catch(e => err(`Scheduler failed: ${e}`)).finally(() => { runningScheduler = false })
+  }, 60_000)
 }
 
 process.on('unhandledRejection', (reason, promise) => {

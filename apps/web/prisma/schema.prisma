@@ -88,8 +88,8 @@ model Agent {
   evalSuites       EvalSuite[]            @relation("EvalSuiteAgent")
   evalRuns         EvalRun[]              @relation("EvalRunAgent")
   tokenUsage       AgentTokenUsage[]
-  webhookTriggers  WebhookTrigger[]           @relation("WebhookTriggerAgent")
-  scheduledTasks   ScheduledTask[]            @relation("ScheduledTaskAgent")
+webhookTriggers  WebhookTrigger[]         @relation("WebhookTriggerAgent")
+  scheduledTasks   ScheduledTask[]          @relation("ScheduledTaskAgent")
 }
 
 model AgentTokenUsage {
@@ -1768,6 +1768,31 @@ model DriftReport {
   @@index([environmentId, scannedAt])
 }
 
+// ── Scheduled Tasks ───────────────────────────────────────────────────────────
+// Cron-style recurring task scheduling. Each record defines a schedule that
+// spawns a new Task when nextRunAt <= now(). The worker polls every 60s.
+
+model ScheduledTask {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  agentId     String
+  agent       Agent     @relation("ScheduledTaskAgent", fields: [agentId], references: [id])
+  cronExpr    String
+  taskTitle   String
+  taskDesc    String?   @db.Text
+  taskMeta    String?   @db.Text
+  enabled     Boolean   @default(true)
+  lastRunAt   DateTime?
+  nextRunAt   DateTime?
+  lastTaskId  String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([agentId])
+  @@index([nextRunAt, enabled])
+}
+
 // ── Webhook Triggers ───────────────────────────────────────────────────────────
 // Inbound webhook endpoints that create tasks when called by external systems
 // (GitHub, Prometheus, PagerDuty, custom sources). Each trigger has a shared
@@ -1803,4 +1828,5 @@ model NotificationChannel {
   agentFilter String?  // JSON array of agent IDs to filter on, null = all agents
   enabled     Boolean  @default(true)
   createdAt   DateTime @default(now())
+}
 }
