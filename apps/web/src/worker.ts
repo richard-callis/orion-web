@@ -424,10 +424,20 @@ async function runTask(taskId: string): Promise<void> {
       const planPrefix = await getPrompt('system.task-plan-prefix')
       systemPrompt = planPrefix + '\n\n' + systemPrompt
     } else if (planAlreadyApproved) {
-      systemPrompt =
-        '## Plan Approved\n\nYour plan for this task has been reviewed and approved by a human. ' +
-        'Do NOT emit another <plan> block — proceed directly to executing the approved plan step by step.\n\n' +
-        systemPrompt
+      const blockedSteps = (taskMeta.blockedSteps as number[] | undefined) ?? []
+      const planSteps = (taskMeta.planSteps as string[] | undefined) ?? []
+      let approvedNote = '## Plan Approved\n\nYour plan for this task has been reviewed and approved by a human. ' +
+        'Do NOT emit another <plan> block — proceed directly to executing the approved plan step by step.\n\n'
+      if (blockedSteps.length > 0 && planSteps.length > 0) {
+        const blockedDescriptions = blockedSteps
+          .filter(i => i >= 0 && i < planSteps.length)
+          .map(i => `  - Step ${i + 1}: ${planSteps[i]}`)
+          .join('\n')
+        approvedNote +=
+          `**The following steps were BLOCKED by the approver and must NOT be executed:**\n${blockedDescriptions}\n\n` +
+          'Skip these steps entirely and proceed with the remaining approved steps.\n\n'
+      }
+      systemPrompt = approvedNote + systemPrompt
     }
 
     log(`Starting task "${task.title}" (${taskId}) → agent "${agent.name}" [${modelId}]`)
@@ -625,7 +635,13 @@ async function runTask(taskId: string): Promise<void> {
           where: { id: taskId },
           data: {
             status: 'pending_validation',
-            metadata: { ...taskMeta, planRisk: risk, planContent: planText, planApproved: false } as object,
+            metadata: {
+              ...taskMeta,
+              planRisk: risk,
+              planContent: planText,
+              planSteps: plan?.steps ?? [],
+              planApproved: false,
+            } as object,
           },
         }),
         logTaskEvent(taskId, 'plan_pending_approval',
@@ -811,6 +827,8 @@ export interface ParsedPlan {
   estimatedDuration: string | null
   /** @deprecated prose fallback kept for backwards compat — prefer rollbackSteps */
   rollbackStrategy: string | null
+  /** Execution steps from <steps> — used for partial plan approval UI. */
+  steps: string[]
   /** How the agent will confirm the action worked (parsed from <verify_steps>). */
   verifySteps: string[]
   /** Concrete tool-call steps to undo the change (parsed from <rollback_steps>). */
@@ -848,6 +866,7 @@ export function parsePlan(text: string): ParsedPlan | null {
     riskLevel,
     estimatedDuration: tag('estimated_duration'),
     rollbackStrategy: tag('rollback_strategy'),
+    steps: stepList('steps'),
     verifySteps: stepList('verify_steps'),
     rollbackSteps: stepList('rollback_steps'),
     raw: planMatch[0],
