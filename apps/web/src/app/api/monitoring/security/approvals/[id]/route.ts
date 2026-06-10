@@ -90,7 +90,8 @@ export async function POST(
         incidentId: audit.incidentId,
       },
       audit.target,
-      audit.payload as Record<string, unknown> | undefined
+      audit.payload as Record<string, unknown> | undefined,
+      audit.environmentId
     )
 
     await prisma.actionAudit.update({

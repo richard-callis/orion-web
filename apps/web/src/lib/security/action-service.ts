@@ -44,10 +44,16 @@ function isErrorResult(result: string): boolean {
 export async function gatewayExecutor(
   action: ActionRequest,
   target: string,
-  payload?: Record<string, unknown>
+  payload?: Record<string, unknown>,
+  environmentId?: string | null,
 ): Promise<{ success: boolean; result: string }> {
+  const where = {
+    status: 'connected',
+    gatewayUrl: { not: null },
+    ...(environmentId ? { id: environmentId } : {}),
+  }
   const env = await prisma.environment.findFirst({
-    where: { status: 'connected', gatewayUrl: { not: null } },
+    where,
     select: { gatewayUrl: true, gatewayToken: true },
   })
 
