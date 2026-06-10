@@ -176,6 +176,7 @@ export async function POST(req: NextRequest) {
           staleAfterMs: FALCO_STALE_AFTER_MS,
         },
       })
+      console.log(`[falco-webhook] heartbeat from env ${environmentId} — source healthy`)
     }
     return NextResponse.json({ received: true, kind: 'heartbeat', environmentId })
   }

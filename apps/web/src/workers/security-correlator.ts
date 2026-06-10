@@ -342,10 +342,7 @@ async function correlateEnvironment(
         // blocks correlation.
         triggerRoomAgentReplies(securityRoomId, noticeBody).catch((e: unknown) => {
           // eslint-disable-next-line no-console
-          console.error(
-            `[siem] correlator: triggerRoomAgentReplies failed for room ${securityRoomId}:`,
-            e instanceof Error ? `${e.name}: ${e.message}` : e,
-          )
+          console.error(`[warden-wakeup] Failed to trigger room agent replies for incident ${incident.id ?? 'unknown'}: ${e instanceof Error ? e.message : e}`)
         })
       }
 
