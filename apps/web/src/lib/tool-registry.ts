@@ -174,7 +174,7 @@ async function auditLog(actorId: string | undefined, content: string): Promise<v
       content,
       messageType: 'task_update',
     },
-  }).catch(() => {})
+  }).catch(e => console.error('[tool-registry] auditLog write failed:', e instanceof Error ? e.message : e))
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -486,7 +486,7 @@ async function handleCloseTask(args: unknown, ctx: ToolExecutionContext): Promis
   // feature (and possibly its epic) done and post summaries to their rooms.
   if (task.featureId) {
     const { checkFeatureCompletion } = await import('./task-completion')
-    await checkFeatureCompletion(task.featureId, ctx.prisma as unknown as import('@prisma/client').PrismaClient).catch(() => {})
+    await checkFeatureCompletion(task.featureId, ctx.prisma as unknown as import('@prisma/client').PrismaClient).catch(e => console.error('[tool-registry] checkFeatureCompletion failed:', e instanceof Error ? e.message : e))
   }
 
   const msg = `✅ Validated & closed **${task.title}** — ${summary}`

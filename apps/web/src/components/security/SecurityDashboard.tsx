@@ -70,6 +70,7 @@ export default function SecurityDashboard() {
       if (!res.ok) throw new Error(`${res.status}`)
       const d = await res.json()
       setData(d)
+      setError(null)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load')
     } finally {
@@ -77,7 +78,11 @@ export default function SecurityDashboard() {
     }
   }, [])
 
-  useEffect(() => { loadOverview() }, [loadOverview])
+  useEffect(() => {
+    loadOverview()
+    const interval = setInterval(loadOverview, 30_000)
+    return () => clearInterval(interval)
+  }, [loadOverview])
 
   if (loading) {
     return (
