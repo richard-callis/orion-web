@@ -3,6 +3,7 @@ import { Header } from '@/components/layout/Header'
 import { StatusBar } from '@/components/layout/StatusBar'
 import { BottomNav } from '@/components/layout/BottomNav'
 import { PendingPlanApprovals } from '@/components/notifications/PendingPlanApprovals'
+import { BudgetPausedTasks } from '@/components/notifications/BudgetPausedTasks'
 import { prisma } from '@/lib/db'
 import type { Metadata } from 'next'
 
@@ -29,6 +30,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <StatusBar />
       <BottomNav />
       <PendingPlanApprovals />
+      <BudgetPausedTasks />
     </>
   )
 }
