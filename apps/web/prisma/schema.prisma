@@ -88,6 +88,8 @@ model Agent {
   evalSuites       EvalSuite[]            @relation("EvalSuiteAgent")
   evalRuns         EvalRun[]              @relation("EvalRunAgent")
   tokenUsage       AgentTokenUsage[]
+  webhookTriggers  WebhookTrigger[]           @relation("WebhookTriggerAgent")
+  scheduledTasks   ScheduledTask[]            @relation("ScheduledTaskAgent")
 }
 
 model AgentTokenUsage {
@@ -1765,4 +1767,26 @@ model DriftReport {
   scannedAt     DateTime    @default(now())
 
   @@index([environmentId, scannedAt])
+}
+
+// ── Webhook Triggers ───────────────────────────────────────────────────────────
+// Inbound webhook endpoints that create tasks when called by external systems
+// (GitHub, Prometheus, PagerDuty, custom sources). Each trigger has a shared
+// secret for HMAC verification and maps to a single agent.
+
+model WebhookTrigger {
+  id          String    @id @default(cuid())
+  name        String
+  agentId     String
+  agent       Agent     @relation("WebhookTriggerAgent", fields: [agentId], references: [id], onDelete: Cascade)
+  secret      String
+  source      String    @default("custom") // github | prometheus | custom
+  taskTitle   String
+  taskDesc    String?
+  enabled     Boolean   @default(true)
+  lastFiredAt DateTime?
+  fireCount   Int       @default(0)
+  createdAt   DateTime  @default(now())
+
+  @@index([agentId])
 }
