@@ -1753,3 +1753,16 @@ model EvalCaseResult {
   @@index([runId])
   @@index([caseId])
 }
+
+/// Periodic GitOps drift detection report for an environment.
+model DriftReport {
+  id            String      @id @default(cuid())
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  status        String      @default("clean") // clean | drifted | error
+  driftCount    Int         @default(0)
+  findings      String      @db.Text // JSON array of DriftFinding
+  scannedAt     DateTime    @default(now())
+
+  @@index([environmentId, scannedAt])
+}

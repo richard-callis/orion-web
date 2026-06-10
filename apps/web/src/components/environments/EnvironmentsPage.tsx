@@ -8,6 +8,7 @@ import {
   Sparkles, ToggleLeft, ToggleRight, Layers, Shield, Users, ArrowUpCircle,
 } from 'lucide-react'
 import { ClusterPreflightFlow } from './ClusterPreflightFlow'
+import { DriftStatusBadge } from './DriftStatusBadge'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
