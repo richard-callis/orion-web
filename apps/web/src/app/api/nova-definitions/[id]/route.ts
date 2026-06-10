@@ -38,7 +38,8 @@ export async function PUT(
   } catch {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   }
-  const body = await req.json()
+  let body: Record<string, unknown>
+  try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
   // MAJOR fix: raw body was written directly to Prisma (mass assignment)
   const title       = body.title ? String(body.title).slice(0, 200) : undefined
   const category    = body.category === 'skill' || body.category === 'hook' ? body.category : undefined

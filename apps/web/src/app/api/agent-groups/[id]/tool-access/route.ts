@@ -4,7 +4,9 @@ import { requireAdmin } from '@/lib/auth'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   await requireAdmin()
-  const { toolGroupId } = await req.json()
+  let parsed: unknown
+  try { parsed = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
+  const { toolGroupId } = parsed as { toolGroupId?: string }
   if (!toolGroupId) return NextResponse.json({ error: 'toolGroupId required' }, { status: 400 })
   await prisma.agentGroupToolAccess.create({ data: { agentGroupId: params.id, toolGroupId } })
   return NextResponse.json({ ok: true })

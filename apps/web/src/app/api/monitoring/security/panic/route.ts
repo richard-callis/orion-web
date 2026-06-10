@@ -36,7 +36,8 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await req.json() as { active?: boolean }
+  let body: { active?: boolean }
+  try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
   if (typeof body.active !== 'boolean') {
     return NextResponse.json({ error: 'Body must be { active: boolean }' }, { status: 400 })
   }

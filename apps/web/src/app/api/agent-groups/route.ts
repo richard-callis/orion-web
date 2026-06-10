@@ -17,18 +17,20 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   await requireAdmin()
-  const body = await req.json()
-  if (!body.name?.trim()) return NextResponse.json({ error: 'name required' }, { status: 400 })
+  let body: Record<string, unknown>
+  try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
+  const b = body as { name?: string; description?: string | null; minimumTier?: string; environmentId?: string }
+  if (!b.name?.trim()) return NextResponse.json({ error: 'name required' }, { status: 400 })
   const VALID_TIERS = ['viewer', 'editor', 'admin']
-  if (body.minimumTier !== undefined && !VALID_TIERS.includes(body.minimumTier)) {
+  if (b.minimumTier !== undefined && !VALID_TIERS.includes(b.minimumTier)) {
     return NextResponse.json({ error: `minimumTier must be one of: ${VALID_TIERS.join(', ')}` }, { status: 400 })
   }
-  if (body.environmentId) {
-    const envExists = await prisma.environment.findUnique({ where: { id: body.environmentId }, select: { id: true } })
+  if (b.environmentId) {
+    const envExists = await prisma.environment.findUnique({ where: { id: b.environmentId }, select: { id: true } })
     if (!envExists) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
   }
   const group = await prisma.agentGroup.create({
-    data: { name: body.name.trim(), description: body.description ?? null },
+    data: { name: b.name.trim(), description: b.description ?? null },
     include: {
       members:    { include: { agent: true } },
       toolAccess: { include: { toolGroup: { include: { environment: { select: { id: true, name: true } } } } } },

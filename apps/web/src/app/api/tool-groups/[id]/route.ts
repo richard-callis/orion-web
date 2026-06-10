@@ -11,13 +11,15 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
 }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
-  const body = await req.json()
+  let body: Record<string, unknown>
+  try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
+  const b = body as { name?: string; description?: string | null; minimumTier?: string }
   const g = await prisma.toolGroup.update({
     where: { id: params.id },
     data: {
-      ...(body.name        !== undefined && { name:        body.name.trim() }),
-      ...(body.description !== undefined && { description: body.description }),
-      ...(body.minimumTier !== undefined && { minimumTier: body.minimumTier }),
+      ...(b.name        !== undefined && { name:        b.name.trim() }),
+      ...(b.description !== undefined && { description: b.description }),
+      ...(b.minimumTier !== undefined && { minimumTier: b.minimumTier }),
     },
     include: { tools: { include: { tool: true } }, agentAccess: { include: { agentGroup: true } } },
   })

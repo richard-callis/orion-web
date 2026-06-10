@@ -3,7 +3,8 @@ import { prisma } from '@/lib/db'
 
 // POST /api/tool-approvals/[id]  body: { action: 'approve'|'deny', adminNote?: string, approvedBy?: string }
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const body = await req.json()
+  let body: unknown
+  try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
   const { action, adminNote, approvedBy } = body as { action: 'approve' | 'deny'; adminNote?: string; approvedBy?: string }
 
   const request = await prisma.toolApprovalRequest.findUnique({ where: { id: params.id } })

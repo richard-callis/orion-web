@@ -86,7 +86,8 @@ export async function POST(req: NextRequest) {
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-  const body: NovaCreateRequest = await req.json()
+  let body: NovaCreateRequest
+  try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
 
   // Validate required fields
   if (!body.name?.trim()) {

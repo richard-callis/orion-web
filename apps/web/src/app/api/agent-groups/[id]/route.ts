@@ -4,15 +4,17 @@ import { requireAdmin } from '@/lib/auth'
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   await requireAdmin()
-  const body = await req.json()
-  if (body.name !== undefined && (!body.name || typeof body.name !== 'string' || !body.name.trim())) {
+  let body: Record<string, unknown>
+  try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
+  const b = body as { name?: unknown; description?: unknown }
+  if (b.name !== undefined && (!b.name || typeof b.name !== 'string' || !b.name.trim())) {
     return NextResponse.json({ error: 'name must be a non-empty string' }, { status: 400 })
   }
   const g = await prisma.agentGroup.update({
     where: { id: params.id },
     data: {
-      ...(body.name        !== undefined && { name:        body.name.trim() }),
-      ...(body.description !== undefined && { description: body.description }),
+      ...(b.name        !== undefined && { name:        (b.name as string).trim() }),
+      ...(b.description !== undefined && { description: b.description as string | null }),
     },
     include: { members: { include: { agent: true } }, toolAccess: { include: { toolGroup: true } } },
   })
