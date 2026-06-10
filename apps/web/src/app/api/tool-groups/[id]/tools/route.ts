@@ -4,7 +4,11 @@ import { prisma } from '@/lib/db'
 // POST — add a tool to the group
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const { toolId } = await req.json()
-  if (!toolId) return NextResponse.json({ error: 'toolId required' }, { status: 400 })
+  if (!toolId || typeof toolId !== 'string' || !toolId.trim()) {
+    return NextResponse.json({ error: 'toolId is required' }, { status: 400 })
+  }
+  const toolExists = await prisma.mcpTool.findUnique({ where: { id: toolId }, select: { id: true } })
+  if (!toolExists) return NextResponse.json({ error: 'Tool not found' }, { status: 404 })
   await prisma.toolGroupTool.create({ data: { toolGroupId: params.id, toolId } })
   return NextResponse.json({ ok: true })
 }
