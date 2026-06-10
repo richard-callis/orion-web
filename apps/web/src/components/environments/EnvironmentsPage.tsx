@@ -78,8 +78,8 @@ const DEFAULT_INPUT_SCHEMA = `{
 
 // ─── Environment form ──────────────────────────────────────────────────────────
 
-interface EnvForm { name: string; type: string; description: string; gatewayUrl: string; gatewayToken: string; kubeconfig: string; nodeIp: string; talosConfig: string }
-const EMPTY_ENV: EnvForm = { name: '', type: 'cluster', description: '', gatewayUrl: '', gatewayToken: '', kubeconfig: '', nodeIp: '', talosConfig: '' }
+interface EnvForm { name: string; type: string; description: string; gatewayUrl: string; gatewayToken: string; kubeconfig: string; nodeIp: string; talosConfig: string; federationRole: string; federationToken: string; spokeUrl: string; hubUrl: string }
+const EMPTY_ENV: EnvForm = { name: '', type: 'cluster', description: '', gatewayUrl: '', gatewayToken: '', kubeconfig: '', nodeIp: '', talosConfig: '', federationRole: 'standalone', federationToken: '', spokeUrl: '', hubUrl: '' }
 
 // ─── Wrench form ────────────────────────────────────────────────────────────────
 
@@ -336,7 +336,8 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   const openCreateEnv = () => { setEnvForm(EMPTY_ENV); setEnvError(null); setEnvModal('create') }
   const openEditEnv = (env: Environment) => {
     const meta = (env as unknown as { metadata?: Record<string, unknown> }).metadata ?? {}
-    setEnvForm({ name: env.name, type: env.type, description: env.description ?? '', gatewayUrl: env.gatewayUrl ?? '', gatewayToken: '', kubeconfig: '', nodeIp: (meta.nodeIp as string) ?? '', talosConfig: '' })
+    const fedEnv = env as unknown as { federationRole?: string | null; federationToken?: string | null; spokeUrl?: string | null; hubUrl?: string | null }
+    setEnvForm({ name: env.name, type: env.type, description: env.description ?? '', gatewayUrl: env.gatewayUrl ?? '', gatewayToken: '', kubeconfig: '', nodeIp: (meta.nodeIp as string) ?? '', talosConfig: '', federationRole: fedEnv.federationRole ?? 'standalone', federationToken: fedEnv.federationToken ?? '', spokeUrl: fedEnv.spokeUrl ?? '', hubUrl: fedEnv.hubUrl ?? '' })
     setEnvError(null)
     setEnvModal('edit')
   }
@@ -357,7 +358,19 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
           metaUpdate.talosConfig = btoa(unescape(encodeURIComponent(envForm.talosConfig.trim())))
         }
       }
-      const payload = { name: envForm.name.trim(), type: envForm.type, description: envForm.description || null, gatewayUrl: envForm.gatewayUrl || null, gatewayToken: envForm.gatewayToken || undefined, kubeconfig: kubeconfigB64, metadata: metaUpdate }
+      const payload = {
+        name: envForm.name.trim(),
+        type: envForm.type,
+        description: envForm.description || null,
+        gatewayUrl: envForm.gatewayUrl || null,
+        gatewayToken: envForm.gatewayToken || undefined,
+        kubeconfig: kubeconfigB64,
+        metadata: metaUpdate,
+        federationRole: (envForm.federationRole && envForm.federationRole !== 'standalone') ? envForm.federationRole : null,
+        federationToken: envForm.federationToken || null,
+        spokeUrl: envForm.spokeUrl || null,
+        hubUrl: envForm.hubUrl || null,
+      }
       const res = envModal === 'create'
         ? await fetch('/api/environments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         : await fetch(`/api/environments/${selected!.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -1228,6 +1241,74 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                   </div>
                 </>
               )}
+
+              {/* ─── Federation section ─────────────────────────────────────── */}
+              <div className="border-t border-border-subtle pt-4 mt-2">
+                <p className="text-xs font-medium text-text-secondary mb-3 flex items-center gap-1.5">
+                  <Globe size={12} />
+                  Federation
+                </p>
+                <div className="space-y-3">
+                  <div>
+                    <label className={labelCls}>Role</label>
+                    <select
+                      value={envForm.federationRole}
+                      onChange={e => setEnvForm(f => ({ ...f, federationRole: e.target.value }))}
+                      className={inputCls}
+                    >
+                      <option value="standalone">Standalone (no federation)</option>
+                      <option value="hub">Hub (dispatch tasks to spokes)</option>
+                      <option value="spoke">Spoke (receive tasks from hub)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelCls}>Federation Token</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        value={envForm.federationToken}
+                        onChange={e => setEnvForm(f => ({ ...f, federationToken: e.target.value }))}
+                        placeholder="Shared secret for hub&#x2194;spoke auth"
+                        className={inputCls}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const token = Array.from(crypto.getRandomValues(new Uint8Array(24)))
+                            .map(b => b.toString(16).padStart(2, '0'))
+                            .join('')
+                          setEnvForm(f => ({ ...f, federationToken: token }))
+                        }}
+                        className="shrink-0 px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors whitespace-nowrap"
+                      >
+                        Generate
+                      </button>
+                    </div>
+                  </div>
+                  {envForm.federationRole === 'spoke' && (
+                    <>
+                      <div>
+                        <label className={labelCls}>Spoke URL <span className="text-text-muted">(this instance&apos;s base URL, reachable by the hub)</span></label>
+                        <input
+                          value={envForm.spokeUrl}
+                          onChange={e => setEnvForm(f => ({ ...f, spokeUrl: e.target.value }))}
+                          placeholder="https://spoke-orion.example.com"
+                          className={inputCls}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Hub URL <span className="text-text-muted">(URL of the hub instance)</span></label>
+                        <input
+                          value={envForm.hubUrl}
+                          onChange={e => setEnvForm(f => ({ ...f, hubUrl: e.target.value }))}
+                          placeholder="https://hub-orion.example.com"
+                          className={inputCls}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className="flex items-center gap-2 px-5 py-4 border-t border-border-subtle">

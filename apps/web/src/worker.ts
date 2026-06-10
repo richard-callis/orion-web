@@ -446,8 +446,6 @@ async function runTask(taskId: string): Promise<void> {
     log(`Starting task "${task.title}" (${taskId}) → agent "${agent.name}" [${modelId}]`)
 
     // ── Budget gate ────────────────────────────────────────────────────────────
-    // Check whether this agent has exceeded its daily or monthly token budget
-    // before starting the task. If over budget, pause the task immediately.
     const budgetCheck = await checkAgentBudget(agent.id)
     if (!budgetCheck.allowed) {
       const budgetMsg = `Budget gate: ${budgetCheck.reason} — task paused until budget resets or limit is increased.`
@@ -466,6 +464,32 @@ async function runTask(taskId: string): Promise<void> {
       return
     }
 
+    // ── Federation check ──────────────────────────────────────────────────────
+    try {
+      const fed = await shouldFederate(taskId)
+      if (fed.federate && fed.spokeUrl && fed.token) {
+        const dispatched = await dispatchToSpoke(taskId, fed.spokeUrl, fed.token)
+        if (dispatched) {
+          await prisma.task.update({
+            where: { id: taskId },
+            data: {
+              metadata: {
+                ...(taskMeta as object),
+                federated: true,
+                spokeUrl: fed.spokeUrl,
+              } as object,
+            },
+          })
+          await logTaskEvent(taskId, 'federated',
+            `Task dispatched to spoke at ${fed.spokeUrl} for execution`, agent.id)
+          log(`Task "${task.title}" (${taskId}) federated to spoke ${fed.spokeUrl}`)
+          return
+        }
+        log(`Federation dispatch for task ${taskId} to ${fed.spokeUrl} failed — running locally`)
+      }
+    } catch (fedErr) {
+      err(`Federation check for task ${taskId} failed (non-fatal): ${fedErr instanceof Error ? fedErr.message : String(fedErr)}`)
+    }
     // Mark task as in progress
     await prisma.task.update({ where: { id: taskId }, data: { status: 'in_progress' } })
 
