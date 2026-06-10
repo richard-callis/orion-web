@@ -29,6 +29,7 @@ import { runDailyScan, runEventTriggeredScan } from './jobs/security-scan-vulns'
 import { runGoalHeartbeat } from './jobs/goal-heartbeat'
 import { detectGitOpsDrift } from './jobs/gitops-drift'
 import { syncCrowdSecDecisions } from './lib/security/crowdsec-bouncer'
+import { runScheduler } from './jobs/task-scheduler'
 
 const POLL_INTERVAL_MS = 15_000
 const MAX_CONCURRENT   = 3
@@ -184,6 +185,7 @@ let runningElkPoller = false
 let runningNtopngPoller = false
 let runningVulnScan = false
 let runningDriftDetector = false
+let runningScheduler = false
 
 const TASK_TIMEOUT_MS = 60 * 60 * 1000 // 60 minutes
 
@@ -1619,6 +1621,12 @@ async function main() {
     runningDriftDetector = true
     detectGitOpsDrift().catch(e => err(`GitOps drift detection failed: ${e}`)).finally(() => { runningDriftDetector = false })
   }, 5 * 60_000)
+
+  setInterval(() => {
+    if (runningScheduler) return
+    runningScheduler = true
+    runScheduler().catch(e => err(`Scheduler failed: ${e}`)).finally(() => { runningScheduler = false })
+  }, 60_000)
 }
 
 process.on('unhandledRejection', (reason, promise) => {
