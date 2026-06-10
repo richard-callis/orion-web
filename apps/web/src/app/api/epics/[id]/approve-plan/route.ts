@@ -27,6 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   await assertCanModify(caller, isService, epic.createdBy)
 
   const approvedBy = caller?.id ?? 'gateway'
+  const approvedAt = new Date()
 
   const toApprove = epic.features.filter(
     f => f.plan && f.planApprovedAt === null && f.tasks.length > 0
@@ -38,12 +39,24 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     ops.push(
       prisma.feature.update({
         where: { id: feature.id },
-        data: { planApprovedAt: new Date(), planApprovedBy: approvedBy },
+        data: { planApprovedAt: approvedAt, planApprovedBy: approvedBy },
       })
     )
     for (const t of feature.tasks) {
       ops.push(prisma.task.update({ where: { id: t.id }, data: { wave: waveMap.get(t.id) ?? 0 } }))
     }
+    const planSnippet = (feature.plan ?? '').slice(0, 2000)
+    const auditContent = `Plan approved by ${approvedBy} at ${approvedAt.toISOString()}\n\n${planSnippet}`
+    ops.push(
+      prisma.taskEvent.createMany({
+        data: feature.tasks.map(t => ({
+          taskId: t.id,
+          eventType: 'plan_approved',
+          content: auditContent,
+          agentId: null,
+        })),
+      })
+    )
   }
 
   if (ops.length > 0) await prisma.$transaction(ops)
