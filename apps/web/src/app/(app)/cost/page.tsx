@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { BarChart2, Coins, RefreshCw, TrendingUp, Zap, Calendar, Activity } from 'lucide-react'
+import { BarChart2, Coins, RefreshCw, TrendingUp, Zap, Calendar, Activity, Cpu } from 'lucide-react'
 
 type Days = 7 | 30 | 90
 
@@ -18,11 +18,18 @@ interface DayRow {
   outputTokens: number
 }
 
+interface ModelRow {
+  modelId: string
+  inputTokens: number
+  outputTokens: number
+}
+
 interface Summary {
   totalInputTokens: number
   totalOutputTokens: number
   totalTasks: number
   byAgent: AgentRow[]
+  byModel: ModelRow[]
   byDay: DayRow[]
 }
 
@@ -250,6 +257,35 @@ export default function CostPage() {
                           </tr>
                         )
                       })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {summary.byModel.length > 0 && (
+              <div className="rounded-lg border border-border-subtle bg-bg-surface overflow-hidden">
+                <div className="px-4 py-3 border-b border-border-subtle flex items-center gap-2">
+                  <Cpu size={13} className="text-accent" />
+                  <h2 className="text-sm font-semibold text-text-primary">By Model</h2>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead><tr className="bg-bg-raised border-b border-border-subtle">
+                      <th className="px-4 py-2.5 text-left text-xs font-medium text-text-secondary">Model</th>
+                      <th className="px-4 py-2.5 text-right text-xs font-medium text-text-secondary">Input</th>
+                      <th className="px-4 py-2.5 text-right text-xs font-medium text-text-secondary">Output</th>
+                      <th className="px-4 py-2.5 text-right text-xs font-medium text-text-secondary">Total</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-border-subtle">
+                      {summary.byModel.map(m => (
+                        <tr key={m.modelId} className="hover:bg-bg-raised/50 transition-colors">
+                          <td className="px-4 py-2.5 font-mono text-xs text-text-primary">{m.modelId}</td>
+                          <td className="px-4 py-2.5 text-right text-xs text-text-secondary">{fmt(m.inputTokens)}</td>
+                          <td className="px-4 py-2.5 text-right text-xs text-text-secondary">{fmt(m.outputTokens)}</td>
+                          <td className="px-4 py-2.5 text-right text-xs font-medium text-text-primary">{fmt(m.inputTokens + m.outputTokens)}</td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>

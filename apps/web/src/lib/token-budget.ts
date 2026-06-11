@@ -79,9 +79,10 @@ export async function recordTokenUsage(
   taskId: string | null,
   inputTokens: number,
   outputTokens: number,
+  modelId?: string,
 ): Promise<void> {
   if (inputTokens === 0 && outputTokens === 0) return
   await prisma.agentTokenUsage.create({
-    data: { agentId, taskId, inputTokens, outputTokens },
+    data: { agentId, taskId, inputTokens, outputTokens, ...(modelId ? { modelId } : {}) },
   })
 }

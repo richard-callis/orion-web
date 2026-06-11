@@ -29,6 +29,8 @@ export async function GET(req: NextRequest) {
     tasks: Set<string>
   }>()
 
+  const modelMap = new Map<string, { modelId: string; inputTokens: number; outputTokens: number }>()
+
   const dayMap = new Map<string, { inputTokens: number; outputTokens: number }>()
 
   for (const r of records) {
@@ -46,6 +48,14 @@ export async function GET(req: NextRequest) {
     ag.inputTokens += r.inputTokens
     ag.outputTokens += r.outputTokens
     if (r.taskId) ag.tasks.add(r.taskId as string)
+
+    const mId = (r as any).modelId as string | null
+    if (mId) {
+      if (!modelMap.has(mId)) modelMap.set(mId, { modelId: mId, inputTokens: 0, outputTokens: 0 })
+      const m = modelMap.get(mId)!
+      m.inputTokens += r.inputTokens
+      m.outputTokens += r.outputTokens
+    }
 
     const dateKey = r.recordedAt.toISOString().slice(0, 10)
     if (!dayMap.has(dateKey)) dayMap.set(dateKey, { inputTokens: 0, outputTokens: 0 })
@@ -72,11 +82,15 @@ export async function GET(req: NextRequest) {
     tasks: a.tasks.size,
   })).sort((a, b) => (b.inputTokens + b.outputTokens) - (a.inputTokens + a.outputTokens))
 
+  const byModel = Array.from(modelMap.values())
+    .sort((a, b) => (b.inputTokens + b.outputTokens) - (a.inputTokens + a.outputTokens))
+
   return NextResponse.json({
     totalInputTokens,
     totalOutputTokens,
     totalTasks: taskSet.size,
     byAgent,
+    byModel,
     byDay,
   })
 }

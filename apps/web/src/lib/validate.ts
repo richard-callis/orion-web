@@ -226,6 +226,8 @@ export const UpdateTaskSchema = z.object({
   planProgress: z.number().int().nullable().optional(),
   planApprovedBy: z.string().max(200).nullable().optional(),
   planApprovedAt: z.string().datetime().nullable().optional(),
+  dependsOn: z.array(z.string()).optional(),
+  wave: z.number().int().min(0).nullable().optional(),
 })
 
 // ── Feature & Epic Schemas ─────────────────────────────────────────────────────

@@ -761,7 +761,7 @@ async function runTask(taskId: string): Promise<void> {
         agent.id,
       ).catch(() => {})
       // Record token spend for budget tracking
-      await recordTokenUsage(agent.id, taskId, totalInputTokens, totalOutputTokens).catch(() => {})
+      await recordTokenUsage(agent.id, taskId, totalInputTokens, totalOutputTokens, modelId).catch(() => {})
     }
 
     // Auto-write the task outcome to the knowledge base so future agents learn
