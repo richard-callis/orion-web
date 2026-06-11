@@ -5,7 +5,14 @@
 
 ## Auth Status
 
-**No route-level auth middleware is enforced.** Routes assume caller is trusted (internal app calls from the Next.js frontend). The session is checked at the page/layout level, not per-route.
+Routes use one of three auth guards from `lib/auth.ts`:
+
+- **`requireAdmin()`** — requires an active admin-role session. Returns `AppUser`. Wrapped in try/catch → 401 on failure. Used on: all `/admin/*`, `/notification-channels/*`, `/tool-approvals/[id]`, `/tools/pending`, `/dns/nodehosts/[ip]`, `/environments/[id]/agents/[agentId]`
+- **`requireServiceAuth(req)`** — accepts a session (any role) OR a valid `Authorization: Bearer <ORION_GATEWAY_TOKEN>` header. Returns `AppUser | null` (null = gateway). Wrapped in try/catch → 401 on failure. Used on: `/executions`, `/executions/[id]`, `/job-runs`, `/conversations/[id]/traces`, `/cost/summary`
+- **Session-only routes** — call `getServerSession(authOptions)` directly and check `userId`. Used on chatroom membership routes.
+- **Unprotected** — a small number of routes (webhooks accepting HMAC-signed payloads, `/auth/*`, `/health`) intentionally have no session auth.
+
+All guarded routes return 401 JSON `{ error: 'Unauthorized' }` on failure.
 
 ## Route Reference
 
@@ -77,7 +84,7 @@ All modes:
 | Method | Route | DB Ops | External | Returns |
 |--------|-------|--------|----------|---------|
 | GET | `/features` | `feature.findMany()` with epic + task count | — | Feature[] |
-| POST | `/features` | `feature.create()` | — | Feature (201) |
+| POST | `/features` | `feature.create()` wrapped in `prisma.$transaction` | — | Feature (201) |
 | GET/PUT/DELETE | `/features/[id]` | standard CRUD | — | Feature |
 | POST | `/features/[id]/generate-tasks` | `feature.findUnique()` + `task.create()` (bulk) | Claude Code SDK | Task[] (201) |
 | GET | `/epics` | `epic.findMany()` nested features + task counts | — | Epic[] |
@@ -122,13 +129,13 @@ lib/k8s.ts internal state:
 
 | Method | Route | DB Ops | Notes |
 |--------|-------|--------|-------|
-| GET | `/admin/users` | `user.findMany()` | |
-| POST | `/admin/users` | `user.create()` with bcryptjs hash | |
-| PUT/DELETE | `/admin/users/[id]` | `user.update/delete()` | |
-| GET | `/admin/settings` | `systemSetting.findMany()` | |
-| PUT | `/admin/settings` | `systemSetting.upsert()` | |
-| GET/PUT | `/admin/system-prompts/[key]` | `systemPrompt.upsert()` | |
-| GET | `/admin/audit-log` | `auditLog.findMany()` | |
+| GET | `/admin/users` | `user.findMany()` | `requireAdmin()` |
+| POST | `/admin/users` | `user.create()` with bcryptjs hash | `requireAdmin()` |
+| PUT/DELETE | `/admin/users/[id]` | `user.update/delete()` | `requireAdmin()` |
+| GET | `/admin/settings` | `systemSetting.findMany()` | `requireAdmin()` |
+| PUT | `/admin/settings` | `systemSetting.upsert()` | `requireAdmin()` |
+| GET/PUT | `/admin/system-prompts/[key]` | `systemPrompt.upsert()` | `requireAdmin()` |
+| GET | `/admin/audit-log` | `auditLog.findMany()` | `requireAdmin()` |
 
 ### `/api/health`
 
@@ -139,7 +146,7 @@ GET /health
   ├─ readFileSync('/claude-creds/.claude') → claude: true/false
   ├─ fetch(ollamaUrl/api/tags)            → ollama: true/false
   └─ for each ExternalModel (enabled):
-       fetch(model.baseUrl/health or /api/tags) → externalModels[ext:id]: bool
+       fetch(model.baseUrl/health or /api/tags) → externalModels["${m.name} (${m.provider})"]: bool
 
 Returns: { k8s, db, claude, ollama, externalModels: {} }
 Status: 200 if k8s && db, else 503
@@ -182,6 +189,6 @@ lib/k8s.ts
 1. Create `src/app/api/<resource>/route.ts`
 2. Export named functions: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`
 3. For DB access: import `prisma` from `@/lib/db`
-4. For auth: import `getCurrentUser` or `requireAdmin` from `@/lib/auth`
+4. For auth: use `requireAdmin()` for admin-only routes, `requireServiceAuth(req)` for service/gateway routes, or `getServerSession(authOptions)` for user-session routes. Always wrap in try/catch returning 401.
 5. For SSE: import `createSSEStream` from `@/lib/sse`
 6. Return `NextResponse.json(data, { status: 200 })` or `new Response(stream)`
