@@ -86,7 +86,7 @@ function sanitizeContextNote(title: string, content: string): string {
   }
 
   // Escape markdown that could break the prompt structure
-  content = content.replace(/^---+$/, '---') // normalize horizontal rules
+  content = content.replace(/^---+$/gm, '---') // normalize horizontal rules
 
   return content
 }
@@ -723,8 +723,8 @@ async function runTask(taskId: string): Promise<void> {
       logTaskEvent(taskId, 'completed', summary, agent.id),
       // SOC2: always keep postToFeed for audit trail
       postToFeed(agent.id, completionMsg, taskId),
-      // Also post to feature room if one exists
-      ...(featureRoomId ? [postToRoom(featureRoomId, agent.id, completionMsg, taskId)] : []),
+      // Post to feature room and any delegation room
+      ...roomPromises,
       prisma.claudeInvocation.create({
         data: {
           conversationId: conversation.id,
@@ -1636,11 +1636,6 @@ async function main() {
     detectGitOpsDrift().catch(e => err(`GitOps drift detection failed: ${e}`)).finally(() => { runningDriftDetector = false })
   }, 5 * 60_000)
 
-  setInterval(() => {
-    if (runningScheduler) return
-    runningScheduler = true
-    runScheduler().catch(e => err(`Scheduler failed: ${e}`)).finally(() => { runningScheduler = false })
-  }, 60_000)
 }
 
 process.on('unhandledRejection', (reason, promise) => {
