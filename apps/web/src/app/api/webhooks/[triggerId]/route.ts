@@ -148,14 +148,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tri
     } as never,
   })
 
-  // Update trigger stats
-  await prisma.webhookTrigger.update({
-    where: { id: triggerId },
-    data: {
-      lastFiredAt: new Date(),
-      fireCount:   { increment: 1 },
-    },
-  })
+  await Promise.all([
+    prisma.webhookTrigger.update({
+      where: { id: triggerId },
+      data: { lastFiredAt: new Date(), fireCount: { increment: 1 } },
+    }),
+    prisma.jobRun.create({
+      data: {
+        source:     'webhook',
+        sourceId:   triggerId,
+        sourceName: trigger.name,
+        agentId:    trigger.agent.id,
+        taskId:     task.id,
+        status:     'running',
+      },
+    }),
+  ])
 
   return NextResponse.json({ ok: true, taskId: task.id })
 }
