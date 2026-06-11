@@ -4,9 +4,11 @@ import { requireAdmin } from '@/lib/auth'
 
 // POST /api/tool-approvals/[id]  body: { action: 'approve'|'deny', adminNote?: string, approvedBy?: string }
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const admin = await requireAdmin()
-  // Override approvedBy with the authenticated admin's username
-  const resolvedApprovedBy = admin?.username ?? admin?.email ?? 'admin'
+  let admin
+  try { admin = await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const resolvedApprovedBy = admin.username ?? admin.email ?? 'admin'
   let body: unknown
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
   const { action, adminNote } = body as { action: 'approve' | 'deny'; adminNote?: string }
