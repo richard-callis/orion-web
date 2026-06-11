@@ -220,7 +220,7 @@ export const UpdateTaskSchema = z.object({
   description: z.string().max(5000).optional(),
   plan: z.string().max(10000).nullable().optional(),
   priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
-  status: z.enum(['pending', 'running', 'done', 'failed']).optional(),
+  status: z.enum(['pending', 'in_progress', 'pending_validation', 'done', 'failed', 'blocked']).optional(),
   assignedAgentId: z.string().optional(),
   assignedUserId: z.string().optional(),
   planProgress: z.number().int().nullable().optional(),
@@ -357,6 +357,15 @@ export const CreateBugSchema = z.object({
   assignedUserId: z.string().max(100).optional(),
 })
 
+export const UpdateBugSchema = z.object({
+  title:          z.string().min(1).max(500).optional(),
+  description:    z.string().max(10000).optional(),
+  severity:       z.enum(['low', 'medium', 'high', 'critical']).optional(),
+  status:         z.enum(['open', 'triaged', 'in_progress', 'resolved', 'wont_fix', 'closed']).optional(),
+  area:           z.string().max(100).nullable().optional(),
+  assignedUserId: z.string().max(100).nullable().optional(),
+})
+
 // ── API Key Schemas ─────────────────────────────────────────────────────────────
 
 export const CreateApiKeySchema = z.object({
@@ -446,6 +455,23 @@ export const CreateExternalModelSchema = z.object({
   minP:          z.number().min(0).max(1).optional().nullable(),
   repeatPenalty: z.number().min(0).max(5).optional().nullable(),
   seed:          z.number().int().optional().nullable(),
+})
+
+export const CreateWebhookTriggerSchema = z.object({
+  name:      z.string().min(1).max(200),
+  agentId:   z.string().min(1),
+  taskTitle: z.string().min(1).max(500),
+  taskDesc:  z.string().max(5000).optional(),
+  source:    z.string().max(100).default('custom'),
+  enabled:   z.boolean().default(true),
+})
+
+export const UpdateWebhookTriggerSchema = z.object({
+  name:      z.string().min(1).max(200).optional(),
+  taskTitle: z.string().min(1).max(500).optional(),
+  taskDesc:  z.string().max(5000).nullable().optional(),
+  source:    z.string().max(100).optional(),
+  enabled:   z.boolean().optional(),
 })
 
 export const UpdateExternalModelSchema = z.object({
