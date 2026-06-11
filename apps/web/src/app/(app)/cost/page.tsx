@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { BarChart2, Coins, RefreshCw, TrendingUp, Zap, Calendar } from 'lucide-react'
+import { BarChart2, Coins, RefreshCw, TrendingUp, Zap, Calendar, Activity } from 'lucide-react'
 
 type Days = 7 | 30 | 90
 
@@ -257,8 +257,10 @@ export default function CostPage() {
             )}
 
             {summary.byAgent.length === 0 && (
-              <div className="rounded-lg border border-border-subtle bg-bg-surface p-8 text-center text-text-muted text-sm">
-                No token usage data for this period.
+              <div className="flex flex-col items-center justify-center rounded-lg border border-border-subtle bg-bg-surface py-16 text-center gap-3">
+                <Activity size={32} className="text-text-muted/40" />
+                <p className="text-sm font-medium text-text-secondary">No token usage recorded yet</p>
+                <p className="text-xs text-text-muted max-w-xs">Token usage will appear here once agents start completing tasks. Try running a task to see cost data.</p>
               </div>
             )}
           </>

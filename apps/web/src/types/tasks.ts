@@ -30,6 +30,9 @@ export interface Task {
   assignedUser: TaskUser | null
   createdAt: string
   updatedAt: string
+  dependsOn?: string[]
+  wave?: number | null
+  metadata?: Record<string, unknown> | null
 }
 
 export interface Feature {
