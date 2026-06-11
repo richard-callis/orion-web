@@ -4,6 +4,7 @@
  */
 
 import { prisma } from './db'
+import { isPrivateUrl } from './ssrf-guard'
 
 export type NotificationEvent =
   | { type: 'task_completed'; taskId: string; taskTitle: string; agentId: string; agentName: string; durationMs?: number }
@@ -141,12 +142,18 @@ export async function notify(event: NotificationEvent): Promise<void> {
         payload = formatWebhook(event)
       }
 
-      fetch(channel.webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      }).catch((e: unknown) => {
-        console.error(`[notifications] Failed to POST to channel "${channel.name}" (${channel.id}):`, e)
+      isPrivateUrl(channel.webhookUrl).then(blocked => {
+        if (blocked) {
+          console.warn(`[notifications] Blocked delivery to private/internal URL for channel "${channel.name}" (${channel.id})`)
+          return
+        }
+        fetch(channel.webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).catch((e: unknown) => {
+          console.error(`[notifications] Failed to POST to channel "${channel.name}" (${channel.id}):`, e)
+        })
       })
     }
   } catch (e) {

@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 // POST — add a tool to the group
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   const { toolId } = await req.json()
   if (!toolId || typeof toolId !== 'string' || !toolId.trim()) {
     return NextResponse.json({ error: 'toolId is required' }, { status: 400 })
@@ -15,6 +17,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
 // DELETE — remove a tool from the group (?toolId=xxx)
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   const toolId = req.nextUrl.searchParams.get('toolId')
   if (!toolId) return NextResponse.json({ error: 'toolId required' }, { status: 400 })
   await prisma.toolGroupTool.delete({ where: { toolGroupId_toolId: { toolGroupId: params.id, toolId } } })
