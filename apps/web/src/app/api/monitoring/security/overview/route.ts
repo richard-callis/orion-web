@@ -58,12 +58,12 @@ export async function GET() {
 
   // Pending approvals
   const pendingApprovals = await prisma.actionAudit.count({
-    where: envId ? { environmentId: envId, status: 'denied', tier: 'approve' } : { status: 'denied', tier: 'approve' },
+    where: envId ? { environmentId: envId, status: 'pending', tier: 'approve' } : { status: 'pending', tier: 'approve' },
   })
 
   // Pending approval list
   const pendingApprovalsList = await prisma.actionAudit.findMany({
-    where: envId ? { environmentId: envId, status: 'denied', tier: 'approve' } : { status: 'denied', tier: 'approve' },
+    where: envId ? { environmentId: envId, status: 'pending', tier: 'approve' } : { status: 'pending', tier: 'approve' },
     orderBy: { createdAt: 'desc' },
     take: 10,
     select: {
