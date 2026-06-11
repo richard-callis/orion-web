@@ -24,6 +24,7 @@ import { resolveAgentGateway } from './agent-gateway'
 import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, invalidateSnapshotCache, getModelContextLimit, getClaudeContextLimit } from './agent-context'
 import { compactRoom, publishCompactionWarning, publishTokenUpdate } from './compaction'
 import { recordTokenUsage } from './token-budget'
+import { auditToolCall } from './security/audit-emitter'
 import { getPrompt } from './system-prompts'
 import type { AgentGateway } from './agent-gateway'
 import type { GatewayTool } from './agent-runner/types'
@@ -493,6 +494,16 @@ async function callOpenAIChat(
         result = `[Cached result — fetched earlier this session]\n${cached.result}`
       } else {
         console.log(`[room-agents] ${agentName} calling tool: ${tc.function.name}`, args)
+
+        // Emit security audit event for high-risk tool calls (fire-and-forget)
+        if (toolContext?.agentId) {
+          auditToolCall({
+            toolName: tc.function.name,
+            args,
+            agentId: toolContext.agentId,
+            agentName,
+          })
+        }
 
         // MINOR fix: allowedTools was applied only to the advertised tool list (prompt
         // layer), not at execution. A jailbroken model emitting a tool name outside the
