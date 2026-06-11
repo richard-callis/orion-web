@@ -29,14 +29,22 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const computedNextRun = nextRun(schedule.cronExpr, now)
 
-  await prisma.scheduledTask.update({
-    where: { id: schedule.id },
-    data: {
-      lastRunAt:  now,
-      lastTaskId: task.id,
-      nextRunAt:  computedNextRun,
-    },
-  })
+  await Promise.all([
+    prisma.scheduledTask.update({
+      where: { id: schedule.id },
+      data: { lastRunAt: now, lastTaskId: task.id, nextRunAt: computedNextRun },
+    }),
+    prisma.jobRun.create({
+      data: {
+        source:     'schedule',
+        sourceId:   schedule.id,
+        sourceName: schedule.name,
+        agentId:    schedule.agentId,
+        taskId:     task.id,
+        status:     'running',
+      },
+    }),
+  ])
 
   return NextResponse.json({ taskId: task.id, nextRunAt: computedNextRun })
 }
