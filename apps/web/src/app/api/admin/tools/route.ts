@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { logAudit } from '@/lib/audit'
+import { parseBodyOrError, PatchAdminToolSchema } from '@/lib/validate'
 
 // GET /api/admin/tools — list all MCP tools with environment and agent restriction info
 export async function GET() {
@@ -26,12 +27,13 @@ export async function PATCH(req: NextRequest) {
   let admin
   try { admin = await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
-  const body = await req.json() as { id: string; enabled?: boolean; status?: string }
-  if (!body.id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+  const parsed = await parseBodyOrError(req, PatchAdminToolSchema)
+  if ('error' in parsed) return parsed.error
+  const body = parsed.data
 
   const update: Record<string, unknown> = {}
-  if (typeof body.enabled === 'boolean') update.enabled = body.enabled
-  if (body.status === 'active' || body.status === 'rejected') update.status = body.status
+  if (body.enabled !== undefined) update.enabled = body.enabled
+  if (body.status  !== undefined) update.status  = body.status
 
   const tool = await prisma.mcpTool.update({ where: { id: body.id }, data: update })
 
