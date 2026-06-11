@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
+import { parseBodyOrError, CreateExternalModelSchema } from '@/lib/validate'
 
 function maskKey(key: string | null): string | null {
   if (!key) return null
@@ -20,23 +21,26 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const admin = await requireAdmin()
-  const body = await req.json()
+  const result = await parseBodyOrError(req, CreateExternalModelSchema)
+  if ('error' in result) return result.error
+  const { data } = result
+
   const model = await prisma.externalModel.create({
     data: {
-      name:        body.name,
-      provider:    body.provider,
-      baseUrl:     body.baseUrl,
-      apiKey:      body.apiKey ?? null,
-      modelId:     body.modelId,
-      enabled:     body.enabled ?? true,
-      timeoutSecs:   body.timeoutSecs ?? 120,
-      maxTokens:     body.maxTokens   ?? null,
-      contextSize:   body.contextSize ?? null,
-      temperature:   body.temperature   ?? null,
-      topP:          body.topP          ?? null,
-      minP:          body.minP          ?? null,
-      repeatPenalty: body.repeatPenalty ?? null,
-      seed:          body.seed          ?? null,
+      name:        data.name,
+      provider:    data.provider,
+      baseUrl:     data.baseUrl,
+      apiKey:      data.apiKey ?? null,
+      modelId:     data.modelId,
+      enabled:     data.enabled ?? true,
+      timeoutSecs:   data.timeoutSecs ?? 120,
+      maxTokens:     data.maxTokens   ?? null,
+      contextSize:   data.contextSize ?? null,
+      temperature:   data.temperature   ?? null,
+      topP:          data.topP          ?? null,
+      minP:          data.minP          ?? null,
+      repeatPenalty: data.repeatPenalty ?? null,
+      seed:          data.seed          ?? null,
     },
   })
 

@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { clearContextLimitCache } from '@/lib/agent-context'
+import { parseBodyOrError, UpdateExternalModelSchema } from '@/lib/validate'
 
 function maskKey(key: string | null): string | null {
   if (!key) return null
@@ -12,37 +13,25 @@ function maskKey(key: string | null): string | null {
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   const admin = await requireAdmin()
-  const body = await req.json()
+  const result = await parseBodyOrError(req, UpdateExternalModelSchema)
+  if ('error' in result) return result.error
+  const { data } = result
 
-  // Validate numeric and URL fields
-  if (body.timeoutSecs !== undefined && (typeof body.timeoutSecs !== 'number' || body.timeoutSecs < 1 || body.timeoutSecs > 600)) {
-    return NextResponse.json({ error: 'timeoutSecs must be a number between 1 and 600' }, { status: 400 })
-  }
-  if (body.maxTokens !== undefined && body.maxTokens !== null && (typeof body.maxTokens !== 'number' || body.maxTokens < 1)) {
-    return NextResponse.json({ error: 'maxTokens must be a positive number' }, { status: 400 })
-  }
-  if (body.baseUrl !== undefined && body.baseUrl !== null) {
-    try { new URL(body.baseUrl) } catch {
-      return NextResponse.json({ error: 'baseUrl must be a valid URL' }, { status: 400 })
-    }
-  }
-
-  // Only update apiKey if a new one was provided
   const updateData: Record<string, unknown> = {}
-  if (body.name        !== undefined) updateData.name        = body.name
-  if (body.provider    !== undefined) updateData.provider    = body.provider
-  if (body.baseUrl     !== undefined) updateData.baseUrl     = body.baseUrl
-  if (body.modelId     !== undefined) updateData.modelId     = body.modelId
-  if (body.enabled     !== undefined) updateData.enabled     = body.enabled
-  if (body.timeoutSecs !== undefined) updateData.timeoutSecs = body.timeoutSecs
-  if ('maxTokens'   in body) updateData.maxTokens   = body.maxTokens   // null clears the cap
-  if ('contextSize' in body) updateData.contextSize = body.contextSize // null = auto-detect
-  if ('temperature'   in body) updateData.temperature   = body.temperature
-  if ('topP'          in body) updateData.topP          = body.topP
-  if ('minP'          in body) updateData.minP          = body.minP
-  if ('repeatPenalty' in body) updateData.repeatPenalty = body.repeatPenalty
-  if ('seed'          in body) updateData.seed          = body.seed
-  if (body.apiKey)                    updateData.apiKey      = body.apiKey
+  if (data.name        !== undefined) updateData.name        = data.name
+  if (data.provider    !== undefined) updateData.provider    = data.provider
+  if (data.baseUrl     !== undefined) updateData.baseUrl     = data.baseUrl
+  if (data.modelId     !== undefined) updateData.modelId     = data.modelId
+  if (data.enabled     !== undefined) updateData.enabled     = data.enabled
+  if (data.timeoutSecs !== undefined) updateData.timeoutSecs = data.timeoutSecs
+  if ('maxTokens'   in data) updateData.maxTokens   = data.maxTokens
+  if ('contextSize' in data) updateData.contextSize = data.contextSize
+  if ('temperature'   in data) updateData.temperature   = data.temperature
+  if ('topP'          in data) updateData.topP          = data.topP
+  if ('minP'          in data) updateData.minP          = data.minP
+  if ('repeatPenalty' in data) updateData.repeatPenalty = data.repeatPenalty
+  if ('seed'          in data) updateData.seed          = data.seed
+  if (data.apiKey)              updateData.apiKey        = data.apiKey
 
   const model = await prisma.externalModel.update({
     where: { id: params.id },
@@ -51,7 +40,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
   // If contextSize changed, drop the cached limit so the next agent turn re-reads the new value.
   // Cache is keyed by "ext:<id>" (model-level), not baseUrl, so two models at the same server don't bleed.
-  if ('contextSize' in body) clearContextLimitCache(`ext:${params.id}`)
+  if ('contextSize' in data) clearContextLimitCache(`ext:${params.id}`)
 
   // SOC2: [M-005] Log model update (non-blocking)
   logAudit({

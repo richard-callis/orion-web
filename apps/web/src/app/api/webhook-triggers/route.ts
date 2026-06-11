@@ -1,8 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { randomBytes } from 'crypto'
+import { requireAdmin } from '@/lib/auth'
+
+async function guard() {
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  return null
+}
 
 export async function GET() {
+  const deny = await guard(); if (deny) return deny
   const triggers = await prisma.webhookTrigger.findMany({
     orderBy: { createdAt: 'desc' },
     include: { agent: { select: { id: true, name: true } } },
@@ -11,6 +20,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const deny = await guard(); if (deny) return deny
   let body: {
     name: string
     agentId: string
