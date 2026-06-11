@@ -11,6 +11,7 @@ export async function GET(req: NextRequest) {
     where: epicId ? { epicId } : undefined,
     orderBy: { createdAt: 'asc' },
     include: { epic: true, _count: { select: { tasks: true } } },
+    take: 500,
   })
   return NextResponse.json(features)
 }

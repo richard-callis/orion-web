@@ -18,6 +18,7 @@ export async function GET() {
       tools:  { orderBy: { name: 'asc' } },
       agents: { include: { agent: true } },
     },
+    take: 200,
   })
   // Mask sensitive fields
   return NextResponse.json(environments.map((e: any) => ({ ...e, gatewayToken: e.gatewayToken ? '••••' : null, kubeconfig: e.kubeconfig ? '••••' : null })))
