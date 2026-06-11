@@ -495,6 +495,16 @@ async function callOpenAIChat(
       } else {
         console.log(`[room-agents] ${agentName} calling tool: ${tc.function.name}`, args)
 
+        // Emit security audit event for high-risk tool calls (fire-and-forget)
+        if (toolContext?.agentId) {
+          auditToolCall({
+            toolName: tc.function.name,
+            args,
+            agentId: toolContext.agentId,
+            agentName,
+          })
+        }
+
         // MINOR fix: allowedTools was applied only to the advertised tool list (prompt
         // layer), not at execution. A jailbroken model emitting a tool name outside the
         // whitelist still executed it. Enforce at dispatch time.
