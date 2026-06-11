@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import {
   Plus, Trash2, Play, Clock, Check, X,
   Webhook, RefreshCw, Copy, ChevronDown, ChevronUp,
-  Zap, Activity,
+  Zap, Activity, Settings,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -133,6 +133,144 @@ const SYSTEM_JOBS = [
   { key: 'retention',          name: 'Data Retention',           desc: 'Purges old data per retention policy',                 cadence: 'Daily' },
 ]
 
+// ── Cron builder ──────────────────────────────────────────────────────────────
+
+type FreqType = 'minutely' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom'
+
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+function buildCron(freq: FreqType, every: number, minute: number, hour: number, weekday: number, monthDay: number): string {
+  switch (freq) {
+    case 'minutely': return every <= 1 ? '* * * * *' : `*/${every} * * * *`
+    case 'hourly':   return every <= 1 ? `${minute} * * * *` : `${minute} */${every} * * *`
+    case 'daily':    return `${minute} ${hour} * * *`
+    case 'weekly':   return `${minute} ${hour} * * ${weekday}`
+    case 'monthly':  return `${minute} ${hour} ${monthDay} * *`
+    default:         return ''
+  }
+}
+
+function describeCron(freq: FreqType, every: number, minute: number, hour: number, weekday: number, monthDay: number): string {
+  const hhmm = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+  switch (freq) {
+    case 'minutely': return every <= 1 ? 'Every minute' : `Every ${every} minutes`
+    case 'hourly':   return every <= 1 ? `Every hour at :${String(minute).padStart(2, '0')}` : `Every ${every} hours at :${String(minute).padStart(2, '0')}`
+    case 'daily':    return `Daily at ${hhmm}`
+    case 'weekly':   return `Every ${DAYS[weekday]} at ${hhmm}`
+    case 'monthly':  return `Monthly on day ${monthDay} at ${hhmm}`
+    default:         return ''
+  }
+}
+
+function CronBuilder({ value, onChange }: { value: string; onChange: (cron: string) => void }) {
+  const [advanced, setAdvanced] = useState(false)
+  const [freq, setFreq]         = useState<FreqType>('daily')
+  const [every, setEvery]       = useState(1)
+  const [minute, setMinute]     = useState(0)
+  const [hour, setHour]         = useState(9)
+  const [weekday, setWeekday]   = useState(1)
+  const [monthDay, setMonthDay] = useState(1)
+
+  const generatedCron = buildCron(freq, every, minute, hour, weekday, monthDay)
+  const humanLabel    = describeCron(freq, every, minute, hour, weekday, monthDay)
+
+  useEffect(() => {
+    if (!advanced) onChange(generatedCron)
+  }, [advanced, generatedCron]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sel = 'px-2 py-1.5 text-sm bg-bg-base border border-border-subtle rounded text-text-primary focus:outline-none focus:border-accent'
+  const num = sel + ' w-16 text-center'
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="block text-xs text-text-secondary">Schedule</label>
+        <button
+          type="button"
+          onClick={() => { setAdvanced(a => !a); if (!advanced) onChange(generatedCron) }}
+          className="flex items-center gap-1 text-xs text-text-muted hover:text-accent transition-colors"
+        >
+          <Settings size={11} />
+          {advanced ? 'Simple mode' : 'Advanced (cron)'}
+        </button>
+      </div>
+
+      {advanced ? (
+        <input
+          className="w-full px-3 py-1.5 text-sm bg-bg-base border border-border-subtle rounded text-text-primary font-mono focus:outline-none focus:border-accent"
+          placeholder="0 9 * * 1"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          required
+        />
+      ) : (
+        <div className="space-y-3 p-3 bg-bg-base border border-border-subtle rounded-lg">
+          {/* Frequency selector */}
+          <div className="flex flex-wrap gap-1">
+            {(['minutely','hourly','daily','weekly','monthly'] as FreqType[]).map(f => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFreq(f)}
+                className={`px-2.5 py-1 text-xs rounded transition-colors ${freq === f ? 'bg-accent text-white' : 'bg-bg-raised text-text-secondary hover:text-text-primary'}`}
+              >
+                {f.charAt(0).toUpperCase() + f.slice(1)}
+              </button>
+            ))}
+          </div>
+
+          {/* Context-sensitive controls */}
+          <div className="flex flex-wrap items-center gap-2 text-sm text-text-secondary">
+            {freq === 'minutely' && (
+              <>
+                <span>Every</span>
+                <input type="number" min={1} max={59} value={every} onChange={e => setEvery(+e.target.value)} className={num} />
+                <span>minute{every !== 1 ? 's' : ''}</span>
+              </>
+            )}
+            {freq === 'hourly' && (
+              <>
+                <span>Every</span>
+                <input type="number" min={1} max={23} value={every} onChange={e => setEvery(+e.target.value)} className={num} />
+                <span>hour{every !== 1 ? 's' : ''} at minute</span>
+                <input type="number" min={0} max={59} value={minute} onChange={e => setMinute(+e.target.value)} className={num} />
+              </>
+            )}
+            {(freq === 'daily' || freq === 'weekly' || freq === 'monthly') && (
+              <>
+                {freq === 'weekly' && (
+                  <>
+                    <span>Every</span>
+                    <select value={weekday} onChange={e => setWeekday(+e.target.value)} className={sel}>
+                      {DAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                    </select>
+                  </>
+                )}
+                {freq === 'monthly' && (
+                  <>
+                    <span>On day</span>
+                    <input type="number" min={1} max={28} value={monthDay} onChange={e => setMonthDay(+e.target.value)} className={num} />
+                  </>
+                )}
+                <span>at</span>
+                <input type="number" min={0} max={23} value={hour} onChange={e => setHour(+e.target.value)} className={num} />
+                <span>:</span>
+                <input type="number" min={0} max={59} value={minute} onChange={e => setMinute(+e.target.value)} className={num} />
+              </>
+            )}
+          </div>
+
+          {/* Human-readable summary + generated cron */}
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-text-primary font-medium">{humanLabel}</span>
+            <span className="font-mono text-text-muted">{generatedCron}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Schedules tab ─────────────────────────────────────────────────────────────
 
 function SchedulesTab() {
@@ -145,7 +283,7 @@ function SchedulesTab() {
   const [deleting, setDeleting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
-  const [form, setForm] = useState({ name: '', agentId: '', cronExpr: '', taskTitle: '', taskDesc: '', enabled: true })
+  const [form, setForm] = useState({ name: '', agentId: '', cronExpr: '0 9 * * *', taskTitle: '', taskDesc: '', enabled: true })
 
   const load = useCallback(async () => {
     try {
@@ -163,7 +301,7 @@ function SchedulesTab() {
     try {
       const res = await fetch('/api/scheduled-tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: form.name, agentId: form.agentId, cronExpr: form.cronExpr, taskTitle: form.taskTitle, taskDesc: form.taskDesc || undefined, enabled: form.enabled }) })
       if (!res.ok) { const d = await res.json(); setFormError(d.error ?? 'Failed'); return }
-      setShowForm(false); setForm({ name: '', agentId: '', cronExpr: '', taskTitle: '', taskDesc: '', enabled: true }); await load()
+      setShowForm(false); setForm({ name: '', agentId: '', cronExpr: '0 9 * * *', taskTitle: '', taskDesc: '', enabled: true }); await load()
     } catch (e) { setFormError(String(e)) }
   }
 
@@ -205,7 +343,7 @@ function SchedulesTab() {
           <form onSubmit={handleCreate} className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div><label className="block text-xs text-text-secondary mb-1">Schedule Name</label><input className={inp} placeholder="e.g. Daily health check" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required /></div>
             <div><label className="block text-xs text-text-secondary mb-1">Agent</label><select className={inp} value={form.agentId} onChange={e => setForm(f => ({ ...f, agentId: e.target.value }))} required><option value="">Select agent...</option>{agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div>
-            <div><label className="block text-xs text-text-secondary mb-1">Cron Expression</label><input className={inp + ' font-mono'} placeholder="0 2 * * *" value={form.cronExpr} onChange={e => setForm(f => ({ ...f, cronExpr: e.target.value }))} required /></div>
+            <div className="md:col-span-2"><CronBuilder value={form.cronExpr} onChange={cronExpr => setForm(f => ({ ...f, cronExpr }))} /></div>
             <div><label className="block text-xs text-text-secondary mb-1">Task Title</label><input className={inp} placeholder="Title for each spawned task" value={form.taskTitle} onChange={e => setForm(f => ({ ...f, taskTitle: e.target.value }))} required /></div>
             <div className="md:col-span-2"><label className="block text-xs text-text-secondary mb-1">Task Description (optional)</label><textarea className={inp + ' resize-none'} rows={2} value={form.taskDesc} onChange={e => setForm(f => ({ ...f, taskDesc: e.target.value }))} /></div>
             <div className="md:col-span-2 flex items-center gap-4">
