@@ -17,7 +17,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // e.g. "@localhost" → "@localhost (environment_id: cmnv32drm0000libvj5vwm5pw)"
   let prompt: string = rawPrompt
   if (rawPrompt && rawPrompt.includes('@')) {
-    const allEnvs = await prisma.environment.findMany({ select: { id: true, name: true } })
+    const allEnvs = await prisma.environment.findMany({ select: { id: true, name: true }, take: 500 })
     prompt = rawPrompt.replace(/@([\w-]+)/g, (_match: string, name: string) => {
       const env = allEnvs.find((e: { id: string; name: string }) => e.name.toLowerCase() === name.toLowerCase())
       return env ? `@${env.name} (environment_id: ${env.id})` : `@${name}`

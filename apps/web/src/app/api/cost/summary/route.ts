@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireServiceAuth } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  await requireServiceAuth(req)
   const { searchParams } = new URL(req.url)
   const days = Math.min(parseInt(searchParams.get('days') ?? '30', 10) || 30, 365)
 

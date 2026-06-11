@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
+import { parseBodyOrError } from '@/lib/validate'
+import { z } from 'zod'
+
+const PatchJobSchema = z.object({ archived: z.boolean().optional() })
 
 async function guard() {
   try { await requireAdmin() } catch {
@@ -24,11 +28,13 @@ export async function PATCH(
   { params }: { params: { id: string } },
 ) {
   const deny = await guard(); if (deny) return deny
-  const body = (await req.json()) as { archived?: boolean }
+  const parsed = await parseBodyOrError(req, PatchJobSchema)
+  if ('error' in parsed) return parsed.error
+  const { archived } = parsed.data
   const job = await prisma.backgroundJob.update({
     where: { id: params.id },
     data: {
-      archivedAt: body.archived ? new Date() : null,
+      archivedAt: archived ? new Date() : null,
       updatedAt: new Date(),
     },
   })

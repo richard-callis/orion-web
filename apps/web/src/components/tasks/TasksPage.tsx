@@ -305,28 +305,31 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   const createTask = async () => {
     if (!taskForm.title.trim()) return
     setSaving(true)
-    const r = await fetch('/api/tasks', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title: taskForm.title, description: taskForm.description || null,
-        priority: taskForm.priority, featureId: activeFeatureId, createdBy: 'admin',
-      }),
-    })
-    const task: Task = await r.json()
-    setTasks(prev => [task, ...prev])
-    // Bump feature task count
-    if (task.featureId) {
-      setEpics(prev => prev.map(e => ({
-        ...e,
-        features: e.features.map(f =>
-          f.id === task.featureId ? { ...f, _count: { tasks: (f._count?.tasks ?? 0) + 1 } } : f
-        ),
-      })))
+    try {
+      const r = await fetch('/api/tasks', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: taskForm.title, description: taskForm.description || null,
+          priority: taskForm.priority, featureId: activeFeatureId, createdBy: 'admin',
+        }),
+      })
+      const task: Task = await r.json()
+      setTasks(prev => [task, ...prev])
+      // Bump feature task count
+      if (task.featureId) {
+        setEpics(prev => prev.map(e => ({
+          ...e,
+          features: e.features.map(f =>
+            f.id === task.featureId ? { ...f, _count: { tasks: (f._count?.tasks ?? 0) + 1 } } : f
+          ),
+        })))
+      }
+      setTaskForm({ title: '', description: '', priority: 'medium' })
+      setTaskModal(false)
+      setPanel({ kind: 'task', task })
+    } finally {
+      setSaving(false)
     }
-    setTaskForm({ title: '', description: '', priority: 'medium' })
-    setTaskModal(false)
-    setSaving(false)
-    setPanel({ kind: 'task', task })
   }
 
   const saveTaskDetail = async () => {
@@ -360,17 +363,20 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   const createEpic = async () => {
     if (!epicForm.title.trim()) return
     setSaving(true)
-    const r = await fetch('/api/epics', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: epicForm.title, description: epicForm.description || null }),
-    })
-    const epic: Epic = await r.json()
-    setEpics(prev => [epic, ...prev])
-    setEpicForm({ title: '', description: '' })
-    setEpicModal(false)
-    setSaving(false)
-    setSelection({ kind: 'epic', epicId: epic.id })
-    setPanel({ kind: 'epic', epic })
+    try {
+      const r = await fetch('/api/epics', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: epicForm.title, description: epicForm.description || null }),
+      })
+      const epic: Epic = await r.json()
+      setEpics(prev => [epic, ...prev])
+      setEpicForm({ title: '', description: '' })
+      setEpicModal(false)
+      setSelection({ kind: 'epic', epicId: epic.id })
+      setPanel({ kind: 'epic', epic })
+    } finally {
+      setSaving(false)
+    }
   }
 
   // ── Feature CRUD ───────────────────────────────────────────────────────────
@@ -400,20 +406,23 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   const createFeature = async () => {
     if (!featureForm.title.trim()) return
     setSaving(true)
-    const r = await fetch('/api/features', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ epicId: featureForm.epicId, title: featureForm.title, description: featureForm.description || null }),
-    })
-    const feature: Feature = await r.json()
-    setEpics(prev => prev.map(e =>
-      e.id === featureForm.epicId ? { ...e, features: [...e.features, feature] } : e
-    ))
-    setFeatureForm({ title: '', description: '', epicId: '', epicTitle: '' })
-    setFeatureModal(null)
-    setSaving(false)
-    const parentEpic = epics.find(e => e.id === feature.epicId)!
-    setSelection({ kind: 'feature', epicId: feature.epicId, featureId: feature.id })
-    setPanel({ kind: 'feature', feature, epic: parentEpic })
+    try {
+      const r = await fetch('/api/features', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ epicId: featureForm.epicId, title: featureForm.title, description: featureForm.description || null }),
+      })
+      const feature: Feature = await r.json()
+      setEpics(prev => prev.map(e =>
+        e.id === featureForm.epicId ? { ...e, features: [...e.features, feature] } : e
+      ))
+      setFeatureForm({ title: '', description: '', epicId: '', epicTitle: '' })
+      setFeatureModal(null)
+      const parentEpic = epics.find(e => e.id === feature.epicId)!
+      setSelection({ kind: 'feature', epicId: feature.epicId, featureId: feature.id })
+      setPanel({ kind: 'feature', feature, epic: parentEpic })
+    } finally {
+      setSaving(false)
+    }
   }
 
   // ── Agent CRUD ─────────────────────────────────────────────────────────────

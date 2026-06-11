@@ -42,12 +42,11 @@ function fmt(n: number): string {
 function Sparkline({ agentId, days }: { agentId: string; days: Days }) {
   const [data, setData] = useState<number[]>([])
   useEffect(() => {
-    fetch(`/api/cost/summary?days=7`)
+    fetch(`/api/cost/summary?days=${days}`)
       .then(r => r.json())
       .then((s: Summary) => {
-        const agentRows = s.byDay.slice(-7)
-        // We just have global by-day here; use it as proxy sparkline
-        setData(agentRows.map(d => d.inputTokens + d.outputTokens))
+        // Use global by-day as a proxy sparkline, showing last 7 bars regardless of window
+        setData(s.byDay.slice(-7).map(d => d.inputTokens + d.outputTokens))
       })
       .catch(() => { /* ignore */ })
   }, [agentId, days])
