@@ -76,7 +76,7 @@ export async function checkAgentBudget(
  */
 export async function recordTokenUsage(
   agentId: string,
-  taskId: string,
+  taskId: string | null,
   inputTokens: number,
   outputTokens: number,
 ): Promise<void> {

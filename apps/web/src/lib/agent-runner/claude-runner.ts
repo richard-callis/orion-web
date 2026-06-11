@@ -47,7 +47,13 @@ export const claudeRunner: AgentRunner = {
         return
       }
 
-      const data = await res.json() as { text?: string; error?: string }
+      const data = await res.json() as {
+        text?: string
+        error?: string
+        inputTokens?: number
+        outputTokens?: number
+        usage?: { inputTokens?: number; outputTokens?: number; input_tokens?: number; output_tokens?: number }
+      }
 
       if (data.error) {
         yield { type: 'error', error: data.error }
@@ -56,6 +62,13 @@ export const claudeRunner: AgentRunner = {
 
       if (data.text) {
         yield { type: 'text', content: data.text }
+      }
+
+      // Emit token usage if the sidecar reported it (field names vary by sidecar version)
+      const inputTokens  = data.inputTokens  ?? data.usage?.inputTokens  ?? data.usage?.input_tokens  ?? 0
+      const outputTokens = data.outputTokens ?? data.usage?.outputTokens ?? data.usage?.output_tokens ?? 0
+      if (inputTokens > 0 || outputTokens > 0) {
+        yield { type: 'usage', inputTokens, outputTokens }
       }
 
       yield { type: 'done' }
