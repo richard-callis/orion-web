@@ -64,14 +64,15 @@ export default function SecurityDashboard() {
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('incidents')
 
-  const loadOverview = useCallback(async () => {
+  const loadOverview = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch('/api/monitoring/security/overview')
+      const res = await fetch('/api/monitoring/security/overview', { signal })
       if (!res.ok) throw new Error(`${res.status}`)
       const d = await res.json()
       setData(d)
       setError(null)
     } catch (e: unknown) {
+      if (e instanceof DOMException && e.name === 'AbortError') return
       setError(e instanceof Error ? e.message : 'Failed to load')
     } finally {
       setLoading(false)
@@ -79,9 +80,10 @@ export default function SecurityDashboard() {
   }, [])
 
   useEffect(() => {
-    loadOverview()
-    const interval = setInterval(loadOverview, 30_000)
-    return () => clearInterval(interval)
+    const controller = new AbortController()
+    loadOverview(controller.signal)
+    const interval = setInterval(() => loadOverview(controller.signal), 30_000)
+    return () => { clearInterval(interval); controller.abort() }
   }, [loadOverview])
 
   if (loading) {
@@ -127,7 +129,7 @@ export default function SecurityDashboard() {
               }`}
             >
               {t.label}
-              {t.badge ? (
+              {t.badge != null && t.badge > 0 ? (
                 <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
                   tab === t.key ? 'bg-white/20' : 'bg-bg-raised'
                 }`}>{t.badge}</span>

@@ -41,6 +41,19 @@ export function redactSensitive(input: string): string {
 }
 
 /**
+ * Redact key=value / key: value secret pairs from tool output before storing or
+ * displaying. Used by worker.ts and room-agents.ts — centralised here so the
+ * pattern stays consistent.
+ */
+const TOOL_RESULT_SECRET_PATTERN = /\b(token|password|secret|api_?key|bearer|credential|private_key)\s*[=:]\s*\S+/gi
+export function redactSecrets(content: string): string {
+  return content.replace(TOOL_RESULT_SECRET_PATTERN, (match) => {
+    const eqIdx = match.search(/[=:]/)
+    return match.slice(0, eqIdx + 1) + ' [REDACTED]'
+  })
+}
+
+/**
  * Wrap console.log to automatically redact sensitive data from all arguments.
  * Usage: const log = makeRedactedLog('[my-module]')
  */

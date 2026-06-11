@@ -200,7 +200,7 @@ export async function POST(req: NextRequest) {
     await prisma.securityEvent.create({
       data: {
         id,
-        environmentId: environmentId === 'host' ? null : environmentId,
+        environmentId: sourceHealthEnvId,
         type: normalized.type,
         source: normalized.source,
         severity: normalized.severity,

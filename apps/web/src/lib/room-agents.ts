@@ -25,6 +25,7 @@ import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, inval
 import { compactRoom, publishCompactionWarning, publishTokenUpdate } from './compaction'
 import { recordTokenUsage } from './token-budget'
 import { auditToolCall } from './security/audit-emitter'
+import { redactSecrets } from './redact'
 import { getPrompt } from './system-prompts'
 import type { AgentGateway } from './agent-gateway'
 import type { GatewayTool } from './agent-runner/types'
@@ -499,7 +500,7 @@ async function callOpenAIChat(
         // layer), not at execution. A jailbroken model emitting a tool name outside the
         // whitelist still executed it. Enforce at dispatch time.
         if (allowedTools && allowedTools.size > 0 && !allowedTools.has(tc.function.name)) {
-          result = `Permission denied: tool '${tc.function.name}' is not in this agent's allowed tool list`
+          result = `Permission denied: tool '${tc.function.name}' is not in this agent's allowed tool list. An admin can grant access under Admin → Agents → Tool Permissions.`
           if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'denied' })
         } else if (registryToolNames.has(tc.function.name)) {
           // Gate registry tools through checkToolPermission before execution.
@@ -508,7 +509,7 @@ async function callOpenAIChat(
           const agentIdForPerm = toolContext?.agentId ?? null
           const perm = await checkToolPermission(tc.function.name, agentIdForPerm, null)
           if (!perm.allowed) {
-            result = `Permission denied: ${perm.reason ?? `tool '${tc.function.name}' is not permitted for this agent`}`
+            result = `Permission denied: ${perm.reason ?? `tool '${tc.function.name}' is not permitted for this agent`}. An admin can grant access under Admin → Agents → Tool Permissions.`
             if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'denied' })
           } else {
           result = await executeRegisteredTool(tc.function.name, args, {
@@ -593,7 +594,7 @@ async function callOpenAIChat(
       console.log(`[room-agents] tool result: ${result}`)
 
       // Save as structured tool_call message and publish via SSE so it appears in real-time
-      const safeOutput = result.replace(/(?:token|secret|password|key)\s*[=:]\s*\S+/gi, (m) => m.split(/[=:]/)[0] + ': [REDACTED]')
+      const safeOutput = redactSecrets(result)
       const toolMsg = await prisma.chatMessage.create({
         data: {
           roomId:      toolContext!.roomId,
@@ -635,7 +636,10 @@ async function callOpenAIChat(
   tokensUsed = finalData.usage?.prompt_tokens ?? tokensUsed
   totalInputTokens  += finalData.usage?.prompt_tokens     ?? 0
   totalOutputTokens += finalData.usage?.completion_tokens ?? 0
-  return { reply: finalData.choices?.[0]?.message?.content?.trim() || null, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
+  const finalReply = finalData.choices?.[0]?.message?.content?.trim() || null
+  // Prepend a visible notice so the user knows the agent was cut off mid-work.
+  const cutoffNotice = `> ⚠️ **Tool round limit reached** (${MAX_TOOL_ROUNDS} rounds). The agent was cut off before completing all steps. Summary of progress so far:\n\n`
+  return { reply: finalReply ? cutoffNotice + finalReply : finalReply, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
 }
 
 /** Resolve a fallback Ollama base URL from configured ExternalModels */

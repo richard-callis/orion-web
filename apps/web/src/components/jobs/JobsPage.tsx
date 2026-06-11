@@ -281,6 +281,7 @@ function SchedulesTab() {
   const [triggering, setTriggering] = useState<string | null>(null)
   const [toggling, setToggling] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', agentId: '', cronExpr: '0 9 * * *', taskTitle: '', taskDesc: '', enabled: true })
@@ -290,7 +291,7 @@ function SchedulesTab() {
       const [sr, ar] = await Promise.all([fetch('/api/scheduled-tasks'), fetch('/api/agents')])
       if (sr.ok) setSchedules(await sr.json())
       if (ar.ok) { const d = await ar.json(); setAgents(Array.isArray(d) ? d : (d.agents ?? [])) }
-    } catch (e) { setError(String(e)) }
+    } catch (e) { setError(e instanceof Error ? e.message : 'Failed to load') }
     finally { setLoading(false) }
   }, [])
 
@@ -302,7 +303,7 @@ function SchedulesTab() {
       const res = await fetch('/api/scheduled-tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: form.name, agentId: form.agentId, cronExpr: form.cronExpr, taskTitle: form.taskTitle, taskDesc: form.taskDesc || undefined, enabled: form.enabled }) })
       if (!res.ok) { const d = await res.json(); setFormError(d.error ?? 'Failed'); return }
       setShowForm(false); setForm({ name: '', agentId: '', cronExpr: '0 9 * * *', taskTitle: '', taskDesc: '', enabled: true }); await load()
-    } catch (e) { setFormError(String(e)) }
+    } catch (e) { setFormError(e instanceof Error ? e.message : 'Request failed') }
   }
 
   async function handleToggle(s: ScheduledTask) {
@@ -320,7 +321,8 @@ function SchedulesTab() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this scheduled task?')) return
+    if (pendingDelete !== id) { setPendingDelete(id); return }
+    setPendingDelete(null)
     setDeleting(id); await fetch(`/api/scheduled-tasks/${id}`, { method: 'DELETE' }); await load(); setDeleting(null)
   }
 
@@ -387,7 +389,14 @@ function SchedulesTab() {
                   </td>
                   <td className="px-4 py-3"><div className="flex items-center gap-2">
                     <button onClick={() => handleTrigger(s.id)} disabled={triggering === s.id} title="Trigger now" className="p-1.5 text-text-secondary hover:text-accent hover:bg-accent/10 rounded transition-colors"><Play size={13} /></button>
-                    <button onClick={() => handleDelete(s.id)} disabled={deleting === s.id} title="Delete" className="p-1.5 text-text-secondary hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"><Trash2 size={13} /></button>
+                    {pendingDelete === s.id ? (
+                      <>
+                        <button onClick={() => handleDelete(s.id)} disabled={deleting === s.id} className="px-2 py-1 text-xs text-white bg-red-500 rounded hover:bg-red-600 transition-colors">Confirm</button>
+                        <button onClick={() => setPendingDelete(null)} className="px-2 py-1 text-xs text-text-secondary border border-border-subtle rounded hover:bg-bg-raised transition-colors">Cancel</button>
+                      </>
+                    ) : (
+                      <button onClick={() => handleDelete(s.id)} disabled={deleting === s.id} title="Delete" className="p-1.5 text-text-secondary hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"><Trash2 size={13} /></button>
+                    )}
                   </div></td>
                 </tr>
               ))}
@@ -411,6 +420,8 @@ function WebhooksTab() {
   const [form, setForm] = useState({ name: '', agentId: '', source: 'custom', taskTitle: '', taskDesc: '' })
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [pendingDeleteWebhook, setPendingDeleteWebhook] = useState<string | null>(null)
+  const [pendingRegen, setPendingRegen] = useState<string | null>(null)
 
   const loadTriggers = useCallback(async () => {
     const res = await fetch('/api/webhook-triggers')
@@ -436,7 +447,8 @@ function WebhooksTab() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this webhook trigger?')) return
+    if (pendingDeleteWebhook !== id) { setPendingDeleteWebhook(id); return }
+    setPendingDeleteWebhook(null)
     await fetch(`/api/webhook-triggers/${id}`, { method: 'DELETE' })
     setTriggers(prev => prev.filter(t => t.id !== id))
   }
@@ -447,7 +459,8 @@ function WebhooksTab() {
   }
 
   async function handleRegenSecret(id: string) {
-    if (!confirm('Regenerate the secret? The old secret will stop working immediately.')) return
+    if (pendingRegen !== id) { setPendingRegen(id); return }
+    setPendingRegen(null)
     const res = await fetch(`/api/webhook-triggers/${id}/regenerate-secret`, { method: 'POST' })
     if (res.ok) { const { secret } = await res.json(); setRevealedSecrets(prev => ({ ...prev, [id]: secret })) }
   }
@@ -521,7 +534,14 @@ function WebhooksTab() {
                         </button>
                       </td>
                       <td className="px-3 py-2.5 text-right" onClick={e => e.stopPropagation()}>
-                        <button onClick={() => handleDelete(trigger.id)} className="p-1 rounded hover:bg-status-error/20 text-text-muted hover:text-status-error transition-colors"><Trash2 size={14} /></button>
+                        {pendingDeleteWebhook === trigger.id ? (
+                          <div className="flex items-center gap-1 justify-end">
+                            <button onClick={() => handleDelete(trigger.id)} className="px-2 py-1 text-xs text-white bg-red-500 rounded hover:bg-red-600 transition-colors">Confirm</button>
+                            <button onClick={() => setPendingDeleteWebhook(null)} className="px-2 py-1 text-xs text-text-secondary border border-border-subtle rounded hover:bg-bg-raised transition-colors">Cancel</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => handleDelete(trigger.id)} className="p-1 rounded hover:bg-status-error/20 text-text-muted hover:text-status-error transition-colors"><Trash2 size={14} /></button>
+                        )}
                       </td>
                     </tr>
                     {expanded && (
@@ -542,9 +562,16 @@ function WebhooksTab() {
                                   <span className="flex-1 text-text-secondary">{revealedSecret ?? '••••••••••••••••••••••••••••••••'}</span>
                                   {revealedSecret && <CopyButton text={revealedSecret} />}
                                 </div>
-                                <button onClick={() => handleRegenSecret(trigger.id)} className="flex items-center gap-1 px-2 py-1.5 rounded border border-border-subtle text-xs text-text-secondary hover:bg-bg-raised hover:text-text-primary transition-colors">
-                                  <RefreshCw size={12} />{revealedSecret ? 'Regenerate' : 'Reveal / Regenerate'}
-                                </button>
+                                {pendingRegen === trigger.id ? (
+                                  <div className="flex items-center gap-1">
+                                    <button onClick={() => handleRegenSecret(trigger.id)} className="flex items-center gap-1 px-2 py-1.5 rounded text-xs text-white bg-red-500 hover:bg-red-600 transition-colors">Confirm regen</button>
+                                    <button onClick={() => setPendingRegen(null)} className="px-2 py-1.5 rounded border border-border-subtle text-xs text-text-secondary hover:bg-bg-raised transition-colors">Cancel</button>
+                                  </div>
+                                ) : (
+                                  <button onClick={() => handleRegenSecret(trigger.id)} className="flex items-center gap-1 px-2 py-1.5 rounded border border-border-subtle text-xs text-text-secondary hover:bg-bg-raised hover:text-text-primary transition-colors">
+                                    <RefreshCw size={12} />{revealedSecret ? 'Regenerate' : 'Reveal / Regenerate'}
+                                  </button>
+                                )}
                               </div>
                             </div>
                             <div>
