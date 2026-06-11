@@ -118,7 +118,8 @@ export const authOptions: NextAuthOptions = {
             }
           }
 
-          // MFA verified — mark as such on the user object
+          // MFA verified — update lastSeen and return full user
+          await prisma.user.update({ where: { id: user.id }, data: { lastSeen: new Date() } })
           return {
             id: user.id,
             name: user.name,
@@ -161,10 +162,13 @@ export const authOptions: NextAuthOptions = {
         // by clearing sub. Middleware treats token without sub as unauthenticated.
         const dbUser = await prisma.user.findUnique({
           where: { id: token.sub },
-          select: { id: true, active: true },
+          select: { id: true, active: true, role: true },
         })
         if (!dbUser || !dbUser.active) {
           token.sub = undefined
+        } else {
+          // Re-sync role from DB so demoted admins lose access immediately
+          token.role = dbUser.role
         }
         // MFA verification expires after 15 minutes
         if (token.mfaVerifiedAt && token.mfaVerified) {

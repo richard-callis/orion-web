@@ -225,8 +225,17 @@ export async function getWebhookSecret(
  * idempotency (backed by SHA-256 for all sources post this PR) is the primary
  * replay defence. For host-agent, Vector signs body only by default.
  */
+/**
+ * Returns true only when BOTH conditions hold:
+ *   1. NODE_ENV is not 'production'
+ *   2. WEBHOOK_DEV_MODE=true is explicitly set
+ *
+ * Requiring an explicit opt-in prevents staging/preview deployments that
+ * forget to set NODE_ENV=production from silently accepting unauthenticated
+ * webhook payloads. In production neither condition can ever be true.
+ */
 export function shouldAcceptUnauthenticated(): boolean {
-  return process.env.NODE_ENV !== 'production'
+  return process.env.NODE_ENV !== 'production' && process.env.WEBHOOK_DEV_MODE === 'true'
 }
 
 /**

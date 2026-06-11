@@ -271,7 +271,12 @@ export async function middleware(req: NextRequest) {
     const isNotesDelete    = req.method === 'DELETE' && pathname.startsWith('/api/notes')
     const isBugsMutate     = ['DELETE','PUT','POST','PATCH'].includes(req.method) && pathname.startsWith('/api/bugs')
     const isAdminMutate    = ['DELETE','PUT','POST','PATCH'].includes(req.method) && pathname.startsWith('/api/admin')
-    if (isNotesDelete || isBugsMutate || isAdminMutate) {
+    // Gateway must not create tasks (POST) — prevents a leaked token from
+    // creating tasks assigned to arbitrary agents. The worker uses direct DB
+    // access; only human sessions should create tasks via the API.
+    const isTasksCreate    = req.method === 'POST' && pathname === '/api/tasks'
+    const isTasksDelete    = req.method === 'DELETE' && pathname.startsWith('/api/tasks')
+    if (isNotesDelete || isBugsMutate || isAdminMutate || isTasksCreate || isTasksDelete) {
       // fall through to session auth
     } else {
       return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
