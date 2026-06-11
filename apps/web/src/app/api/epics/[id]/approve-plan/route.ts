@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db'
 import { requireServiceAuth, assertCanModify } from '@/lib/auth'
-import { computeWaves } from '../../../features/[id]/approve-plan/route'
+import { computeWaves } from '@/lib/plan-waves'
 
 /**
  * POST /api/epics/:id/approve-plan
