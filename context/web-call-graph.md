@@ -43,6 +43,11 @@ getCurrentUser()                              → AppUser | null
 
 requireAdmin()                                → AppUser (throws if not admin)
   └─ getCurrentUser() → throws "Unauthorized" if null or role != 'admin'
+
+requireServiceAuth(req)                       → AppUser | null (throws if no auth)
+  ├─ getCurrentUser()                         ← check session first
+  ├─ if no session: check Authorization header for Bearer ORION_GATEWAY_TOKEN
+  └─ returns AppUser (session) or null (gateway) or throws "Unauthorized"
 ```
 
 **DB models touched**: `User`, `OIDCProvider`

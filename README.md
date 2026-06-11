@@ -92,7 +92,7 @@ GitHub
 
 | Component | Role |
 |---|---|
-| **ORION Web** | Next.js 15 dashboard + API + AI agent orchestrator |
+| **ORION Web** | Next.js 14 dashboard + API + AI agent orchestrator (Prisma ORM, SIEM pipeline, Warden agent, SSRF guard, Zod validation) |
 | **ORION Gateway** | MCP server deployed inside each managed environment |
 | **Gitea** | Self-hosted Git — one repo per registered environment |
 | **Vault** | Secrets store with per-environment isolation |
@@ -173,7 +173,7 @@ In the ORION UI, go to **Environments → Add Environment** and select:
 ```
 orion-web/
 ├── apps/
-│   ├── web/                    # ORION dashboard (Next.js 15 + Prisma + TypeScript)
+│   ├── web/                    # ORION dashboard (Next.js 14 + Prisma + TypeScript)
 │   │   └── src/
 │   │       ├── app/            # Next.js app router (API routes + pages)
 │   │       ├── components/     # UI components (security dashboard, infrastructure, etc.)
