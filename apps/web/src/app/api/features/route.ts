@@ -25,27 +25,31 @@ export async function POST(req: NextRequest) {
 
   const { data } = result
 
-  const feature = await prisma.feature.create({
-    data: {
-      title:       data.title,
-      description: data.description ?? null,
-      status:      data.status,
-      createdBy:   caller?.id ?? 'gateway',
-      ...(data.epicId ? { epicId: data.epicId } : {}),
-    } as any,
-    include: { _count: { select: { tasks: true } } },
-  })
+  const [feature, room] = await prisma.$transaction(async (tx) => {
+    const f = await tx.feature.create({
+      data: {
+        title:       data.title,
+        description: data.description ?? null,
+        status:      data.status,
+        createdBy:   caller?.id ?? 'gateway',
+        ...(data.epicId ? { epicId: data.epicId } : {}),
+      } as any,
+      include: { _count: { select: { tasks: true } } },
+    })
 
-  // Auto-create a feature chat room and add any already-assigned agents
-  const room = await prisma.chatRoom.create({
-    data: {
-      name: feature.title,
-      type: 'feature',
-      featureId: feature.id,
-      ...(data.epicId ? { epicId: data.epicId } : {}),
-      createdBy: caller?.id ?? 'system',
-      ...(caller ? { members: { create: [{ userId: caller.id, role: 'lead' }] } } : {}),
-    },
+    // Auto-create a feature chat room
+    const r = await tx.chatRoom.create({
+      data: {
+        name: f.title,
+        type: 'feature',
+        featureId: f.id,
+        ...(data.epicId ? { epicId: data.epicId } : {}),
+        createdBy: caller?.id ?? 'system',
+        ...(caller ? { members: { create: [{ userId: caller.id, role: 'lead' }] } } : {}),
+      },
+    })
+
+    return [f, r] as const
   })
 
   // Add any agents already assigned to tasks in this feature

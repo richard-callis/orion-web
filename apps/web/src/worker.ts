@@ -1188,6 +1188,7 @@ async function runWatchers() {
 
   const watchers = await prisma.agent.findMany({
     where: { type: { not: 'human' } },
+    take: 200,
   })
 
   for (const agent of watchers) {
