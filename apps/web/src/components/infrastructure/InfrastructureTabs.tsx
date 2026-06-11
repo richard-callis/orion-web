@@ -1,14 +1,14 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { RefreshCw, ServerCrash, Server, Database, KeyRound, HardDrive, FileText, GitBranch, Plus, X, Trash2, ChevronDown, ChevronUp, Pencil } from 'lucide-react'
+import { RefreshCw, ServerCrash, Server, Database, KeyRound, HardDrive, FileText, GitBranch, Bell, Plus, X, Trash2, ChevronDown, ChevronUp, Pencil } from 'lucide-react'
 import { IngressPage } from '@/components/ingress/IngressPage'
 import { GitOpsPage } from '@/components/gitops/GitOpsPage'
 import { NodeGrid } from '@/components/infrastructure/NodeGrid'
 import { PodTable } from '@/components/infrastructure/PodTable'
 import type { CachedNode, CachedPod } from '@/lib/k8s'
 
-type InfraTab = 'overview' | 'ingress' | 'storage' | 'secrets' | 'backups' | 'logs' | 'gitops'
+type InfraTab = 'overview' | 'ingress' | 'storage' | 'secrets' | 'backups' | 'logs' | 'gitops' | 'alerts'
 
 const tabs: { key: InfraTab; label: string; icon: typeof Server }[] = [
   { key: 'overview', label: 'Overview', icon: Server },
@@ -18,6 +18,7 @@ const tabs: { key: InfraTab; label: string; icon: typeof Server }[] = [
   { key: 'backups', label: 'Backups', icon: FileText },
   { key: 'logs', label: 'Logs', icon: FileText },
   { key: 'gitops', label: 'GitOps', icon: GitBranch },
+  { key: 'alerts', label: 'Alerts', icon: Bell },
 ]
 
 interface Environment {
@@ -884,6 +885,62 @@ function LogsTab() {
   )
 }
 
+// ── Alerts tab ────────────────────────────────────────────────────────────────
+
+function AlertsTab() {
+  const [events, setEvents] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch('/api/k8s/events?type=Warning&limit=100')
+      .then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`))
+      .then(data => setEvents(Array.isArray(data) ? data : (data.items ?? [])))
+      .catch(e => setError(String(e)))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div className="p-6 text-sm text-text-muted">Loading alerts…</div>
+  if (error) return <div className="p-6 text-sm text-status-error">Failed to load alerts: {error}</div>
+
+  return (
+    <div className="space-y-4 p-4">
+      <p className="text-sm text-text-muted">Showing last {events.length} Warning events cluster-wide</p>
+      <div className="rounded-lg border border-border-subtle overflow-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-bg-raised border-b border-border-subtle">
+            <tr>
+              <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Time</th>
+              <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Namespace</th>
+              <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Object</th>
+              <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Reason</th>
+              <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">Message</th>
+              <th className="px-3 py-2 text-left text-xs font-medium text-text-muted w-12">Count</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border-subtle">
+            {events.map((e, i) => (
+              <tr key={i} className="hover:bg-bg-raised">
+                <td className="px-3 py-2 text-xs font-mono text-text-muted whitespace-nowrap">
+                  {e.lastTimestamp ? new Date(e.lastTimestamp).toLocaleString() : '—'}
+                </td>
+                <td className="px-3 py-2 text-xs text-text-secondary">{e.metadata?.namespace}</td>
+                <td className="px-3 py-2 text-xs font-mono text-text-primary max-w-[160px] truncate">{e.involvedObject?.name}</td>
+                <td className="px-3 py-2 text-xs text-status-warning font-medium">{e.reason}</td>
+                <td className="px-3 py-2 text-xs text-text-secondary max-w-[300px] truncate" title={e.message}>{e.message}</td>
+                <td className="px-3 py-2 text-xs font-mono text-text-muted">{e.count}</td>
+              </tr>
+            ))}
+            {!events.length && (
+              <tr><td colSpan={6} className="px-3 py-8 text-center text-status-healthy text-sm">No Warning events — cluster looks healthy</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export function InfrastructureTabs() {
@@ -1083,6 +1140,8 @@ export function InfrastructureTabs() {
         {activeTab === 'logs' && <LogsTab />}
 
         {activeTab === 'gitops' && <GitOpsPage />}
+
+        {activeTab === 'alerts' && <AlertsTab />}
       </div>
     </div>
   )
