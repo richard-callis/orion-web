@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "node server.ts",
-    "build": "next build && npm run build:worker",
+    "build": "prisma generate && next build && npm run build:worker",
     "build:worker": "esbuild src/worker.ts --bundle --platform=node --outfile=worker.js --external:@prisma/client --external:@anthropic-ai/claude-code --external:@anthropic-ai/sdk --log-level=warning",
     "start": "NODE_ENV=production node server.js",
     "lint": "next lint",
