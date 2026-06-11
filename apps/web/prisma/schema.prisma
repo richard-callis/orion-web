@@ -1815,6 +1815,25 @@ model WebhookTrigger {
   @@index([agentId])
 }
 
+// ── Job Run History ────────────────────────────────────────────────────────────
+// Records every execution of a ScheduledTask, WebhookTrigger, or system job.
+
+model JobRun {
+  id           String    @id @default(cuid())
+  source       String    // "schedule" | "webhook" | "system"
+  sourceId     String    // ScheduledTask.id, WebhookTrigger.id, or system job key
+  sourceName   String
+  agentId      String?
+  taskId       String?
+  status       String    @default("running") // running | completed | failed
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  errorMessage String?
+
+  @@index([source, startedAt])
+  @@index([sourceId, startedAt])
+}
+
 // ── Notification Channels ──────────────────────────────────────────────────────
 // Slack / Discord / generic webhook endpoints that receive notifications for
 // task lifecycle events (completed, failed, plan approval needed).
