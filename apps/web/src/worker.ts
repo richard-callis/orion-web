@@ -215,19 +215,25 @@ async function recoverStuckTasks() {
       console.log(`[recovery] Skipping task ${task.id} — retry scheduled at ${task.nextRetryAt.toISOString()}`)
       continue
     }
+    const retries = ((task.metadata as any)?.recoveryCount ?? 0) as number
+    const MAX_RECOVERY = 2
+    const newStatus = retries < MAX_RECOVERY ? 'open' : 'failed'
+    const newMeta = { ...(task.metadata as object ?? {}), recoveryCount: retries + 1 }
     await prisma.task.update({
       where: { id: task.id },
-      data: { status: 'failed' }
+      data: { status: newStatus, assignedAgent: newStatus === 'open' ? task.assignedAgent : task.assignedAgent, metadata: newMeta as any }
     })
     await prisma.taskEvent.create({
       data: {
         taskId: task.id,
         eventType: 'system',
-        content: `Task recovered from crashed worker after ${stuckMinutes}min inactivity — marked failed for safety. Use orion_reopen_task to retry if appropriate.`,
+        content: newStatus === 'open'
+          ? `Task re-queued after crashed worker (${stuckMinutes}min inactivity). Recovery attempt ${retries + 1}/${MAX_RECOVERY}.`
+          : `Task failed after ${MAX_RECOVERY} recovery attempts. Use orion_reopen_task to retry manually.`,
         agentId: null
       }
     })
-    console.log(`[recovery] Recovered stuck task ${task.id} — marked failed (${stuckMinutes}min threshold)`)
+    console.log(`[recovery] Recovered stuck task ${task.id} — ${newStatus} (attempt ${retries + 1}, threshold ${stuckMinutes}min)`)
   }
   if (stuck.length > 0) console.log(`[recovery] Recovered ${stuck.length} stuck task(s)`)
 }
