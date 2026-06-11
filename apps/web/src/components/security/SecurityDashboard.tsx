@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Shield, AlertTriangle, Activity, Zap, CheckCircle2, Loader2 } from 'lucide-react'
+import { Shield, AlertTriangle, Activity, Zap, CheckCircle2, Loader2, Info } from 'lucide-react'
 import Link from 'next/link'
 import AlertFeed from './AlertFeed'
 import FlowTable from './FlowTable'
@@ -145,6 +145,24 @@ export default function SecurityDashboard() {
             <StatCard icon={CheckCircle2} label="Blocks" value={data?.blockCount ?? 0} color="text-blue-400" />
             <StatCard icon={Zap} label="Anomalies" value={data?.anomalyCount ?? 0} color="text-purple-400" />
           </div>
+
+          {!data?.recentAlerts?.length && !data?.activeIncidents && (
+            <div className="rounded-lg border border-border-subtle bg-bg-surface px-5 py-6 flex gap-4 items-start">
+              <Info size={18} className="text-accent shrink-0 mt-0.5" />
+              <div className="space-y-2 text-sm">
+                <div className="font-medium text-text-primary">No security signals yet</div>
+                <p className="text-xs text-text-muted leading-relaxed">
+                  To start monitoring, connect external sources (CrowdSec, Wazuh, ELK, ntopng) or add K8s cluster environments.
+                  The correlator automatically groups raw events into incidents.
+                </p>
+                <ol className="text-xs text-text-muted space-y-1 list-decimal list-inside">
+                  <li>Go to the <strong className="text-text-primary">Settings</strong> tab and seed default correlation rules</li>
+                  <li>Configure source URLs or connect a cluster environment in Infrastructure</li>
+                  <li>Optionally inject demo events to test the pipeline end-to-end</li>
+                </ol>
+              </div>
+            </div>
+          )}
 
           {data?.recentIncidents?.length ? (
             <div className="bg-bg-surface border border-border-subtle rounded-xl">
