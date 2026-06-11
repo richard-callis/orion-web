@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db'
 import { requireServiceAuth } from '@/lib/auth'
 
 export async function POST(req: NextRequest) {
-  await requireServiceAuth(req)
+  try { await requireServiceAuth(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   try {
     const body = await req.json()
 
@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  await requireServiceAuth(req)
+  try { await requireServiceAuth(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   try {
     const { searchParams } = new URL(req.url)
     const actorId = searchParams.get('actorId')
