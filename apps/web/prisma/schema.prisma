@@ -97,12 +97,14 @@ model AgentTokenUsage {
   agentId      String
   agent        Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
   taskId       String?
+  modelId      String?  // e.g. "claude-sonnet-4-6", "gpt-4o", "llama3" — null for legacy rows
   inputTokens  Int      @default(0)
   outputTokens Int      @default(0)
   recordedAt   DateTime @default(now())
 
   @@index([agentId, recordedAt])
   @@index([taskId])
+  @@index([modelId])
 }
 
 model Environment {

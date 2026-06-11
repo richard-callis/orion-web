@@ -105,7 +105,14 @@ export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: 
 
   if (alerts.length === 0) {
     return (
-      <div className="p-8 text-center text-text-muted text-sm">No alerts.</div>
+      <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+        <Shield size={32} className="text-text-muted/40" />
+        <p className="text-sm font-medium text-text-secondary">No security alerts</p>
+        <p className="text-xs text-text-muted max-w-xs">
+          ORION is listening for events from CrowdSec, Falco, ntopng, and Wazuh.
+          Alerts will appear here in real time.
+        </p>
+      </div>
     )
   }
 

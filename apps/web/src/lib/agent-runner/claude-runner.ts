@@ -26,12 +26,23 @@ export const claudeRunner: AgentRunner = {
       taskPlan:        ctx.taskPlan ? `\nImplementation plan:\n${ctx.taskPlan}` : '',
     })
 
+    // Inject completed checkpoint steps into the prompt so the sidecar (Claude Code CLI)
+    // doesn't re-execute tool calls that already succeeded in a prior run.
+    let fullPrompt = taskPrompt
+    if (ctx.checkpoints && ctx.checkpoints.size > 0) {
+      const steps = Array.from(ctx.checkpoints.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([step, cp]) => `Step ${step} [${cp.toolName}]: ${cp.result}`)
+        .join('\n')
+      fullPrompt += `\n\n---\nThe following tool steps were already completed in a previous run. Do not repeat them:\n${steps}\n---`
+    }
+
     try {
       const res = await fetch(`${CLAUDE_URL}/run/collect`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt:       taskPrompt,
+          prompt:       fullPrompt,
           systemPrompt: ctx.systemPrompt,
           model:        modelName,
           agentId:      ctx.agentId,
