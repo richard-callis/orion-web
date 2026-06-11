@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 function maskUrl(url: string): string {
   if (url.length <= 4) return '****'
@@ -7,8 +8,10 @@ function maskUrl(url: string): string {
 }
 
 export async function GET() {
+  await requireAdmin()
   const channels = await prisma.notificationChannel.findMany({
     orderBy: { createdAt: 'desc' },
+    take: 200,
   })
   return NextResponse.json(
     channels.map(c => ({ ...c, webhookUrl: maskUrl(c.webhookUrl) }))
@@ -16,6 +19,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  await requireAdmin()
   const body = await req.json() as {
     name: string
     type: string
