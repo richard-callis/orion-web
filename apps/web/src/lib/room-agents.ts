@@ -635,7 +635,10 @@ async function callOpenAIChat(
   tokensUsed = finalData.usage?.prompt_tokens ?? tokensUsed
   totalInputTokens  += finalData.usage?.prompt_tokens     ?? 0
   totalOutputTokens += finalData.usage?.completion_tokens ?? 0
-  return { reply: finalData.choices?.[0]?.message?.content?.trim() || null, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
+  const finalReply = finalData.choices?.[0]?.message?.content?.trim() || null
+  // Prepend a visible notice so the user knows the agent was cut off mid-work.
+  const cutoffNotice = `> ⚠️ **Tool round limit reached** (${MAX_TOOL_ROUNDS} rounds). The agent was cut off before completing all steps. Summary of progress so far:\n\n`
+  return { reply: finalReply ? cutoffNotice + finalReply : finalReply, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
 }
 
 /** Resolve a fallback Ollama base URL from configured ExternalModels */

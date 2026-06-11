@@ -1441,7 +1441,10 @@ async function escalateStalePendingValidation(): Promise<void> {
       human
         ? prisma.task.update({
             where: { id: t.id },
-            data: { metadata: { ...(t.metadata as object ?? {}), approvalEscalatedAt: new Date().toISOString() } as object },
+            data: {
+              assignedUserId: human.id,
+              metadata: { ...(t.metadata as object ?? {}), approvalEscalatedAt: new Date().toISOString() } as object,
+            },
           }).catch(() => {})
         : Promise.resolve(),
     ])
@@ -1600,14 +1603,22 @@ async function main() {
   // Daily scheduled scan — once a day at 02:00 server time. Implemented as
   // a guard inside an hourly tick so we don't need a separate scheduler
   // library and the timing self-heals across worker restarts.
-  let lastDailyScanDate: string | null = null
+  // lastDailyScanDate is persisted to DB so a restart between 02:00-03:00
+  // doesn't re-run the scan, and a restart that spans 02:00 doesn't skip it.
   setInterval(() => {
     const now = new Date()
     const dateKey = now.toISOString().slice(0, 10)
-    if (now.getHours() === 2 && lastDailyScanDate !== dateKey) {
-      lastDailyScanDate = dateKey
-      runDailyScan().catch(e => err(`Daily vuln scan failed: ${e}`))
-    }
+    if (now.getHours() !== 2) return
+    prisma.systemSetting.findUnique({ where: { key: 'worker.lastDailyScanDate' } })
+      .then(row => {
+        if (row?.value === dateKey) return
+        return prisma.systemSetting.upsert({
+          where: { key: 'worker.lastDailyScanDate' },
+          update: { value: dateKey },
+          create: { key: 'worker.lastDailyScanDate', value: dateKey },
+        }).then(() => runDailyScan().catch(e => err(`Daily vuln scan failed: ${e}`)))
+      })
+      .catch(e => err(`Daily scan guard failed: ${e}`))
   }, 60 * 60 * 1000)
 
   // Goal heartbeat — every 5 min, re-trigger agents in rooms whose active goal
