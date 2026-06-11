@@ -14,11 +14,15 @@ async function getOverviewData() {
     prisma.oIDCProvider.findFirst(),
   ])
 
-  return { userCount, modelCount, recentAudit, oidcProvider }
+  const uniqueIds = [...new Set(recentAudit.map((e: any) => e.userId).filter(Boolean) as string[])]
+  const users = await prisma.user.findMany({ where: { id: { in: uniqueIds } }, select: { id: true, username: true } })
+  const userMap = Object.fromEntries(users.map(u => [u.id, u.username]))
+
+  return { userCount, modelCount, recentAudit, oidcProvider, userMap }
 }
 
 export default async function AdminOverviewPage() {
-  const { userCount, modelCount, recentAudit, oidcProvider } = await getOverviewData()
+  const { userCount, modelCount, recentAudit, oidcProvider, userMap } = await getOverviewData()
   const h = headers()
   const ssoActive = !!h.get('x-authentik-username')
 
@@ -58,7 +62,7 @@ export default async function AdminOverviewPage() {
                 <span className="text-text-muted font-mono text-xs w-40 flex-shrink-0">
                   {new Date(entry.createdAt).toLocaleString()}
                 </span>
-                <span className="text-accent text-xs w-28 flex-shrink-0 truncate">{entry.userId}</span>
+                <span className="text-accent text-xs w-28 flex-shrink-0 truncate">{userMap[entry.userId] ?? entry.userId?.slice(0, 8) ?? '—'}</span>
                 <span className="text-status-warning text-xs w-24 flex-shrink-0">{entry.action}</span>
                 <span className="text-text-secondary truncate">{entry.target}</span>
               </div>

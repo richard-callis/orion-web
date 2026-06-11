@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireServiceAuth } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,9 +11,10 @@ export const dynamic = 'force-dynamic'
  * calendar month, and a 7-day sparkline.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  await requireServiceAuth(req)
   const agent = await prisma.agent.findUnique({
     where: { id: params.id },
     select: { tokenBudgetDay: true, tokenBudgetMonth: true },

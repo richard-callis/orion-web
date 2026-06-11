@@ -318,8 +318,11 @@ model FederatedDispatch {
   dispatchedAt   DateTime  @default(now())
   acknowledgedAt DateTime?
   completedAt    DateTime?
+  lastPolledAt   DateTime?
+  failCount      Int       @default(0)
 
   @@index([targetEnvId])
+  @@index([status])
 }
 
 model TaskEvent {
