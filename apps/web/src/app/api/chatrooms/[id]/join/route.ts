@@ -25,9 +25,8 @@ export async function POST(
   const room = await prisma.chatRoom.findUnique({ where: { id } })
   if (!room) return NextResponse.json({ error: 'Chat room not found' }, { status: 404 })
 
-  const role = body.role ? String(body.role) : 'member'
   await prisma.chatRoomMember.create({
-    data: { roomId: id, userId, agentId, role },
+    data: { roomId: id, userId, agentId, role: 'member' },
   })
 
   const name = agentId ? `Agent ${agentId}` : session?.user?.username ?? userId
