@@ -2,7 +2,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
-import { Plus, X, Trash2, ChevronRight, Flag, Menu, Terminal, CheckCircle2, XCircle, Play, MessageSquare, ChevronDown, ChevronUp, Send, Loader2, User } from 'lucide-react'
+import { Plus, X, Trash2, ChevronRight, Flag, Menu, Terminal, CheckCircle2, XCircle, Play, MessageSquare, ChevronDown, ChevronUp, Send, Loader2, User, Lock, AlertTriangle, Layers } from 'lucide-react'
 import type { Agent, Task, Feature, Epic, SelectionState, PlanTarget, Bug } from '@/types/tasks'
 import { BugManager } from './BugManager'
 import { KanbanBoard } from '../ui/KanbanBoard'
@@ -62,6 +62,18 @@ type RightPanel =
   | { kind: 'feature'; feature: Feature; epic: Epic }
 
 interface CreateTaskForm { title: string; description: string; priority: string }
+
+const RISK_KEYWORDS: { pattern: RegExp; hint: string }[] = [
+  { pattern: /\b(delete|drop|truncate|destroy|wipe|purge)\b/i, hint: 'Destructive operation — make sure a backup or rollback plan exists.' },
+  { pattern: /\b(production|prod|live)\b/i, hint: 'Targets production — verify with a staging environment first.' },
+  { pattern: /\b(password|secret|token|credential|api.?key)\b/i, hint: 'Involves credentials — avoid hard-coding; use env vars or secrets manager.' },
+  { pattern: /\b(migrate|migration|schema change|alter table)\b/i, hint: 'Database migration — check for zero-downtime path and rollback script.' },
+  { pattern: /\b(public|expose|open|unauthenticated)\b/i, hint: 'May expose data publicly — confirm auth requirements.' },
+]
+
+function getRiskHints(text: string): string[] {
+  return RISK_KEYWORDS.filter(r => r.pattern.test(text)).map(r => r.hint)
+}
 interface CreateEpicForm { title: string; description: string }
 interface CreateFeatureForm { title: string; description: string; epicId: string; epicTitle: string }
 
@@ -682,6 +694,14 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
                       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${p.dot}`} />
                       <span className={`text-[10px] ${p.color}`}>{p.label}</span>
                       <div className="ml-auto flex items-center gap-1">
+                        {task.wave != null && task.wave > 0 && (
+                          <span className="text-[10px] text-text-muted" title={`Wave ${task.wave}`}>W{task.wave}</span>
+                        )}
+                        {(task.dependsOn?.length ?? 0) > 0 && task.status === 'pending' && (
+                          <span className="flex items-center gap-0.5 text-[10px] text-amber-400" title={`Blocked by ${task.dependsOn!.length} task(s)`}>
+                            <Lock size={9} />{task.dependsOn!.length}
+                          </span>
+                        )}
                         {task.plan && <span className="text-[10px] text-accent">has plan</span>}
                         {task.agent && (() => {
                           const idx = agents.findIndex(a => a.id === task.agent!.id)
@@ -864,6 +884,32 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
                       })}
                     </div>
                   </div>
+                  {((panel.task.dependsOn?.length ?? 0) > 0 || panel.task.wave != null) && (
+                    <div>
+                      <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block flex items-center gap-1">
+                        <Layers size={10} /> Dependencies
+                      </label>
+                      {panel.task.wave != null && (
+                        <p className="text-[10px] text-text-muted mb-1">Wave {panel.task.wave}</p>
+                      )}
+                      {(panel.task.dependsOn?.length ?? 0) > 0 && (
+                        <div className="space-y-1">
+                          {panel.task.dependsOn!.map(depId => {
+                            const dep = tasks.find(t => t.id === depId)
+                            return dep ? (
+                              <div key={depId} className="flex items-center gap-1.5 text-[10px] text-text-muted bg-bg-card rounded px-2 py-1">
+                                {dep.status === 'done' ? <CheckCircle2 size={10} className="text-emerald-400" /> : <Lock size={10} className="text-amber-400" />}
+                                <span className="flex-1 truncate">{dep.title}</span>
+                                <span className="text-text-muted/60">{dep.status}</span>
+                              </div>
+                            ) : (
+                              <div key={depId} className="text-[10px] text-text-muted/50 px-2 py-1">{depId}</div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div>
                     <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
                     <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} onBlur={saveTaskDetail} rows={4}
@@ -945,6 +991,11 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
               onKeyDown={e => e.key === 'Enter' && !e.shiftKey && createTask()}
               placeholder="What needs to be done?"
               className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent" />
+            {getRiskHints(`${taskForm.title} ${taskForm.description}`).map((hint, i) => (
+              <div key={i} className="flex items-start gap-1.5 mt-1.5 text-[10px] text-amber-400 bg-amber-400/10 rounded px-2 py-1.5">
+                <AlertTriangle size={10} className="flex-shrink-0 mt-0.5" />{hint}
+              </div>
+            ))}
           </div>
           <div>
             <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
