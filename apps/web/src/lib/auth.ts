@@ -26,11 +26,10 @@ export type MfaLoginResult =
   | { status: 'success'; user: AppUser }
   | { status: 'error'; message: string }
 
-// SOC2: [M-002] Use __Secure- cookie prefix in production so the browser enforces
-// HTTPS transport independent of the Set-Cookie secure flag (defence in depth).
-// Must stay in sync with the cookieName passed to getToken() in middleware.ts.
+import { SESSION_COOKIE_NAME } from './auth-constants'
+export { SESSION_COOKIE_NAME }
+
 const IS_SECURE = process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https'
-export const SESSION_COOKIE_NAME = IS_SECURE ? '__Secure-next-auth.session-token' : 'next-auth.session-token'
 
 export const authOptions: NextAuthOptions = {
   session: { strategy: 'jwt' },
