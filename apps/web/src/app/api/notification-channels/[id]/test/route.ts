@@ -4,9 +4,16 @@ import { requireAdmin } from '@/lib/auth'
 
 function isPrivateUrl(url: string): boolean {
   try {
-    const { hostname } = new URL(url)
-    if (hostname === 'localhost') return true
-    const privatePatterns = [/^127\./, /^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./, /^169\.254\./, /^::1$/, /^fc00:/i, /^fe80:/i]
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true
+    const { hostname } = parsed
+    if (hostname === 'localhost' || hostname === '0.0.0.0') return true
+    const privatePatterns = [
+      /^127\./, /^10\./, /^192\.168\./,
+      /^172\.(1[6-9]|2\d|3[01])\./,
+      /^169\.254\./,
+      /^::1$/, /^::ffff:/i, /^fc00:/i, /^fe80:/i,
+    ]
     return privatePatterns.some(p => p.test(hostname))
   } catch { return true }
 }
