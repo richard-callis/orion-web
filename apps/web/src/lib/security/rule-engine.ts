@@ -602,6 +602,10 @@ async function runVolumeSumRule(
 
   // Build a safe JSON path for Postgres: "rawEvent"->'field' or "rawEvent"->'parent'->>'child'
   const pathParts = params.jsonPath.split('.')
+  // Validate each path segment to prevent SQL injection via $queryRawUnsafe
+  if (pathParts.some(p => !/^[a-zA-Z0-9_]+$/.test(p))) {
+    throw new Error('Invalid jsonPath: segments must be alphanumeric/underscore only')
+  }
   let jsonExtract: string
   if (pathParts.length === 1) {
     jsonExtract = `("rawEvent"->>'${pathParts[0]}')`

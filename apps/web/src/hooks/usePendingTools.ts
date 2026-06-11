@@ -33,8 +33,8 @@ export function usePendingTools(intervalMs = 30_000) {
   const fetch_ = useCallback(async () => {
     try {
       const [toolData, approvalData] = await Promise.all([
-        fetch('/api/tools/pending').then(r => r.json()) as Promise<PendingTool[]>,
-        fetch('/api/tool-approvals').then(r => r.json()) as Promise<ApprovalRequest[]>,
+        fetch('/api/tools/pending').then(r => r.ok ? r.json() : []) as Promise<PendingTool[]>,
+        fetch('/api/tool-approvals').then(r => r.ok ? r.json() : []) as Promise<ApprovalRequest[]>,
       ])
       setTools(toolData)
       setApprovals(approvalData)

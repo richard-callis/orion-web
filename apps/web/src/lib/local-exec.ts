@@ -4,11 +4,12 @@
 import { mkdirSync, writeFileSync, rmSync } from 'fs'
 import { execFile, type ExecFileOptions } from 'child_process'
 import { promisify } from 'util'
+import { randomBytes } from 'crypto'
 
 const execFileAsync = promisify(execFile)
 
 export function makeLocalGx(kubeconfig: string) {
-  const tmpDir = `/tmp/orion-kubectl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const tmpDir = `/tmp/orion-kubectl-${Date.now()}-${randomBytes(8).toString('hex')}`
 
   try {
     mkdirSync(tmpDir, { recursive: true })

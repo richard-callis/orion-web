@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireServiceAuth } from '@/lib/auth'
 
 export async function POST(req: NextRequest) {
+  await requireServiceAuth(req)
   try {
     const body = await req.json()
 
@@ -58,6 +60,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  await requireServiceAuth(req)
   try {
     const { searchParams } = new URL(req.url)
     const actorId = searchParams.get('actorId')
