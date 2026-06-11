@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   const channel = await prisma.notificationChannel.findUnique({ where: { id: params.id } })
   if (!channel) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   return NextResponse.json(channel)
@@ -14,6 +16,7 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   const body = await req.json() as Partial<{
     name: string
     type: string
@@ -34,6 +37,7 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   await prisma.notificationChannel.delete({ where: { id: params.id } })
   return new NextResponse(null, { status: 204 })
 }

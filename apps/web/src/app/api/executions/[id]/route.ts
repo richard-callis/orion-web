@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireServiceAuth } from '@/lib/auth'
 
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  await requireServiceAuth(req)
   try {
     const execution = await prisma.toolExecution.findUnique({
       where: { id: params.id },
@@ -31,6 +33,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  await requireServiceAuth(req)
   try {
     const body = await req.json()
 

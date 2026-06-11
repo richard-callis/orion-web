@@ -2,9 +2,11 @@ export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 // GET /api/tools/pending — all pending tool proposals across all environments
 export async function GET() {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   const tools = await prisma.mcpTool.findMany({
     where: { status: 'pending' },
     include: { environment: { select: { id: true, name: true } } },
