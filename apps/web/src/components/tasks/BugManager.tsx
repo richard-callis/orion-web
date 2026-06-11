@@ -112,6 +112,7 @@ export function BugManager({ initialBugs, users }: Props) {
         reportedBy:  'admin',
       }),
     })
+    if (!r.ok) { setSaving(false); return }
     const bug: Bug = await r.json()
     setBugs(prev => [bug, ...prev])
     setForm({ title: '', description: '', severity: 'medium', area: '' })

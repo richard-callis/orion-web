@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 // POST /api/tool-approvals/[id]  body: { action: 'approve'|'deny', adminNote?: string, approvedBy?: string }
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const admin = await requireAdmin()
+  // Override approvedBy with the authenticated admin's username
+  const resolvedApprovedBy = admin?.username ?? admin?.email ?? 'admin'
   let body: unknown
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
-  const { action, adminNote, approvedBy } = body as { action: 'approve' | 'deny'; adminNote?: string; approvedBy?: string }
+  const { action, adminNote } = body as { action: 'approve' | 'deny'; adminNote?: string }
 
   const request = await prisma.toolApprovalRequest.findUnique({ where: { id: params.id } })
   if (!request) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -15,7 +19,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     where: { id: params.id },
     data: {
       status:     action === 'approve' ? 'approved' : 'denied',
-      approvedBy: approvedBy ?? null,
+      approvedBy: resolvedApprovedBy,
       adminNote:  adminNote ?? null,
       resolvedAt: new Date(),
     },

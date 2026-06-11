@@ -474,7 +474,8 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
   const loadToolGroups = useCallback(async () => {
     if (!selected) return
-    const data = await fetch(`/api/tool-groups?environmentId=${selected.id}`).then(r => r.json())
+    const r = await fetch(`/api/tool-groups?environmentId=${selected.id}`)
+    const data = r.ok ? await r.json() : []
     setToolGroups(data)
     setToolGroupsLoaded(true)
   }, [selected])
@@ -528,7 +529,8 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
   const loadAllAgents = useCallback(async () => {
     if (agentsLoaded) return
-    const data: AllAgent[] = await fetch('/api/agents').then(r => r.json())
+    const r = await fetch('/api/agents')
+    const data: AllAgent[] = r.ok ? await r.json() : []
     setAllAgents(data)
     setAgentsLoaded(true)
   }, [agentsLoaded])
@@ -562,10 +564,14 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
   const loadUserTiers = useCallback(async () => {
     if (!selected) return
-    const [tiersData, usersData] = await Promise.all([
-      fetch(`/api/environments/${selected.id}/user-tiers`).then(r => r.json()),
-      fetch('/api/admin/users').then(r => r.json()),
+    const [tiersRes, usersRes] = await Promise.all([
+      fetch(`/api/environments/${selected.id}/user-tiers`),
+      fetch('/api/admin/users'),
     ])
+    const [tiersData, usersData] = [
+      tiersRes.ok ? await tiersRes.json() : [],
+      usersRes.ok ? await usersRes.json() : [],
+    ]
     setUserTiers(tiersData)
     setAllUsers(usersData)
     setTiersLoaded(true)

@@ -38,8 +38,16 @@ export async function POST(
   const text = typeof body.text === 'string' ? body.text.trim() : ''
   if (!text) return NextResponse.json({ error: 'text is required' }, { status: 400 })
 
-  const room = await prisma.chatRoom.findUnique({ where: { id }, select: { id: true } })
+  const room = await prisma.chatRoom.findUnique({
+    where: { id },
+    select: { id: true, members: { select: { userId: true } } },
+  })
   if (!room) return NextResponse.json({ error: 'Chat room not found' }, { status: 404 })
+
+  if (userId && !room.members.some((m: any) => m.userId === userId)) {
+    return NextResponse.json({ error: 'You are not a member of this room' }, { status: 403 })
+  }
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   // Abandon any existing active goal
   await prisma.roomGoal.updateMany({

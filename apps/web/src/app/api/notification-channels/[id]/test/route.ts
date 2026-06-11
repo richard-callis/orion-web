@@ -1,12 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
+
+function isPrivateUrl(url: string): boolean {
+  try {
+    const { hostname } = new URL(url)
+    if (hostname === 'localhost') return true
+    const privatePatterns = [/^127\./, /^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./, /^169\.254\./, /^::1$/, /^fc00:/i, /^fe80:/i]
+    return privatePatterns.some(p => p.test(hostname))
+  } catch { return true }
+}
 
 export async function POST(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  }
+
   const channel = await prisma.notificationChannel.findUnique({ where: { id: params.id } })
   if (!channel) return NextResponse.json({ ok: false, error: 'Channel not found' }, { status: 404 })
+
+  if (isPrivateUrl(channel.webhookUrl)) {
+    return NextResponse.json({ ok: false, error: 'Webhook URL targets a private/internal address' }, { status: 400 })
+  }
 
   let payload: object
 
