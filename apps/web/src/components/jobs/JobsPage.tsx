@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import {
   Plus, Trash2, Play, Clock, Check, X,
   Webhook, RefreshCw, Copy, ChevronDown, ChevronUp,
-  Zap, Activity, Settings,
+  Zap, Activity, Settings, CalendarClock,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -361,7 +361,11 @@ function SchedulesTab() {
       )}
 
       {loading ? <div className="text-sm text-text-secondary">Loading...</div> : schedules.length === 0 ? (
-        <div className="text-sm text-text-secondary py-8 text-center">No scheduled tasks yet.</div>
+        <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+          <CalendarClock size={32} className="text-text-muted/40" />
+          <p className="text-sm font-medium text-text-secondary">No scheduled tasks yet</p>
+          <p className="text-xs text-text-muted max-w-xs">Schedule recurring tasks using cron expressions. Click <strong>+ New Schedule</strong> to get started.</p>
+        </div>
       ) : (
         <div className="border border-border-subtle rounded-lg overflow-hidden">
           <table className="w-full text-sm">
@@ -496,9 +500,10 @@ function WebhooksTab() {
       )}
 
       {loading ? <p className="text-sm text-text-muted">Loading…</p> : triggers.length === 0 ? (
-        <div className="rounded-lg border border-border-subtle p-8 text-center">
-          <Webhook size={32} className="mx-auto mb-2 text-text-muted opacity-40" />
-          <p className="text-sm text-text-muted">No webhook triggers yet.</p>
+        <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+          <Webhook size={32} className="text-text-muted/40" />
+          <p className="text-sm font-medium text-text-secondary">No webhook triggers yet</p>
+          <p className="text-xs text-text-muted max-w-xs">Connect external systems to kick off agents automatically. Click <strong>+ New Trigger</strong> to create one.</p>
         </div>
       ) : (
         <div className="rounded-lg border border-border-subtle overflow-hidden">

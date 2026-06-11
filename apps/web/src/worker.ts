@@ -191,6 +191,7 @@ let runningNtopngPoller = false
 let runningVulnScan = false
 let runningDriftDetector = false
 let runningScheduler = false
+let runningFedPoller = false
 
 const TASK_TIMEOUT_MS = 60 * 60 * 1000 // 60 minutes
 
@@ -1454,6 +1455,46 @@ async function escalateStalePendingValidation(): Promise<void> {
   }
 }
 
+/**
+ * Poll all in-flight federated tasks for completion.
+ * Fetches status from each spoke and marks the local task done/failed to match.
+ */
+async function pollFederatedTasks(): Promise<void> {
+  const dispatches = await prisma.federatedDispatch.findMany({
+    where: { status: { in: ['dispatched', 'acknowledged'] } },
+    select: { id: true, taskId: true, spokeUrl: true, status: true },
+  })
+  if (dispatches.length === 0) return
+
+  // Get the federation token from env (hub uses this to authenticate with spokes)
+  const token = process.env.ORION_GATEWAY_TOKEN ?? ''
+
+  await Promise.all(dispatches.map(async (dispatch) => {
+    try {
+      const res = await fetch(`${dispatch.spokeUrl}/api/federation/tasks/${dispatch.taskId}/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(5_000),
+      })
+      if (!res.ok) return
+
+      const data = (await res.json()) as { status: string }
+      const spokeStatus = data.status
+
+      if (spokeStatus === 'done' || spokeStatus === 'failed') {
+        await prisma.$transaction([
+          prisma.task.update({ where: { id: dispatch.taskId }, data: { status: spokeStatus } }),
+          prisma.federatedDispatch.update({ where: { id: dispatch.id }, data: { status: 'completed', completedAt: new Date() } }),
+        ])
+        log(`Federated task ${dispatch.taskId} completed on spoke with status: ${spokeStatus}`)
+      } else if (spokeStatus === 'in_progress' && dispatch.status === 'dispatched') {
+        await prisma.federatedDispatch.update({ where: { id: dispatch.id }, data: { status: 'acknowledged', acknowledgedAt: new Date() } })
+      }
+    } catch (e) {
+      err(`Failed to poll federated task ${dispatch.taskId} at ${dispatch.spokeUrl}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }))
+}
+
 async function pollOnce() {
   if (runningTasks.size >= MAX_CONCURRENT) return
 
@@ -1663,6 +1704,13 @@ async function main() {
     runningDriftDetector = true
     detectGitOpsDrift().catch(e => err(`GitOps drift detection failed: ${e}`)).finally(() => { runningDriftDetector = false })
   }, 5 * 60_000)
+
+  // Federation spoke polling — every 60s, check in-flight federated tasks for completion.
+  setInterval(() => {
+    if (runningFedPoller) return
+    runningFedPoller = true
+    pollFederatedTasks().catch(e => err(`Federation spoke polling failed: ${e}`)).finally(() => { runningFedPoller = false })
+  }, 60_000)
 
 }
 

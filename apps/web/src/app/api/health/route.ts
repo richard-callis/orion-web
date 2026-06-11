@@ -42,6 +42,28 @@ export async function GET() {
     } catch { extHealth[`ext:${m.id}`] = false }
   }))
 
+  // Worker health — inferred from task activity (worker has no direct health port)
+  const [runningTasks, queuedTasks, lastActivity] = await Promise.all([
+    prisma.task.count({ where: { status: 'in_progress' } }),
+    prisma.task.count({ where: { status: 'pending' } }),
+    prisma.task.findFirst({
+      where: { status: 'in_progress' },
+      orderBy: { updatedAt: 'desc' },
+      select: { updatedAt: true },
+    }),
+  ])
+  const workerActive = lastActivity
+    ? (Date.now() - lastActivity.updatedAt.getTime()) < 5 * 60 * 1000
+    : false
+
   const healthy = db  // k8s optional — not available in Docker-only deployments
-  return NextResponse.json({ k8s, db, claude, externalModels: extHealth }, { status: healthy ? 200 : 503 })
+  return NextResponse.json({
+    k8s, db, claude, externalModels: extHealth,
+    worker: {
+      running: runningTasks,
+      queued: queuedTasks,
+      lastActivityAt: lastActivity?.updatedAt.toISOString() ?? null,
+      active: workerActive,
+    },
+  }, { status: healthy ? 200 : 503 })
 }
