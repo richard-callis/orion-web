@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { randomBytes } from 'crypto'
 import { requireAdmin } from '@/lib/auth'
+import { parseBodyOrError, CreateWebhookTriggerSchema } from '@/lib/validate'
 
 async function guard() {
   try { await requireAdmin() } catch {
@@ -21,42 +22,22 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const deny = await guard(); if (deny) return deny
-  let body: {
-    name: string
-    agentId: string
-    source?: string
-    taskTitle: string
-    taskDesc?: string
-    enabled?: boolean
-  }
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
-  }
+  const parsed = await parseBodyOrError(req, CreateWebhookTriggerSchema)
+  if ('error' in parsed) return parsed.error
+  const { data } = parsed
 
-  if (!body.name || !body.agentId || !body.taskTitle) {
-    return NextResponse.json(
-      { error: 'name, agentId, and taskTitle are required' },
-      { status: 400 }
-    )
-  }
-
-  const agent = await prisma.agent.findUnique({ where: { id: body.agentId } })
-  if (!agent) {
-    return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
-  }
+  const agent = await prisma.agent.findUnique({ where: { id: data.agentId }, select: { id: true } })
+  if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
   const secret = randomBytes(32).toString('hex')
-
   const trigger = await prisma.webhookTrigger.create({
     data: {
-      name:      body.name,
-      agentId:   body.agentId,
-      source:    body.source ?? 'custom',
-      taskTitle: body.taskTitle,
-      taskDesc:  body.taskDesc ?? null,
-      enabled:   body.enabled ?? true,
+      name:      data.name,
+      agentId:   data.agentId,
+      source:    data.source,
+      taskTitle: data.taskTitle,
+      taskDesc:  data.taskDesc ?? null,
+      enabled:   data.enabled,
       secret,
     },
     include: { agent: { select: { id: true, name: true } } },

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
+import { parseBodyOrError, UpdateWebhookTriggerSchema } from '@/lib/validate'
 
 async function guard() {
   try { await requireAdmin() } catch {
@@ -30,32 +31,23 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const deny = await guard(); if (deny) return deny
   const { id } = await params
-  let body: {
-    name?: string
-    taskTitle?: string
-    taskDesc?: string
-    enabled?: boolean
-    source?: string
-  }
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
-  }
+  const parsed = await parseBodyOrError(req, UpdateWebhookTriggerSchema)
+  if ('error' in parsed) return parsed.error
+  const { data } = parsed
 
   const existing = await prisma.webhookTrigger.findUnique({ where: { id } })
   if (!existing) return new NextResponse(null, { status: 404 })
 
-  const data: Record<string, unknown> = {}
-  if (body.name      !== undefined) data.name      = body.name
-  if (body.taskTitle !== undefined) data.taskTitle = body.taskTitle
-  if (body.taskDesc  !== undefined) data.taskDesc  = body.taskDesc
-  if (body.enabled   !== undefined) data.enabled   = body.enabled
-  if (body.source    !== undefined) data.source    = body.source
+  const updateData: Record<string, unknown> = {}
+  if (data.name      !== undefined) updateData.name      = data.name
+  if (data.taskTitle !== undefined) updateData.taskTitle = data.taskTitle
+  if ('taskDesc'     in data)       updateData.taskDesc  = data.taskDesc ?? null
+  if (data.enabled   !== undefined) updateData.enabled   = data.enabled
+  if (data.source    !== undefined) updateData.source    = data.source
 
   const trigger = await prisma.webhookTrigger.update({
     where: { id },
-    data,
+    data: updateData,
     include: { agent: { select: { id: true, name: true } } },
   })
   return NextResponse.json({ ...trigger, secret: '••••••••', webhookUrl: `/api/webhooks/${id}` })
