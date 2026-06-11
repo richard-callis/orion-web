@@ -301,6 +301,9 @@ model Task {
   chatRooms          ChatRoom[]         @relation("ChatRoomTask")
   chatMessages       ChatMessage[]
   federatedDispatch  FederatedDispatch?
+
+  // Worker poll: pollOnce queries status+assignedAgent ordered by wave,priority,createdAt every 15s
+  @@index([status, assignedAgent, wave, priority, createdAt])
 }
 
 model FederatedDispatch {
@@ -970,6 +973,7 @@ model SecurityEvent {
   @@index([environmentId, createdAt])
   @@index([environmentId, type, acknowledged])
   @@index([incidentId])
+  @@index([dedupKey])
   // Drives the event-triggered vuln scan loop in Phase 3 PR13 — partial
   // index would be ideal (only WHERE scannedAt IS NULL) but Prisma doesn't
   // emit partial indexes. The full index is small because the planner uses

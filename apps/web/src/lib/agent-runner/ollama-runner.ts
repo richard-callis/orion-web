@@ -90,6 +90,7 @@ export const ollamaRunner: AgentRunner = {
 
     const MAX_TURNS = 20
     let turns = 0
+    let checkpointStep = 0 // 1-based, incremented on each tool_result
 
     try {
       while (turns < MAX_TURNS) {
@@ -146,7 +147,12 @@ export const ollamaRunner: AgentRunner = {
               continue
             }
 
-            if (ctx.managementTools && ctx.managementTools.definitions.some(d => d.name === fn.name)) {
+            checkpointStep++
+            const checkpoint = ctx.checkpoints?.get(checkpointStep)
+            if (checkpoint && checkpoint.toolName === fn.name) {
+              // Replay checkpointed result — skip re-executing the tool
+              result = `[Replayed from checkpoint step ${checkpointStep}]\n${checkpoint.result}`
+            } else if (ctx.managementTools && ctx.managementTools.definitions.some(d => d.name === fn.name)) {
               result = await ctx.managementTools.execute(fn.name, argsRaw)
             } else if (gateway) {
               try {

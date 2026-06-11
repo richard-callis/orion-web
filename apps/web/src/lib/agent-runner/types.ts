@@ -33,6 +33,13 @@ export interface TaskRunContext {
     execute: (name: string, argsRaw: string) => Promise<string>
   }
   nebula?: { environmentId: string; traceId: string }  // Nebula observability context
+  /**
+   * Checkpointed tool results from a previous run of this task.
+   * Keyed by stepIndex (1-based, matching TaskCheckpoint.stepIndex).
+   * When present, the runner skips re-executing matching tool calls and
+   * injects the stored result instead, preventing duplicate side effects on retry.
+   */
+  checkpoints?: Map<number, { toolName: string; result: string }>
 }
 
 export type AgentEvent =

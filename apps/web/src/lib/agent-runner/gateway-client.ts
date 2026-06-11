@@ -12,7 +12,7 @@ export class GatewayClient {
   }
 
   async listTools(): Promise<GatewayTool[]> {
-    const res = await fetch(`${this.url}/tools`, { headers: this.headers() })
+    const res = await fetch(`${this.url}/tools`, { headers: this.headers(), signal: AbortSignal.timeout(30_000) })
     if (!res.ok) throw new Error(`Gateway listTools failed: ${res.status} ${await res.text()}`)
     return res.json()
   }

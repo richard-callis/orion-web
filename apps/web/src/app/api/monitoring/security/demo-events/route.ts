@@ -39,7 +39,9 @@ export async function POST() {
   const attackerIp = randIp()
   // Port scanner uses a single IP so the threshold rule (groupBy attackerIp, threshold 20) fires
   const scannerIp = randIp()
-  const now = Date.now()
+  // Dedup key uses today's date (not ms timestamp) so repeated clicks in the same
+  // day return 409-style skips rather than flooding the table with duplicate events.
+  const today = new Date().toISOString().slice(0, 10)
 
   const events: DemoEvent[] = [
     // Brute force sequence — same IP, fires brute_force rule (threshold 5 in 300s)
@@ -50,7 +52,7 @@ export async function POST() {
       title: `Failed SSH login from ${attackerIp}`,
       description: `Authentication failure for user root from ${attackerIp} (attempt ${i + 1})`,
       attackerIp,
-      dedupKey: `demo-brute-${attackerIp}-${i}-${now}`,
+      dedupKey: `demo-brute-${attackerIp}-${i}-${today}`,
       firstSeen: ago(10 - i * 0.5),
       lastSeen: ago(10 - i * 0.5),
     })),
@@ -62,7 +64,7 @@ export async function POST() {
       title: `IP ${attackerIp} blocked by CrowdSec`,
       description: 'CrowdSec community blocklist match: known scanner/brute-force source',
       attackerIp,
-      dedupKey: `demo-crowdsec-${attackerIp}-${now}`,
+      dedupKey: `demo-crowdsec-${attackerIp}-${today}`,
       firstSeen: ago(8),
       lastSeen: ago(8),
     },
@@ -74,7 +76,7 @@ export async function POST() {
       title: `Port scan detected from ${scannerIp}`,
       description: `Connection refused on port ${1024 + i * 100}`,
       attackerIp: scannerIp,
-      dedupKey: `demo-portscan-${scannerIp}-${i}-${now}`,
+      dedupKey: `demo-portscan-${scannerIp}-${i}-${today}`,
       firstSeen: ago(1),
       lastSeen: ago(1),
     })),
@@ -85,7 +87,7 @@ export async function POST() {
       severity: 45,
       title: 'Pod OOMKilled in namespace production',
       description: 'Container memory limit exceeded, process killed',
-      dedupKey: `demo-k8s-oom-${now}`,
+      dedupKey: `demo-k8s-oom-${today}`,
       firstSeen: ago(5),
       lastSeen: ago(5),
     },
@@ -95,7 +97,7 @@ export async function POST() {
       severity: 50,
       title: 'ImagePullBackOff: suspicious image tag in namespace default',
       description: 'Unknown image tag pulled from external registry',
-      dedupKey: `demo-k8s-image-${now}`,
+      dedupKey: `demo-k8s-image-${today}`,
       firstSeen: ago(3),
       lastSeen: ago(3),
     },
@@ -107,7 +109,7 @@ export async function POST() {
       title: 'Unusual outbound traffic spike detected',
       description: 'Network baseline deviation: 5x normal egress volume in last 10 minutes',
       attackerIp,
-      dedupKey: `demo-anomaly-${now}`,
+      dedupKey: `demo-anomaly-${today}`,
       firstSeen: ago(2),
       lastSeen: ago(2),
     },
@@ -119,15 +121,27 @@ export async function POST() {
       title: 'Malware signature match on web-01',
       description: 'File /tmp/.svc matches known trojan dropper signature (EICAR-like)',
       attackerIp: '10.0.0.1',
-      dedupKey: `demo-malware-${now}`,
+      dedupKey: `demo-malware-${today}`,
       firstSeen: ago(1),
       lastSeen: ago(1),
     },
   ]
 
+  // Skip events that already have their dedupKey to prevent repeat-click flooding
+  const existingKeys = new Set(
+    (await prisma.securityEvent.findMany({
+      where: { dedupKey: { in: events.map(e => e.dedupKey) } },
+      select: { dedupKey: true },
+    })).map(r => r.dedupKey)
+  )
+  const toInsert = events.filter(e => !existingKeys.has(e.dedupKey))
+  if (toInsert.length === 0) {
+    return NextResponse.json({ inserted: 0, message: 'Demo events already injected today — no duplicates created' })
+  }
+
   try {
     await prisma.$transaction(
-      events.map(ev =>
+      toInsert.map(ev =>
         prisma.securityEvent.create({
           data: {
             environmentId: envId,
@@ -148,5 +162,5 @@ export async function POST() {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 
-  return NextResponse.json({ inserted: events.length, message: `Injected ${events.length} demo security events` })
+  return NextResponse.json({ inserted: toInsert.length, message: `Injected ${toInsert.length} demo security events` })
 }

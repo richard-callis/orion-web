@@ -28,13 +28,16 @@ import { runElkPollerAll } from './jobs/security-poll-elk'
 import { runNtopngPollerAll } from './jobs/security-poll-ntopng'
 import { runDailyScan, runEventTriggeredScan } from './jobs/security-scan-vulns'
 import { runGoalHeartbeat } from './jobs/goal-heartbeat'
+import { redactSecrets } from './lib/redact'
 import { detectGitOpsDrift } from './jobs/gitops-drift'
 import { runScheduler } from './jobs/task-scheduler'
 import { syncCrowdSecDecisions } from './lib/security/crowdsec-bouncer'
 import { shouldFederate, dispatchToSpoke } from './lib/federation'
 
-const POLL_INTERVAL_MS = 15_000
-const MAX_CONCURRENT   = 3
+// Configurable via SystemSetting — worker.pollIntervalMs and worker.maxConcurrent
+// so operators can tune throughput without redeploying.
+let POLL_INTERVAL_MS = 15_000
+let MAX_CONCURRENT   = 3
 
 // SOC2: [C-001] Maximum length per context note to prevent context overflow attacks
 const MAX_NOTE_LENGTH = 8000
@@ -215,19 +218,25 @@ async function recoverStuckTasks() {
       console.log(`[recovery] Skipping task ${task.id} — retry scheduled at ${task.nextRetryAt.toISOString()}`)
       continue
     }
+    const retries = ((task.metadata as any)?.recoveryCount ?? 0) as number
+    const MAX_RECOVERY = 2
+    const newStatus = retries < MAX_RECOVERY ? 'open' : 'failed'
+    const newMeta = { ...(task.metadata as object ?? {}), recoveryCount: retries + 1 }
     await prisma.task.update({
       where: { id: task.id },
-      data: { status: 'failed' }
+      data: { status: newStatus, assignedAgent: newStatus === 'open' ? task.assignedAgent : task.assignedAgent, metadata: newMeta as any }
     })
     await prisma.taskEvent.create({
       data: {
         taskId: task.id,
         eventType: 'system',
-        content: `Task recovered from crashed worker after ${stuckMinutes}min inactivity — marked failed for safety. Use orion_reopen_task to retry if appropriate.`,
+        content: newStatus === 'open'
+          ? `Task re-queued after crashed worker (${stuckMinutes}min inactivity). Recovery attempt ${retries + 1}/${MAX_RECOVERY}.`
+          : `Task failed after ${MAX_RECOVERY} recovery attempts. Use orion_reopen_task to retry manually.`,
         agentId: null
       }
     })
-    console.log(`[recovery] Recovered stuck task ${task.id} — marked failed (${stuckMinutes}min threshold)`)
+    console.log(`[recovery] Recovered stuck task ${task.id} — ${newStatus} (attempt ${retries + 1}, threshold ${stuckMinutes}min)`)
   }
   if (stuck.length > 0) console.log(`[recovery] Recovered ${stuck.length} stuck task(s)`)
 }
@@ -559,14 +568,17 @@ async function runTask(taskId: string): Promise<void> {
     let pausedForApproval = false
 
     // Step-level checkpointing: load any existing checkpoints so we can record
-    // each completed tool_result step and detect retries.
-    const checkpoints = new Map<number, string>() // stepIndex → result
+    // each completed tool_result step and replay them on retry.
+    const checkpoints = new Map<number, { toolName: string; result: string }>()
     const existingCheckpoints = await prisma.taskCheckpoint.findMany({
       where: { taskId },
-      select: { stepIndex: true, result: true },
+      select: { stepIndex: true, toolName: true, result: true },
     }).catch(() => [])
-    for (const c of existingCheckpoints) checkpoints.set(c.stepIndex, c.result)
+    for (const c of existingCheckpoints) checkpoints.set(c.stepIndex, { toolName: c.toolName, result: c.result })
     let stepIndex = 0
+
+    // Inject checkpoints into ctx so runners can replay without re-executing tools
+    ctx.checkpoints = checkpoints.size > 0 ? checkpoints : undefined
 
     for await (const event of runner.run(ctx)) {
       // Check for task-level abort (60-minute timeout)
@@ -636,7 +648,7 @@ async function runTask(taskId: string): Promise<void> {
             update: { result: redactedResult },
             create: { taskId, stepIndex, toolName: event.tool, argsHash: idemKeyForCheckpoint, result: redactedResult },
           }).catch(e => err(`[worker] checkpoint upsert failed for task ${taskId} step ${stepIndex}: ${e instanceof Error ? e.message : e}`))
-          checkpoints.set(stepIndex, redactedResult)
+          checkpoints.set(stepIndex, { toolName: event.tool, result: redactedResult })
           await prisma.message.create({
             data: {
               conversationId: conversation.id, role: 'user',
@@ -1026,15 +1038,6 @@ async function findOrCreateFeatureRoom(featureId: string, agentId: string): Prom
     update: {},
   })
   return room.id
-}
-
-// SOC2: redact secret-like values from tool result content before posting to rooms
-const SECRET_PATTERNS = /\b(token|password|secret|apikey|api_key|bearer|credential|private_key)\s*[=:]\s*\S+/gi
-function redactSecrets(content: string): string {
-  return content.replace(SECRET_PATTERNS, (match) => {
-    const eqIdx = match.search(/[=:]/)
-    return match.slice(0, eqIdx + 1) + ' [REDACTED]'
-  })
 }
 
 /**
@@ -1441,7 +1444,10 @@ async function escalateStalePendingValidation(): Promise<void> {
       human
         ? prisma.task.update({
             where: { id: t.id },
-            data: { metadata: { ...(t.metadata as object ?? {}), approvalEscalatedAt: new Date().toISOString() } as object },
+            data: {
+              assignedUserId: human.id,
+              metadata: { ...(t.metadata as object ?? {}), approvalEscalatedAt: new Date().toISOString() } as object,
+            },
           }).catch(() => {})
         : Promise.resolve(),
     ])
@@ -1516,6 +1522,20 @@ async function main() {
 
   // Wait for the DB to be ready (give Next.js time to run prisma db push)
   await new Promise(resolve => setTimeout(resolve, 5_000))
+
+  // Load tunable settings from DB so operators can change them without redeploying
+  const [pollSetting, concurrentSetting] = await Promise.all([
+    prisma.systemSetting.findUnique({ where: { key: 'worker.pollIntervalMs' } }).catch(() => null),
+    prisma.systemSetting.findUnique({ where: { key: 'worker.maxConcurrent' } }).catch(() => null),
+  ])
+  if (pollSetting?.value) {
+    const v = parseInt(String(pollSetting.value), 10)
+    if (v >= 1000 && v <= 300_000) POLL_INTERVAL_MS = v
+  }
+  if (concurrentSetting?.value) {
+    const v = parseInt(String(concurrentSetting.value), 10)
+    if (v >= 1 && v <= 20) MAX_CONCURRENT = v
+  }
 
   log(`Polling every ${POLL_INTERVAL_MS / 1000}s, max ${MAX_CONCURRENT} concurrent tasks`)
 
@@ -1600,14 +1620,22 @@ async function main() {
   // Daily scheduled scan — once a day at 02:00 server time. Implemented as
   // a guard inside an hourly tick so we don't need a separate scheduler
   // library and the timing self-heals across worker restarts.
-  let lastDailyScanDate: string | null = null
+  // lastDailyScanDate is persisted to DB so a restart between 02:00-03:00
+  // doesn't re-run the scan, and a restart that spans 02:00 doesn't skip it.
   setInterval(() => {
     const now = new Date()
     const dateKey = now.toISOString().slice(0, 10)
-    if (now.getHours() === 2 && lastDailyScanDate !== dateKey) {
-      lastDailyScanDate = dateKey
-      runDailyScan().catch(e => err(`Daily vuln scan failed: ${e}`))
-    }
+    if (now.getHours() !== 2) return
+    prisma.systemSetting.findUnique({ where: { key: 'worker.lastDailyScanDate' } })
+      .then(row => {
+        if (row?.value === dateKey) return
+        return prisma.systemSetting.upsert({
+          where: { key: 'worker.lastDailyScanDate' },
+          update: { value: dateKey },
+          create: { key: 'worker.lastDailyScanDate', value: dateKey },
+        }).then(() => runDailyScan().catch(e => err(`Daily vuln scan failed: ${e}`)))
+      })
+      .catch(e => err(`Daily scan guard failed: ${e}`))
   }, 60 * 60 * 1000)
 
   // Goal heartbeat — every 5 min, re-trigger agents in rooms whose active goal

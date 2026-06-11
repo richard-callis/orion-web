@@ -109,6 +109,7 @@ export const openaiRunner: AgentRunner = {
     let turns = 0
     let totalInputTokens = 0
     let totalOutputTokens = 0
+    let checkpointStep = 0 // 1-based, incremented on each tool_result
 
     try {
       while (turns < MAX_TURNS) {
@@ -148,6 +149,12 @@ export const openaiRunner: AgentRunner = {
           const executeToolCall = async (toolCall: typeof toolCalls[number]): Promise<{ toolCall: typeof toolCalls[number]; result: string }> => {
             const fn = toolCall.function
             const argsRaw = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments)
+
+            checkpointStep++
+            const checkpoint = ctx.checkpoints?.get(checkpointStep)
+            if (checkpoint && checkpoint.toolName === fn.name) {
+              return { toolCall, result: `[Replayed from checkpoint step ${checkpointStep}]\n${checkpoint.result}` }
+            }
 
             // Validate arguments before executing
             let parsedArgs: unknown
