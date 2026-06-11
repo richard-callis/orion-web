@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 /** POST /api/environments/:id/agents — link an agent to this environment */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   const body = await req.json().catch(() => ({}))
   if (!body.agentId) return NextResponse.json({ error: 'agentId is required' }, { status: 400 })
 

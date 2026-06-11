@@ -7,8 +7,10 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
 
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   const env = await prisma.environment.findUnique({ where: { id: params.id } })
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
   if (!env.gatewayUrl || !env.gatewayToken) {

@@ -11,7 +11,7 @@ const CreateAgentWithReservedCheck = CreateAgentSchema.refine(
 export const { GET, POST } = makeCrudRoutes({
   model:        'agent',
   createSchema: CreateAgentWithReservedCheck,
-  requireAuth:  false,
+  requireAuth:  true,
   orderBy:      { name: 'asc' },
   transformData: (data) => ({
     name:     data.name,
