@@ -24,8 +24,11 @@ export async function POST(req: NextRequest) {
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   }
-  const body = await req.json()
-  const { environmentId, title, reasoning, operationDescription, changes } = body
+  let body: Record<string, unknown>
+  try { body = await req.json() } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+  const { environmentId, title, reasoning, operationDescription, changes } = body as any
 
   if (!environmentId || !title || !reasoning || !operationDescription || !changes?.length) {
     return NextResponse.json(

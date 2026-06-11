@@ -225,7 +225,7 @@ async function recoverStuckTasks() {
     const newMeta = { ...(task.metadata as object ?? {}), recoveryCount: retries + 1 }
     await prisma.task.update({
       where: { id: task.id },
-      data: { status: newStatus, assignedAgent: newStatus === 'open' ? task.assignedAgent : task.assignedAgent, metadata: newMeta as any }
+      data: { status: newStatus, assignedAgent: newStatus === 'open' ? task.assignedAgent : null, metadata: newMeta as any }
     })
     await prisma.taskEvent.create({
       data: {
@@ -1068,6 +1068,7 @@ async function buildSystemSnapshot(): Promise<string> {
     prisma.agent.findMany({
       orderBy: { name: 'asc' },
       include: { tasks: { where: { status: 'in_progress' }, take: 1 } },
+      take: 200,
     }),
     prisma.taskEvent.findMany({
       where:   { eventType: { in: ['completed', 'failed', 'started'] } },
