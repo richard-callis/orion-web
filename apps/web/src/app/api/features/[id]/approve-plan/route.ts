@@ -14,7 +14,7 @@ interface WaveTask {
  * dependencies. Cycles are guarded (a task that transitively depends on
  * itself resolves to wave 0 rather than recursing forever).
  */
-export function computeWaves(tasks: WaveTask[]): Map<string, number> {
+function computeWaves(tasks: WaveTask[]): Map<string, number> {
   const waveMap = new Map<string, number>()
   const taskMap = new Map(tasks.map(t => [t.id, t]))
 
