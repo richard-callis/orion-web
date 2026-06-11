@@ -28,13 +28,16 @@ import { runElkPollerAll } from './jobs/security-poll-elk'
 import { runNtopngPollerAll } from './jobs/security-poll-ntopng'
 import { runDailyScan, runEventTriggeredScan } from './jobs/security-scan-vulns'
 import { runGoalHeartbeat } from './jobs/goal-heartbeat'
+import { redactSecrets } from './lib/redact'
 import { detectGitOpsDrift } from './jobs/gitops-drift'
 import { runScheduler } from './jobs/task-scheduler'
 import { syncCrowdSecDecisions } from './lib/security/crowdsec-bouncer'
 import { shouldFederate, dispatchToSpoke } from './lib/federation'
 
-const POLL_INTERVAL_MS = 15_000
-const MAX_CONCURRENT   = 3
+// Configurable via SystemSetting — worker.pollIntervalMs and worker.maxConcurrent
+// so operators can tune throughput without redeploying.
+let POLL_INTERVAL_MS = 15_000
+let MAX_CONCURRENT   = 3
 
 // SOC2: [C-001] Maximum length per context note to prevent context overflow attacks
 const MAX_NOTE_LENGTH = 8000
@@ -1034,15 +1037,6 @@ async function findOrCreateFeatureRoom(featureId: string, agentId: string): Prom
   return room.id
 }
 
-// SOC2: redact secret-like values from tool result content before posting to rooms
-const SECRET_PATTERNS = /\b(token|password|secret|apikey|api_key|bearer|credential|private_key)\s*[=:]\s*\S+/gi
-function redactSecrets(content: string): string {
-  return content.replace(SECRET_PATTERNS, (match) => {
-    const eqIdx = match.search(/[=:]/)
-    return match.slice(0, eqIdx + 1) + ' [REDACTED]'
-  })
-}
-
 /**
  * Post a message to a ChatRoom. agentId provides SOC2 attribution.
  * taskId tags the message to a specific task for filtered views.
@@ -1525,6 +1519,20 @@ async function main() {
 
   // Wait for the DB to be ready (give Next.js time to run prisma db push)
   await new Promise(resolve => setTimeout(resolve, 5_000))
+
+  // Load tunable settings from DB so operators can change them without redeploying
+  const [pollSetting, concurrentSetting] = await Promise.all([
+    prisma.systemSetting.findUnique({ where: { key: 'worker.pollIntervalMs' } }).catch(() => null),
+    prisma.systemSetting.findUnique({ where: { key: 'worker.maxConcurrent' } }).catch(() => null),
+  ])
+  if (pollSetting?.value) {
+    const v = parseInt(String(pollSetting.value), 10)
+    if (v >= 1000 && v <= 300_000) POLL_INTERVAL_MS = v
+  }
+  if (concurrentSetting?.value) {
+    const v = parseInt(String(concurrentSetting.value), 10)
+    if (v >= 1 && v <= 20) MAX_CONCURRENT = v
+  }
 
   log(`Polling every ${POLL_INTERVAL_MS / 1000}s, max ${MAX_CONCURRENT} concurrent tasks`)
 

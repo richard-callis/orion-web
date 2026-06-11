@@ -25,6 +25,7 @@ import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, inval
 import { compactRoom, publishCompactionWarning, publishTokenUpdate } from './compaction'
 import { recordTokenUsage } from './token-budget'
 import { auditToolCall } from './security/audit-emitter'
+import { redactSecrets } from './redact'
 import { getPrompt } from './system-prompts'
 import type { AgentGateway } from './agent-gateway'
 import type { GatewayTool } from './agent-runner/types'
@@ -593,7 +594,7 @@ async function callOpenAIChat(
       console.log(`[room-agents] tool result: ${result}`)
 
       // Save as structured tool_call message and publish via SSE so it appears in real-time
-      const safeOutput = result.replace(/(?:token|secret|password|key)\s*[=:]\s*\S+/gi, (m) => m.split(/[=:]/)[0] + ': [REDACTED]')
+      const safeOutput = redactSecrets(result)
       const toolMsg = await prisma.chatMessage.create({
         data: {
           roomId:      toolContext!.roomId,
