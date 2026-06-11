@@ -32,6 +32,7 @@ export async function GET(req: NextRequest) {
 
   const notes = await prisma.note.findMany({
     orderBy: { updatedAt: 'desc' },
+    take: 2000,
   })
 
   const nodes = notes.map((n: any) => ({
@@ -58,6 +59,7 @@ export async function GET(req: NextRequest) {
       select: { sourceNoteId: true, targetNoteId: true, score: true },
       where: { score: { gte: threshold } },
       orderBy: { score: 'desc' },
+      take: 5000,
     })
     semanticLinks = connections.map((c: any) => ({
       source: c.sourceNoteId,

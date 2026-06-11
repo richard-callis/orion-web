@@ -31,6 +31,7 @@ export async function GET() {
         orderBy: { name: 'asc' },
       },
     },
+    take: 200,
   })
   return NextResponse.json(domains)
 }

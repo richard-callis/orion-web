@@ -14,6 +14,7 @@ export function makeCrudRoutes(config: {
   include?: object
   orderBy?: object | object[]
   listFilters?: string[]                 // query param names forwarded as where filters
+  take?: number                          // default 500
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   transformData?: (data: any, caller: Caller) => Record<string, unknown>
   afterCreate?: (record: unknown, caller: Caller) => Promise<void>
@@ -36,6 +37,7 @@ export function makeCrudRoutes(config: {
         ...(Object.keys(where).length ? { where } : {}),
         ...(config.orderBy !== undefined ? { orderBy: config.orderBy } : {}),
         ...(config.include ? { include: config.include } : {}),
+        take: config.take ?? 500,
       })
       return NextResponse.json(records)
     },
