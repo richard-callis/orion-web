@@ -12,7 +12,7 @@ wrapConsoleLog()
 
 import { rateLimitRedis } from './lib/rate-limit-redis'
 import { isIpBlocked } from './lib/security/crowdsec-bouncer'
-import { SESSION_COOKIE_NAME } from './lib/auth'
+import { SESSION_COOKIE_NAME } from './lib/auth-constants'
 
 function getRateLimitKey(req: NextRequest): string {
   // X-Forwarded-For is intentionally NOT used: the leftmost IP is client-supplied
