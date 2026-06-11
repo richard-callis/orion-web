@@ -10,6 +10,7 @@ export async function GET(req: NextRequest) {
   const featureId     = searchParams.get('featureId')
   const assignedAgent = searchParams.get('assignedAgent')
   const priority      = searchParams.get('priority')
+  const limit         = Math.min(parseInt(searchParams.get('limit') ?? '500', 10), 1000)
 
   const where: Record<string, unknown> = {}
   if (status)        where.status        = status
@@ -20,6 +21,7 @@ export async function GET(req: NextRequest) {
   const tasks = await prisma.task.findMany({
     where,
     orderBy: { updatedAt: 'desc' },
+    take: limit,
     include: { agent: true, feature: { include: { epic: true } } },
   })
   return NextResponse.json(tasks)
@@ -37,14 +39,14 @@ export async function POST(req: NextRequest) {
 
   const task = await prisma.task.create({
     data: {
-      title:       data.title,
-      description: data.description ?? null,
-      priority:    data.priority ?? 'medium',
-      featureId:   data.featureId ?? null,
-      ...(data.assignedAgentId && { assignedAgent: data.assignedAgentId }),
-      assignedUserId: data.assignedUserId ?? null,
-      createdBy:    caller?.id ?? 'gateway',
-    } as any,
+      title:          data.title,
+      description:    data.description   ?? null,
+      priority:       data.priority      ?? 'medium',
+      featureId:      data.featureId     ?? null,
+      assignedAgent:  data.assignedAgentId ?? null,
+      assignedUserId: data.assignedUserId  ?? null,
+      createdBy:      caller?.id           ?? 'gateway',
+    },
     include: { agent: true },
   })
   return NextResponse.json(task, { status: 201 })

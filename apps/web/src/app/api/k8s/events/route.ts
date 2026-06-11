@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { coreApi } from '@/lib/k8s'
+import { requireServiceAuth } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  await requireServiceAuth(req)
   const { searchParams } = new URL(req.url)
   const type  = searchParams.get('type')   // e.g. "Warning"
   const limit = parseInt(searchParams.get('limit') ?? '100', 10)
