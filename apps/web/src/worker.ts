@@ -31,6 +31,7 @@ import { runGoalHeartbeat } from './jobs/goal-heartbeat'
 import { detectGitOpsDrift } from './jobs/gitops-drift'
 import { runScheduler } from './jobs/task-scheduler'
 import { syncCrowdSecDecisions } from './lib/security/crowdsec-bouncer'
+import { shouldFederate, dispatchToSpoke } from './lib/federation'
 
 const POLL_INTERVAL_MS = 15_000
 const MAX_CONCURRENT   = 3
@@ -85,7 +86,7 @@ function sanitizeContextNote(title: string, content: string): string {
   }
 
   // Escape markdown that could break the prompt structure
-  content = content.replace(/^---+$/, '---') // normalize horizontal rules
+  content = content.replace(/^---+$/gm, '---') // normalize horizontal rules
 
   return content
 }
@@ -356,6 +357,9 @@ async function runTask(taskId: string): Promise<void> {
     console.log(`[timeout] Task ${taskId} exceeded ${TASK_TIMEOUT_MS / 60000} minutes — aborting`)
   }, TASK_TIMEOUT_MS)
 
+  let trace: ReturnType<typeof createTrace> | null = null
+  let mainSpan: string | null = null
+
   try {
     // Load task with agent
     const task = await prisma.task.findUnique({
@@ -547,8 +551,8 @@ async function runTask(taskId: string): Promise<void> {
     let totalOutputTokens = 0
 
     // Langfuse: create a trace for this task run (no-op when keys are not set)
-    const trace = createTrace({ taskId, taskTitle: task.title, agentId: agent.id, modelId })
-    const mainSpan = trace.startSpan('task-execution', { title: task.title, description: task.description })
+    trace = createTrace({ taskId, taskTitle: task.title, agentId: agent.id, modelId })
+    mainSpan = trace.startSpan('task-execution', { title: task.title, description: task.description })
     // FIFO queue of open tool span IDs — tool_call pushes, tool_result shifts
     const toolSpanQueue: string[] = []
 
@@ -719,8 +723,8 @@ async function runTask(taskId: string): Promise<void> {
       logTaskEvent(taskId, 'completed', summary, agent.id),
       // SOC2: always keep postToFeed for audit trail
       postToFeed(agent.id, completionMsg, taskId),
-      // Also post to feature room if one exists
-      ...(featureRoomId ? [postToRoom(featureRoomId, agent.id, completionMsg, taskId)] : []),
+      // Post to feature room and any delegation room
+      ...roomPromises,
       prisma.claudeInvocation.create({
         data: {
           conversationId: conversation.id,
@@ -781,8 +785,10 @@ async function runTask(taskId: string): Promise<void> {
     err(`Task ${taskId} failed: ${errMsg}`)
 
     // Langfuse: flush trace on failure
-    trace.endSpan(mainSpan, undefined, errMsg)
-    await trace.flush().catch(() => {})
+    if (trace) {
+      if (mainSpan) trace.endSpan(mainSpan, undefined, errMsg)
+      await trace.flush().catch(() => {})
+    }
 
     const failedTask = await prisma.task.findUnique({
       where: { id: taskId },
@@ -1630,11 +1636,6 @@ async function main() {
     detectGitOpsDrift().catch(e => err(`GitOps drift detection failed: ${e}`)).finally(() => { runningDriftDetector = false })
   }, 5 * 60_000)
 
-  setInterval(() => {
-    if (runningScheduler) return
-    runningScheduler = true
-    runScheduler().catch(e => err(`Scheduler failed: ${e}`)).finally(() => { runningScheduler = false })
-  }, 60_000)
 }
 
 process.on('unhandledRejection', (reason, promise) => {
