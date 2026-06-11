@@ -6,7 +6,7 @@ import { parseBodyOrError, UpdateSettingsSchema } from '@/lib/validate'
 
 export async function GET() {
   await requireAdmin()
-  const rows = await prisma.systemSetting.findMany()
+  const rows = await prisma.systemSetting.findMany({ take: 500 })
   const result: Record<string, unknown> = {}
   for (const row of rows) {
     result[row.key] = row.value

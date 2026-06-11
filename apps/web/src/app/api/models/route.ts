@@ -36,7 +36,7 @@ const CLAUDE_MODELS = (isDefault: (id: string) => boolean): AppModel[] => [
 
 export async function GET() {
   const [external, defaultSetting] = await Promise.all([
-    prisma.externalModel.findMany({ where: { enabled: true }, orderBy: { createdAt: 'asc' } }),
+    prisma.externalModel.findMany({ where: { enabled: true }, orderBy: { createdAt: 'asc' }, take: 200 }),
     prisma.systemSetting.findUnique({ where: { key: 'model.default' } }),
   ])
 
