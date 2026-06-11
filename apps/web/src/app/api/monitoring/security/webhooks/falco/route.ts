@@ -182,7 +182,13 @@ export async function POST(req: NextRequest) {
   }
 
   // 8. Real alert path — normalize and insert
-  const normalized = normalizeFalcoAlert(alert, environmentId)
+  let normalized: ReturnType<typeof normalizeFalcoAlert>
+  try {
+    normalized = normalizeFalcoAlert(alert, environmentId)
+  } catch (e) {
+    console.error('[falco-webhook] normalization error:', e instanceof Error ? e.message : String(e))
+    return NextResponse.json({ error: 'Failed to normalize alert' }, { status: 422 })
+  }
   const id = crypto.randomUUID()
 
   // Dedup check (24h window, matches host-agent pattern)
@@ -197,23 +203,27 @@ export async function POST(req: NextRequest) {
 
   let inserted = false
   if (!existing) {
-    await prisma.securityEvent.create({
-      data: {
-        id,
-        environmentId: sourceHealthEnvId,
-        type: normalized.type,
-        source: normalized.source,
-        severity: normalized.severity,
-        title: normalized.title,
-        description: normalized.description ?? null,
-        rawEvent: normalized.rawEvent as any,
-        dedupKey: normalized.dedupKey,
-        firstSeen: normalized.timestamp ?? now,
-        lastSeen: normalized.timestamp ?? now,
-        // createdAt intentionally omitted — let DB @default(now()) set ingestion time.
-      },
-    })
-    inserted = true
+    try {
+      await prisma.securityEvent.create({
+        data: {
+          id,
+          environmentId: sourceHealthEnvId,
+          type: normalized.type,
+          source: normalized.source,
+          severity: normalized.severity,
+          title: normalized.title,
+          description: normalized.description ?? null,
+          rawEvent: normalized.rawEvent as any,
+          dedupKey: normalized.dedupKey,
+          firstSeen: normalized.timestamp ?? now,
+          lastSeen: normalized.timestamp ?? now,
+          // createdAt intentionally omitted — let DB @default(now()) set ingestion time.
+        },
+      })
+      inserted = true
+    } catch (e) {
+      console.error('[falco-webhook] DB write error:', e instanceof Error ? e.message : String(e))
+    }
   }
 
   // 9. Bump EnvironmentSourceHealth — skip if we couldn't resolve a real env UUID

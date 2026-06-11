@@ -57,10 +57,15 @@ export async function POST(req: NextRequest) {
     gitlabEvent === 'Merge Request Hook'
 
   if (isPR) {
-    if (gitlabEvent) {
-      await handleGitLabMREvent(payload)
-    } else {
-      await handlePullRequestEvent(payload)
+    try {
+      if (gitlabEvent) {
+        await handleGitLabMREvent(payload)
+      } else {
+        await handlePullRequestEvent(payload)
+      }
+    } catch (e) {
+      console.error('[gitea-webhook] event handler error:', e instanceof Error ? e.message : String(e))
+      return NextResponse.json({ error: 'Internal error processing webhook' }, { status: 500 })
     }
   }
 

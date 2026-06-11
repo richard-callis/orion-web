@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireAdmin } from '@/lib/auth'
+
+async function guard() {
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  return null
+}
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const deny = await guard(); if (deny) return deny
   const { id } = await params
   const trigger = await prisma.webhookTrigger.findUnique({
     where: { id },
@@ -19,6 +28,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const deny = await guard(); if (deny) return deny
   const { id } = await params
   let body: {
     name?: string
@@ -52,6 +62,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const deny = await guard(); if (deny) return deny
   const { id } = await params
   const existing = await prisma.webhookTrigger.findUnique({ where: { id } })
   if (!existing) return new NextResponse(null, { status: 404 })
