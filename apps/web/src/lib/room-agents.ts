@@ -23,6 +23,7 @@ import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
 import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, invalidateSnapshotCache, getModelContextLimit, getClaudeContextLimit } from './agent-context'
 import { compactRoom, publishCompactionWarning, publishTokenUpdate } from './compaction'
+import { recordTokenUsage } from './token-budget'
 import { getPrompt } from './system-prompts'
 import type { AgentGateway } from './agent-gateway'
 import type { GatewayTool } from './agent-runner/types'
@@ -287,7 +288,7 @@ async function callOllamaChat(
 type OpenAIMessage = { role: string; content: string | null; tool_calls?: ToolCall[]; tool_call_id?: string; name?: string }
 type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } }
 
-type OpenAICallResult = { reply: string | null; tokensUsed: number; contextLimit: number }
+type OpenAICallResult = { reply: string | null; tokensUsed: number; contextLimit: number; inputTokens: number; outputTokens: number }
 
 // ── Tool result cache ─────────────────────────────────────────────────────────
 
@@ -419,9 +420,11 @@ async function callOpenAIChat(
   const isQwen3 = /qwen3/i.test(model)
 
   type Choice = { finish_reason: string; message: { role: string; content: string | null; tool_calls?: ToolCall[] } }
-  type OpenAIResponse = { choices?: Choice[]; usage?: { prompt_tokens?: number } }
+  type OpenAIResponse = { choices?: Choice[]; usage?: { prompt_tokens?: number; completion_tokens?: number } }
 
   let tokensUsed = 0
+  let totalInputTokens  = 0
+  let totalOutputTokens = 0
 
   // Per-session tool result cache — keyed by (toolName, args), evicted by TTL
   const toolCache = new Map<string, CacheEntry>()
@@ -447,8 +450,10 @@ async function callOpenAIChat(
 
     const data = await res.json() as OpenAIResponse
     tokensUsed = data.usage?.prompt_tokens ?? tokensUsed
+    totalInputTokens  += data.usage?.prompt_tokens     ?? 0
+    totalOutputTokens += data.usage?.completion_tokens ?? 0
     const choice = data.choices?.[0]
-    if (!choice) return { reply: null, tokensUsed, contextLimit }
+    if (!choice) return { reply: null, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
 
     // Plain text reply — check for fake tool calls before accepting
     if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
@@ -465,7 +470,7 @@ async function callOpenAIChat(
         })
         continue  // burn a round to get a real response
       }
-      return { reply: replyText, tokensUsed, contextLimit }
+      return { reply: replyText, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
     }
 
     // Tool calls — execute each and feed results back
@@ -619,10 +624,12 @@ async function callOpenAIChat(
     body: JSON.stringify(finalBody),
     signal: AbortSignal.timeout(120_000),
   }).catch(() => null)
-  if (!finalRes?.ok) return { reply: null, tokensUsed, contextLimit }
+  if (!finalRes?.ok) return { reply: null, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
   const finalData = await finalRes.json() as OpenAIResponse
   tokensUsed = finalData.usage?.prompt_tokens ?? tokensUsed
-  return { reply: finalData.choices?.[0]?.message?.content?.trim() || null, tokensUsed, contextLimit }
+  totalInputTokens  += finalData.usage?.prompt_tokens     ?? 0
+  totalOutputTokens += finalData.usage?.completion_tokens ?? 0
+  return { reply: finalData.choices?.[0]?.message?.content?.trim() || null, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
 }
 
 /** Resolve a fallback Ollama base URL from configured ExternalModels */
@@ -938,6 +945,8 @@ export async function triggerRoomAgentReplies(
 
       let reply: string | null = null
       let tokensUsed = 0
+      let callInputTokens  = 0
+      let callOutputTokens = 0
 
       setTyping(roomId, agent.name)
       try {
@@ -955,11 +964,13 @@ export async function triggerRoomAgentReplies(
             const result = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey ?? null, toolContext, gateway, gatewayTools, activeGoal)
             reply = result.reply
             tokensUsed = result.tokensUsed
+            callInputTokens = result.inputTokens; callOutputTokens = result.outputTokens
           } else {
             // openai / custom — OpenAI-compatible (supports tool calling + token tracking)
             const result = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey, toolContext, gateway, gatewayTools, activeGoal)
             reply = result.reply
             tokensUsed = result.tokensUsed
+            callInputTokens = result.inputTokens; callOutputTokens = result.outputTokens
           }
         } else if (llm.startsWith('ollama:')) {
           const model   = llm.slice('ollama:'.length)
@@ -970,6 +981,7 @@ export async function triggerRoomAgentReplies(
           const result = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, model, baseUrl, null, toolContext, gateway, gatewayTools, activeGoal)
           reply = result.reply
           tokensUsed = result.tokensUsed
+          callInputTokens = result.inputTokens; callOutputTokens = result.outputTokens
         } else if (llm.startsWith('gemini:')) {
           // Gemini not yet supported — reject clearly instead of silently falling back to Claude
           console.error(`[room-agents] ${agent.name}: gemini:* models are not yet supported (got "${llm}")`)
@@ -1071,6 +1083,11 @@ export async function triggerRoomAgentReplies(
       // Skip if compaction already fired this turn — subsequent agents' prompt_tokens
       // reflect pre-compaction context and would incorrectly re-trigger the threshold.
       // roomEffectiveLimit is the min of all agents' model limits (or the room override).
+      // Record per-call token spend to cost dashboard (independent of compaction state)
+      if (callInputTokens > 0 || callOutputTokens > 0) {
+        recordTokenUsage(agent.id, null, callInputTokens, callOutputTokens).catch(() => {})
+      }
+
       if (tokensUsed > 0 && !compactedThisTurn) {
         currentTokenCount = tokensUsed  // prompt_tokens is cumulative context size for this turn
         await prisma.chatRoom.update({
