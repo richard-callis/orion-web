@@ -13,6 +13,7 @@ export async function GET() {
   const configs = await prisma.securityConfig.findMany({
     where: envId ? { environmentId: envId } : {},
     select: { key: true, value: true },
+    take: 200,
   })
 
   const config: Record<string, string> = {}
@@ -54,6 +55,7 @@ export async function PUT(request: Request) {
   const saved = await prisma.securityConfig.findMany({
     where: envId ? { environmentId: envId } : {},
     select: { key: true, value: true },
+    take: 200,
   })
 
   const result: Record<string, string> = {}

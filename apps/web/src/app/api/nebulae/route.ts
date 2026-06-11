@@ -7,7 +7,7 @@ import { syncNebula } from '@/lib/nebula-loader'
  * GET /api/nebulae — List all registered Nebulae
  */
 export async function GET() {
-  const nebulae = await prisma.nebula.findMany({ orderBy: { createdAt: 'asc' } })
+  const nebulae = await prisma.nebula.findMany({ orderBy: { createdAt: 'asc' }, take: 500 })
   return NextResponse.json(nebulae)
 }
 

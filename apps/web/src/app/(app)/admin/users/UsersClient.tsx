@@ -40,9 +40,12 @@ export function UsersClient({ initialUsers }: { initialUsers: User[] }) {
   const deleteUser = async (id: string) => {
     if (!confirm('Delete this user? They will be re-created on next login.')) return
     setBusy(b => ({ ...b, [id]: true }))
-    const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' })
-    if (res.ok) setUsers(prev => prev.filter(u => u.id !== id))
-    setBusy(b => ({ ...b, [id]: false }))
+    try {
+      const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' })
+      if (res.ok) setUsers(prev => prev.filter(u => u.id !== id))
+    } finally {
+      setBusy(b => ({ ...b, [id]: false }))
+    }
   }
 
   if (users.length === 0) {

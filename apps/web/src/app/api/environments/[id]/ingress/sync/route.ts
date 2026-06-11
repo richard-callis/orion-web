@@ -28,7 +28,7 @@ export async function POST(
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const expectedToken = env.gatewayToken
-  if (expectedToken && auth !== `Bearer ${expectedToken}`) {
+  if (!expectedToken || auth !== `Bearer ${expectedToken}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

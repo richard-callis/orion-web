@@ -112,9 +112,11 @@ export default function AgentGroupsPage() {
   }
 
   const deleteGroup = async (id: string) => {
-    await fetch(`/api/agent-groups/${id}`, { method: 'DELETE' })
-    setGroups(prev => prev.filter(g => g.id !== id))
-    if (selected?.id === id) setSelected(null)
+    const res = await fetch(`/api/agent-groups/${id}`, { method: 'DELETE' })
+    if (res.ok) {
+      setGroups(prev => prev.filter(g => g.id !== id))
+      if (selected?.id === id) setSelected(null)
+    }
     setConfirmDelete(null)
   }
 
