@@ -11,6 +11,7 @@ export async function GET() {
       toolAccess: { include: { toolGroup: { include: { environment: { select: { id: true, name: true } } } } } },
     },
     orderBy: { name: 'asc' },
+    take: 200,
   })
   return NextResponse.json(groups)
 }

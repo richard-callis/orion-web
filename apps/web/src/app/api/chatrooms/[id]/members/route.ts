@@ -28,10 +28,12 @@ export async function GET(
   const allUsers = await prisma.user.findMany({
     select: { id: true, username: true, name: true },
     orderBy: { username: 'asc' },
+    take: 500,
   })
   const allAgents = await prisma.agent.findMany({
     select: { id: true, name: true, type: true, metadata: true },
     orderBy: { name: 'asc' },
+    take: 500,
   })
 
   const memberUserIds = room.members.map((m: any) => m.userId).filter(Boolean) as string[]

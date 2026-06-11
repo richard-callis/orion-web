@@ -7,7 +7,9 @@ export async function PUT(req: NextRequest) {
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-  const { modelId } = await req.json()
+  let body: unknown
+  try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
+  const modelId = typeof (body as any)?.modelId === 'string' ? (body as any).modelId as string : null
 
   if (!modelId) {
     // Clear default
