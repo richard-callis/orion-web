@@ -447,3 +447,20 @@ export const CreateExternalModelSchema = z.object({
   repeatPenalty: z.number().min(0).max(5).optional().nullable(),
   seed:          z.number().int().optional().nullable(),
 })
+
+export const UpdateExternalModelSchema = z.object({
+  name:          z.string().min(1).max(200).optional(),
+  provider:      z.string().min(1).max(50).regex(/^[a-z0-9_-]+$/).optional(),
+  baseUrl:       z.string().url().max(500).optional(),
+  modelId:       z.string().min(1).max(200).optional(),
+  apiKey:        z.string().max(500).optional().nullable(),
+  enabled:       z.boolean().optional(),
+  timeoutSecs:   z.number().int().min(1).max(600).optional(),
+  maxTokens:     z.number().int().min(1).optional().nullable(),
+  contextSize:   z.number().int().min(1).optional().nullable(),
+  temperature:   z.number().min(0).max(2).optional().nullable(),
+  topP:          z.number().min(0).max(1).optional().nullable(),
+  minP:          z.number().min(0).max(1).optional().nullable(),
+  repeatPenalty: z.number().min(0).max(5).optional().nullable(),
+  seed:          z.number().int().optional().nullable(),
+})
