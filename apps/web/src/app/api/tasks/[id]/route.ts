@@ -44,6 +44,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (data.planProgress    !== undefined) dbData.planProgress    = data.planProgress
   if (data.planApprovedBy  !== undefined) dbData.planApprovedBy  = data.planApprovedBy
   if (data.planApprovedAt  !== undefined) dbData.planApprovedAt  = data.planApprovedAt ? new Date(data.planApprovedAt) : null
+  if (data.dependsOn       !== undefined) dbData.dependsOn       = data.dependsOn
+  if (data.wave            !== undefined) dbData.wave            = data.wave
   const task = await prisma.task.update({
     where: { id: params.id },
     data: dbData,

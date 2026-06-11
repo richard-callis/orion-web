@@ -145,6 +145,7 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   const [editDesc, setEditDesc]         = useState('')
   const [editPlan, setEditPlan]         = useState('')
   const [editPriority, setEditPriority] = useState('medium')
+  const [depSearch, setDepSearch]       = useState('')
   const titleRef = useRef<HTMLInputElement>(null)
 
   // Task log tab
@@ -884,32 +885,73 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
                       })}
                     </div>
                   </div>
-                  {((panel.task.dependsOn?.length ?? 0) > 0 || panel.task.wave != null) && (
-                    <div>
-                      <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block flex items-center gap-1">
-                        <Layers size={10} /> Dependencies
-                      </label>
-                      {panel.task.wave != null && (
-                        <p className="text-[10px] text-text-muted mb-1">Wave {panel.task.wave}</p>
-                      )}
-                      {(panel.task.dependsOn?.length ?? 0) > 0 && (
-                        <div className="space-y-1">
-                          {panel.task.dependsOn!.map(depId => {
-                            const dep = tasks.find(t => t.id === depId)
-                            return dep ? (
-                              <div key={depId} className="flex items-center gap-1.5 text-[10px] text-text-muted bg-bg-card rounded px-2 py-1">
-                                {dep.status === 'done' ? <CheckCircle2 size={10} className="text-emerald-400" /> : <Lock size={10} className="text-amber-400" />}
-                                <span className="flex-1 truncate">{dep.title}</span>
-                                <span className="text-text-muted/60">{dep.status}</span>
-                              </div>
-                            ) : (
-                              <div key={depId} className="text-[10px] text-text-muted/50 px-2 py-1">{depId}</div>
-                            )
-                          })}
+                  <div>
+                    <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block flex items-center gap-1">
+                      <Layers size={10} /> Dependencies
+                    </label>
+                    {/* Current deps */}
+                    {(panel.task.dependsOn?.length ?? 0) > 0 && (
+                      <div className="space-y-1 mb-2">
+                        {panel.task.dependsOn!.map(depId => {
+                          const dep = tasks.find(t => t.id === depId)
+                          return dep ? (
+                            <div key={depId} className="flex items-center gap-1.5 text-[10px] text-text-muted bg-bg-card rounded px-2 py-1">
+                              {dep.status === 'done' ? <CheckCircle2 size={10} className="text-emerald-400" /> : <Lock size={10} className="text-amber-400" />}
+                              <span className="flex-1 truncate">{dep.title}</span>
+                              <span className="text-text-muted/60 mr-1">{dep.status}</span>
+                              <button
+                                onClick={() => {
+                                  const next = (panel.task.dependsOn ?? []).filter(d => d !== depId)
+                                  updateTask(panel.task.id, { dependsOn: next } as any)
+                                }}
+                                className="text-text-muted/40 hover:text-red-400 transition-colors"
+                                title="Remove dependency"
+                              >
+                                <X size={9} />
+                              </button>
+                            </div>
+                          ) : null
+                        })}
+                      </div>
+                    )}
+                    {/* Add dep search */}
+                    <input
+                      value={depSearch}
+                      onChange={e => setDepSearch(e.target.value)}
+                      placeholder="Search tasks to add as dependency…"
+                      className="w-full px-2.5 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                    />
+                    {depSearch.trim().length > 1 && (() => {
+                      const q = depSearch.toLowerCase()
+                      const candidates = tasks.filter(t =>
+                        t.id !== panel.task.id &&
+                        !(panel.task.dependsOn ?? []).includes(t.id) &&
+                        t.title.toLowerCase().includes(q)
+                      ).slice(0, 5)
+                      return candidates.length > 0 ? (
+                        <div className="border border-border-subtle rounded mt-1 overflow-hidden">
+                          {candidates.map(t => (
+                            <button
+                              key={t.id}
+                              onClick={() => {
+                                const next = [...(panel.task.dependsOn ?? []), t.id]
+                                updateTask(panel.task.id, { dependsOn: next } as any)
+                                setDepSearch('')
+                              }}
+                              className="w-full text-left px-2.5 py-1.5 text-xs text-text-secondary hover:bg-accent/10 hover:text-text-primary flex items-center gap-2 transition-colors"
+                            >
+                              <Plus size={9} className="text-accent flex-shrink-0" />
+                              <span className="truncate">{t.title}</span>
+                            </button>
+                          ))}
                         </div>
-                      )}
-                    </div>
-                  )}
+                      ) : null
+                    })()}
+                    {/* Wave */}
+                    {panel.task.wave != null && (
+                      <p className="text-[10px] text-text-muted mt-1.5">Execution wave: {panel.task.wave}</p>
+                    )}
+                  </div>
                   <div>
                     <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
                     <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} onBlur={saveTaskDetail} rows={4}
