@@ -9,7 +9,7 @@ export type NotificationEvent =
   | { type: 'task_completed'; taskId: string; taskTitle: string; agentId: string; agentName: string; durationMs?: number }
   | { type: 'task_failed';    taskId: string; taskTitle: string; agentId: string; agentName: string; error?: string }
   | { type: 'budget_exceeded'; agentId: string; agentName: string; reason: string }
-  | { type: 'plan_approval_needed'; taskId: string; taskTitle: string; agentId: string; riskLevel: string }
+  | { type: 'plan_approval_needed'; taskId: string; taskTitle: string; agentId: string; agentName: string; riskLevel: string }
 
 function colorForEvent(type: NotificationEvent['type']): { slack: string; discord: number } {
   switch (type) {
