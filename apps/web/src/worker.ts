@@ -552,10 +552,6 @@ async function runTask(taskId: string): Promise<void> {
     // FIFO queue of open tool span IDs — tool_call pushes, tool_result shifts
     const toolSpanQueue: string[] = []
 
-    // Plan-before-execute gating: when enabled, the agent emits a <plan> block
-    // up front. If the plan is high/critical risk, we pause the task for human
-    // or supervisor approval before allowing ANY tool to run.
-    const planBeforeExecute = contextConfig.planBeforeExecute === true
     let pausedForApproval = false
 
     // Step-level checkpointing: load any existing checkpoints so we can record
