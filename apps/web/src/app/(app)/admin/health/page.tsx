@@ -131,7 +131,7 @@ export default function SystemHealthPage() {
               <p className="text-xs text-text-muted">No external models configured.</p>
             ) : (
               extEntries.map(([id, ok]) => (
-                <StatusDot key={id} ok={ok} label={id.replace('ext:', '')} />
+                <StatusDot key={id} ok={ok} label={id} />
               ))
             )}
           </Card>

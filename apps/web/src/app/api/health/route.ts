@@ -38,8 +38,8 @@ export async function GET() {
         headers: m.apiKey ? { Authorization: `Bearer ${m.apiKey}` } : {},
         signal: AbortSignal.timeout(3000),
       })
-      extHealth[`ext:${m.id}`] = res.ok
-    } catch { extHealth[`ext:${m.id}`] = false }
+      extHealth[`${m.name} (${m.provider})`] = res.ok
+    } catch { extHealth[`${m.name} (${m.provider})`] = false }
   }))
 
   // Worker health — inferred from task activity (worker has no direct health port)

@@ -474,6 +474,16 @@ export const UpdateWebhookTriggerSchema = z.object({
   enabled:   z.boolean().optional(),
 })
 
+export const UpdateWatcherPauseSchema = z.object({
+  paused: z.boolean(),
+})
+
+export const PatchAdminToolSchema = z.object({
+  id:      z.string().min(1),
+  enabled: z.boolean().optional(),
+  status:  z.enum(['active', 'rejected']).optional(),
+})
+
 export const UpdateExternalModelSchema = z.object({
   name:          z.string().min(1).max(200).optional(),
   provider:      z.string().min(1).max(50).regex(/^[a-z0-9_-]+$/).optional(),
