@@ -500,7 +500,7 @@ async function callOpenAIChat(
         // layer), not at execution. A jailbroken model emitting a tool name outside the
         // whitelist still executed it. Enforce at dispatch time.
         if (allowedTools && allowedTools.size > 0 && !allowedTools.has(tc.function.name)) {
-          result = `Permission denied: tool '${tc.function.name}' is not in this agent's allowed tool list`
+          result = `Permission denied: tool '${tc.function.name}' is not in this agent's allowed tool list. An admin can grant access under Admin → Agents → Tool Permissions.`
           if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'denied' })
         } else if (registryToolNames.has(tc.function.name)) {
           // Gate registry tools through checkToolPermission before execution.
@@ -509,7 +509,7 @@ async function callOpenAIChat(
           const agentIdForPerm = toolContext?.agentId ?? null
           const perm = await checkToolPermission(tc.function.name, agentIdForPerm, null)
           if (!perm.allowed) {
-            result = `Permission denied: ${perm.reason ?? `tool '${tc.function.name}' is not permitted for this agent`}`
+            result = `Permission denied: ${perm.reason ?? `tool '${tc.function.name}' is not permitted for this agent`}. An admin can grant access under Admin → Agents → Tool Permissions.`
             if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'denied' })
           } else {
           result = await executeRegisteredTool(tc.function.name, args, {

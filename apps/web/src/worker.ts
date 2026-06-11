@@ -568,14 +568,17 @@ async function runTask(taskId: string): Promise<void> {
     let pausedForApproval = false
 
     // Step-level checkpointing: load any existing checkpoints so we can record
-    // each completed tool_result step and detect retries.
-    const checkpoints = new Map<number, string>() // stepIndex → result
+    // each completed tool_result step and replay them on retry.
+    const checkpoints = new Map<number, { toolName: string; result: string }>()
     const existingCheckpoints = await prisma.taskCheckpoint.findMany({
       where: { taskId },
-      select: { stepIndex: true, result: true },
+      select: { stepIndex: true, toolName: true, result: true },
     }).catch(() => [])
-    for (const c of existingCheckpoints) checkpoints.set(c.stepIndex, c.result)
+    for (const c of existingCheckpoints) checkpoints.set(c.stepIndex, { toolName: c.toolName, result: c.result })
     let stepIndex = 0
+
+    // Inject checkpoints into ctx so runners can replay without re-executing tools
+    ctx.checkpoints = checkpoints.size > 0 ? checkpoints : undefined
 
     for await (const event of runner.run(ctx)) {
       // Check for task-level abort (60-minute timeout)
@@ -645,7 +648,7 @@ async function runTask(taskId: string): Promise<void> {
             update: { result: redactedResult },
             create: { taskId, stepIndex, toolName: event.tool, argsHash: idemKeyForCheckpoint, result: redactedResult },
           }).catch(e => err(`[worker] checkpoint upsert failed for task ${taskId} step ${stepIndex}: ${e instanceof Error ? e.message : e}`))
-          checkpoints.set(stepIndex, redactedResult)
+          checkpoints.set(stepIndex, { toolName: event.tool, result: redactedResult })
           await prisma.message.create({
             data: {
               conversationId: conversation.id, role: 'user',
