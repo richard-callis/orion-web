@@ -12,6 +12,7 @@ wrapConsoleLog()
 
 import { rateLimitRedis } from './lib/rate-limit-redis'
 import { isIpBlocked } from './lib/security/crowdsec-bouncer'
+import { SESSION_COOKIE_NAME } from './lib/auth'
 
 function getRateLimitKey(req: NextRequest): string {
   // X-Forwarded-For is intentionally NOT used: the leftmost IP is client-supplied
@@ -298,8 +299,7 @@ export async function middleware(req: NextRequest) {
     return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
   }
 
-  // Cookie name must match what auth.ts configures (no __Secure- prefix — works over HTTP and HTTPS)
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET, cookieName: 'next-auth.session-token' })
+  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET, cookieName: SESSION_COOKIE_NAME })
   if (!token || !token.sub) {
     const loginUrl = new URL('/login', req.url)
     loginUrl.searchParams.set('callbackUrl', pathname)

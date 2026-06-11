@@ -26,37 +26,40 @@ export type MfaLoginResult =
   | { status: 'success'; user: AppUser }
   | { status: 'error'; message: string }
 
+// SOC2: [M-002] Use __Secure- cookie prefix in production so the browser enforces
+// HTTPS transport independent of the Set-Cookie secure flag (defence in depth).
+// Must stay in sync with the cookieName passed to getToken() in middleware.ts.
+const IS_SECURE = process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https'
+export const SESSION_COOKIE_NAME = IS_SECURE ? '__Secure-next-auth.session-token' : 'next-auth.session-token'
+
 export const authOptions: NextAuthOptions = {
   session: { strategy: 'jwt' },
   secret: process.env.NEXTAUTH_SECRET,
-  // SOC2: [M-002] secure flag is now conditional — true behind TLS (prod/reverse-proxy),
-  // false only for local dev over plain HTTP. The __Secure- prefix is used when secure=true
-  // so browsers will not send cookies on insecure requests.
   cookies: {
     sessionToken: {
-      name: 'next-auth.session-token',
+      name: SESSION_COOKIE_NAME,
       options: {
         httpOnly: true,
         sameSite: 'strict' as const,
         path: '/',
-        secure: process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https',
+        secure: IS_SECURE,
       },
     },
     callbackUrl: {
-      name: 'next-auth.callback-url',
+      name: IS_SECURE ? '__Secure-next-auth.callback-url' : 'next-auth.callback-url',
       options: {
         sameSite: 'lax' as const,
         path: '/',
-        secure: process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https',
+        secure: IS_SECURE,
       },
     },
     csrfToken: {
-      name: 'next-auth.csrf-token',
+      name: IS_SECURE ? '__Host-next-auth.csrf-token' : 'next-auth.csrf-token',
       options: {
         httpOnly: true,
         sameSite: 'lax' as const,
         path: '/',
-        secure: process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https',
+        secure: IS_SECURE,
       },
     },
   },
