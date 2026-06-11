@@ -495,21 +495,12 @@ async function callOpenAIChat(
       } else {
         console.log(`[room-agents] ${agentName} calling tool: ${tc.function.name}`, args)
 
-        // Emit security audit event for high-risk tool calls (fire-and-forget)
-        if (toolContext?.agentId) {
-          auditToolCall({
-            toolName: tc.function.name,
-            args,
-            agentId: toolContext.agentId,
-            agentName,
-          })
-        }
-
         // MINOR fix: allowedTools was applied only to the advertised tool list (prompt
         // layer), not at execution. A jailbroken model emitting a tool name outside the
         // whitelist still executed it. Enforce at dispatch time.
         if (allowedTools && allowedTools.size > 0 && !allowedTools.has(tc.function.name)) {
           result = `Permission denied: tool '${tc.function.name}' is not in this agent's allowed tool list`
+          if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'denied' })
         } else if (registryToolNames.has(tc.function.name)) {
           // Gate registry tools through checkToolPermission before execution.
           // Previously called executeRegisteredTool directly with NO permission check,
@@ -518,6 +509,7 @@ async function callOpenAIChat(
           const perm = await checkToolPermission(tc.function.name, agentIdForPerm, null)
           if (!perm.allowed) {
             result = `Permission denied: ${perm.reason ?? `tool '${tc.function.name}' is not permitted for this agent`}`
+            if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'denied' })
           } else {
           result = await executeRegisteredTool(tc.function.name, args, {
             agentId: toolContext!.agentId,
@@ -527,6 +519,7 @@ async function callOpenAIChat(
               listTools: () => gateway.client.listTools(),
             } : undefined,
           })
+          if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'executed' })
           }
         } else if (legacyToolNames.has(tc.function.name)) {
           // Legacy agent-tools (create_task, orion_manage_task, etc.)
@@ -535,9 +528,11 @@ async function callOpenAIChat(
             callerAgentId: toolContext!.agentId,
             callerLlm:     toolContext!.llm,
           })
+          if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'executed' })
         } else if (gateway && gatewayToolNames.has(tc.function.name)) {
           // Known gateway tool
           result = await gateway.client.executeTool(tc.function.name, args)
+          if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'executed' })
         } else {
           // Hallucinated or unknown tool name — attempt fuzzy resolution before giving up.
           const resolved = resolveToolName(tc.function.name, allKnownToolNames)
