@@ -8,6 +8,7 @@
  * Runs every 5 minutes from worker.ts.
  */
 
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db'
 import { GatewayClient } from '@/lib/agent-runner/gateway-client'
 
@@ -245,7 +246,7 @@ export async function detectGitOpsDrift(): Promise<void> {
         { gatewayUrl: { not: null } },
         // monitoringConfig is a JSON column — environments with gitopsEnabled will
         // also be caught by having a gatewayUrl in practice, but include explicit check
-        { monitoringConfig: { not: undefined } },
+        { monitoringConfig: { not: Prisma.DbNull } },
       ],
     },
     select: {
