@@ -700,7 +700,7 @@ async function runTask(taskId: string): Promise<void> {
         postToFeed(agent.id, pauseMsg, taskId),
         ...(featureRoomId ? [postToRoom(featureRoomId, agent.id, pauseMsg, taskId)] : []),
       ])
-      notify({ type: 'plan_approval_needed', taskId, taskTitle: task.title, agentId: agent.id, riskLevel: risk }).catch(() => {})
+      notify({ type: 'plan_approval_needed', taskId, taskTitle: task.title, agentId: agent.id, agentName: agent.name, riskLevel: risk }).catch(() => {})
       log(`Task "${task.title}" (${taskId}) paused for ${risk}-risk plan approval`)
       return
     }
