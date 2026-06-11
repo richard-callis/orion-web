@@ -10,6 +10,18 @@ import { prisma } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
+interface DemoEvent {
+  type: string
+  source: string
+  severity: number
+  title: string
+  description: string
+  attackerIp?: string
+  dedupKey: string
+  firstSeen: Date
+  lastSeen: Date
+}
+
 function randIp() {
   return `${10 + Math.floor(Math.random() * 245)}.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}`
 }
@@ -21,16 +33,17 @@ function ago(minutes: number) {
 export async function POST() {
   try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
-  // Get first available environment (or null for global events)
   const env = await prisma.environment.findFirst({ select: { id: true } })
   const envId = env?.id ?? null
 
   const attackerIp = randIp()
+  // Port scanner uses a single IP so the threshold rule (groupBy attackerIp, threshold 20) fires
+  const scannerIp = randIp()
   const now = Date.now()
 
-  const events = [
-    // Brute force sequence
-    ...Array.from({ length: 8 }, (_, i) => ({
+  const events: DemoEvent[] = [
+    // Brute force sequence — same IP, fires brute_force rule (threshold 5 in 300s)
+    ...Array.from({ length: 8 }, (_, i): DemoEvent => ({
       type: 'auth_failure',
       source: 'wazuh',
       severity: 55,
@@ -38,32 +51,32 @@ export async function POST() {
       description: `Authentication failure for user root from ${attackerIp} (attempt ${i + 1})`,
       attackerIp,
       dedupKey: `demo-brute-${attackerIp}-${i}-${now}`,
-      firstSeen: ago(10 - i),
-      lastSeen: ago(10 - i),
+      firstSeen: ago(10 - i * 0.5),
+      lastSeen: ago(10 - i * 0.5),
     })),
-    // CrowdSec block
+    // CrowdSec block — fires crowdsec_block pattern rule
     {
       type: 'crowdsec_block',
       source: 'crowdsec',
       severity: 65,
       title: `IP ${attackerIp} blocked by CrowdSec`,
-      description: `CrowdSec community blocklist match: known scanner/brute-force source`,
+      description: 'CrowdSec community blocklist match: known scanner/brute-force source',
       attackerIp,
       dedupKey: `demo-crowdsec-${attackerIp}-${now}`,
       firstSeen: ago(8),
       lastSeen: ago(8),
     },
-    // Port scan
-    ...Array.from({ length: 25 }, (_, i) => ({
+    // Port scan — 25 events from the SAME IP fires port_scan threshold rule (>20 in 120s)
+    ...Array.from({ length: 25 }, (_, i): DemoEvent => ({
       type: 'connection_refused',
       source: 'ntopng',
       severity: 40,
-      title: `Port scan detected from ${randIp()}`,
+      title: `Port scan detected from ${scannerIp}`,
       description: `Connection refused on port ${1024 + i * 100}`,
-      attackerIp: randIp(),
-      dedupKey: `demo-portscan-${i}-${now}`,
-      firstSeen: ago(15),
-      lastSeen: ago(15),
+      attackerIp: scannerIp,
+      dedupKey: `demo-portscan-${scannerIp}-${i}-${now}`,
+      firstSeen: ago(1),
+      lastSeen: ago(1),
     })),
     // K8s warnings
     {
@@ -93,12 +106,12 @@ export async function POST() {
       severity: 60,
       title: 'Unusual outbound traffic spike detected',
       description: 'Network baseline deviation: 5x normal egress volume in last 10 minutes',
-      attackerIp: randIp(),
+      attackerIp,
       dedupKey: `demo-anomaly-${now}`,
       firstSeen: ago(2),
       lastSeen: ago(2),
     },
-    // High-severity malware signal
+    // High-severity malware signal — fires malware_detection pattern rule
     {
       type: 'malware',
       source: 'wazuh',
@@ -112,25 +125,28 @@ export async function POST() {
     },
   ]
 
-  let inserted = 0
-  for (const ev of events) {
-    const { attackerIp: aIp, ...rest } = ev as any
-    await prisma.securityEvent.create({
-      data: {
-        environmentId: envId,
-        type: rest.type,
-        source: rest.source,
-        severity: rest.severity,
-        title: rest.title,
-        description: rest.description ?? null,
-        rawEvent: { demo: true, attackerIp: aIp ?? null },
-        dedupKey: rest.dedupKey,
-        firstSeen: rest.firstSeen,
-        lastSeen: rest.lastSeen,
-      },
-    })
-    inserted++
+  try {
+    await prisma.$transaction(
+      events.map(ev =>
+        prisma.securityEvent.create({
+          data: {
+            environmentId: envId,
+            type: ev.type,
+            source: ev.source,
+            severity: ev.severity,
+            title: ev.title,
+            description: ev.description,
+            rawEvent: { demo: true, attackerIp: ev.attackerIp ?? null },
+            dedupKey: ev.dedupKey,
+            firstSeen: ev.firstSeen,
+            lastSeen: ev.lastSeen,
+          },
+        })
+      )
+    )
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 
-  return NextResponse.json({ inserted, message: `Injected ${inserted} demo security events` })
+  return NextResponse.json({ inserted: events.length, message: `Injected ${events.length} demo security events` })
 }

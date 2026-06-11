@@ -75,9 +75,9 @@ export default function SecuritySettings() {
     try {
       const res = await fetch('/api/monitoring/security/seed-rules', { method: 'POST' })
       const data = await res.json()
+      if (!res.ok) { setSeedRulesMsg(data.error ?? 'Failed to seed rules'); return }
       setSeedRulesMsg(`Seeded ${data.seeded} correlation rules`)
-      setRules(data.rules?.map((name: string) => ({ id: name, name, ruleType: '', severity: 0, enabled: true })) ?? [])
-      // Reload rules
+      // Reload the full rule list with all fields
       const r2 = await fetch('/api/monitoring/security/seed-rules')
       const d2 = await r2.json()
       setRules(d2.rules ?? [])
@@ -95,6 +95,7 @@ export default function SecuritySettings() {
     try {
       const res = await fetch('/api/monitoring/security/demo-events', { method: 'POST' })
       const data = await res.json()
+      if (!res.ok) { setSeedDemoMsg(data.error ?? 'Failed to inject demo events'); return }
       setSeedDemoMsg(data.message ?? 'Demo events injected')
     } catch {
       setSeedDemoMsg('Failed to inject demo events')

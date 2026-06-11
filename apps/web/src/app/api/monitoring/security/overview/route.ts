@@ -17,19 +17,11 @@ export async function GET() {
     include: { environment: true },
   })
 
-  // Count by type and severity
+  // Count by type
   const typeCounts = await prisma.securityEvent.groupBy({
     by: ['type'],
     where: envId ? { environmentId: envId } : undefined,
     _count: true,
-  })
-
-  const severityDist = await prisma.securityEvent.groupBy({
-    by: ['severity'],
-    where: envId ? { environmentId: envId } : undefined,
-    _count: { id: true },
-    orderBy: { severity: 'desc' },
-    take: 5,
   })
 
   const criticalCount = recentAlerts.filter(a => a.severity >= 80).length
@@ -110,7 +102,7 @@ export async function GET() {
       ...inv,
       _count: inv._count,
     })),
-    pendingApprovalsList: pendingApprovalsList.map((a: any) => ({
+    pendingApprovalsList: pendingApprovalsList.map(a => ({
       ...a,
       createdAt: a.createdAt.toISOString(),
     })),
