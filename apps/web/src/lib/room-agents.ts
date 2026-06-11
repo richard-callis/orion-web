@@ -445,7 +445,7 @@ async function callOpenAIChat(
     })
     if (!res.ok) {
       console.error(`[room-agents] OpenAI-compat ${baseUrl} returned HTTP ${res.status}`)
-      return { reply: null, tokensUsed, contextLimit }
+      return { reply: null, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
     }
 
     const data = await res.json() as OpenAIResponse
