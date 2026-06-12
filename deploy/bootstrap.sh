@@ -376,12 +376,20 @@ echo "Starting Vector host telemetry shipper..."
 $COMPOSE up -d --force-recreate vector 2>/dev/null || echo "NOTE: Vector service failed to start (check compose logs)."
 
 if [[ -n "${SETUP_TOKEN:-}" ]]; then
+  # In CI environments, write the setup token to a file rather than stdout
+  # to prevent it appearing in build logs.
+  if [[ -n "${CI:-}" ]]; then
+    TOKEN_FILE="${RUNNER_TEMP:-/tmp}/orion-setup-token"
+    echo "$SETUP_TOKEN" > "$TOKEN_FILE"
+    chmod 600 "$TOKEN_FILE"
+    echo "Setup token written to $TOKEN_FILE (suppressed from CI logs)."
+  fi
   echo ""
   echo "========================================"
   echo "  ORION is ready for first-run setup"
   echo "  Visit: http://$(hostname -I | awk '{print $1}'):3000"
   echo "  Or:    https://${ORION_DOMAIN:-orion.khalis.corp}"
-  echo "  Setup token: $SETUP_TOKEN"
+  if [[ -z "${CI:-}" ]]; then echo "  Setup token: $SETUP_TOKEN"; fi
   echo "========================================"
 else
   echo ""

@@ -107,7 +107,7 @@ export async function executeRegisteredTool(
   context: ToolExecutionContext,
 ): Promise<string> {
   const def = _registry.get(name)
-  if (!def) return `Error: unknown tool "${name}"`
+  if (!def) throw new Error(`Unknown tool: "${name}" — execution denied`)
   try {
     return await def.handler(args, context)
   } catch (e) {
@@ -122,7 +122,7 @@ export function validateToolArgs(
   args: unknown,
 ): { valid: boolean; errors: string[] } {
   const def = _registry.get(toolName)
-  if (!def) return { valid: true, errors: [] }  // unknown tools pass through
+  if (!def) return { valid: false, errors: [`Unknown tool: "${toolName}"`] }
 
   const schema = def.inputSchema as {
     required?: string[]
