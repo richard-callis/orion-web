@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireServiceAuth, requireWriteAccess } from '@/lib/auth'
 import { parseBodyOrError, CreateTaskSchema } from '@/lib/validate'
 import { z } from 'zod'
 
@@ -13,7 +13,8 @@ const TaskQuerySchema = z.object({
 })
 
 export async function GET(req: NextRequest) {
-  await requireServiceAuth(req)
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
   const { searchParams } = new URL(req.url)
 
   const parsed = TaskQuerySchema.safeParse({
@@ -34,6 +35,14 @@ export async function GET(req: NextRequest) {
   if (assignedAgent) where.assignedAgent = assignedAgent
   if (priority)      where.priority      = priority
 
+  // SOC2: Non-admin users only see tasks they created or are assigned to
+  if (!isService && caller && caller.role !== 'admin') {
+    where.OR = [
+      { createdBy: caller.id },
+      { assignedUserId: caller.id },
+    ]
+  }
+
   const tasks = await prisma.task.findMany({
     where,
     orderBy: { updatedAt: 'desc' },
@@ -46,6 +55,11 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
+
+  // SOC2: readonly users may not create tasks
+  if (!isService && caller && caller.role === 'readonly') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   // SOC2 [INPUT-001]: Validate request body with Zod schema
   const result = await parseBodyOrError(req, CreateTaskSchema)

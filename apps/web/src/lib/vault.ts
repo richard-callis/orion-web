@@ -108,7 +108,12 @@ export async function writeVaultSecret(
   // always return null, silently breaking every secret write.
   const setting = await prisma.systemSetting.findUnique({ where: { key: 'vault.adminToken' } })
   if (!setting?.value) throw new Error('Vault admin token not configured — has the Vault setup wizard been completed?')
-  const token = decrypt(String(setting.value))
+  const rawValue = String(setting.value)
+  if (!rawValue.startsWith('enc:v1:')) {
+    console.error('[vault] admin token is not encrypted — refusing to use plaintext token (possible substitution attack)')
+    throw new Error('Vault admin token must be encrypted')
+  }
+  const token = decrypt(rawValue)
 
   // Normalise: strip "secret/data/" prefix if the caller included it
   const normalised = kvPath.replace(/^secret\/data\//, '')
