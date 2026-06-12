@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { randomBytes } from 'crypto'
 import { requireAdmin } from '@/lib/auth'
 import { parseBodyOrError, CreateWebhookTriggerSchema } from '@/lib/validate'
+import { encrypt } from '@/lib/encryption'
 
 async function guard() {
   try { await requireAdmin() } catch {
@@ -30,6 +31,7 @@ export async function POST(req: NextRequest) {
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
   const secret = randomBytes(32).toString('hex')
+  const secretToStore = process.env.ORION_ENCRYPTION_KEY ? encrypt(secret) : secret
   const trigger = await prisma.webhookTrigger.create({
     data: {
       name:      data.name,
@@ -38,7 +40,7 @@ export async function POST(req: NextRequest) {
       taskTitle: data.taskTitle,
       taskDesc:  data.taskDesc ?? null,
       enabled:   data.enabled,
-      secret,
+      secret:    secretToStore,
     },
     include: { agent: { select: { id: true, name: true } } },
   })

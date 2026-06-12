@@ -5,6 +5,7 @@ import { prisma } from './db'
 import { verifyTOTP, verifyRecoveryCode, consumeRecoveryCode } from './totp'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { logAudit } from './audit'
+import { decrypt } from './encryption'
 
 export interface AppUser {
   id: string
@@ -436,4 +437,36 @@ export async function assertCanModify(
   if (user.role === 'admin') return
   if (user.id === recordCreatedBy) return
   throw new Error('Forbidden')
+}
+
+/**
+ * SOC2: Per-environment gateway token scoping.
+ *
+ * Validates that the Bearer token in the request matches the gateway token
+ * for the specified environment. Prevents a token for env A from being used
+ * to access env B's resources.
+ *
+ * Throws 'Unauthorized' if validation fails.
+ */
+export async function requireGatewayAuthForEnvironment(
+  req: { headers: Headers },
+  environmentId: string,
+): Promise<void> {
+  const auth = req.headers.get('authorization')
+  if (!auth?.startsWith('Bearer ')) throw new Error('Unauthorized')
+  const bearerToken = auth.slice(7)
+
+  const env = await prisma.environment.findUnique({
+    where: { id: environmentId },
+    select: { gatewayToken: true },
+  })
+  if (!env?.gatewayToken) throw new Error('Unauthorized')
+
+  const storedToken = decrypt(env.gatewayToken)
+  if (
+    storedToken.length !== bearerToken.length ||
+    !timingSafeEqual(Buffer.from(storedToken), Buffer.from(bearerToken))
+  ) {
+    throw new Error('Unauthorized')
+  }
 }

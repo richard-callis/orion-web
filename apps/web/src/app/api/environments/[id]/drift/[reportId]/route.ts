@@ -2,14 +2,15 @@
  * GET /api/environments/:id/drift/:reportId — full report with all findings
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireGatewayAuthForEnvironment } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string; reportId: string } },
 ) {
-  await requireServiceAuth(req).catch(() => {
+  const { id } = params
+  await requireGatewayAuthForEnvironment(req, id).catch(() => {
     throw Object.assign(new Error('Unauthorized'), { status: 401 })
   })
 
