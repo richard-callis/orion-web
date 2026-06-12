@@ -38,13 +38,17 @@ const IS_SECURE = process.env.NODE_ENV === 'production' || process.env.HEADER_X_
  * Increments the counter; locks the account for 15 minutes after 5 failures.
  */
 async function recordFailedLogin(userId: string): Promise<void> {
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { failedLoginAttempts: true } })
-  const attempts = (user?.failedLoginAttempts ?? 0) + 1
-  const lockedUntil = attempts >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null
-  await prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id: userId },
-    data: { failedLoginAttempts: attempts, ...(lockedUntil ? { lockedUntil } : {}) },
+    data: { failedLoginAttempts: { increment: 1 } },
+    select: { failedLoginAttempts: true },
   })
+  if (updated.failedLoginAttempts >= 5) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { lockedUntil: new Date(Date.now() + 15 * 60 * 1000) },
+    })
+  }
 }
 
 export const authOptions: NextAuthOptions = {
@@ -138,17 +142,25 @@ export const authOptions: NextAuthOptions = {
               await recordFailedLogin(user.id)
               return null
             }
-            // BLOCKER fix: consume the recovery code (single-use)
-            const updatedCodes = await consumeRecoveryCode(code, hashedCodes)
-            if (updatedCodes) {
-              const newCodesJson = JSON.stringify(updatedCodes)
-              const { encrypt: encryptFn } = await import('./encryption')
-              const encryptedUpdate: Record<string, unknown> = { totpRecoveryCodes: newCodesJson }
-              if (process.env.ORION_ENCRYPTION_KEY) {
-                encryptedUpdate.totpRecoveryCodesEncrypted = encryptFn(newCodesJson)
+            // BLOCKER fix: consume the recovery code atomically inside a transaction
+            // to prevent concurrent requests from both consuming the same code.
+            const { encrypt: encryptFn } = await import('./encryption')
+            const consumed = await prisma.$transaction(async (tx) => {
+              const fresh = await tx.user.findUnique({
+                where: { id: user.id },
+                select: { totpRecoveryCodes: true, totpRecoveryCodesEncrypted: true },
+              })
+              const freshCodes: string[] = fresh?.totpRecoveryCodes ? JSON.parse(fresh.totpRecoveryCodes) : []
+              const updatedCodes = await consumeRecoveryCode(code, freshCodes)
+              if (!updatedCodes) return false  // code already consumed by concurrent request
+              const writeData: Record<string, unknown> = { totpRecoveryCodes: JSON.stringify(updatedCodes) }
+              if (process.env.ORION_ENCRYPTION_KEY && fresh?.totpRecoveryCodesEncrypted) {
+                writeData.totpRecoveryCodesEncrypted = encryptFn(JSON.stringify(updatedCodes))
               }
-              await prisma.user.update({ where: { id: user.id }, data: encryptedUpdate })
-            }
+              await tx.user.update({ where: { id: user.id }, data: writeData })
+              return true
+            })
+            if (!consumed) return null  // concurrent request already used this code
           } else {
             // TOTP code login
             const code = credentials.totpCode as string
@@ -380,10 +392,10 @@ export async function getCurrentUser(): Promise<AppUser | null> {
           return null
         }
 
-        const existingUser = await prisma.user.findUnique({ where: { username } })
+        const now = new Date()
         const user = await prisma.user.upsert({
           where: { username },
-          update: { lastSeen: new Date() },
+          update: { lastSeen: now },
           create: {
             username,
             email: h.get('x-authentik-email') ?? `${username}@sso`,
@@ -391,9 +403,15 @@ export async function getCurrentUser(): Promise<AppUser | null> {
             externalId: h.get('x-authentik-uid'),
             role: 'user',
             provider: 'authentik',
+            lastSeen: now,
           },
         })
-        const isNewUser = !existingUser
+        // Derive new-vs-existing from the upsert result rather than a separate
+        // pre-read findUnique — avoids a race where two concurrent first-time SSO
+        // logins both read existingUser=null before either upsert commits.
+        // A new user has createdAt === lastSeen (both just set); an existing user
+        // has lastSeen updated but createdAt older.
+        const isNewUser = Math.abs(user.createdAt.getTime() - user.lastSeen.getTime()) < 2000
         if (isNewUser) {
           void logAudit({
             userId: user.id,
