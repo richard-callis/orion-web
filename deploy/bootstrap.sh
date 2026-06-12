@@ -424,3 +424,8 @@ else
   echo "Stack started. Visit http://$(hostname -I | awk '{print $1}'):3000 to complete setup."
   echo "(If setup is already done, your ORION is ready to use.)"
 fi
+
+echo ""
+echo "IMPORTANT [SOC2]: No automated backup is configured."
+echo "  Schedule backups: crontab -e"
+echo "  Add: 0 2 * * * $DEPLOY_DIR/backup.sh >> /var/log/orion-backup.log 2>&1"
