@@ -60,11 +60,15 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Create or upsert the task — the taskId is supplied by the hub so it can
-  // correlate status lookups by the same ID.
-  const task = await prisma.task.upsert({
-    where: { id: body.taskId },
-    create: {
+  // Create-only — reject duplicate taskIds with 409 to prevent a compromised
+  // spoke from force-resetting an in-progress or completed task to 'pending'.
+  const existing = await prisma.task.findUnique({ where: { id: body.taskId }, select: { id: true } })
+  if (existing) {
+    return NextResponse.json({ error: 'Task already exists', taskId: body.taskId }, { status: 409 })
+  }
+
+  const task = await prisma.task.create({
+    data: {
       id: body.taskId,
       title: body.title,
       description: body.description ?? null,
@@ -75,9 +79,6 @@ export async function POST(req: NextRequest) {
         ...(body.metadata as object | null ?? {}),
         federatedFrom: 'hub',
       } as object,
-    },
-    update: {
-      status: 'pending',
     },
     select: { id: true, status: true },
   })

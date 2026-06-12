@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { parseBodyOrError, CreateUserSchema } from '@/lib/validate'
 import { hash } from 'bcryptjs'
+import { logAudit } from '@/lib/audit'
 
 // Fields safe to return — never include passwordHash, totpSecret, totpRecoveryCodes
 const SAFE_USER_SELECT = {
@@ -24,7 +25,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  await requireAdmin()
+  const admin = await requireAdmin()
   const result = await parseBodyOrError(req, CreateUserSchema)
   if ('error' in result) return result.error
   const { data } = result
@@ -34,6 +35,13 @@ export async function POST(req: NextRequest) {
   const user = await prisma.user.create({
     data: { username: data.username, email: data.email, passwordHash, name: data.name, role: data.role },
     select: SAFE_USER_SELECT,
+  })
+
+  await logAudit({
+    userId: admin.id,
+    action: 'user_create',
+    target: user.id,
+    detail: { username: user.username, role: user.role },
   })
 
   return NextResponse.json(user, { status: 201 })

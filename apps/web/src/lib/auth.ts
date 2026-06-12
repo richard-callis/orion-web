@@ -89,7 +89,10 @@ export const authOptions: NextAuthOptions = {
         if (!user || !user.active || !user.passwordHash) return null
 
         const passwordValid = await compare(credentials.password, user.passwordHash)
-        if (!passwordValid) return null
+        if (!passwordValid) {
+          void logAudit({ userId: user.id, action: 'user_login_failure', target: user.id, detail: { reason: 'invalid_password' } })
+          return null
+        }
 
         // SOC2: [M-002] Check MFA requirement
         if (user.totpEnabled) {
@@ -100,6 +103,7 @@ export const authOptions: NextAuthOptions = {
             const code = credentials.totpCode as string
             const hashedCodes: string[] = user.totpRecoveryCodes ? JSON.parse(user.totpRecoveryCodes) : []
             if (!code || !(await verifyRecoveryCode(code, hashedCodes))) {
+              void logAudit({ userId: user.id, action: 'user_login_failure', target: user.id, detail: { reason: 'invalid_recovery_code' } })
               return { error: 'Invalid recovery code' }
             }
             // BLOCKER fix: consume the recovery code (single-use)
@@ -116,12 +120,14 @@ export const authOptions: NextAuthOptions = {
               return { mfaRequired: true, totpEnabled: true, username: user.username }
             }
             if (!(await verifyTOTP(user.totpSecret, code))) {
+              void logAudit({ userId: user.id, action: 'user_login_failure', target: user.id, detail: { reason: 'invalid_totp' } })
               return { error: 'Invalid TOTP code' }
             }
           }
 
           // MFA verified — update lastSeen and return full user
           await prisma.user.update({ where: { id: user.id }, data: { lastSeen: new Date() } })
+          void logAudit({ userId: user.id, action: 'user_login', target: user.id, detail: { mfaVerified: true } })
           return {
             id: user.id,
             name: user.name,
@@ -137,6 +143,7 @@ export const authOptions: NextAuthOptions = {
           data: { lastSeen: new Date() },
         })
 
+        void logAudit({ userId: user.id, action: 'user_login', target: user.id, detail: { mfaVerified: false } })
         return {
           id: user.id,
           name: user.name,

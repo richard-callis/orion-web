@@ -122,9 +122,9 @@ export async function logAudit(params: {
         previousHash: prevHash ?? undefined,
       },
     })
-  } catch {
+  } catch (e) {
     // Non-blocking — audit logging failures must not impact normal operations
-    // SOC2: If audit logging is consistently failing, this is an alerting condition
+    console.error('[audit] logAudit failed:', e)
   }
 }
 
