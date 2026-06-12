@@ -33,6 +33,13 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if ('error' in result) return result.error
 
   const { data } = result
+
+  // SOC2: Validate the target user exists before reassigning
+  if (data.assignedUserId) {
+    const target = await prisma.user.findUnique({ where: { id: data.assignedUserId }, select: { id: true } })
+    if (!target) return NextResponse.json({ error: 'Assigned user not found' }, { status: 400 })
+  }
+
   const dbData: Record<string, unknown> = {}
   if (data.status          !== undefined) dbData.status          = data.status
   if (data.title           !== undefined) dbData.title           = data.title

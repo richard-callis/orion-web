@@ -300,8 +300,9 @@ async function validateSSoHeaderHmac(headers: Headers): Promise<boolean> {
   }
 
   // Timing-safe comparison against current secret
+  // x-authentik-hmac carries the signature as base64 (per the contract above).
   try {
-    const signatureBuf = Buffer.from(signature, 'hex')
+    const signatureBuf = Buffer.from(signature, 'base64')
     const expectedBuf = Buffer.from(expected, 'hex')
     if (signatureBuf.length !== expectedBuf.length) {
       // Try previous secret if configured (key rotation grace period)
@@ -406,6 +407,17 @@ export async function getCurrentUser(): Promise<AppUser | null> {
   }
 
   return null
+}
+
+/**
+ * SOC2: Require a logged-in user with write access (any role except readonly).
+ * Use this for POST/PUT/DELETE handlers to block readonly users.
+ */
+export async function requireWriteAccess(): Promise<AppUser> {
+  const user = await getCurrentUser()
+  if (!user) throw new Error('Unauthorized')
+  if (user.role === 'readonly') throw new Error('Forbidden')
+  return user
 }
 
 export async function requireAdmin(): Promise<AppUser> {

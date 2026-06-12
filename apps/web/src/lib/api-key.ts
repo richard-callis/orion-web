@@ -9,15 +9,12 @@
 import { randomBytes } from 'crypto'
 import { compare, hash } from 'bcryptjs'
 
-// Deterministic prefix for DB lookup — a fixed-length slice of the raw key.
+// Deterministic prefix for DB lookup — a raw 16-char slice of the key's random portion.
 // API keys are `orion_ak_` + 36 random hex chars (144 bits of entropy).
-// Taking 16 chars of the random portion as the lookup index gives 64 bits —
-// sufficient for indexed DB lookup. The bcrypt hash in the `hash` column is
-// the actual security mechanism; this prefix is not a password hash.
-// Using a fast hash (SHA-256) here would trigger CodeQL js/insufficient-password-hash
-// because CodeQL treats any hash of key material as a weak password hash.
-// The raw-slice approach is intentional and safe — the prefix is an opaque
-// lookup key, not a secret.
+// Characters 9–24 (64 bits) are used as an opaque lookup index into the DB.
+// This is NOT a hash and carries no cryptographic guarantee — it is purely a
+// narrowing index. The bcrypt hash in the `hash` column is the actual security
+// mechanism; bcrypt verification is always required before trusting the key.
 function deterministicPrefix(raw: string): string {
   return raw.slice(9, 25)
 }
@@ -64,7 +61,7 @@ function mapRow(r: ApiKeyRow): ApiKeyInfo {
 // updateLastUsed and deleteByKey use Prisma ORM instead of raw SQL to prevent SQL injection
 const sql = {
   findByHash: `SELECT "id", "hashPrefix", name, active, "expiresAt", "lastUsedAt", "createdAt" FROM api_keys WHERE "hashPrefix" = $1 AND hash = $2`,
-  // Lookup by SHA-256 prefix only (hash column still used for bcrypt verification below)
+  // Lookup by prefix only (hash column still used for bcrypt verification below)
   findByPrefix: `SELECT "id", "userId", "hashPrefix", hash, name, active, "expiresAt", "lastUsedAt", "createdAt" FROM api_keys WHERE "hashPrefix" = $1`,
   listByUser: `SELECT "id", "hashPrefix", name, active, "expiresAt", "lastUsedAt", "createdAt" FROM api_keys WHERE "userId" = $1 ORDER BY "createdAt" DESC`,
   verifyByHash: `SELECT "id", "userId", "expiresAt", "lastUsedAt", active FROM api_keys WHERE "hashPrefix" = $1 AND hash = $2`,
@@ -80,7 +77,7 @@ export async function createApiKey(
   expiresInDays?: number,
 ): Promise<{ key: string; info: ApiKeyInfo }> {
   const raw = `orion_ak_${randomBytes(18).toString('hex')}`
-  // Use SHA-256 of the raw key for the lookup prefix (deterministic).
+  // Use the raw prefix slice for deterministic DB lookup.
   // bcrypt generates a new random salt per call — using it as a lookup key
   // would mean verification always misses (the re-computed hash never matches).
   const prefix = deterministicPrefix(raw)
@@ -113,9 +110,9 @@ export async function verifyApiKey(key: string): Promise<string | null> {
   if (!key.startsWith('orion_ak_')) return null
   if (key.length < 18) return null // minimum length check
 
-  // Deterministic prefix for lookup — SHA-256 (not bcrypt which is non-deterministic)
+  // Deterministic prefix for lookup — raw slice (not bcrypt which is non-deterministic)
   const prefix = deterministicPrefix(key)
-  // Look up by SHA-256 prefix; bcrypt compare below does the actual verification
+  // Look up by prefix; bcrypt compare below does the actual verification
   const rows = await prisma.$queryRawUnsafe(sql.findByPrefix, prefix) as ApiKeyRow[]
 
   if (!rows || rows.length === 0) return null

@@ -13,33 +13,32 @@ import { prisma } from '@/lib/db'
 import { decrypt } from '@/lib/encryption'
 import { timingSafeEqual } from 'crypto'
 
-async function validateFederationToken(req: NextRequest): Promise<boolean> {
+async function validateFederationToken(req: NextRequest, environmentId: string): Promise<boolean> {
+  if (!environmentId) return false
+
   const auth = req.headers.get('authorization')
   if (!auth?.startsWith('Bearer ')) return false
   const token = auth.slice(7)
 
-  const envs = await prisma.environment.findMany({
-    where: { federationToken: { not: null } },
-    select: { id: true, federationToken: true },
+  const env = await prisma.environment.findUnique({
+    where: { id: environmentId },
+    select: { federationToken: true },
   })
-  for (const env of envs) {
-    try {
-      const stored = decrypt(env.federationToken!)  // handles enc:v1: prefix and plaintext passthrough
-      if (stored.length === token.length &&
-          timingSafeEqual(Buffer.from(stored), Buffer.from(token))) {
-        return true
-      }
-    } catch { continue }
-  }
+  if (!env?.federationToken) return false
+
+  try {
+    const stored = decrypt(env.federationToken)  // handles enc:v1: prefix and plaintext passthrough
+    if (stored.length === token.length &&
+        timingSafeEqual(Buffer.from(stored), Buffer.from(token))) {
+      return true
+    }
+  } catch { /* fall through */ }
   return false
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await validateFederationToken(req))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
   let body: {
+    environmentId?: string
     taskId?: string
     title?: string
     description?: string | null
@@ -51,6 +50,14 @@ export async function POST(req: NextRequest) {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  if (!body.environmentId) {
+    return NextResponse.json({ error: 'environmentId is required' }, { status: 400 })
+  }
+
+  if (!(await validateFederationToken(req, body.environmentId))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   if (!body.taskId || !body.title) {
