@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { BarChart2, Coins, RefreshCw, TrendingUp, Zap, Calendar, Activity, Cpu } from 'lucide-react'
+import { BarChart2, Coins, RefreshCw, TrendingUp, Zap, Calendar, Activity, Cpu, PiggyBank, DollarSign } from 'lucide-react'
 
 type Days = 7 | 30 | 90
 
@@ -9,6 +9,8 @@ interface AgentRow {
   agentName: string
   inputTokens: number
   outputTokens: number
+  costUsd: number
+  savingsUsd: number
   tasks: number
 }
 
@@ -16,17 +18,24 @@ interface DayRow {
   date: string
   inputTokens: number
   outputTokens: number
+  costUsd: number
+  savingsUsd: number
 }
 
 interface ModelRow {
   modelId: string
+  selfHosted: boolean
   inputTokens: number
   outputTokens: number
+  costUsd: number
+  savingsUsd: number
 }
 
 interface Summary {
   totalInputTokens: number
   totalOutputTokens: number
+  totalCostUsd: number
+  totalSavingsUsd: number
   totalTasks: number
   byAgent: AgentRow[]
   byModel: ModelRow[]
@@ -39,16 +48,22 @@ function fmt(n: number): string {
   return String(n)
 }
 
+function fmtUsd(n: number): string {
+  if (n === 0) return '—'
+  if (n < 0.01) return '<$0.01'
+  if (n >= 1000) return `$${(n / 1000).toFixed(1)}K`
+  return `$${n.toFixed(2)}`
+}
+
 function Sparkline({ agentId, days }: { agentId: string; days: Days }) {
   const [data, setData] = useState<number[]>([])
   useEffect(() => {
     fetch(`/api/cost/summary?days=${days}`)
       .then(r => r.json())
       .then((s: Summary) => {
-        // Use global by-day as a proxy sparkline, showing last 7 bars regardless of window
         setData(s.byDay.slice(-7).map(d => d.inputTokens + d.outputTokens))
       })
-      .catch(() => { /* ignore */ })
+      .catch(() => {})
   }, [agentId, days])
 
   if (!data.length) return <div className="w-16 h-5" />
@@ -76,16 +91,18 @@ export default function CostPage() {
     setLoading(true)
     try {
       const res = await fetch(`/api/cost/summary?days=${d}`)
-      const data = await res.json()
-      setSummary(data)
-    } catch { /* ignore */ }
+      if (res.ok) setSummary(await res.json())
+    } catch {}
     setLoading(false)
   }
 
   useEffect(() => { load(days) }, [days])
 
   const totalTokens = summary ? summary.totalInputTokens + summary.totalOutputTokens : 0
-  const topSpender = summary?.byAgent[0]
+  const topSpender  = summary?.byAgent[0]
+  const hasCost     = summary ? summary.totalCostUsd > 0 : false
+  const hasSavings  = summary ? summary.totalSavingsUsd > 0 : false
+
   const busiestDay = summary?.byDay.reduce<DayRow | null>((best, d) =>
     !best || (d.inputTokens + d.outputTokens) > (best.inputTokens + best.outputTokens) ? d : best
   , null)
@@ -100,15 +117,14 @@ export default function CostPage() {
       <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
         <div className="flex items-center gap-2">
           <Coins size={18} className="text-accent" />
-          <h1 className="text-sm font-semibold text-text-primary">Token Usage</h1>
+          <h1 className="text-sm font-semibold text-text-primary">Token Usage & Cost</h1>
           {summary && (
             <p className="text-xs text-text-muted ml-2">
-              {fmt(totalTokens)} tokens &middot; {summary.totalTasks} tasks &middot; {summary.byAgent.length} agents
+              {fmt(totalTokens)} tokens · {summary.totalTasks} tasks · {summary.byAgent.length} agents
             </p>
           )}
         </div>
         <div className="flex items-center gap-2">
-          {/* Date range tabs */}
           <div className="flex items-center border border-border-subtle rounded overflow-hidden">
             {([7, 30, 90] as Days[]).map(d => (
               <button
@@ -156,47 +172,68 @@ export default function CostPage() {
                   <TrendingUp size={10} /> Total Tasks
                 </div>
               </div>
-              <div className="rounded-lg border border-border-subtle bg-bg-surface p-3">
-                <div className="text-sm font-bold text-text-primary truncate" title={topSpender?.agentName}>
-                  {topSpender?.agentName ?? '—'}
+              {hasCost ? (
+                <div className="rounded-lg border border-status-error/30 bg-status-error/5 p-3">
+                  <div className="text-2xl font-bold text-status-error">{fmtUsd(summary.totalCostUsd)}</div>
+                  <div className="text-[10px] text-text-muted mt-1 flex items-center gap-1">
+                    <DollarSign size={10} /> API Spend
+                  </div>
+                  <div className="text-[10px] text-text-muted mt-0.5">last {days} days</div>
                 </div>
-                <div className="text-[10px] text-text-muted mt-1">
-                  {topSpender ? fmt(topSpender.inputTokens + topSpender.outputTokens) + ' tokens' : ''}
+              ) : (
+                <div className="rounded-lg border border-border-subtle bg-bg-surface p-3">
+                  <div className="text-sm font-bold text-text-primary truncate" title={topSpender?.agentName}>
+                    {topSpender?.agentName ?? '—'}
+                  </div>
+                  <div className="text-[10px] text-text-muted mt-1">
+                    {topSpender ? fmt(topSpender.inputTokens + topSpender.outputTokens) + ' tokens' : ''}
+                  </div>
+                  <div className="text-[10px] text-text-muted mt-0.5 flex items-center gap-1">
+                    <BarChart2 size={10} /> Top Spender
+                  </div>
                 </div>
-                <div className="text-[10px] text-text-muted mt-0.5 flex items-center gap-1">
-                  <BarChart2 size={10} /> Top Spender
+              )}
+              {hasSavings ? (
+                <div className="rounded-lg border border-status-healthy/30 bg-status-healthy/5 p-3">
+                  <div className="text-2xl font-bold text-status-healthy">{fmtUsd(summary.totalSavingsUsd)}</div>
+                  <div className="text-[10px] text-text-muted mt-1 flex items-center gap-1">
+                    <PiggyBank size={10} /> Estimated Savings
+                  </div>
+                  <div className="text-[10px] text-text-muted mt-0.5">vs. cloud equivalent</div>
                 </div>
-              </div>
-              <div className="rounded-lg border border-border-subtle bg-bg-surface p-3">
-                <div className="text-sm font-bold text-text-primary">
-                  {busiestDay?.date ?? '—'}
+              ) : (
+                <div className="rounded-lg border border-border-subtle bg-bg-surface p-3">
+                  <div className="text-sm font-bold text-text-primary">
+                    {busiestDay?.date ?? '—'}
+                  </div>
+                  <div className="text-[10px] text-text-muted mt-1">
+                    {busiestDay ? fmt(busiestDay.inputTokens + busiestDay.outputTokens) + ' tokens' : ''}
+                  </div>
+                  <div className="text-[10px] text-text-muted mt-0.5 flex items-center gap-1">
+                    <Calendar size={10} /> Busiest Day
+                  </div>
                 </div>
-                <div className="text-[10px] text-text-muted mt-1">
-                  {busiestDay ? fmt(busiestDay.inputTokens + busiestDay.outputTokens) + ' tokens' : ''}
-                </div>
-                <div className="text-[10px] text-text-muted mt-0.5 flex items-center gap-1">
-                  <Calendar size={10} /> Busiest Day
-                </div>
-              </div>
+              )}
             </div>
 
             {/* Daily bar chart */}
             <div className="rounded-lg border border-border-subtle bg-bg-surface p-4">
               <h3 className="text-xs font-medium text-text-primary mb-3 flex items-center gap-1.5">
                 <BarChart2 size={13} className="text-accent" />
-                Daily Token Spend — last {days} days
+                Daily Token Usage — last {days} days
               </h3>
               <div className="flex items-end gap-px" style={{ height: '120px' }}>
                 {summary.byDay.map((d, i) => {
                   const total = d.inputTokens + d.outputTokens
-                  const pct = (total / maxDayTokens) * 100
+                  const pct   = (total / maxDayTokens) * 100
                   const showLabel = i % 5 === 0
+                  const tip = `${d.date}: ${fmt(total)} tokens${d.costUsd > 0 ? ` · ${fmtUsd(d.costUsd)}` : ''}${d.savingsUsd > 0 ? ` · ${fmtUsd(d.savingsUsd)} saved` : ''}`
                   return (
                     <div key={d.date} className="flex-1 flex flex-col items-center justify-end gap-0.5 min-w-0">
                       <div
                         className="w-full bg-accent/50 hover:bg-accent/80 rounded-t-sm transition-colors cursor-default"
                         style={{ height: `${Math.max(pct, total > 0 ? 3 : 0)}%` }}
-                        title={`${d.date}: ${fmt(total)} tokens`}
+                        title={tip}
                       />
                       {showLabel && (
                         <span className="text-[8px] text-text-muted truncate w-full text-center leading-tight">
@@ -224,15 +261,17 @@ export default function CostPage() {
                         <th className="text-right pb-2 font-medium">Input</th>
                         <th className="text-right pb-2 font-medium">Output</th>
                         <th className="text-right pb-2 font-medium">Total</th>
+                        {hasCost    && <th className="text-right pb-2 font-medium text-status-error">Spend</th>}
+                        {hasSavings && <th className="text-right pb-2 font-medium text-status-healthy">Saved</th>}
                         <th className="text-right pb-2 font-medium">Tasks</th>
                         <th className="text-right pb-2 font-medium">Last 7d</th>
                       </tr>
                     </thead>
                     <tbody>
                       {summary.byAgent.map(a => {
-                        const total = a.inputTokens + a.outputTokens
+                        const total    = a.inputTokens + a.outputTokens
                         const maxTotal = (summary.byAgent[0].inputTokens + summary.byAgent[0].outputTokens) || 1
-                        const barPct = (total / maxTotal) * 100
+                        const barPct   = (total / maxTotal) * 100
                         return (
                           <tr key={a.agentId} className="border-b border-border-subtle/50 last:border-0">
                             <td className="py-2 pr-2">
@@ -240,19 +279,16 @@ export default function CostPage() {
                                 {a.agentName}
                               </div>
                               <div className="w-full bg-bg-raised rounded-full h-1 mt-1">
-                                <div
-                                  className="h-1 rounded-full bg-accent/60"
-                                  style={{ width: `${barPct}%` }}
-                                />
+                                <div className="h-1 rounded-full bg-accent/60" style={{ width: `${barPct}%` }} />
                               </div>
                             </td>
                             <td className="py-2 text-right text-text-secondary">{fmt(a.inputTokens)}</td>
                             <td className="py-2 text-right text-text-secondary">{fmt(a.outputTokens)}</td>
                             <td className="py-2 text-right font-medium text-text-primary">{fmt(total)}</td>
+                            {hasCost    && <td className="py-2 text-right text-status-error">{fmtUsd(a.costUsd)}</td>}
+                            {hasSavings && <td className="py-2 text-right text-status-healthy">{fmtUsd(a.savingsUsd)}</td>}
                             <td className="py-2 text-right text-text-secondary">{a.tasks}</td>
-                            <td className="py-2 pl-2">
-                              <Sparkline agentId={a.agentId} days={days} />
-                            </td>
+                            <td className="py-2 pl-2"><Sparkline agentId={a.agentId} days={days} /></td>
                           </tr>
                         )
                       })}
@@ -262,6 +298,7 @@ export default function CostPage() {
               </div>
             )}
 
+            {/* By-model table */}
             {summary.byModel.length > 0 && (
               <div className="rounded-lg border border-border-subtle bg-bg-surface overflow-hidden">
                 <div className="px-4 py-3 border-b border-border-subtle flex items-center gap-2">
@@ -270,19 +307,30 @@ export default function CostPage() {
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
-                    <thead><tr className="bg-bg-raised border-b border-border-subtle">
-                      <th className="px-4 py-2.5 text-left text-xs font-medium text-text-secondary">Model</th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-text-secondary">Input</th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-text-secondary">Output</th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-text-secondary">Total</th>
-                    </tr></thead>
+                    <thead>
+                      <tr className="bg-bg-raised border-b border-border-subtle">
+                        <th className="px-4 py-2.5 text-left text-xs font-medium text-text-secondary">Model</th>
+                        <th className="px-4 py-2.5 text-right text-xs font-medium text-text-secondary">Input</th>
+                        <th className="px-4 py-2.5 text-right text-xs font-medium text-text-secondary">Output</th>
+                        <th className="px-4 py-2.5 text-right text-xs font-medium text-text-secondary">Total</th>
+                        {hasCost    && <th className="px-4 py-2.5 text-right text-xs font-medium text-status-error">Spend</th>}
+                        {hasSavings && <th className="px-4 py-2.5 text-right text-xs font-medium text-status-healthy">Savings</th>}
+                      </tr>
+                    </thead>
                     <tbody className="divide-y divide-border-subtle">
                       {summary.byModel.map(m => (
                         <tr key={m.modelId} className="hover:bg-bg-raised/50 transition-colors">
-                          <td className="px-4 py-2.5 font-mono text-xs text-text-primary">{m.modelId}</td>
+                          <td className="px-4 py-2.5 font-mono text-xs text-text-primary">
+                            {m.modelId}
+                            {m.selfHosted && (
+                              <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] bg-accent/10 text-accent">self-hosted</span>
+                            )}
+                          </td>
                           <td className="px-4 py-2.5 text-right text-xs text-text-secondary">{fmt(m.inputTokens)}</td>
                           <td className="px-4 py-2.5 text-right text-xs text-text-secondary">{fmt(m.outputTokens)}</td>
                           <td className="px-4 py-2.5 text-right text-xs font-medium text-text-primary">{fmt(m.inputTokens + m.outputTokens)}</td>
+                          {hasCost    && <td className="px-4 py-2.5 text-right text-xs text-status-error">{fmtUsd(m.costUsd)}</td>}
+                          {hasSavings && <td className="px-4 py-2.5 text-right text-xs text-status-healthy">{fmtUsd(m.savingsUsd)}</td>}
                         </tr>
                       ))}
                     </tbody>
@@ -295,7 +343,7 @@ export default function CostPage() {
               <div className="flex flex-col items-center justify-center rounded-lg border border-border-subtle bg-bg-surface py-16 text-center gap-3">
                 <Activity size={32} className="text-text-muted/40" />
                 <p className="text-sm font-medium text-text-secondary">No token usage recorded yet</p>
-                <p className="text-xs text-text-muted max-w-xs">Token usage will appear here once agents start completing tasks. Try running a task to see cost data.</p>
+                <p className="text-xs text-text-muted max-w-xs">Token usage will appear here once agents start completing tasks. Set pricing on your models in Admin → Models to track spend and savings.</p>
               </div>
             )}
           </>

@@ -10,6 +10,9 @@ interface ExternalModel {
   apiKey: string | null
   modelId: string
   enabled: boolean
+  selfHosted: boolean
+  inputPricePer1M: number | null
+  outputPricePer1M: number | null
   timeoutSecs: number
   maxTokens: number | null
   contextSize: number | null
@@ -32,6 +35,9 @@ interface ModelForm {
   apiKey: string
   modelId: string
   enabled: boolean
+  selfHosted: boolean
+  inputPricePer1M: number | null
+  outputPricePer1M: number | null
   timeoutSecs: number
   maxTokens: number | null
   contextSize: number | null
@@ -42,7 +48,7 @@ interface ModelForm {
   seed: number | null
 }
 
-const EMPTY_FORM: ModelForm = { name: '', provider: 'openai', baseUrl: '', apiKey: '', modelId: '', enabled: true, timeoutSecs: 120, maxTokens: null, contextSize: null, temperature: null, topP: null, minP: null, repeatPenalty: null, seed: null }
+const EMPTY_FORM: ModelForm = { name: '', provider: 'openai', baseUrl: '', apiKey: '', modelId: '', enabled: true, selfHosted: false, inputPricePer1M: null, outputPricePer1M: null, timeoutSecs: 120, maxTokens: null, contextSize: null, temperature: null, topP: null, minP: null, repeatPenalty: null, seed: null }
 
 const PROVIDER_LABELS: Record<string, string> = {
   openai: 'OpenAI Compatible',
@@ -105,7 +111,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
   const isNew = model === null
   const [form, setForm] = useState<ModelForm>(
     model
-      ? { name: model.name, provider: model.provider, baseUrl: model.baseUrl, apiKey: '', modelId: model.modelId, enabled: model.enabled, timeoutSecs: model.timeoutSecs ?? 120, maxTokens: model.maxTokens ?? null, contextSize: model.contextSize ?? null, temperature: model.temperature ?? null, topP: model.topP ?? null, minP: model.minP ?? null, repeatPenalty: model.repeatPenalty ?? null, seed: model.seed ?? null }
+      ? { name: model.name, provider: model.provider, baseUrl: model.baseUrl, apiKey: '', modelId: model.modelId, enabled: model.enabled, selfHosted: model.selfHosted ?? false, inputPricePer1M: model.inputPricePer1M ?? null, outputPricePer1M: model.outputPricePer1M ?? null, timeoutSecs: model.timeoutSecs ?? 120, maxTokens: model.maxTokens ?? null, contextSize: model.contextSize ?? null, temperature: model.temperature ?? null, topP: model.topP ?? null, minP: model.minP ?? null, repeatPenalty: model.repeatPenalty ?? null, seed: model.seed ?? null }
       : EMPTY_FORM
   )
   const [saving, setSaving]         = useState(false)
@@ -121,7 +127,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
     if (!form.name || !form.baseUrl || !form.modelId) { setError('Name, Base URL, and Model ID are required.'); return }
     setSaving(true); setError(null)
     try {
-      const payload = { name: form.name, provider: form.provider, baseUrl: form.baseUrl, apiKey: form.apiKey || undefined, modelId: form.modelId, enabled: form.enabled, timeoutSecs: form.timeoutSecs, maxTokens: form.maxTokens, contextSize: form.contextSize, temperature: form.temperature, topP: form.topP, minP: form.minP, repeatPenalty: form.repeatPenalty, seed: form.seed }
+      const payload = { name: form.name, provider: form.provider, baseUrl: form.baseUrl, apiKey: form.apiKey || undefined, modelId: form.modelId, enabled: form.enabled, selfHosted: form.selfHosted, inputPricePer1M: form.inputPricePer1M, outputPricePer1M: form.outputPricePer1M, timeoutSecs: form.timeoutSecs, maxTokens: form.maxTokens, contextSize: form.contextSize, temperature: form.temperature, topP: form.topP, minP: form.minP, repeatPenalty: form.repeatPenalty, seed: form.seed }
       const res = model
         ? await fetch(`/api/admin/models/${model.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         : await fetch('/api/admin/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -333,6 +339,50 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
                 className={inputCls}
               />
             </FormField>
+          </div>
+
+          {/* Pricing & self-hosted */}
+          <div className="rounded-lg border border-border-subtle bg-bg-raised/50 px-4 py-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-text-primary">Self-hosted model</p>
+                <p className="text-[11px] text-text-muted mt-0.5">
+                  {form.selfHosted
+                    ? 'Token cost shows estimated savings vs. cloud equivalent'
+                    : 'Token cost tracks actual API spend'}
+                </p>
+              </div>
+              <button
+                onClick={() => setForm(f => ({ ...f, selfHosted: !f.selfHosted }))}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${form.selfHosted ? 'bg-accent' : 'bg-bg-raised border border-border-subtle'}`}
+              >
+                <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${form.selfHosted ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label={form.selfHosted ? 'Cloud equivalent input $/1M tokens' : 'Input price $/1M tokens'}>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={form.inputPricePer1M ?? ''}
+                  onChange={e => setForm(f => ({ ...f, inputPricePer1M: e.target.value ? Math.max(0, parseFloat(e.target.value)) : null }))}
+                  placeholder="e.g. 3.00"
+                  className={inputCls}
+                />
+              </FormField>
+              <FormField label={form.selfHosted ? 'Cloud equivalent output $/1M tokens' : 'Output price $/1M tokens'}>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={form.outputPricePer1M ?? ''}
+                  onChange={e => setForm(f => ({ ...f, outputPricePer1M: e.target.value ? Math.max(0, parseFloat(e.target.value)) : null }))}
+                  placeholder="e.g. 15.00"
+                  className={inputCls}
+                />
+              </FormField>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">

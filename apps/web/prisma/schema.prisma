@@ -505,23 +505,26 @@ model Bug {
 }
 
 model ExternalModel {
-  id            String   @id @default(cuid())
-  name          String
-  provider      String // "openai" | "ollama" | "anthropic" | "custom"
-  baseUrl       String
-  apiKey        String?  @db.Text
-  modelId       String
-  enabled       Boolean  @default(true)
-  timeoutSecs   Int      @default(120)
-  maxTokens     Int?     // max output generation tokens; null = model default
-  contextSize   Int?     // context window override; null = auto-discover from /props
-  temperature   Float?
-  topP          Float?
-  minP          Float?
-  repeatPenalty Float?
-  seed          Int?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id               String    @id @default(cuid())
+  name             String
+  provider         String // "openai" | "ollama" | "anthropic" | "custom"
+  baseUrl          String
+  apiKey           String?   @db.Text
+  modelId          String
+  enabled          Boolean   @default(true)
+  selfHosted       Boolean   @default(false)
+  inputPricePer1M  Decimal?  @db.Decimal(10, 6) // USD per 1M input tokens; for self-hosted = cloud equivalent (savings estimate)
+  outputPricePer1M Decimal?  @db.Decimal(10, 6) // USD per 1M output tokens
+  timeoutSecs      Int       @default(120)
+  maxTokens        Int?
+  contextSize      Int?
+  temperature      Float?
+  topP             Float?
+  minP             Float?
+  repeatPenalty    Float?
+  seed             Int?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }
 
 model OIDCProvider {
