@@ -3,6 +3,15 @@ import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, UpdateSettingsSchema } from '@/lib/validate'
+import { encrypt } from '@/lib/encryption'
+
+// Keys containing these substrings are sensitive and must be encrypted at rest.
+const SENSITIVE_KEY_PATTERNS = ['token', 'secret', 'password', 'apikey', 'api_key', 'credential']
+
+function isSensitiveKey(key: string): boolean {
+  const lower = key.toLowerCase()
+  return SENSITIVE_KEY_PATTERNS.some(p => lower.includes(p))
+}
 
 // Keys containing these substrings are redacted in GET responses.
 // They hold tokens, secrets, or keys that must not be returned to the browser.
@@ -29,11 +38,23 @@ export async function PATCH(req: NextRequest) {
   if ('error' in result) return result.error
   const { data } = result
 
+  // SOC2: encrypt sensitive values before storage
+  let valueToStore: unknown
+  if (isSensitiveKey(data.key)) {
+    try {
+      valueToStore = encrypt(data.value as string)
+    } catch {
+      return NextResponse.json({ error: 'Encryption key not configured' }, { status: 500 })
+    }
+  } else {
+    valueToStore = data.value
+  }
+
   const ops = [
     prisma.systemSetting.upsert({
       where: { key: data.key },
-      update: { value: data.value as any },
-      create: { key: data.key, value: data.value as any },
+      update: { value: valueToStore as any },
+      create: { key: data.key, value: valueToStore as any },
     })
   ]
 
