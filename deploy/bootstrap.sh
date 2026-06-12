@@ -152,6 +152,27 @@ if grep -q "^NEXTAUTH_SECRET=change-me" "$DEPLOY_DIR/.env"; then
   echo "Generated NEXTAUTH_SECRET."
 fi
 
+# ── Auto-generate MinIO credentials if missing ────────────────────────────────
+if ! grep -q "^MINIO_ROOT_USER=" "$DEPLOY_DIR/.env" || grep -q "^MINIO_ROOT_USER=change-me" "$DEPLOY_DIR/.env" || grep -q "^MINIO_ROOT_USER=$" "$DEPLOY_DIR/.env"; then
+  sed -i '/^MINIO_ROOT_USER=/d' "$DEPLOY_DIR/.env"
+  echo "MINIO_ROOT_USER=orion-minio-$(openssl rand -hex 8)" >> "$DEPLOY_DIR/.env"
+  echo "Generated MINIO_ROOT_USER."
+fi
+if ! grep -q "^MINIO_ROOT_PASSWORD=" "$DEPLOY_DIR/.env" || grep -q "^MINIO_ROOT_PASSWORD=change-me" "$DEPLOY_DIR/.env" || grep -q "^MINIO_ROOT_PASSWORD=$" "$DEPLOY_DIR/.env"; then
+  MINIO_PASS=$(openssl rand -hex 24)
+  sed -i '/^MINIO_ROOT_PASSWORD=/d' "$DEPLOY_DIR/.env"
+  echo "MINIO_ROOT_PASSWORD=${MINIO_PASS}" >> "$DEPLOY_DIR/.env"
+  echo "Generated MINIO_ROOT_PASSWORD."
+fi
+
+# ── Auto-generate Redis password if missing ───────────────────────────────────
+if ! grep -q "^REDIS_PASSWORD=" "$DEPLOY_DIR/.env" || grep -q "^REDIS_PASSWORD=change-me" "$DEPLOY_DIR/.env" || grep -q "^REDIS_PASSWORD=$" "$DEPLOY_DIR/.env"; then
+  REDIS_PASS=$(openssl rand -hex 32)
+  sed -i '/^REDIS_PASSWORD=/d' "$DEPLOY_DIR/.env"
+  echo "REDIS_PASSWORD=${REDIS_PASS}" >> "$DEPLOY_DIR/.env"
+  echo "Generated REDIS_PASSWORD."
+fi
+
 # ── Auto-generate bundled Gitea admin credentials ─────────────────────────────
 if [[ "${GIT_PROVIDER:-gitea-bundled}" == "gitea-bundled" ]]; then
   if ! grep -q "^GITEA_ADMIN_USER=" "$DEPLOY_DIR/.env" || \
@@ -374,6 +395,13 @@ chown -R 1000:1000 "$DEPLOY_DIR/vector-data" 2>/dev/null || true
 
 echo "Starting Vector host telemetry shipper..."
 $COMPOSE up -d --force-recreate vector 2>/dev/null || echo "NOTE: Vector service failed to start (check compose logs)."
+
+# Warn about unpinned image tags (SOC2 LOW finding)
+if grep -qE ":(latest|[^@\"']+)\"" "$DEPLOY_DIR/docker-compose.yml" 2>/dev/null; then
+  echo ""
+  echo "NOTE [SOC2-LOW]: Some services use mutable image tags. For production,"
+  echo "  pin images to specific digests (e.g. image@sha256:...) in docker-compose.yml."
+fi
 
 if [[ -n "${SETUP_TOKEN:-}" ]]; then
   # In CI environments, write the setup token to a file rather than stdout

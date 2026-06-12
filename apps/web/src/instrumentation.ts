@@ -39,5 +39,23 @@ export async function register() {
         'SSO_ALLOW_UNSIGNED_SSO before going to production.'
       )
     }
+
+    // SOC2 CC5: validate critical security environment variables at startup
+    const REQUIRED_SECURITY_VARS = ['NEXTAUTH_SECRET', 'ORION_ENCRYPTION_KEY']
+    const WARN_IF_DEFAULT: Array<[string, string]> = [
+      ['MINIO_ROOT_PASSWORD', 'change-me'],
+      ['REDIS_PASSWORD', 'change-me'],
+      ['POSTGRES_PASSWORD', 'change-me'],
+    ]
+    for (const v of REQUIRED_SECURITY_VARS) {
+      if (!process.env[v]) {
+        console.error(`[SOC2][startup] MISSING REQUIRED ENV VAR: ${v} — server security may be compromised`)
+      }
+    }
+    for (const [v, def] of WARN_IF_DEFAULT) {
+      if (!process.env[v] || process.env[v] === def) {
+        console.warn(`[SOC2][startup] SECURITY WARNING: ${v} is unset or using placeholder value`)
+      }
+    }
   }
 }
