@@ -18,6 +18,7 @@ import { compare } from 'bcryptjs'
 import { verifyTOTP, verifyRecoveryCode, consumeRecoveryCode } from '@/lib/totp'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, MfaVerifySchema } from '@/lib/validate'
+import { decrypt, encrypt } from '@/lib/encryption'
 
 export async function POST(req: NextRequest) {
   // BLOCKER fix: per-account rate limit on MFA verify (5 attempts/15min)
@@ -44,11 +45,12 @@ async function handleTotpLogin(username: string, password: string, code?: string
     select: {
       id: true, username: true, email: true, name: true,
       role: true, active: true, passwordHash: true,
-      totpEnabled: true, totpSecret: true,
+      totpEnabled: true, totpSecret: true, totpSecretEncrypted: true,
     },
   })
 
-  if (!user || !user.active || !user.totpEnabled || !user.totpSecret) {
+  const rawSecret = user?.totpSecretEncrypted ? decrypt(user.totpSecretEncrypted) : user?.totpSecret
+  if (!user || !user.active || !user.totpEnabled || !rawSecret) {
     return NextResponse.json({ error: 'MFA not enabled for this account' }, { status: 403 })
   }
 
@@ -69,7 +71,7 @@ async function handleTotpLogin(username: string, password: string, code?: string
     return NextResponse.json({ error: 'Too many MFA attempts. Try again later.' }, { status: 429 })
   }
 
-  if (!(await verifyTOTP(user.totpSecret, code))) {
+  if (!(await verifyTOTP(rawSecret, code))) {
     // SOC2: [M-005] Log MFA verification failure (non-blocking)
     logAudit({
       userId: user.id, action: 'mfa_verify_failure', target: 'mfa:verify',
@@ -116,7 +118,7 @@ async function handleRecoveryLogin(username: string, password: string, code?: st
     select: {
       id: true, username: true, email: true, name: true,
       role: true, active: true, passwordHash: true,
-      totpEnabled: true, totpRecoveryCodes: true,
+      totpEnabled: true, totpRecoveryCodes: true, totpRecoveryCodesEncrypted: true,
     },
   })
 
@@ -134,8 +136,9 @@ async function handleRecoveryLogin(username: string, password: string, code?: st
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 
-  // Verify recovery code
-  const hashedCodes: string[] = user.totpRecoveryCodes ? JSON.parse(user.totpRecoveryCodes) : []
+  // Verify recovery code — prefer encrypted field
+  const rawCodes = user.totpRecoveryCodesEncrypted ? decrypt(user.totpRecoveryCodesEncrypted) : user.totpRecoveryCodes
+  const hashedCodes: string[] = rawCodes ? JSON.parse(rawCodes) : []
   if (!hashedCodes.length || !(await verifyRecoveryCode(code, hashedCodes))) {
     // SOC2: [M-005] Log MFA verification failure (non-blocking)
     logAudit({
@@ -154,7 +157,12 @@ async function handleRecoveryLogin(username: string, password: string, code?: st
   // SOC2: [M-005] Log successful MFA verification via recovery code (non-blocking)
     // Consume the recovery code (single-use)
     const updatedCodes = await consumeRecoveryCode(code, hashedCodes)
-    await prisma.user.update({ where: { id: user.id }, data: { totpRecoveryCodes: JSON.stringify(updatedCodes) } })
+    const updatedCodesJson = JSON.stringify(updatedCodes)
+    const recoveryWriteData: Record<string, unknown> = { totpRecoveryCodes: updatedCodesJson }
+    if (process.env.ORION_ENCRYPTION_KEY) {
+      recoveryWriteData.totpRecoveryCodesEncrypted = encrypt(updatedCodesJson)
+    }
+    await prisma.user.update({ where: { id: user.id }, data: recoveryWriteData })
 
   logAudit({
     userId: user.id, action: 'mfa_verify_success', target: 'mfa:verify',

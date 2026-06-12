@@ -443,10 +443,12 @@ model User {
   updatedAt    DateTime  @updatedAt
 
   // SOC2: [M-002] TOTP multi-factor authentication
-  totpSecret        String? // Base32 TOTP secret (encrypted at rest)
-  totpEnabled       Boolean   @default(false)
-  totpRecoveryCodes String? // JSON array of bcrypt-hashed recovery codes
-  totpEnabledAt     DateTime? // When MFA was enabled (audit trail)
+  totpSecret                 String? // Base32 TOTP secret (plaintext legacy — migrate to totpSecretEncrypted)
+  totpEnabled                Boolean   @default(false)
+  totpRecoveryCodes          String? // JSON array of bcrypt-hashed recovery codes (plaintext legacy — migrate to totpRecoveryCodesEncrypted)
+  totpEnabledAt              DateTime? // When MFA was enabled (audit trail)
+  totpSecretEncrypted        String? // AES-256-GCM encrypted TOTP secret (enc:v1: prefix)
+  totpRecoveryCodesEncrypted String? // AES-256-GCM encrypted JSON array of bcrypt-hashed recovery codes
 
   // SOC2: [M-006] Per-account login lockout
   failedLoginAttempts Int       @default(0)
