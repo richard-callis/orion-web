@@ -12,13 +12,13 @@ import { compare, hash } from 'bcryptjs'
 // Deterministic prefix for DB lookup — a fixed-length slice of the raw key.
 // API keys are `orion_ak_` + 36 random hex chars (144 bits of entropy).
 // Taking 16 chars of the random portion as the lookup index gives 64 bits —
-// sufficient for indexed DB lookup. No hashing is applied here; the bcrypt
-// hash stored in the `hash` column is the actual security mechanism.
-// This avoids using a fast hash function (SHA-256) on a secret, which
-// satisfies CodeQL js/insufficient-password-hash (the prefix itself is not
-// a password hash — it is an opaque lookup key backed by bcrypt verification).
+// sufficient for indexed DB lookup. The bcrypt hash in the `hash` column is
+// the actual security mechanism; this prefix is not a password hash.
+// Using a fast hash (SHA-256) here would trigger CodeQL js/insufficient-password-hash
+// because CodeQL treats any hash of key material as a weak password hash.
+// The raw-slice approach is intentional and safe — the prefix is an opaque
+// lookup key, not a secret.
 function deterministicPrefix(raw: string): string {
-  // Skip the 'orion_ak_' prefix (9 chars) and take 16 chars of random hex
   return raw.slice(9, 25)
 }
 import { prisma } from './db'
