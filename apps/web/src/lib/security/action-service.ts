@@ -58,10 +58,13 @@ export async function gatewayExecutor(
   payload?: Record<string, unknown>,
   environmentId?: string | null,
 ): Promise<{ success: boolean; result: string; errorType?: GatewayErrorType }> {
+  if (!environmentId) {
+    return { success: false, result: 'environmentId is required to select a gateway — refusing to pick an arbitrary connected gateway' }
+  }
   const where = {
+    id: environmentId,
     status: 'connected',
     gatewayUrl: { not: null },
-    ...(environmentId ? { id: environmentId } : {}),
   }
   const env = await prisma.environment.findFirst({
     where,

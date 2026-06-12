@@ -345,7 +345,11 @@ async function runReviewerCheck(
     if (verdict.startsWith('REJECTED:')) {
       const reason = verdict.slice('REJECTED:'.length).trim()
       await logTaskEvent(taskId, 'reviewer_rejected', reason, agentId)
-      await prisma.task.update({ where: { id: taskId }, data: { status: 'pending' } })
+      const current = await prisma.task.findUnique({ where: { id: taskId }, select: { retryCount: true } })
+      const retryCount = (current?.retryCount ?? 0) + 1
+      // Cap retries at 3 to prevent unbounded rejection loops
+      const newStatus = retryCount >= 3 ? 'failed' : 'pending'
+      await prisma.task.update({ where: { id: taskId }, data: { status: newStatus, retryCount } })
     } else {
       const reason = verdict.startsWith('APPROVED:') ? verdict.slice('APPROVED:'.length).trim() : verdict
       await logTaskEvent(taskId, 'reviewer_approved', reason || 'Output approved', agentId)

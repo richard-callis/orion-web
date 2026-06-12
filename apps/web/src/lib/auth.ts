@@ -381,8 +381,14 @@ export async function requireServiceAuth(
   // it's a gateway request. Detect it by checking for the service token header.
   const auth = req.headers.get('authorization')
   const gatewayToken = process.env.ORION_GATEWAY_TOKEN
-  if (gatewayToken && auth === `Bearer ${gatewayToken}`) {
-    return null // service/gateway auth — caller should handle
+  if (gatewayToken && auth) {
+    const expected = `Bearer ${gatewayToken}`
+    if (
+      auth.length === expected.length &&
+      timingSafeEqual(Buffer.from(auth), Buffer.from(expected))
+    ) {
+      return null // service/gateway auth — caller should handle
+    }
   }
 
   throw new Error('Unauthorized')

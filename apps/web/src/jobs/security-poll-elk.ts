@@ -176,6 +176,7 @@ async function queryElk(since: Date, index: string, size: number): Promise<ElkEv
     method: 'POST',
     headers,
     body: JSON.stringify(query),
+    signal: AbortSignal.timeout(30_000),
   })
 
   if (!res.ok) {

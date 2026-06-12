@@ -207,6 +207,7 @@ async function pollNtopngAlerts(since: Date, limit: number): Promise<NtopngThrea
       headers: {
         'Authorization': `Bearer ${NTOPNG_API_KEY}`,
       },
+      signal: AbortSignal.timeout(30_000),
     }
   )
 
@@ -233,6 +234,7 @@ async function pollNtopngFlows(since: Date, limit: number): Promise<NtopngFlow[]
       headers: {
         'Authorization': `Bearer ${NTOPNG_API_KEY}`,
       },
+      signal: AbortSignal.timeout(30_000),
     }
   )
 

@@ -308,8 +308,10 @@ function SchedulesTab() {
 
   async function handleToggle(s: ScheduledTask) {
     setToggling(s.id)
-    await fetch(`/api/scheduled-tasks/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !s.enabled }) })
-    await load(); setToggling(null)
+    try {
+      await fetch(`/api/scheduled-tasks/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !s.enabled }) })
+      await load()
+    } finally { setToggling(null) }
   }
 
   async function handleTrigger(id: string) {

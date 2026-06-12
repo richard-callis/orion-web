@@ -8,7 +8,7 @@
 import { NextRequest } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/db'
-import { getCurrentUser } from '@/lib/auth'
+import { requireAdmin } from '@/lib/auth'
 import { parseBodyOrError } from '@/lib/validate'
 
 const CreateAgentKnowledgeSchema = z.object({
@@ -20,8 +20,7 @@ const CreateAgentKnowledgeSchema = z.object({
 })
 
 export async function GET(req: NextRequest) {
-  const user = await getCurrentUser()
-  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  try { await requireAdmin() } catch { return Response.json({ error: 'Unauthorized' }, { status: 401 }) }
 
   const { searchParams } = new URL(req.url)
   const query   = searchParams.get('query') ?? ''
@@ -49,8 +48,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await getCurrentUser()
-  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  try { await requireAdmin() } catch { return Response.json({ error: 'Unauthorized' }, { status: 401 }) }
 
   const result = await parseBodyOrError(req, CreateAgentKnowledgeSchema)
   if ('error' in result) return result.error

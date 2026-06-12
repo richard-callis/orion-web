@@ -39,7 +39,7 @@ export function PendingToolNotifications() {
   const approve = async (tool: McpTool) => {
     setActing(tool.id)
     try {
-      await fetch(`/api/environments/${tool.environment.id}/tools/${tool.id}/approve`, {
+      const res = await fetch(`/api/environments/${tool.environment.id}/tools/${tool.id}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -47,6 +47,7 @@ export function PendingToolNotifications() {
           enabled:    tool.enabled !== false,
         }),
       })
+      if (!res.ok) return
       setTools(prev => prev.filter(t => t.id !== tool.id))
       setViewTool(null)
     } finally { setActing(null) }
@@ -55,7 +56,8 @@ export function PendingToolNotifications() {
   const reject = async (tool: McpTool) => {
     setActing(tool.id)
     try {
-      await fetch(`/api/environments/${tool.environment.id}/tools/${tool.id}/reject`, { method: 'POST' })
+      const res = await fetch(`/api/environments/${tool.environment.id}/tools/${tool.id}/reject`, { method: 'POST' })
+      if (!res.ok) return
       setTools(prev => prev.filter(t => t.id !== tool.id))
       setViewTool(null)
     } finally { setActing(null) }

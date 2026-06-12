@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth'
 import { existsSync } from 'fs'
 
 export const dynamic = 'force-dynamic'
@@ -35,6 +36,9 @@ const CLAUDE_MODELS = (isDefault: (id: string) => boolean): AppModel[] => [
 ]
 
 export async function GET() {
+  const user = await getCurrentUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const [external, defaultSetting] = await Promise.all([
     prisma.externalModel.findMany({ where: { enabled: true }, orderBy: { createdAt: 'asc' }, take: 200 }),
     prisma.systemSetting.findUnique({ where: { key: 'model.default' } }),

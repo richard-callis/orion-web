@@ -294,11 +294,12 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       }
     } catch { /* ignore */ }
 
-    await fetch(url, {
+    const patchRes = await fetch(url, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ plan: content }),
     })
+    if (!patchRes.ok) return
     setSavedPlanMsgId(msgId)
     setPlanToast({ msgId, prevPlan })
     setTimeout(() => setSavedPlanMsgId(null), 3000)
