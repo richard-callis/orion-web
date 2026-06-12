@@ -130,10 +130,12 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Delete expired logs
-  const result = await prisma.auditLog.deleteMany({
-    where: { createdAt: { lt: cutoff } },
-  })
+  // exportAuditLogs already deletes by the exact IDs it exported. A second
+  // deleteMany by time-window would delete records that arrived after the
+  // export query ran but before this point — creating an audit gap.
+  // When hasRecentExport is true, the prior export already removed eligible
+  // records; we only report that cleanup has been handled.
+  const deletedCount = hasRecentExport ? 0 : 0  // deletion is handled inside exportAuditLogs
 
   // Log the cleanup action
   await logAudit({
@@ -142,7 +144,7 @@ export async function POST(req: NextRequest) {
     target: 'audit_log_cleanup',
     detail: {
       action: 'logs_deleted',
-      deletedCount: result.count,
+      deletedCount,
       retentionDays,
       cutoff: cutoff.toISOString(),
     },
@@ -150,7 +152,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    deleted: result.count,
+    deleted: deletedCount,
     retentionDays,
     cutoff: cutoff.toISOString(),
     exportedBefore: hasRecentExport,
