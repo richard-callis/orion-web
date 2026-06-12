@@ -2,11 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { createHmac, timingSafeEqual } from 'crypto'
 
+const MAX_VAR_LENGTH = 200
+
 // ---------------------------------------------------------------------------
 // Template interpolation — replaces {{key}} with vars[key]
 // ---------------------------------------------------------------------------
 function interpolate(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`)
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => {
+    const val = vars[key] ?? `{{${key}}}`
+    // Cap each substituted value to prevent prompt injection via webhook payloads
+    return val.length > MAX_VAR_LENGTH ? val.slice(0, MAX_VAR_LENGTH) + '[…]' : val
+  })
 }
 
 // ---------------------------------------------------------------------------
