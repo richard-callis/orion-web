@@ -14,6 +14,7 @@ export interface AppUser {
   role: string
   active: boolean
   totpEnabled?: boolean // SOC2: [M-002] whether this user has MFA enabled
+  mfaVerified?: boolean // SOC2: [M-002] whether MFA was verified in this session
 }
 
 /**
@@ -298,6 +299,7 @@ export async function getCurrentUser(): Promise<AppUser | null> {
   // Primary: NextAuth JWT session
   const session = await getServerSession(authOptions)
   if (session?.user) {
+    const sessionUser = session.user as AppUser & { mfaVerified?: boolean }
     return {
       id: session.user.id,
       username: session.user.username,
@@ -306,6 +308,7 @@ export async function getCurrentUser(): Promise<AppUser | null> {
       role: session.user.role,
       active: true,
       totpEnabled: (session.user as AppUser & { totpEnabled?: boolean }).totpEnabled,
+      mfaVerified: sessionUser.mfaVerified ?? false,
     }
   }
 
@@ -364,6 +367,10 @@ export async function requireAdmin(): Promise<AppUser> {
   const user = await getCurrentUser()
   if (!user || user.role !== 'admin') {
     throw new Error('Unauthorized')
+  }
+  // SOC2 [M-002]: If the user has MFA enabled, require it to be verified in this session.
+  if (user.totpEnabled && !user.mfaVerified) {
+    throw new Error('MFA verification required')
   }
   return user
 }

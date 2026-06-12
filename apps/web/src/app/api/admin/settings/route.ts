@@ -4,12 +4,21 @@ import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, UpdateSettingsSchema } from '@/lib/validate'
 
+// Keys containing these substrings are redacted in GET responses.
+// They hold tokens, secrets, or keys that must not be returned to the browser.
+const SENSITIVE_KEY_PATTERNS = ['token', 'secret', 'password', 'apikey', 'api_key', 'key', 'credential']
+
+function isSensitiveKey(key: string): boolean {
+  const lower = key.toLowerCase()
+  return SENSITIVE_KEY_PATTERNS.some(p => lower.includes(p))
+}
+
 export async function GET() {
   await requireAdmin()
   const rows = await prisma.systemSetting.findMany({ take: 500 })
   const result: Record<string, unknown> = {}
   for (const row of rows) {
-    result[row.key] = row.value
+    result[row.key] = isSensitiveKey(row.key) ? '••••' : row.value
   }
   return NextResponse.json(result)
 }
