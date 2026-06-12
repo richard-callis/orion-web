@@ -8,7 +8,7 @@
  * Auth: Bearer gatewayToken (same token used for heartbeats).
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireGatewayAuthForEnvironment } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
 interface ArgoCDApp {
@@ -26,17 +26,15 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  await requireServiceAuth(req).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
-
-  // Verify gateway token
-  const auth = req.headers.get('authorization')
-  const env = await prisma.environment.findUnique({ where: { id: params.id } })
-  if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-
-  const expectedToken = env.gatewayToken
-  if (expectedToken && auth !== `Bearer ${expectedToken}`) {
+  const { id } = params
+  try {
+    await requireGatewayAuthForEnvironment(req, id)
+  } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  const env = await prisma.environment.findUnique({ where: { id: params.id } })
+  if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const { applications } = (await req.json()) as { applications: ArgoCDApp[] }
   if (!Array.isArray(applications)) {
@@ -102,7 +100,8 @@ export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  await requireServiceAuth(req).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
+  const { id } = params
+  await requireGatewayAuthForEnvironment(req, id).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
 
   const env = await prisma.environment.findUnique({ where: { id: params.id } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })

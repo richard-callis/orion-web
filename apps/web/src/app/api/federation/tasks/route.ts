@@ -10,17 +10,28 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { decrypt } from '@/lib/encryption'
+import { timingSafeEqual } from 'crypto'
 
 async function validateFederationToken(req: NextRequest): Promise<boolean> {
   const auth = req.headers.get('authorization')
   if (!auth?.startsWith('Bearer ')) return false
   const token = auth.slice(7)
 
-  const env = await prisma.environment.findFirst({
-    where: { federationToken: token },
-    select: { id: true },
+  const envs = await prisma.environment.findMany({
+    where: { federationToken: { not: null } },
+    select: { id: true, federationToken: true },
   })
-  return env !== null
+  for (const env of envs) {
+    try {
+      const stored = decrypt(env.federationToken!)  // handles enc:v1: prefix and plaintext passthrough
+      if (stored.length === token.length &&
+          timingSafeEqual(Buffer.from(stored), Buffer.from(token))) {
+        return true
+      }
+    } catch { continue }
+  }
+  return false
 }
 
 export async function POST(req: NextRequest) {

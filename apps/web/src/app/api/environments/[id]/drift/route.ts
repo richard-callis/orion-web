@@ -3,7 +3,7 @@
  * POST /api/environments/:id/drift      — manually trigger a drift scan
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireGatewayAuthForEnvironment } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { detectGitOpsDriftForEnv } from '@/jobs/gitops-drift'
 
@@ -11,7 +11,8 @@ export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  await requireServiceAuth(req).catch(() => {
+  const { id } = params
+  await requireGatewayAuthForEnvironment(req, id).catch(() => {
     throw Object.assign(new Error('Unauthorized'), { status: 401 })
   })
 
@@ -40,7 +41,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  await requireServiceAuth(req).catch(() => {
+  const { id } = params
+  await requireGatewayAuthForEnvironment(req, id).catch(() => {
     throw Object.assign(new Error('Unauthorized'), { status: 401 })
   })
 

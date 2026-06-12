@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireGatewayAuthForEnvironment } from '@/lib/auth'
 import { parseBodyOrError } from '@/lib/validate'
 export const dynamic = 'force-dynamic'
 
@@ -13,8 +13,9 @@ const RunEvalSchema = z.object({
 // POST /api/environments/[id]/evals/run
 // Auto-eval trigger — evaluates a conversation or task after completion.
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const { id } = params
   try {
-    await requireServiceAuth(req)
+    await requireGatewayAuthForEnvironment(req, id)
   } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { createHmac, timingSafeEqual } from 'crypto'
+import { decrypt } from '@/lib/encryption'
 
 const MAX_VAR_LENGTH = 200
 
@@ -102,19 +103,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tri
   // Read raw body for HMAC computation
   const rawBody = await req.text()
 
+  // Decrypt the stored secret (handles enc:v1: prefix and plaintext passthrough for legacy)
+  const triggerSecret = decrypt(trigger.secret)
+
   // Verify signature based on source
   let verified = false
   const source = trigger.source
 
   if (source === 'github') {
-    verified = verifyGitHub(rawBody, trigger.secret, req.headers.get('x-hub-signature-256'))
+    verified = verifyGitHub(rawBody, triggerSecret, req.headers.get('x-hub-signature-256'))
   } else if (source === 'prometheus' || source === 'alertmanager') {
-    verified = verifySecretHeader(trigger.secret, req.headers.get('x-webhook-secret'))
+    verified = verifySecretHeader(triggerSecret, req.headers.get('x-webhook-secret'))
   } else {
     // custom: accept X-Webhook-Secret or Authorization: Bearer <secret>
     verified =
-      verifySecretHeader(trigger.secret, req.headers.get('x-webhook-secret')) ||
-      verifyBearerToken(trigger.secret, req.headers.get('authorization'))
+      verifySecretHeader(triggerSecret, req.headers.get('x-webhook-secret')) ||
+      verifyBearerToken(triggerSecret, req.headers.get('authorization'))
   }
 
   if (!verified) {

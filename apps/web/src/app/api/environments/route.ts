@@ -6,6 +6,7 @@ import { seedNovaDefinitions } from '@/lib/default-novas'
 import { getCurrentUser, requireAdmin } from '@/lib/auth'
 import { CreateEnvironmentSchema } from '@/lib/validate'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
+import { encrypt } from '@/lib/encryption'
 
 export async function GET() {
   // SOC2: CR-002 — require authentication to list environments
@@ -40,18 +41,23 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  const federationTokenToStore = parsed.data.federationToken && process.env.ORION_ENCRYPTION_KEY
+    ? encrypt(parsed.data.federationToken)
+    : (parsed.data.federationToken ?? null)
+
   const env = await prisma.environment.create({
     data: {
-      name:         parsed.data.name,
-      type:         parsed.data.type,
-      description:  parsed.data.description ?? null,
-      gatewayUrl:   parsed.data.gatewayUrl ?? null,
-      gatewayToken: parsed.data.gatewayToken ?? null,
-      gitOwner:     parsed.data.gitOwner ?? null,
-      gitRepo:      parsed.data.gitRepo ?? null,
-      policyConfig: (parsed.data.policyConfig ?? undefined) as any,
-      kubeconfig:   parsed.data.kubeconfig ?? null,
-      metadata:     (parsed.data.metadata ?? undefined) as any,
+      name:           parsed.data.name,
+      type:           parsed.data.type,
+      description:    parsed.data.description ?? null,
+      gatewayUrl:     parsed.data.gatewayUrl ?? null,
+      gatewayToken:   parsed.data.gatewayToken ?? null,
+      gitOwner:       parsed.data.gitOwner ?? null,
+      gitRepo:        parsed.data.gitRepo ?? null,
+      policyConfig:   (parsed.data.policyConfig ?? undefined) as any,
+      kubeconfig:     parsed.data.kubeconfig ?? null,
+      metadata:       (parsed.data.metadata ?? undefined) as any,
+      federationToken: federationTokenToStore,
     },
     include: { tools: true, agents: { include: { agent: true } } },
   })
