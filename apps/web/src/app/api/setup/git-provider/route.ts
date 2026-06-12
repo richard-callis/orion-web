@@ -26,6 +26,7 @@ import { GiteaGitProvider } from '@/lib/git-provider/gitea-provider'
 import { encryptJson } from '@/lib/encryption'
 import { randomBytes } from 'crypto'
 import { seedSystemNebula } from '@/lib/seed-system-nebula'
+import { logAudit } from '@/lib/audit'
 
 function isPrivateHost(hostname: string): boolean {
   if (hostname === 'localhost') return true
@@ -154,6 +155,13 @@ export async function POST(req: NextRequest) {
 
   // Seed system Nebula in background (don't block the response)
   seedSystemNebula().catch(err => console.error('[Nebula] System nebula seed failed:', err))
+
+  void logAudit({
+    userId: 'system',
+    action: 'admin_action',
+    target: 'git_provider_config',
+    detail: { source: 'setup_wizard', providerType: type, org },
+  })
 
   return NextResponse.json({ ok: true })
 }

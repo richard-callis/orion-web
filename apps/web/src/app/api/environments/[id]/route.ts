@@ -51,7 +51,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     const body = await req.json()
     const env = await prisma.environment.findUnique({
       where: { id: params.id },
-      select: { gatewayToken: true },
+      select: { gatewayToken: true, gatewayUrl: true },
     })
     if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     if (!env.gatewayToken || auth !== `Bearer ${env.gatewayToken}`) {
@@ -73,6 +73,16 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
         gitOpsPRs: { orderBy: { createdAt: 'desc' }, take: 50 },
       },
     })
+
+    if (body.gatewayUrl !== undefined && body.gatewayUrl !== env.gatewayUrl) {
+      void logAudit({
+        userId: 'gateway',
+        action: 'environment_update',
+        target: `environment:${params.id}`,
+        detail: { field: 'gatewayUrl', changed: true },
+      })
+    }
+
     return NextResponse.json({
       ...updated,
       gatewayToken: updated.gatewayToken ? '••••' : null,
@@ -86,6 +96,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     const { data } = result
 
     const admin = await requireAdmin()
+    const existing = await prisma.environment.findUnique({ where: { id: params.id }, select: { gatewayUrl: true } })
     const updateData: Record<string, unknown> = {}
     if (data.name !== undefined) updateData.name = data.name.trim()
     if (data.type !== undefined) updateData.type = data.type
@@ -124,6 +135,15 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       ipAddress: getClientIp(req),
       userAgent: getUserAgent(req.headers),
     }).catch(() => {})
+
+    if (data.gatewayUrl !== undefined && data.gatewayUrl !== existing?.gatewayUrl) {
+      void logAudit({
+        userId: admin.id,
+        action: 'environment_update',
+        target: `environment:${params.id}`,
+        detail: { field: 'gatewayUrl', changed: true },
+      })
+    }
 
     return NextResponse.json({
       ...env,

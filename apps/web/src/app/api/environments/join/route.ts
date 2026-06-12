@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/db'
 import { randomBytes, createHash } from 'crypto'
+import { logAudit } from '@/lib/audit'
 
 function hashFingerprint(machineId: string): string {
   return createHash('sha256').update(machineId).digest('hex')
@@ -85,6 +86,12 @@ export async function POST(req: NextRequest) {
       where: { id: env.id },
       data: { status: 'connected', lastSeen: new Date(), gatewayUrl: gatewayUrl ?? env.gatewayUrl },
     })
+    void logAudit({
+      userId: 'system',
+      action: 'environment_update',
+      target: `environment:${env.id}`,
+      detail: { event: 'gateway_joined', environmentId: env.id, gatewayType: body.gatewayType ?? 'unknown' },
+    })
     return NextResponse.json({ environmentId: env.id, apiToken: env.gatewayToken, environmentName: env.name })
   }
 
@@ -110,6 +117,13 @@ export async function POST(req: NextRequest) {
   ])
 
   console.log(`[join] Gateway registered for environment "${env.name}" (${env.id})${fingerprint ? ' with fingerprint' : ' (no fingerprint)'}`)
+
+  void logAudit({
+    userId: 'system',
+    action: 'environment_update',
+    target: `environment:${env.id}`,
+    detail: { event: 'gateway_joined', environmentId: env.id, gatewayType: body.gatewayType ?? 'unknown' },
+  })
 
   return NextResponse.json({
     environmentId: env.id,
