@@ -1,22 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireWizardSession } from '@/lib/setup-guard'
-import { validateBody, SetupAiProviderSchema } from '@/lib/validate'
+import { parseBodyOrError, SetupAiProviderSchema } from '@/lib/validate'
+import { z } from 'zod'
+
+const SetupAiProviderWithSkipSchema = SetupAiProviderSchema.or(z.object({ skip: z.literal(true) }))
 
 export async function POST(req: NextRequest) {
   if (!await requireWizardSession(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await req.json()
-  if (body.skip) {
+  const result = await parseBodyOrError(req, SetupAiProviderWithSkipSchema)
+  if ('error' in result) return result.error
+
+  if ('skip' in result.data && result.data.skip) {
     return NextResponse.json({ ok: true, skipped: true })
   }
 
-  const data = validateBody(body, SetupAiProviderSchema)
-  if (!data) {
-    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
-  }
+  const data = result.data as z.infer<typeof SetupAiProviderSchema>
 
   // Use provider default baseUrl if not provided
   const defaultBaseUrls: Record<string, string> = {

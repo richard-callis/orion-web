@@ -28,5 +28,16 @@ export async function register() {
 
     const { ensureSocConfig } = await import('./lib/seed-soc-config')
     await ensureSocConfig()
+
+    // SOC2 [SSO-001]: Warn at startup if unsigned SSO headers are permitted.
+    // SSO_ALLOW_UNSIGNED_SSO=true is only for rollout — must not persist in production.
+    if (process.env.SSO_ALLOW_UNSIGNED_SSO === 'true') {
+      console.warn(
+        '[SOC2][SSO-001] SECURITY WARNING: SSO_ALLOW_UNSIGNED_SSO=true — ' +
+        'SSO header authentication is running WITHOUT HMAC signature verification. ' +
+        'Any request can forge identity headers. Set SSO_HMAC_SECRET and remove ' +
+        'SSO_ALLOW_UNSIGNED_SSO before going to production.'
+      )
+    }
   }
 }

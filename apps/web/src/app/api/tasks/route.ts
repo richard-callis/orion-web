@@ -2,15 +2,31 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireServiceAuth } from '@/lib/auth'
 import { parseBodyOrError, CreateTaskSchema } from '@/lib/validate'
+import { z } from 'zod'
+
+const TaskQuerySchema = z.object({
+  status:        z.enum(['pending', 'in_progress', 'pending_validation', 'done', 'failed', 'blocked']).optional(),
+  featureId:     z.string().max(100).optional(),
+  assignedAgent: z.string().max(100).optional(),
+  priority:      z.enum(['low', 'medium', 'high', 'urgent']).optional(),
+  limit:         z.coerce.number().int().min(1).max(1000).default(500),
+})
 
 export async function GET(req: NextRequest) {
   await requireServiceAuth(req)
   const { searchParams } = new URL(req.url)
-  const status        = searchParams.get('status')        // pending|in_progress|completed|blocked
-  const featureId     = searchParams.get('featureId')
-  const assignedAgent = searchParams.get('assignedAgent')
-  const priority      = searchParams.get('priority')
-  const limit         = Math.min(parseInt(searchParams.get('limit') ?? '500', 10), 1000)
+
+  const parsed = TaskQuerySchema.safeParse({
+    status:        searchParams.get('status') ?? undefined,
+    featureId:     searchParams.get('featureId') ?? undefined,
+    assignedAgent: searchParams.get('assignedAgent') ?? undefined,
+    priority:      searchParams.get('priority') ?? undefined,
+    limit:         searchParams.get('limit') ?? undefined,
+  })
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Invalid query parameters', issues: parsed.error.issues }, { status: 400 })
+  }
+  const { status, featureId, assignedAgent, priority, limit } = parsed.data
 
   const where: Record<string, unknown> = {}
   if (status)        where.status        = status

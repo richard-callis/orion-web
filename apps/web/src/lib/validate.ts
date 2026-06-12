@@ -54,18 +54,15 @@ export async function parseBodyOrError<T extends z.ZodType>(
  * Returns null if invalid (caller must return 400).
  * Use parseBodyOrError() in new code instead.
  */
+/** @deprecated Use parseBodyOrError() instead — this returns null on failure with no details. */
 export function validateBody<T extends z.ZodType>(
   body: unknown,
   schema: T,
-  options?: { errorPrefix?: string },
 ): z.infer<T> | null {
   try {
-    const parsed = schema.parse(body)
-    return parsed
-  } catch (err) {
-    const zodErr = err as z.ZodError
-    const prefix = options?.errorPrefix ?? 'Invalid input'
-    return null // caller should return 400 with error details
+    return schema.parse(body)
+  } catch {
+    return null
   }
 }
 
