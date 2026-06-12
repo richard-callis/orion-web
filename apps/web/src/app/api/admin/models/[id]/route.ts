@@ -23,7 +23,10 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (data.baseUrl     !== undefined) updateData.baseUrl     = data.baseUrl
   if (data.modelId     !== undefined) updateData.modelId     = data.modelId
   if (data.enabled     !== undefined) updateData.enabled     = data.enabled
+  if (data.selfHosted  !== undefined) updateData.selfHosted  = data.selfHosted
   if (data.timeoutSecs !== undefined) updateData.timeoutSecs = data.timeoutSecs
+  if ('inputPricePer1M'  in data) updateData.inputPricePer1M  = data.inputPricePer1M
+  if ('outputPricePer1M' in data) updateData.outputPricePer1M = data.outputPricePer1M
   if ('maxTokens'   in data) updateData.maxTokens   = data.maxTokens
   if ('contextSize' in data) updateData.contextSize = data.contextSize
   if ('temperature'   in data) updateData.temperature   = data.temperature
