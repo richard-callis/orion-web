@@ -52,8 +52,9 @@ export async function POST(
   try {
     await detectGitOpsDriftForEnv(params.id)
   } catch (e) {
+    console.error('[drift] Drift detection failed:', e)
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : String(e) },
+      { error: 'Drift detection failed' },
       { status: 500 },
     )
   }

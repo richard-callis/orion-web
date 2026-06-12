@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(items)
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 })
+    console.error('[k8s/events] Failed to fetch cluster events:', e)
+    return NextResponse.json({ error: 'Failed to fetch cluster events' }, { status: 500 })
   }
 }
