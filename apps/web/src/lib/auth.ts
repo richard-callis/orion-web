@@ -33,7 +33,7 @@ export { SESSION_COOKIE_NAME }
 const IS_SECURE = process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https'
 
 export const authOptions: NextAuthOptions = {
-  session: { strategy: 'jwt' },
+  session: { strategy: 'jwt', maxAge: 8 * 60 * 60 },
   secret: process.env.NEXTAUTH_SECRET,
   cookies: {
     sessionToken: {
@@ -105,7 +105,7 @@ export const authOptions: NextAuthOptions = {
             const hashedCodes: string[] = user.totpRecoveryCodes ? JSON.parse(user.totpRecoveryCodes) : []
             if (!code || !(await verifyRecoveryCode(code, hashedCodes))) {
               void logAudit({ userId: user.id, action: 'user_login_failure', target: user.id, detail: { reason: 'invalid_recovery_code' } })
-              return { error: 'Invalid recovery code' }
+              return null
             }
             // BLOCKER fix: consume the recovery code (single-use)
             const updatedCodes = await consumeRecoveryCode(code, hashedCodes)
@@ -115,14 +115,14 @@ export const authOptions: NextAuthOptions = {
           } else {
             // TOTP code login
             const code = credentials.totpCode as string
-            if (!user.totpSecret) return { error: 'MFA not configured' }
+            if (!user.totpSecret) return null
             if (!code || typeof code !== 'string') {
               // No TOTP code provided — signal MFA required
               return { mfaRequired: true, totpEnabled: true, username: user.username }
             }
             if (!(await verifyTOTP(user.totpSecret, code))) {
               void logAudit({ userId: user.id, action: 'user_login_failure', target: user.id, detail: { reason: 'invalid_totp' } })
-              return { error: 'Invalid TOTP code' }
+              return null
             }
           }
 
@@ -340,6 +340,7 @@ export async function getCurrentUser(): Promise<AppUser | null> {
           return null
         }
 
+        const existingUser = await prisma.user.findUnique({ where: { username } })
         const user = await prisma.user.upsert({
           where: { username },
           update: { lastSeen: new Date() },
@@ -352,6 +353,15 @@ export async function getCurrentUser(): Promise<AppUser | null> {
             provider: 'authentik',
           },
         })
+        const isNewUser = !existingUser
+        if (isNewUser) {
+          void logAudit({
+            userId: user.id,
+            action: 'user_create',
+            target: user.id,
+            detail: { provider: 'sso', username, source: 'auto-provision' },
+          })
+        }
         if (!user.active) return null
         return user
       }
