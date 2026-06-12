@@ -152,6 +152,12 @@ export async function dispatchToSpoke(
   })
   const targetEnvId = spokeEnv?.id ?? 'unknown'
 
+  if (process.env.NODE_ENV === 'production') {
+    if (spokeUrl.startsWith('http://')) {
+      throw new Error(`Federation URL must use HTTPS in production: ${spokeUrl}`)
+    }
+  }
+
   try {
     const res = await fetch(`${spokeUrl}/api/federation/tasks`, {
       method: 'POST',
