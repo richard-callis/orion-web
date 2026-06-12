@@ -43,12 +43,12 @@ export async function verifyTOTP(secret: string, code: string): Promise<boolean>
 
 /**
  * Generate recovery codes for MFA fallback.
- * Returns 8 unique 8-character alphanumeric codes.
+ * Returns 8 unique 12-character hex codes (6 random bytes = 48 bits of entropy each).
  */
 export function generateRecoveryCodes(): string[] {
   const codes: string[] = []
   while (codes.length < 8) {
-    const raw = crypto.randomBytes(6).toString('hex').slice(0, 8)
+    const raw = crypto.randomBytes(6).toString('hex')
     if (!codes.includes(raw)) {
       codes.push(raw)
     }
