@@ -1,6 +1,7 @@
 import { makeCrudRoutes } from '@/lib/crud-route-factory'
 import { CreateAgentSchema } from '@/lib/validate'
 import { RESERVED_AGENT_NAMES } from '@/lib/management-tools'
+import { logAudit } from '@/lib/audit'
 
 // SOC2 [INPUT-001]: Extended validation with reserved name check
 const CreateAgentWithReservedCheck = CreateAgentSchema.refine(
@@ -19,4 +20,13 @@ export const { GET, POST } = makeCrudRoutes({
     role:     data.role ?? null,
     ...(data.metadata ? { metadata: data.metadata } : {}),
   }),
+  afterCreate: async (record: any, caller: any) => {
+    // SOC2: audit agent creation
+    logAudit({
+      userId: caller?.id ?? 'unknown',
+      action: 'agent_create',
+      target: `agent:${record.id}`,
+      detail: { name: record.name },
+    }).catch(() => {})
+  },
 })

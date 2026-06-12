@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { parseBodyOrError, UpdateAgentSchema } from '@/lib/validate'
 import { requireAdmin } from '@/lib/auth'
+import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const agent = await prisma.agent.findUnique({
@@ -44,12 +45,26 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  try { await requireAdmin() } catch {
+  let adminUser
+  try { adminUser = await requireAdmin() } catch {
     return NextResponse.json({ error: 'Admin privileges required to delete agents' }, { status: 403 })
   }
+
+  const agent = await prisma.agent.findUnique({ where: { id: params.id }, select: { name: true } })
 
   // Unassign tasks first to avoid FK violation
   await prisma.task.updateMany({ where: { assignedAgent: params.id }, data: { assignedAgent: null } })
   await prisma.agent.delete({ where: { id: params.id } })
+
+  // SOC2: audit agent deletion
+  logAudit({
+    userId: adminUser.id,
+    action: 'agent_delete',
+    target: `agent:${params.id}`,
+    detail: { name: agent?.name },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req.headers),
+  }).catch(() => {})
+
   return new NextResponse(null, { status: 204 })
 }
