@@ -141,7 +141,9 @@ export async function runEventTriggeredScan(): Promise<ScanResult[]> {
   for (const event of candidates) {
     const image = extractImageFromPullEvent(event.rawEvent as Record<string, unknown> | null)
 
-    if (!image || !event.environmentId) {
+    // Validate image name format to prevent command injection via gateway shell interpolation
+    const safeImagePattern = /^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]*$/
+    if (!image || !safeImagePattern.test(image) || !event.environmentId) {
       // Mark scanned-but-skipped so we don't keep re-probing malformed events.
       await prisma.securityEvent.update({
         where: { id: event.id },

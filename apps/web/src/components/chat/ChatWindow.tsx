@@ -248,7 +248,9 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
         signal: abort.signal,
       })
 
-      const reader = resp.body!.getReader()
+      if (!resp.ok) throw new Error(`Chat request failed: ${resp.status}`)
+      if (!resp.body) throw new Error('No response body')
+      const reader = resp.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
 

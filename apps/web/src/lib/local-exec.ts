@@ -106,8 +106,15 @@ export function makeLocalGx(kubeconfig: string) {
 
     if (name === 'kubectl_get' || name === 'kubectl_patch' || name === 'kubectl_exec') {
       const cmd = name.startsWith('kubectl_') ? name.substring(8) : 'get'
+      // Allowlist of safe arg keys — prevents flag injection (--as, --token, --server, etc.)
+      const ALLOWED_KUBECTL_ARGS = new Set([
+        'resource', 'name', 'namespace', 'output', 'container',
+        'selector', 'all_namespaces', 'subresource', 'patch', 'patch_type',
+        'kind', 'timeout', 'command',
+      ])
       const flags: string[] = []
       for (const [k, v] of Object.entries(args).filter(([key]) => key !== 'manifest')) {
+        if (!ALLOWED_KUBECTL_ARGS.has(k)) continue
         if (k === 'namespace') { flags.push('-n'); flags.push(String(v)) }
         else if (k === 'output') { flags.push(`-o${v === '' ? '' : v}`) }
         else { flags.push(`--${k.replace(/_/g, '-')}`); flags.push(String(v)) }

@@ -51,6 +51,7 @@ export function BugManager({ initialBugs, users }: Props) {
   const [selectedBug, setSelectedBug] = useState<Bug | null>(null)
   const [modal, setModal]       = useState(false)
   const [saving, setSaving]     = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
   const [form, setForm]         = useState<CreateBugForm>({ title: '', description: '', severity: 'medium', area: '' })
 
   // Detail edit state
@@ -112,7 +113,7 @@ export function BugManager({ initialBugs, users }: Props) {
         reportedBy:  'admin',
       }),
     })
-    if (!r.ok) { setSaving(false); return }
+    if (!r.ok) { setSaving(false); setCreateError('Failed to create bug — please try again'); return }
     const bug: Bug = await r.json()
     setBugs(prev => [bug, ...prev])
     setForm({ title: '', description: '', severity: 'medium', area: '' })
@@ -158,7 +159,7 @@ export function BugManager({ initialBugs, users }: Props) {
             )}
           </div>
           <button
-            onClick={() => setModal(true)}
+            onClick={() => { setCreateError(null); setModal(true) }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-xs font-medium hover:bg-accent/80 transition-colors"
           >
             <Plus size={13} /> Report Bug
@@ -342,6 +343,7 @@ export function BugManager({ initialBugs, users }: Props) {
           submitting={saving}
           submitDisabled={!form.title.trim()}
         >
+          {createError && <p className="text-xs text-status-error mb-2">{createError}</p>}
           <div className="space-y-1">
             <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title *</label>
             <input
