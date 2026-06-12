@@ -104,7 +104,11 @@ export const authOptions: NextAuthOptions = {
           },
         })
 
-        if (!user || !user.active || !user.passwordHash) return null
+        if (!user || !user.active || !user.passwordHash) {
+          // Constant-time: always run bcrypt to prevent user enumeration via timing
+          await compare(credentials.password ?? '', '$2b$14$dummyhashfortimingnormalization000000000000000000000000')
+          return null
+        }
 
         // SOC2: [M-006] Check account lockout before attempting password verification
         if (user.lockedUntil && user.lockedUntil > new Date()) {

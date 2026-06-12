@@ -20,6 +20,7 @@ import { randomBytes } from 'crypto'
 import { createConnection } from 'net'
 import { prisma } from '@/lib/db'
 import { getGitProvider } from '@/lib/git-provider'
+import { requireGatewayAuthForEnvironment } from '@/lib/auth'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -147,6 +148,12 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  try {
+    await requireGatewayAuthForEnvironment(_req, params.id)
+  } catch {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
+  }
+
   const encoder = new TextEncoder()
 
   const stream = new ReadableStream({
