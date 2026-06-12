@@ -99,9 +99,9 @@ export async function POST(req: NextRequest) {
   const apiToken    = 'mcga_' + randomBytes(32).toString('hex')
   const fingerprint = machineId ? hashFingerprint(machineId) : null
 
-  const [, env] = await prisma.$transaction([
-    prisma.environmentJoinToken.update({
-      where: { id: record.id },
+  const [tokenUpdate, env] = await prisma.$transaction([
+    prisma.environmentJoinToken.updateMany({
+      where: { id: record.id, usedAt: null },  // conditional: only if not yet used
       data: { usedAt: new Date(), fingerprint },
     }),
     prisma.environment.update({
@@ -115,6 +115,10 @@ export async function POST(req: NextRequest) {
       },
     }),
   ])
+  if (tokenUpdate.count === 0) {
+    // Another concurrent request already consumed this token
+    return NextResponse.json({ error: 'Join token already used' }, { status: 409 })
+  }
 
   console.log(`[join] Gateway registered for environment "${env.name}" (${env.id})${fingerprint ? ' with fingerprint' : ' (no fingerprint)'}`)
 
