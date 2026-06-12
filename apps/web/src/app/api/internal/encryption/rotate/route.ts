@@ -68,7 +68,8 @@ export async function POST(req: NextRequest) {
         updates.gatewayToken = encryptWithKey(plaintext, newKeyBase64)
         migrated++
       } catch (e) {
-        errors.push({ model: 'Environment', id: env.id, field: 'gatewayToken', error: String(e) })
+        console.error('Key rotation error [Environment.gatewayToken]:', e)
+        errors.push({ model: 'Environment', id: env.id, field: 'gatewayToken', error: 'Key rotation failed' })
       }
     }
 
@@ -78,7 +79,8 @@ export async function POST(req: NextRequest) {
         updates.kubeconfig = encryptWithKey(plaintext, newKeyBase64)
         migrated++
       } catch (e) {
-        errors.push({ model: 'Environment', id: env.id, field: 'kubeconfig', error: String(e) })
+        console.error('Key rotation error [Environment.kubeconfig]:', e)
+        errors.push({ model: 'Environment', id: env.id, field: 'kubeconfig', error: 'Key rotation failed' })
       }
     }
 
@@ -100,7 +102,8 @@ export async function POST(req: NextRequest) {
         await prisma.externalModel.update({ where: { id: ext.id }, data: { apiKey: encrypted } })
         migrated++
       } catch (e) {
-        errors.push({ model: 'ExternalModel', id: ext.id, field: 'apiKey', error: String(e) })
+        console.error('Key rotation error [ExternalModel.apiKey]:', e)
+        errors.push({ model: 'ExternalModel', id: ext.id, field: 'apiKey', error: 'Key rotation failed' })
       }
     }
   }

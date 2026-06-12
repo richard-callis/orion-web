@@ -6,20 +6,18 @@
  * Only admins can create API keys.
  */
 
-import { randomBytes } from 'crypto'
+import { randomBytes, createHash } from 'crypto'
 import { compare, hash } from 'bcryptjs'
 
-// Deterministic prefix for DB lookup — a fixed-length slice of the raw key.
-// API keys are `orion_ak_` + 36 random hex chars (144 bits of entropy).
-// Taking 16 chars of the random portion as the lookup index gives 64 bits —
-// sufficient for indexed DB lookup. No hashing is applied here; the bcrypt
-// hash stored in the `hash` column is the actual security mechanism.
-// This avoids using a fast hash function (SHA-256) on a secret, which
-// satisfies CodeQL js/insufficient-password-hash (the prefix itself is not
-// a password hash — it is an opaque lookup key backed by bcrypt verification).
+// Deterministic prefix for DB lookup — a SHA-256 hash of the first 8 bytes
+// of the raw key's random portion, truncated to 16 hex chars.
+// This avoids storing raw key material in the hashPrefix column while still
+// enabling deterministic indexed lookup. The bcrypt hash in the `hash` column
+// remains the actual security mechanism for verification.
 function deterministicPrefix(raw: string): string {
-  // Skip the 'orion_ak_' prefix (9 chars) and take 16 chars of random hex
-  return raw.slice(9, 25)
+  // Skip the 'orion_ak_' prefix (9 chars) and take the first 8 chars as the key prefix
+  const rawPrefix = raw.slice(9, 17)
+  return createHash('sha256').update(rawPrefix).digest('hex').slice(0, 16)
 }
 import { prisma } from './db'
 
