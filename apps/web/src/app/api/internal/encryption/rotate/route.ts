@@ -89,6 +89,23 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── Migrate Environment.federationToken ────────────────────────────
+  const envsWithFedToken = await prisma.environment.findMany({
+    where: { federationToken: { not: null } },
+    select: { id: true, federationToken: true },
+  })
+  for (const env of envsWithFedToken) {
+    if (!env.federationToken?.startsWith('enc:v1:')) continue
+    try {
+      const plaintext = decrypt(env.federationToken)
+      await prisma.environment.update({ where: { id: env.id }, data: { federationToken: encryptWithKey(plaintext, newKeyBase64) } })
+      migrated++
+    } catch (e) {
+      console.error('Key rotation error [Environment.federationToken]:', e)
+      errors.push({ model: 'Environment', id: env.id, field: 'federationToken', error: 'Key rotation failed' })
+    }
+  }
+
   // ── Migrate ExternalModel.apiKey ────────────────────────────────────
   const extModels = await prisma.externalModel.findMany({
     select: { id: true, apiKey: true, name: true },
@@ -105,6 +122,35 @@ export async function POST(req: NextRequest) {
         console.error('Key rotation error [ExternalModel.apiKey]:', e)
         errors.push({ model: 'ExternalModel', id: ext.id, field: 'apiKey', error: 'Key rotation failed' })
       }
+    }
+  }
+
+  // ── Migrate WebhookTrigger.secret ──────────────────────────────────
+  const triggers = await prisma.webhookTrigger.findMany({ select: { id: true, secret: true } })
+  for (const trigger of triggers) {
+    if (!trigger.secret?.startsWith('enc:v1:')) continue
+    try {
+      const plaintext = decrypt(trigger.secret)
+      await prisma.webhookTrigger.update({ where: { id: trigger.id }, data: { secret: encryptWithKey(plaintext, newKeyBase64) } })
+      migrated++
+    } catch (e) {
+      console.error('Key rotation error [WebhookTrigger.secret]:', e)
+      errors.push({ model: 'WebhookTrigger', id: trigger.id, field: 'secret', error: 'Key rotation failed' })
+    }
+  }
+
+  // ── Migrate SystemSetting encrypted values ──────────────────────────
+  const settings = await prisma.systemSetting.findMany()
+  for (const setting of settings) {
+    const val = String(setting.value ?? '')
+    if (!val.startsWith('enc:v1:')) continue
+    try {
+      const plaintext = decrypt(val)
+      await prisma.systemSetting.update({ where: { key: setting.key }, data: { value: encryptWithKey(plaintext, newKeyBase64) } })
+      migrated++
+    } catch (e) {
+      console.error('Key rotation error [SystemSetting]:', e)
+      errors.push({ model: 'SystemSetting', id: setting.key, field: 'value', error: 'Key rotation failed' })
     }
   }
 
