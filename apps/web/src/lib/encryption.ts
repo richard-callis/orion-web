@@ -33,7 +33,10 @@ export function encrypt(plaintext: string): string {
 }
 
 export function decrypt(value: string): string {
-  if (!value.startsWith(PREFIX)) return value   // plaintext passthrough (legacy values)
+  if (!value.startsWith(PREFIX)) {
+    console.warn('[encryption] decrypt() called on unencrypted value — plaintext passthrough (legacy). Migrate this value to encrypted format.')
+    return value
+  }
   const key    = getKey()
   const packed = Buffer.from(value.slice(PREFIX.length), 'base64')
   const iv         = packed.subarray(0, IV_BYTES)

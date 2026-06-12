@@ -44,6 +44,17 @@ export async function cleanupAuditLogs(): Promise<{ deleted: number; durationMs:
       return { deleted: 0, durationMs: Date.now() - startTime }
     }
 
+    // Require a successful export within the last 25 hours before deleting.
+    // This prevents the worker from permanently destroying audit records that
+    // have never been exported to S3.
+    const lastExportRow = await prisma.systemSetting.findUnique({ where: { key: 'audit.lastExportTime' } })
+    const lastExportMs = lastExportRow ? parseInt(String(lastExportRow.value), 10) : NaN
+    const exportAge = Date.now() - lastExportMs
+    if (isNaN(exportAge) || exportAge > 25 * 60 * 60 * 1000) {
+      console.warn(`[audit-cleanup] Skipping deletion — no successful export in the last 25h. Run exportAuditLogs() first.`)
+      return { deleted: 0, durationMs: Date.now() - startTime }
+    }
+
     // Delete in batches to avoid long transactions
     const BATCH_SIZE = 1000
     let deleted = 0
