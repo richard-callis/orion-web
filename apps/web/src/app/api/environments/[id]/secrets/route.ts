@@ -78,8 +78,9 @@ export async function POST(req: NextRequest, { params }: Params) {
     }
     await writeVaultSecret(remoteRef, vaultData)
   } catch (e) {
+    console.error('[secrets] Vault write failed:', e)
     return NextResponse.json(
-      { error: `Failed to write to Vault: ${e instanceof Error ? e.message : String(e)}` },
+      { error: 'Vault operation failed' },
       { status: 502 },
     )
   }
