@@ -88,8 +88,8 @@ model Agent {
   evalSuites       EvalSuite[]            @relation("EvalSuiteAgent")
   evalRuns         EvalRun[]              @relation("EvalRunAgent")
   tokenUsage       AgentTokenUsage[]
-webhookTriggers  WebhookTrigger[]         @relation("WebhookTriggerAgent")
-  scheduledTasks   ScheduledTask[]          @relation("ScheduledTaskAgent")
+  webhookTriggers  WebhookTrigger[]       @relation("WebhookTriggerAgent")
+  scheduledTasks   ScheduledTask[]        @relation("ScheduledTaskAgent")
 }
 
 model AgentTokenUsage {
@@ -97,7 +97,7 @@ model AgentTokenUsage {
   agentId      String
   agent        Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
   taskId       String?
-  modelId      String?  // e.g. "claude-sonnet-4-6", "gpt-4o", "llama3" — null for legacy rows
+  modelId      String? // e.g. "claude-sonnet-4-6", "gpt-4o", "llama3" — null for legacy rows
   inputTokens  Int      @default(0)
   outputTokens Int      @default(0)
   recordedAt   DateTime @default(now())
@@ -275,34 +275,34 @@ model Feature {
 }
 
 model Task {
-  id             String        @id @default(cuid())
-  title          String
-  description    String?       @db.Text
-  plan           String?       @db.Text
-  status         String        @default("pending")
-  priority       String        @default("medium")
-  featureId      String?
-  feature        Feature?      @relation(fields: [featureId], references: [id], onDelete: Cascade)
-  assignedAgent  String?
-  agent          Agent?        @relation("AssignedTasks", fields: [assignedAgent], references: [id])
-  assignedUserId String?
-  assignedUser   User?         @relation("AssignedUserTasks", fields: [assignedUserId], references: [id], onDelete: SetNull)
-  createdBy      String
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  planProgress   Int?
-  planApprovedBy String?
-  planApprovedAt DateTime?
-  retryCount     Int           @default(0)
-  maxRetries     Int           @default(3)
-  nextRetryAt    DateTime?
-  dependsOn      String[]      @default([]) // IDs of Task records that must be 'done' before this runs
-  wave           Int? // Execution wave (0 = no deps, 1 = depends on wave-0, etc.) — computed at plan approval time
-  events             TaskEvent[]
-  metadata           Json?
-  chatRooms          ChatRoom[]         @relation("ChatRoomTask")
-  chatMessages       ChatMessage[]
-  federatedDispatch  FederatedDispatch?
+  id                String             @id @default(cuid())
+  title             String
+  description       String?            @db.Text
+  plan              String?            @db.Text
+  status            String             @default("pending")
+  priority          String             @default("medium")
+  featureId         String?
+  feature           Feature?           @relation(fields: [featureId], references: [id], onDelete: Cascade)
+  assignedAgent     String?
+  agent             Agent?             @relation("AssignedTasks", fields: [assignedAgent], references: [id])
+  assignedUserId    String?
+  assignedUser      User?              @relation("AssignedUserTasks", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  createdBy         String
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  planProgress      Int?
+  planApprovedBy    String?
+  planApprovedAt    DateTime?
+  retryCount        Int                @default(0)
+  maxRetries        Int                @default(3)
+  nextRetryAt       DateTime?
+  dependsOn         String[]           @default([]) // IDs of Task records that must be 'done' before this runs
+  wave              Int? // Execution wave (0 = no deps, 1 = depends on wave-0, etc.) — computed at plan approval time
+  events            TaskEvent[]
+  metadata          Json?
+  chatRooms         ChatRoom[]         @relation("ChatRoomTask")
+  chatMessages      ChatMessage[]
+  federatedDispatch FederatedDispatch?
 
   // Worker poll: pollOnce queries status+assignedAgent ordered by wave,priority,createdAt every 15s
   @@index([status, assignedAgent, wave, priority, createdAt])
@@ -312,8 +312,8 @@ model FederatedDispatch {
   id             String    @id @default(cuid())
   taskId         String    @unique
   task           Task      @relation(fields: [taskId], references: [id])
-  targetEnvId    String    // which environment the task was routed to
-  spokeUrl       String    // URL of the spoke that received it
+  targetEnvId    String // which environment the task was routed to
+  spokeUrl       String // URL of the spoke that received it
   status         String    @default("dispatched") // dispatched | acknowledged | completed | failed
   dispatchedAt   DateTime  @default(now())
   acknowledgedAt DateTime?
@@ -448,6 +448,10 @@ model User {
   totpRecoveryCodes String? // JSON array of bcrypt-hashed recovery codes
   totpEnabledAt     DateTime? // When MFA was enabled (audit trail)
 
+  // SOC2: [M-006] Per-account login lockout
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+
   assignedTasks    Task[]                @relation("AssignedUserTasks")
   assignedBugs     Bug[]                 @relation("AssignedBugUser")
   sessions         Session[]
@@ -505,17 +509,17 @@ model Bug {
 }
 
 model ExternalModel {
-  id               String    @id @default(cuid())
+  id               String   @id @default(cuid())
   name             String
   provider         String // "openai" | "ollama" | "anthropic" | "custom"
   baseUrl          String
-  apiKey           String?   @db.Text
+  apiKey           String?  @db.Text
   modelId          String
-  enabled          Boolean   @default(true)
-  selfHosted       Boolean   @default(false)
-  inputPricePer1M  Decimal?  @db.Decimal(10, 6) // USD per 1M input tokens; for self-hosted = cloud equivalent (savings estimate)
-  outputPricePer1M Decimal?  @db.Decimal(10, 6) // USD per 1M output tokens
-  timeoutSecs      Int       @default(120)
+  enabled          Boolean  @default(true)
+  selfHosted       Boolean  @default(false)
+  inputPricePer1M  Decimal? @db.Decimal(10, 6) // USD per 1M input tokens; for self-hosted = cloud equivalent (savings estimate)
+  outputPricePer1M Decimal? @db.Decimal(10, 6) // USD per 1M output tokens
+  timeoutSecs      Int      @default(120)
   maxTokens        Int?
   contextSize      Int?
   temperature      Float?
@@ -523,8 +527,8 @@ model ExternalModel {
   minP             Float?
   repeatPenalty    Float?
   seed             Int?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model OIDCProvider {
@@ -1176,16 +1180,16 @@ model VulnerabilityFinding {
   packageVersion String
   fixedVersion   String?
 
-  cveId           String
-  cvssScore       Float?
-  cvssVector      String?
-  attackVector    String? // NETWORK / ADJACENT / LOCAL / PHYSICAL
+  cveId            String
+  cvssScore        Float?
+  cvssVector       String?
+  attackVector     String? // NETWORK / ADJACENT / LOCAL / PHYSICAL
   attackComplexity String?
 
-  epssScore     Float?
+  epssScore      Float?
   epssPercentile Float?
-  isKev         Boolean   @default(false)
-  kevDueDate    DateTime?
+  isKev          Boolean   @default(false)
+  kevDueDate     DateTime?
 
   severity Int // 0-100, computed via attack-vector formula
   status   VulnStatus @default(open)
@@ -1528,41 +1532,41 @@ enum ObservableRole {
 }
 
 model Investigation {
-  id                 String              @id @default(uuid())
-  name               String
-  status             InvestigationStatus @default(open)
-  severity           Int                 // 0-100, derived from linked incidents; manually overridable
-  tlp                TLP                 @default(amber)
-  pap                Int                 @default(2) // 0-3, Permissible Actions Protocol
-  startedAt          DateTime            @default(now())
-  resolvedAt         DateTime?
-  closedAt           DateTime?
-  resolution         String?             // markdown summary of what happened
-  resolutionType     ResolutionType?
-  assignedTo         String?             // userId or null (unassigned)
-  createdBy          String              // userId or "warden"
-  tags               String[]            @default([])
-  dueAt              DateTime?           // SLA deadline
-  mitreAttackIds     String[]            @default([]) // e.g. ["T1110", "T1046"]
+  id             String              @id @default(uuid())
+  name           String
+  status         InvestigationStatus @default(open)
+  severity       Int // 0-100, derived from linked incidents; manually overridable
+  tlp            TLP                 @default(amber)
+  pap            Int                 @default(2) // 0-3, Permissible Actions Protocol
+  startedAt      DateTime            @default(now())
+  resolvedAt     DateTime?
+  closedAt       DateTime?
+  resolution     String? // markdown summary of what happened
+  resolutionType ResolutionType?
+  assignedTo     String? // userId or null (unassigned)
+  createdBy      String // userId or "warden"
+  tags           String[]            @default([])
+  dueAt          DateTime? // SLA deadline
+  mitreAttackIds String[]            @default([]) // e.g. ["T1110", "T1046"]
 
-  externalId         String?             // TheHive case ID (e.g. "TH-0001")
-  externalSystem     String?             // "thehive"
-  lastSyncedAt       DateTime?
-  syncVersion        Int                 @default(0) // increment on each sync cycle
-  syncSource         String?             // last write origin: "orion" | "thehive"
+  externalId     String? // TheHive case ID (e.g. "TH-0001")
+  externalSystem String? // "thehive"
+  lastSyncedAt   DateTime?
+  syncVersion    Int       @default(0) // increment on each sync cycle
+  syncSource     String? // last write origin: "orion" | "thehive"
 
-  timeToDetect       Int?                // seconds from first event to incident creation
-  timeToRespond      Int?                // seconds from incident to investigation open
-  timeToResolve      Int?                // seconds from investigation open to resolved
+  timeToDetect  Int? // seconds from first event to incident creation
+  timeToRespond Int? // seconds from incident to investigation open
+  timeToResolve Int? // seconds from investigation open to resolved
 
-  incidents          Incident[]
-  notes              InvestigationNote[]
-  observables        InvestigationObservable[]
-  timeline           InvestigationTimeline[]
-  auditLog           InvestigationAudit[]
+  incidents   Incident[]
+  notes       InvestigationNote[]
+  observables InvestigationObservable[]
+  timeline    InvestigationTimeline[]
+  auditLog    InvestigationAudit[]
 
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status])
   @@index([createdAt])
@@ -1570,15 +1574,15 @@ model Investigation {
 }
 
 model InvestigationNote {
-  id              String        @id @default(uuid())
-  investigation   Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  id              String                   @id @default(uuid())
+  investigation   Investigation            @relation(fields: [investigationId], references: [id], onDelete: Cascade)
   investigationId String
-  content         String        // markdown; stored separately from Warden-generated content
-  author          String        // userId or "warden"
-  authorType      String        // "human" | "warden" — never mix in query results
-  isDraft         Boolean       @default(false) // human-private draft
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime?     @updatedAt
+  content         String // markdown; stored separately from Warden-generated content
+  author          String // userId or "warden"
+  authorType      String // "human" | "warden" — never mix in query results
+  isDraft         Boolean                  @default(false) // human-private draft
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime?                @updatedAt
   searchVector    Unsupported("tsvector")? // GIN index for full-text search
 
   @@index([investigationId, createdAt])
@@ -1586,26 +1590,26 @@ model InvestigationNote {
 }
 
 model InvestigationObservable {
-  id              String              @id @default(uuid())
-  investigation   Investigation       @relation(fields: [investigationId], references: [id], onDelete: Cascade)
-  investigationId String
-  value           String              // canonical defanged form (e.g. 1.2.3.4, evil[.]com)
-  displayValue    String              // original as found (e.g. hxxp://evil[.]com/path)
-  category        ObservableCategory
-  role            ObservableRole      @default(ioc)
-  verdict         ObservableVerdict   @default(unknown)
-  verdictBy       String?             // userId, "warden", "cortex"
-  verdictAt       DateTime?
-  confidence      Int                 @default(0) // 0-100
-  severity        Int                 @default(0) // relevance to this investigation
-  firstSeen       DateTime            @default(now())
-  lastSeen        DateTime            @updatedAt
-  context         String?             // where it was found; which incident, which log line
-  resolved        Boolean             @default(false)
-  threatIntelMatch Json?              // enrichment from TheHive/Cortex
+  id               String             @id @default(uuid())
+  investigation    Investigation      @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  investigationId  String
+  value            String // canonical defanged form (e.g. 1.2.3.4, evil[.]com)
+  displayValue     String // original as found (e.g. hxxp://evil[.]com/path)
+  category         ObservableCategory
+  role             ObservableRole     @default(ioc)
+  verdict          ObservableVerdict  @default(unknown)
+  verdictBy        String? // userId, "warden", "cortex"
+  verdictAt        DateTime?
+  confidence       Int                @default(0) // 0-100
+  severity         Int                @default(0) // relevance to this investigation
+  firstSeen        DateTime           @default(now())
+  lastSeen         DateTime           @updatedAt
+  context          String? // where it was found; which incident, which log line
+  resolved         Boolean            @default(false)
+  threatIntelMatch Json? // enrichment from TheHive/Cortex
 
-  externalId      String?
-  lastSyncedAt    DateTime?
+  externalId   String?
+  lastSyncedAt DateTime?
 
   @@unique([investigationId, value, category])
   @@index([value])
@@ -1617,14 +1621,14 @@ model InvestigationTimeline {
   id              String        @id @default(uuid())
   investigation   Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
   investigationId String
-  eventTime       DateTime      // WHEN the event occurred (not when the entry was created)
+  eventTime       DateTime // WHEN the event occurred (not when the entry was created)
   createdAt       DateTime      @default(now())
-  eventType       String        // incident_created | observable_added | note_added | status_changed | action_taken | warden_annotation | merge_source | merge_target | link_added | link_removed | thehive_sync | observable_verdict_set
+  eventType       String // incident_created | observable_added | note_added | status_changed | action_taken | warden_annotation | merge_source | merge_target | link_added | link_removed | thehive_sync | observable_verdict_set
   title           String
   description     String?
-  source          String        // "manual" | "warden" | "correlator" | "thehive"
+  source          String // "manual" | "warden" | "correlator" | "thehive"
   isPinned        Boolean       @default(false) // analyst can pin key events
-  payload         Json?         // structured event data
+  payload         Json? // structured event data
 
   @@index([investigationId, eventTime])
   @@index([investigationId, eventType])
@@ -1634,11 +1638,11 @@ model InvestigationAudit {
   id              String        @id @default(uuid())
   investigation   Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
   investigationId String
-  actorId         String        // userId or "warden" or "system"
-  actorType       String        // "human" | "warden" | "system"
-  action          String        // status_changed | note_added | observable_added | merge | link_added | severity_changed
-  before          Json?         // previous value
-  after           Json?         // new value
+  actorId         String // userId or "warden" or "system"
+  actorType       String // "human" | "warden" | "system"
+  action          String // status_changed | note_added | observable_added | merge | link_added | severity_changed
+  before          Json? // previous value
+  after           Json? // new value
   timestamp       DateTime      @default(now())
 
   @@index([investigationId, timestamp])
@@ -1649,13 +1653,13 @@ model InvestigationAudit {
 // steps are detected and skipped. Cleaned up on task success or terminal failure.
 
 model TaskCheckpoint {
-  id         String   @id @default(cuid())
-  taskId     String
-  stepIndex  Int
-  toolName   String
-  argsHash   String
-  result     String   @db.Text
-  createdAt  DateTime @default(now())
+  id        String   @id @default(cuid())
+  taskId    String
+  stepIndex Int
+  toolName  String
+  argsHash  String
+  result    String   @db.Text
+  createdAt DateTime @default(now())
 
   @@unique([taskId, stepIndex])
   @@index([taskId])
@@ -1668,31 +1672,31 @@ model TaskCheckpoint {
 // and Warden approval gating.
 
 model ToolExecution {
-  id              String    @id @default(cuid())
-  executionId     String    @unique  // client UUID — duplicate POST returns existing row, never re-executes
-  environmentId   String?           // null = localhost/management-host
-  tool            String            // "shell_exec" | "file_read" | "system_info"
-  args            Json              // redacted before storage — no secrets in DB
-  actorId         String            // agentId or userId (server-attested by gateway, not client-asserted)
-  actorType       String            // "agent" | "human"
-  riskTier        String            // "auto" | "notify" | "approve" | "escalate"
-  status          String            // "pending" | "running" | "completed" | "failed" | "denied"
-  exitCode        Int?
-  output          String?           // stdout+stderr, truncated to 10k, secrets redacted
-  durationMs      Int?
-  reviewerId      String?
-  reviewDecision  String?           // "approved" | "denied"
-  reviewedAt      DateTime?
-  expiresAt       DateTime?         // set for approve/escalate — auto-deny when reached
-  createdAt       DateTime  @default(now())
-  completedAt     DateTime?
+  id             String    @id @default(cuid())
+  executionId    String    @unique // client UUID — duplicate POST returns existing row, never re-executes
+  environmentId  String? // null = localhost/management-host
+  tool           String // "shell_exec" | "file_read" | "system_info"
+  args           Json // redacted before storage — no secrets in DB
+  actorId        String // agentId or userId (server-attested by gateway, not client-asserted)
+  actorType      String // "agent" | "human"
+  riskTier       String // "auto" | "notify" | "approve" | "escalate"
+  status         String // "pending" | "running" | "completed" | "failed" | "denied"
+  exitCode       Int?
+  output         String? // stdout+stderr, truncated to 10k, secrets redacted
+  durationMs     Int?
+  reviewerId     String?
+  reviewDecision String? // "approved" | "denied"
+  reviewedAt     DateTime?
+  expiresAt      DateTime? // set for approve/escalate — auto-deny when reached
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
 
-  environment     Environment?      @relation(fields: [environmentId], references: [id])
+  environment Environment? @relation(fields: [environmentId], references: [id])
 
   @@index([actorId, createdAt])
   @@index([status, createdAt])
   @@index([tool, createdAt])
-  @@index([expiresAt])              // for expiry sweep job
+  @@index([expiresAt]) // for expiry sweep job
 }
 
 // ── Agent Benchmark Harness ────────────────────────────────────────────────────
@@ -1832,8 +1836,8 @@ model WebhookTrigger {
 
 model JobRun {
   id           String    @id @default(cuid())
-  source       String    // "schedule" | "webhook" | "system"
-  sourceId     String    // ScheduledTask.id, WebhookTrigger.id, or system job key
+  source       String // "schedule" | "webhook" | "system"
+  sourceId     String // ScheduledTask.id, WebhookTrigger.id, or system job key
   sourceName   String
   agentId      String?
   taskId       String?
@@ -1853,10 +1857,10 @@ model JobRun {
 model NotificationChannel {
   id          String   @id @default(cuid())
   name        String
-  type        String   // slack | discord | webhook
+  type        String // slack | discord | webhook
   webhookUrl  String
   events      String   @default("[\"task_completed\",\"task_failed\"]") // JSON array
-  agentFilter String?  // JSON array of agent IDs to filter on, null = all agents
+  agentFilter String? // JSON array of agent IDs to filter on, null = all agents
   enabled     Boolean  @default(true)
   createdAt   DateTime @default(now())
 }
