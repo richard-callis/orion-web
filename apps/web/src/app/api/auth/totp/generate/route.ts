@@ -16,6 +16,7 @@ import {
   generateRecoveryCodes,
   hashRecoveryCode,
 } from '@/lib/totp'
+import { encrypt } from '@/lib/encryption'
 
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser()
@@ -42,13 +43,19 @@ export async function POST(req: NextRequest) {
 
   // Store secret and hashed recovery codes temporarily
   // totpEnabled remains false until verification succeeds
+  const recoveryCodesJson = JSON.stringify(hashedRecoveryCodes)
+  const writeData: Record<string, unknown> = {
+    totpSecret: secret,
+    totpRecoveryCodes: recoveryCodesJson,
+    // totpEnabled NOT set yet — only verified after code validation
+  }
+  if (process.env.ORION_ENCRYPTION_KEY) {
+    writeData.totpSecretEncrypted = encrypt(secret)
+    writeData.totpRecoveryCodesEncrypted = encrypt(recoveryCodesJson)
+  }
   await prisma.user.update({
     where: { id: user.id },
-    data: {
-      totpSecret: secret,
-      totpRecoveryCodes: JSON.stringify(hashedRecoveryCodes),
-      // totpEnabled NOT set yet — only verified after code validation
-    },
+    data: writeData,
   })
 
   return NextResponse.json({

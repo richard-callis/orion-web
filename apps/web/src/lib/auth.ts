@@ -98,7 +98,8 @@ export const authOptions: NextAuthOptions = {
           select: {
             id: true, username: true, email: true, name: true,
             role: true, active: true, passwordHash: true,
-            totpEnabled: true, totpSecret: true, totpRecoveryCodes: true,
+            totpEnabled: true, totpSecret: true, totpSecretEncrypted: true,
+            totpRecoveryCodes: true, totpRecoveryCodesEncrypted: true,
             failedLoginAttempts: true, lockedUntil: true,
           },
         })
@@ -126,7 +127,8 @@ export const authOptions: NextAuthOptions = {
           if (isRecovery) {
             // Recovery code login
             const code = credentials.totpCode as string
-            const hashedCodes: string[] = user.totpRecoveryCodes ? JSON.parse(user.totpRecoveryCodes) : []
+            const rawCodes = user.totpRecoveryCodesEncrypted ? decrypt(user.totpRecoveryCodesEncrypted) : user.totpRecoveryCodes
+            const hashedCodes: string[] = rawCodes ? JSON.parse(rawCodes) : []
             if (!code || !(await verifyRecoveryCode(code, hashedCodes))) {
               void logAudit({ userId: user.id, action: 'user_login_failure', target: user.id, detail: { reason: 'invalid_recovery_code' } })
               await recordFailedLogin(user.id)
@@ -135,17 +137,24 @@ export const authOptions: NextAuthOptions = {
             // BLOCKER fix: consume the recovery code (single-use)
             const updatedCodes = await consumeRecoveryCode(code, hashedCodes)
             if (updatedCodes) {
-              await prisma.user.update({ where: { id: user.id }, data: { totpRecoveryCodes: JSON.stringify(updatedCodes) } })
+              const newCodesJson = JSON.stringify(updatedCodes)
+              const { encrypt: encryptFn } = await import('./encryption')
+              const encryptedUpdate: Record<string, unknown> = { totpRecoveryCodes: newCodesJson }
+              if (process.env.ORION_ENCRYPTION_KEY) {
+                encryptedUpdate.totpRecoveryCodesEncrypted = encryptFn(newCodesJson)
+              }
+              await prisma.user.update({ where: { id: user.id }, data: encryptedUpdate })
             }
           } else {
             // TOTP code login
             const code = credentials.totpCode as string
-            if (!user.totpSecret) return null
+            const rawSecret = user.totpSecretEncrypted ? decrypt(user.totpSecretEncrypted) : user.totpSecret
+            if (!rawSecret) return null
             if (!code || typeof code !== 'string') {
               // No TOTP code provided — signal MFA required
               return { mfaRequired: true, totpEnabled: true, username: user.username }
             }
-            if (!(await verifyTOTP(user.totpSecret, code))) {
+            if (!(await verifyTOTP(rawSecret, code))) {
               void logAudit({ userId: user.id, action: 'user_login_failure', target: user.id, detail: { reason: 'invalid_totp' } })
               await recordFailedLogin(user.id)
               return null
