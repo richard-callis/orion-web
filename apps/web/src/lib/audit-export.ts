@@ -181,29 +181,8 @@ async function exportLogsToFile(retentionDays: number): Promise<{
 
   // Create temporary gzipped file
   const tmpFile = join(tmpdir(), `audit-export-${randomBytes(8).toString('hex')}.json.gz`)
-  const writeStream = createWriteStream(tmpFile)
-  const gzip = createGzip()
 
-  await new Promise<void>((resolve, reject) => {
-    let isFirstLine = true
-    writeStream.write('[\n')
-
-    for (const log of logs) {
-      const line = JSON.stringify(log)
-      if (!isFirstLine) writeStream.write(',\n')
-      writeStream.write(line)
-      isFirstLine = false
-    }
-
-    writeStream.write('\n]')
-    writeStream.end()
-
-    const pipeStream = createReadStream(tmpFile.replace('.gz', '')).pipe(gzip).pipe(writeStream)
-    pipeStream.on('finish', resolve)
-    pipeStream.on('error', reject)
-  })
-
-  // Actually, let's write JSON then gzip it
+  // Write JSON then gzip it
   const jsonFile = tmpFile.replace('.gz', '')
   const jsonStream = createWriteStream(jsonFile)
 
@@ -349,6 +328,8 @@ export async function uploadToS3(
         ContentType: 'application/gzip',
         ContentEncoding: 'gzip',
         ServerSideEncryption: 'AES256',
+        ObjectLockMode: 'COMPLIANCE',
+        ObjectLockRetainUntilDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1-year retention
         Metadata: {
           'export-date': new Date().toISOString(),
           'export-type': 'audit-logs',

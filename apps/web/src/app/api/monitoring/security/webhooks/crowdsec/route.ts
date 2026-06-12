@@ -109,7 +109,11 @@ export async function POST(req: NextRequest) {
   event.environmentId = envId || null
 
   // 7. Validate with Zod
-  const parsed = normalizedEventSchema.parse(event)
+  const parseResult = normalizedEventSchema.safeParse(event)
+  if (!parseResult.success) {
+    return NextResponse.json({ error: 'Event failed schema validation', issues: parseResult.error.issues }, { status: 400 })
+  }
+  const parsed = parseResult.data
 
   // 8. Idempotency check
   if (await wasAlreadyProcessed(parsed.dedupKey, 'crowdsec')) {
