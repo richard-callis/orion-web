@@ -10,17 +10,15 @@ wrapConsoleLog()
 // Redis-backed sliding window rate limiter with in-memory fallback.
 // See: src/lib/rate-limit-redis.ts
 
-import { rateLimitRedis } from './lib/rate-limit-redis'
+import { rateLimitRedis, getClientIpForRateLimit } from './lib/rate-limit-redis'
 import { isIpBlocked } from './lib/security/crowdsec-bouncer'
 import { SESSION_COOKIE_NAME } from './lib/auth-constants'
 
 function getRateLimitKey(req: NextRequest): string {
-  // X-Forwarded-For is intentionally NOT used: the leftmost IP is client-supplied
-  // and completely spoofable, letting anyone rotate past rate limits by changing
-  // the header. req.ip is set by trusted infrastructure only.
-  // In self-hosted Next.js (Node runtime) req.ip is undefined; all unidentifiable
-  // clients then share one bucket ('unknown') which still bounds brute-force.
-  return req.ip ?? 'unknown'
+  // SOC2: [M-006] Use x-forwarded-for first so self-hosted Node deployments
+  // (where req.ip is always undefined) correctly isolate rate-limit buckets
+  // per client rather than lumping every request into 'unknown'.
+  return getClientIpForRateLimit(req)
 }
 
 // Per-path rate limit configs: [maxRequests, windowMs]
@@ -217,7 +215,7 @@ export async function middleware(req: NextRequest) {
   const isCrowdSecWebhook = pathname.startsWith('/api/monitoring/security/webhooks')
   const isHealthCheck     = pathname === '/api/health'
   if (!isCrowdSecWebhook && !isHealthCheck) {
-    const clientIp = req.ip ?? 'unknown'
+    const clientIp = getClientIpForRateLimit(req)
     const blocked = await isIpBlocked(clientIp).catch(() => false)
     if (blocked) {
       return new NextResponse('Forbidden', { status: 403 })

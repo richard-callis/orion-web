@@ -1,6 +1,8 @@
 /**
  * Redis-backed sliding window rate limiter.
  * SOC2: [M-003] Replaces in-memory Map with Redis for distributed rate limiting.
+ * SOC2: [M-006] Provides IP extraction helper that reads x-forwarded-for first
+ * so rate limiting works correctly in self-hosted Node deployments behind a proxy.
  *
  * Uses a sorted set per key: timestamps as members scored by epoch_ms.
  * On each request:
@@ -245,4 +247,21 @@ export async function getRedisStatus(): Promise<{
     available: false,
     url: redisUrls.find((u: any) => u && u.trim()) || undefined,
   }
+}
+
+// ─── IP extraction for rate limiting ─────────────────────────────────────────
+
+/**
+ * SOC2: [M-006] Extract the real client IP for rate limiting.
+ *
+ * Next.js only sets req.ip in the Edge runtime. In self-hosted Node.js
+ * deployments req.ip is always undefined, so we read x-forwarded-for first.
+ * The leftmost value in x-forwarded-for is the original client IP as set by
+ * a trusted reverse proxy (Traefik/nginx/etc.). Falls back to req.ip (Edge)
+ * then 'unknown' so all unidentifiable clients still share one bucket.
+ */
+export function getClientIpForRateLimit(req: import('next/server').NextRequest): string {
+  const forwarded = req.headers.get('x-forwarded-for')
+  if (forwarded) return forwarded.split(',')[0].trim()
+  return (req as any).ip ?? 'unknown'
 }

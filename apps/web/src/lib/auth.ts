@@ -33,6 +33,20 @@ export { SESSION_COOKIE_NAME }
 
 const IS_SECURE = process.env.NODE_ENV === 'production' || process.env.HEADER_X_FORWARDED_PROTO === 'https'
 
+/**
+ * SOC2: [M-006] Record a failed login attempt for a user.
+ * Increments the counter; locks the account for 15 minutes after 5 failures.
+ */
+async function recordFailedLogin(userId: string): Promise<void> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { failedLoginAttempts: true } })
+  const attempts = (user?.failedLoginAttempts ?? 0) + 1
+  const lockedUntil = attempts >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null
+  await prisma.user.update({
+    where: { id: userId },
+    data: { failedLoginAttempts: attempts, ...(lockedUntil ? { lockedUntil } : {}) },
+  })
+}
+
 export const authOptions: NextAuthOptions = {
   session: { strategy: 'jwt', maxAge: 8 * 60 * 60 },
   secret: process.env.NEXTAUTH_SECRET,
@@ -85,14 +99,23 @@ export const authOptions: NextAuthOptions = {
             id: true, username: true, email: true, name: true,
             role: true, active: true, passwordHash: true,
             totpEnabled: true, totpSecret: true, totpRecoveryCodes: true,
+            failedLoginAttempts: true, lockedUntil: true,
           },
         })
 
         if (!user || !user.active || !user.passwordHash) return null
 
+        // SOC2: [M-006] Check account lockout before attempting password verification
+        if (user.lockedUntil && user.lockedUntil > new Date()) {
+          void logAudit({ userId: user.id, action: 'user_login_failure', target: user.id,
+            detail: { reason: 'account_locked', lockedUntil: user.lockedUntil.toISOString() } })
+          return null
+        }
+
         const passwordValid = await compare(credentials.password, user.passwordHash)
         if (!passwordValid) {
           void logAudit({ userId: user.id, action: 'user_login_failure', target: user.id, detail: { reason: 'invalid_password' } })
+          await recordFailedLogin(user.id)
           return null
         }
 
@@ -106,6 +129,7 @@ export const authOptions: NextAuthOptions = {
             const hashedCodes: string[] = user.totpRecoveryCodes ? JSON.parse(user.totpRecoveryCodes) : []
             if (!code || !(await verifyRecoveryCode(code, hashedCodes))) {
               void logAudit({ userId: user.id, action: 'user_login_failure', target: user.id, detail: { reason: 'invalid_recovery_code' } })
+              await recordFailedLogin(user.id)
               return null
             }
             // BLOCKER fix: consume the recovery code (single-use)
@@ -123,12 +147,13 @@ export const authOptions: NextAuthOptions = {
             }
             if (!(await verifyTOTP(user.totpSecret, code))) {
               void logAudit({ userId: user.id, action: 'user_login_failure', target: user.id, detail: { reason: 'invalid_totp' } })
+              await recordFailedLogin(user.id)
               return null
             }
           }
 
-          // MFA verified — update lastSeen and return full user
-          await prisma.user.update({ where: { id: user.id }, data: { lastSeen: new Date() } })
+          // MFA verified — reset lockout counters, update lastSeen, and return full user
+          await prisma.user.update({ where: { id: user.id }, data: { failedLoginAttempts: 0, lockedUntil: null, lastSeen: new Date() } })
           void logAudit({ userId: user.id, action: 'user_login', target: user.id, detail: { mfaVerified: true } })
           return {
             id: user.id,
@@ -142,7 +167,7 @@ export const authOptions: NextAuthOptions = {
 
         await prisma.user.update({
           where: { id: user.id },
-          data: { lastSeen: new Date() },
+          data: { failedLoginAttempts: 0, lockedUntil: null, lastSeen: new Date() },
         })
 
         void logAudit({ userId: user.id, action: 'user_login', target: user.id, detail: { mfaVerified: false } })
