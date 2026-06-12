@@ -3,6 +3,8 @@ import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, CreateEnvironmentSchema } from '@/lib/validate'
+import { encrypt, decrypt } from '@/lib/encryption'
+import { timingSafeEqual } from 'crypto'
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   // BLOCKER fix: GET had no auth — any request with an arbitrary Bearer header
@@ -21,7 +23,15 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   if (auth?.startsWith('Bearer ')) {
     const token = auth.slice(7)
     const envCheck = await prisma.environment.findUnique({ where: { id: params.id }, select: { gatewayToken: true } })
-    if (!envCheck?.gatewayToken || token !== envCheck.gatewayToken) {
+    if (!envCheck?.gatewayToken) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    try {
+      const storedToken = decrypt(envCheck.gatewayToken)
+      if (storedToken.length !== token.length || !timingSafeEqual(Buffer.from(storedToken), Buffer.from(token))) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+    } catch {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
   }
@@ -54,7 +64,17 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       select: { gatewayToken: true },
     })
     if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    if (!env.gatewayToken || auth !== `Bearer ${env.gatewayToken}`) {
+    if (!env.gatewayToken) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    try {
+      const storedGatewayToken = decrypt(env.gatewayToken)
+      const bearerToken = auth.slice(7)
+      if (storedGatewayToken.length !== bearerToken.length ||
+          !timingSafeEqual(Buffer.from(storedGatewayToken), Buffer.from(bearerToken))) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+    } catch {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     // Gateways may only update heartbeat fields — not name, kubeconfig, policy, etc.
@@ -101,7 +121,12 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       updateData.kubeconfig = data.kubeconfig || null
     }
     if (data.federationRole  !== undefined) updateData.federationRole  = data.federationRole  === 'standalone' ? null : (data.federationRole ?? null)
-    if (data.federationToken !== undefined) updateData.federationToken = data.federationToken ?? null
+    if (data.federationToken !== undefined) {
+      const rawFedToken = data.federationToken ?? null
+      updateData.federationToken = rawFedToken && process.env.ORION_ENCRYPTION_KEY
+        ? encrypt(rawFedToken)
+        : rawFedToken
+    }
     if (data.spokeUrl        !== undefined) updateData.spokeUrl        = data.spokeUrl        ?? null
     if (data.hubUrl          !== undefined) updateData.hubUrl          = data.hubUrl          ?? null
 
