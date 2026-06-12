@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { requireWizardSession } from '@/lib/setup-guard'
 import { parseBodyOrError, SetupAiProviderSchema } from '@/lib/validate'
 import { z } from 'zod'
+import { logAudit } from '@/lib/audit'
 
 const SetupAiProviderWithSkipSchema = SetupAiProviderSchema.or(z.object({ skip: z.literal(true) }))
 
@@ -62,6 +63,13 @@ export async function POST(req: NextRequest) {
     where:  { key: 'model.default' },
     update: { value: `ext:${created.id}` },
     create: { key: 'model.default', value: `ext:${created.id}` },
+  })
+
+  void logAudit({
+    userId: 'system',
+    action: 'admin_action',
+    target: `external_model:${created.id}`,
+    detail: { source: 'setup_wizard', provider: data.provider, modelId: data.modelId },
   })
 
   return NextResponse.json({ ok: true })

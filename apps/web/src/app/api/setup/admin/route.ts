@@ -3,6 +3,7 @@ import { hash } from 'bcryptjs'
 import { prisma } from '@/lib/db'
 import { requireWizardSession } from '@/lib/setup-guard'
 import { parseBodyOrError, SetupAdminSchema } from '@/lib/validate'
+import { logAudit } from '@/lib/audit'
 
 export async function POST(req: NextRequest) {
   if (!await requireWizardSession(req)) {
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
 
   const passwordHash = await hash(password, 14)
 
-  await prisma.user.create({
+  const createdUser = await prisma.user.create({
     data: {
       username,
       email: `${username}@local`,
@@ -39,6 +40,13 @@ export async function POST(req: NextRequest) {
       provider: 'local',
       active: true,
     },
+  })
+
+  void logAudit({
+    userId: createdUser.id,
+    action: 'user_create',
+    target: createdUser.id,
+    detail: { source: 'setup_wizard', role: 'admin' },
   })
 
   return NextResponse.json({ ok: true })

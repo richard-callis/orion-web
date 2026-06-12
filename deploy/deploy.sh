@@ -38,12 +38,14 @@ docker compose up -d --remove-orphans || {
 
 echo "Waiting for ORION to become healthy..."
 for i in $(seq 1 30); do
-  if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+  if curl -sf --max-time 10 http://localhost:3000/api/health > /dev/null 2>&1; then
     echo "ORION is healthy!"
     exit 0
   fi
   sleep 2
 done
 
-echo "WARNING: ORION health check timed out (may still be starting)"
-exit 0
+if ! curl -sf --max-time 10 http://localhost:3000/api/health 2>/dev/null; then
+  echo "ERROR: ORION health check failed" >&2
+  exit 1
+fi
