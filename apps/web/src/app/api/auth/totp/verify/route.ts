@@ -13,6 +13,7 @@ import { getCurrentUser } from '@/lib/auth'
 import { verifyTOTP } from '@/lib/totp'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, TOTPVerifySchema } from '@/lib/validate'
+import { decrypt } from '@/lib/encryption'
 
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser()
@@ -28,10 +29,11 @@ export async function POST(req: NextRequest) {
   // Get the stored secret from the database
   const dbUser = await prisma.user.findUnique({
     where: { id: user.id },
-    select: { totpSecret: true, totpRecoveryCodes: true },
+    select: { totpSecret: true, totpSecretEncrypted: true, totpRecoveryCodes: true },
   })
 
-  if (!dbUser?.totpSecret) {
+  const rawSecret = dbUser?.totpSecretEncrypted ? decrypt(dbUser.totpSecretEncrypted) : dbUser?.totpSecret
+  if (!rawSecret) {
     return NextResponse.json(
       { error: 'No pending TOTP setup. Call /api/auth/totp/generate first' },
       { status: 400 },
@@ -39,7 +41,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Verify the code against the server-stored secret
-  if (!(await verifyTOTP(dbUser.totpSecret, data.code))) {
+  if (!(await verifyTOTP(rawSecret, data.code))) {
     return NextResponse.json({ error: 'Invalid verification code' }, { status: 400 })
   }
 

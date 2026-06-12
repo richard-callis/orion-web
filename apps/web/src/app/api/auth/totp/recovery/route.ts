@@ -10,6 +10,7 @@ import { getCurrentUser } from '@/lib/auth'
 import { compare } from 'bcryptjs'
 import { generateRecoveryCodes, hashRecoveryCode } from '@/lib/totp'
 import { parseBodyOrError, TOTPDisableSchema } from '@/lib/validate'
+import { encrypt } from '@/lib/encryption'
 
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser()
@@ -51,9 +52,14 @@ export async function POST(req: NextRequest) {
     recoveryCodes.map((rc) => hashRecoveryCode(rc)),
   )
 
+  const recoveryCodesJson = JSON.stringify(hashedCodes)
+  const writeData: Record<string, unknown> = { totpRecoveryCodes: recoveryCodesJson }
+  if (process.env.ORION_ENCRYPTION_KEY) {
+    writeData.totpRecoveryCodesEncrypted = encrypt(recoveryCodesJson)
+  }
   await prisma.user.update({
     where: { id: user.id },
-    data: { totpRecoveryCodes: JSON.stringify(hashedCodes) },
+    data: writeData,
   })
 
   return NextResponse.json({

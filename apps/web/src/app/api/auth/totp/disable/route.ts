@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Incorrect password' }, { status: 401 })
   }
 
-  // Disable MFA and clear all TOTP data
+  // Disable MFA and clear all TOTP data (both plaintext and encrypted)
   await prisma.user.update({
     where: { id: user.id },
     data: {
@@ -49,6 +49,8 @@ export async function POST(req: NextRequest) {
       totpSecret: null,
       totpRecoveryCodes: null,
       totpEnabledAt: null,
+      totpSecretEncrypted: null,
+      totpRecoveryCodesEncrypted: null,
     },
   })
 

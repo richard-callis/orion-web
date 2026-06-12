@@ -29,6 +29,13 @@ export async function register() {
     const { ensureSocConfig } = await import('./lib/seed-soc-config')
     await ensureSocConfig()
 
+    // SOC2 [M-002]: Backfill encrypted TOTP columns for any users with plaintext values.
+    const { migrateTotpToEncrypted } = await import('./lib/totp-migration')
+    const totpResult = await migrateTotpToEncrypted()
+    if (totpResult.migrated > 0) {
+      console.log(`[totp-migration] Encrypted TOTP secrets for ${totpResult.migrated} users`)
+    }
+
     // SOC2 [SSO-001]: Warn at startup if unsigned SSO headers are permitted.
     // SSO_ALLOW_UNSIGNED_SSO=true is only for rollout — must not persist in production.
     if (process.env.SSO_ALLOW_UNSIGNED_SSO === 'true') {
