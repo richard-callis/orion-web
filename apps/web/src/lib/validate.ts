@@ -154,7 +154,7 @@ export const TOTPLoginSchema = z.object({
 export const CreateUserSchema = z.object({
   username: z.string().min(3).max(100).regex(/^[a-zA-Z0-9_-]+$/, 'Invalid username'),
   email: z.string().email('Invalid email'),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
+  password: z.string().min(12, 'Password must be at least 12 characters'),
   name: z.string().max(200).optional(),
   role: z.enum(['admin', 'user', 'readonly']).default('user'),
 })
@@ -280,7 +280,7 @@ export const UpdateConversationSchema = z.object({
 
 export const SetupAdminSchema = z.object({
   username: z.string().min(3).max(100).regex(/^[a-zA-Z0-9_-]+$/, 'Username must be alphanumeric (hyphens/underscores allowed)'),
-  password: z.string().min(10, 'Password must be at least 10 characters'),
+  password: z.string().min(12, 'Password must be at least 12 characters'),
 })
 
 export const SetupAiProviderSchema = z.object({
