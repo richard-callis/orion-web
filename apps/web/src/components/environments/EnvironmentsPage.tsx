@@ -385,7 +385,8 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
   const deleteEnv = async () => {
     if (!selected) return
-    await fetch(`/api/environments/${selected.id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/environments/${selected.id}`, { method: 'DELETE' })
+    if (!res.ok) return
     const remaining = environments.filter(e => e.id !== selected.id)
     setEnvironments(remaining)
     setSelected(remaining[0] ?? null)

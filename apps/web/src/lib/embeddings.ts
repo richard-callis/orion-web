@@ -62,6 +62,10 @@ export async function generateEmbedding(text: string): Promise<EmbeddingResult |
   const provider = await getEmbeddingProvider()
   if (!provider) return null
 
+  // Guard against SSRF via DB-controlled baseUrl
+  const { isPrivateUrl } = await import('./ssrf-guard')
+  if (await isPrivateUrl(provider.baseUrl)) return null
+
   if (provider.provider === 'openai') {
     const res = await fetch(`${provider.baseUrl}/v1/embeddings`, {
       method: 'POST',

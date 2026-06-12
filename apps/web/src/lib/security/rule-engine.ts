@@ -623,13 +623,13 @@ async function runVolumeSumRule(
     SELECT
       COALESCE(SUM(CAST(NULLIF(${jsonExtract}, '') AS BIGINT)), 0)::text AS total,
       string_agg(id::text, ',' ORDER BY "createdAt" DESC) AS event_ids,
-      (rawEvent->>'source_ip') AS top_source
+      ("rawEvent"->>'source_ip') AS top_source
     FROM "SecurityEvent"
     WHERE
       "createdAt" >= $1
       ${envFilter !== null ? 'AND "environmentId" = $2' : 'AND "environmentId" IS NULL'}
       ${sourceFilter.length > 0 ? `AND source = ANY($${envFilter !== null ? 3 : 2}::text[])` : ''}
-    GROUP BY (rawEvent->>'source_ip')
+    GROUP BY ("rawEvent"->>'source_ip')
     ORDER BY SUM(CAST(NULLIF(${jsonExtract}, '') AS BIGINT)) DESC NULLS LAST
     LIMIT 1
     `,

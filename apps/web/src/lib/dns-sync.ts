@@ -36,12 +36,16 @@ export function buildZoneFile(domainName: string, records: { ip: string; hostnam
     '',
   ]
   for (const rec of records) {
+    // Validate IP: must be a valid IPv4 address (no newlines, no injection)
+    if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(rec.ip)) continue
     for (const h of rec.hostnames) {
       // Strip domain suffix for relative names, keep wildcard as-is
       const rel = h === `*.${domainName}` ? '*'
         : h.endsWith(`.${domainName}`) ? h.slice(0, -(domainName.length + 1))
         : h === domainName ? '@'
         : h
+      // Validate: only allow safe label characters to prevent zone file injection
+      if (!/^[\w.*@-]+$/.test(rel)) continue
       lines.push(`${rel} 60 IN A ${rec.ip}`)
     }
   }

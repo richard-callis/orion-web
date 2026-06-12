@@ -122,7 +122,8 @@ export function MessageList({
 
   const removeConvo = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
-    await fetch(`/api/chat/conversations/${id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/chat/conversations/${id}`, { method: 'DELETE' })
+    if (!res.ok) return
     onDelete?.(`c_${id}`)
   }
 
