@@ -29,8 +29,8 @@ export async function ensureSetupToken(): Promise<void> {
 
   // bootstrap.sh greps for this exact line
   if (!process.env.CI && !process.env.SETUP_TOKEN_SUPPRESS_LOG) {
-    console.log(`SETUP_TOKEN: ${token}`)
-    console.warn('[security] SETUP_TOKEN logged above — clear application logs after completing setup or set SETUP_TOKEN_SUPPRESS_LOG=true')
+    console.log(`SETUP_TOKEN: ${token.slice(0, 8)}...[redacted]`)
+    console.warn('[security] SETUP_TOKEN partially logged above — clear application logs after completing setup or set SETUP_TOKEN_SUPPRESS_LOG=true')
   }
   console.log('[orion] Visit http://<management-ip>:3000/setup to complete first-run setup.')
 }

@@ -167,8 +167,11 @@ export const authOptions: NextAuthOptions = {
             const rawSecret = user.totpSecretEncrypted ? decrypt(user.totpSecretEncrypted) : user.totpSecret
             if (!rawSecret) return null
             if (!code || typeof code !== 'string') {
-              // No TOTP code provided — signal MFA required
-              return { mfaRequired: true, totpEnabled: true, username: user.username }
+              // No TOTP code provided — throw a detectable error so NextAuth returns
+              // a login failure (no JWT minted) while the frontend can redirect to the
+              // MFA entry screen. Returning a non-null object here would mint a valid
+              // session without MFA verification (SOC2: CRITICAL-1 bypass).
+              throw new Error('MFA_REQUIRED')
             }
             if (!(await verifyTOTP(rawSecret, code))) {
               void logAudit({ userId: user.id, action: 'user_login_failure', target: user.id, detail: { reason: 'invalid_totp' } })
@@ -217,6 +220,8 @@ export const authOptions: NextAuthOptions = {
         // SOC2: [M-002] Propagate MFA verified state from authorize()
         token.mfaVerified = (user as { mfaVerified?: boolean }).mfaVerified ?? false
         token.mfaVerifiedAt = Date.now()
+        // SOC2: [CRITICAL-1] Propagate totpEnabled so the session callback gate is live
+        token.totpEnabled = (user as AppUser & { totpEnabled?: boolean }).totpEnabled ?? false
       } else if (token.sub) {
         // Subsequent requests — verify the user still exists in the DB.
         // If the DB was wiped the user row is gone, so we invalidate the token
@@ -246,8 +251,19 @@ export const authOptions: NextAuthOptions = {
         session.user.id = token.sub as string
         session.user.username = token.username as string
         session.user.role = token.role as string
+        // SOC2: [CRITICAL-1] Propagate totpEnabled so requireAdmin() gate is live
+        ;(session.user as any).totpEnabled = token.totpEnabled as boolean ?? false
+        ;(session.user as any).mfaVerified = token.mfaVerified as boolean ?? false
       }
       return session
+    },
+  },
+  events: {
+    async signOut({ token }: { token?: any }) {
+      // SOC2: audit user logout
+      if (token?.sub) {
+        void logAudit({ userId: token.sub as string, action: 'user_logout', target: token.sub as string })
+      }
     },
   },
 }
