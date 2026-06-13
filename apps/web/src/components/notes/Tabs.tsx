@@ -63,7 +63,10 @@ export function Tabs({ children }: { children: React.ReactNode }) {
         const panel = document.createElement('div')
         panel.className = 'note-tab-panel'
         panel.style.display = i === activeIdx ? '' : 'none'
-        panel.innerHTML = div.innerHTML
+        // Use cloneNode instead of innerHTML to avoid XSS via injected HTML
+        Array.from(div.childNodes).forEach(node => {
+          panel.appendChild(node.cloneNode(true))
+        })
         contentWrapper.appendChild(panel)
       })
 
