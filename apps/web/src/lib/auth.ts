@@ -258,6 +258,14 @@ export const authOptions: NextAuthOptions = {
       return session
     },
   },
+  events: {
+    async signOut({ token }: { token?: any }) {
+      // SOC2: audit user logout
+      if (token?.sub) {
+        void logAudit({ userId: token.sub as string, action: 'user_logout', target: token.sub as string })
+      }
+    },
+  },
 }
 
 /**

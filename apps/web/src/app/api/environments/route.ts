@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
   }).catch(() => {})
 
   return NextResponse.json(
-    { ...envWithTools, gatewayToken: envWithTools?.gatewayToken ? '••••' : null, kubeconfig: envWithTools?.kubeconfig ? '••••' : null },
+    { ...envWithTools, gatewayToken: envWithTools?.gatewayToken ? '••••' : null, kubeconfig: envWithTools?.kubeconfig ? '••••' : null, federationToken: envWithTools?.federationToken ? '••••' : null },
     { status: 201 }
   )
 }

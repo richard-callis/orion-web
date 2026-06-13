@@ -32,11 +32,26 @@ const RATE_LIMITS: Record<string, [number, number]> = {
   '/api/chat': [30, 15 * 60 * 1000],
   '/api/k8s': [30, 15 * 60 * 1000],
 
-  // Webhooks — higher limit (they're automated)
+  // Webhooks — per-IP limit applied separately inside webhook handler (keyed by triggerId)
+  // SOC2: [H-001] This entry is intentionally kept for fallback/documentation purposes;
+  // the actual enforcement is done per-trigger inside the webhook route handler.
   '/api/webhooks': [60, 15 * 60 * 1000],
 
   // Tool generation — moderate limit (cost control)
   '/api/tools/generate': [20, 15 * 60 * 1000],
+
+  // Task creation — tight limit (each task spawns LLM work)
+  // SOC2: [M-001] 20 task creations per minute per IP/user
+  '/api/tasks': [20, 60 * 1000],
+
+  // Note search — higher limit for read-heavy workloads (must be listed BEFORE /api/notes
+  // so the more-specific path wins the prefix match in applyRateLimit)
+  // SOC2: [M-003] 60 note searches per minute
+  '/api/notes/search': [60, 60 * 1000],
+
+  // Note CRUD — moderate write limit
+  // SOC2: [M-002] 30 note writes per minute
+  '/api/notes': [30, 60 * 1000],
 
   // UI polling endpoints — high limit (browser polls every few seconds)
   '/api/jobs': [2000, 15 * 60 * 1000],
@@ -50,8 +65,8 @@ const RATE_LIMITS: Record<string, [number, number]> = {
   'default': [100, 15 * 60 * 1000],
 }
 
-async function applyRateLimit(req: NextRequest): Promise<NextResponse | null> {
-  const key = getRateLimitKey(req)
+async function applyRateLimit(req: NextRequest, userId?: string): Promise<NextResponse | null> {
+  const ip = getRateLimitKey(req)
   const { pathname } = req.nextUrl
 
   // Find the most specific rate limit config for this path
@@ -66,23 +81,46 @@ async function applyRateLimit(req: NextRequest): Promise<NextResponse | null> {
     }
   }
 
-  const rateKey = `rate-limit:ip:${key}:${pathname}`
-  const result = await rateLimitRedis(rateKey, maxRequests, windowMs)
+  // SOC2: [H-002] Primary IP-based rate limit (spoofing-resistant via TRUSTED_PROXY_COUNT)
+  const ipRateKey = `rate-limit:ip:${ip}:${pathname}`
+  const ipResult = await rateLimitRedis(ipRateKey, maxRequests, windowMs)
 
-  if (!result.allowed) {
-    const retryAfterSeconds = Math.ceil((result.resetAt.getTime() - Date.now()) / 1000)
+  if (!ipResult.allowed) {
+    const retryAfterSeconds = Math.ceil((ipResult.resetAt.getTime() - Date.now()) / 1000)
     return NextResponse.json(
       { error: 'Too many requests, please try again later' },
       {
         status: 429,
         headers: {
-          'X-RateLimit-Limit': String(result.limit),
-          'X-RateLimit-Remaining': String(result.remaining),
-          'X-RateLimit-Reset': result.resetAt.toISOString(),
+          'X-RateLimit-Limit': String(ipResult.limit),
+          'X-RateLimit-Remaining': String(ipResult.remaining),
+          'X-RateLimit-Reset': ipResult.resetAt.toISOString(),
           'Retry-After': String(Math.max(1, retryAfterSeconds)),
         },
       }
     )
+  }
+
+  // SOC2: [H-002] Secondary per-user rate limit for authenticated requests.
+  // A user who rotates IPs (VPN, mobile) still gets per-account quota enforcement.
+  if (userId) {
+    const userRateKey = `rate-limit:user:${userId}:${pathname}`
+    const userResult = await rateLimitRedis(userRateKey, maxRequests, windowMs)
+    if (!userResult.allowed) {
+      const retryAfterSeconds = Math.ceil((userResult.resetAt.getTime() - Date.now()) / 1000)
+      return NextResponse.json(
+        { error: 'Too many requests, please try again later' },
+        {
+          status: 429,
+          headers: {
+            'X-RateLimit-Limit': String(userResult.limit),
+            'X-RateLimit-Remaining': String(userResult.remaining),
+            'X-RateLimit-Reset': userResult.resetAt.toISOString(),
+            'Retry-After': String(Math.max(1, retryAfterSeconds)),
+          },
+        }
+      )
+    }
   }
 
   return null
@@ -222,14 +260,35 @@ export async function middleware(req: NextRequest) {
     }
   }
 
-  // SOC2: [M-003] Apply rate limiting before auth check (prevents auth DoS)
-  // Public endpoints that are rate-limited still get the check, others skip
-  if (!PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
+  // SOC2: [H-001] Rate-limit webhook paths before the PUBLIC_PATHS early-return.
+  // Webhooks are in PUBLIC_PATHS (HMAC is their auth), but without this check the
+  // RATE_LIMITS entry for '/api/webhooks' was dead code — the early-return below
+  // would fire first, skipping applyRateLimit entirely. We apply it here so an
+  // attacker with a valid secret cannot flood the endpoint.
+  // The per-trigger quota is enforced inside the route handler (60 req/15 min keyed
+  // by triggerId); this IP-level check is an additional outer guard.
+  if (pathname.startsWith('/api/webhooks') || pathname.startsWith('/api/monitoring/security/webhooks')) {
     const rateLimited = await applyRateLimit(req)
     if (rateLimited) return addSecurityHeaders(rateLimited, nonce)
   }
 
-  if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
+  // Decode session JWT once — reused for rate limit userId and auth redirect below.
+  // getToken is a fast local JWT decode (no DB call).
+  // For public paths this will usually return null — that's fine.
+  const isPublicPath = PUBLIC_PATHS.some((p) => pathname.startsWith(p))
+  const sessionToken = isPublicPath
+    ? null
+    : await getToken({ req, secret: process.env.NEXTAUTH_SECRET, cookieName: SESSION_COOKIE_NAME })
+
+  // SOC2: [M-003] Apply rate limiting before auth check (prevents auth DoS)
+  // Public endpoints that are rate-limited still get the check, others skip
+  if (!isPublicPath) {
+    // Pass userId for secondary per-user quota enforcement (SOC2: [H-002])
+    const rateLimited = await applyRateLimit(req, sessionToken?.sub ?? undefined)
+    if (rateLimited) return addSecurityHeaders(rateLimited, nonce)
+  }
+
+  if (isPublicPath) {
     return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
   }
 
@@ -266,17 +325,19 @@ export async function middleware(req: NextRequest) {
     // Gateway can do anything except:
     // - DELETE on notes (safety — prevents gateway from wiping knowledge base)
     // - DELETE/PUT/POST on bugs (bugs are human tracking, not gateway-owned)
-    // - Any method on admin routes (gateway should not manage users/prompts)
+    // - ANY method on admin routes (gateway should not manage users/prompts/settings)
+    //   SOC2: [HIGH] This includes GET — a leaked ORION_GATEWAY_TOKEN must not
+    //   grant read access to /api/admin/* (user management, system config, etc.)
     const isNotesDelete    = req.method === 'DELETE' && pathname.startsWith('/api/notes')
     const isBugsMutate     = ['DELETE','PUT','POST','PATCH'].includes(req.method) && pathname.startsWith('/api/bugs')
-    const isAdminMutate    = ['DELETE','PUT','POST','PATCH'].includes(req.method) && pathname.startsWith('/api/admin')
+    const isAdminAny       = pathname.startsWith('/api/admin')
     // Gateway must not create tasks (POST) — prevents a leaked token from
     // creating tasks assigned to arbitrary agents. The worker uses direct DB
     // access; only human sessions should create tasks via the API.
     const isTasksCreate    = req.method === 'POST' && pathname === '/api/tasks'
     const isTasksDelete    = req.method === 'DELETE' && pathname.startsWith('/api/tasks')
-    if (isNotesDelete || isBugsMutate || isAdminMutate || isTasksCreate || isTasksDelete) {
-      // fall through to session auth
+    if (isNotesDelete || isBugsMutate || isAdminAny || isTasksCreate || isTasksDelete) {
+      // fall through to session auth — gateway token is not sufficient
     } else {
       return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
     }
@@ -297,7 +358,8 @@ export async function middleware(req: NextRequest) {
     return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
   }
 
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET, cookieName: SESSION_COOKIE_NAME })
+  // sessionToken was already decoded above (before rate limit check) — reuse it.
+  const token = sessionToken
   if (!token || !token.sub) {
     const loginUrl = new URL('/login', req.url)
     loginUrl.searchParams.set('callbackUrl', pathname)

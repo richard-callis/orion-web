@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
+import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 // POST /api/environments/[id]/tools/[toolId]/approve
 // Approves a pending tool proposal — activates it so the gateway picks it up on next heartbeat.
@@ -29,5 +30,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
       ...(body.inputSchema !== undefined && { inputSchema: body.inputSchema }),
     },
   })
+  // SOC2: audit tool approval (activates gateway tool)
+  logAudit({
+    userId: user.id,
+    action: 'tool_approve',
+    target: `tool:${params.toolId}`,
+    detail: { environmentId: params.id, toolName: tool.name },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req.headers),
+  }).catch(() => {})
+
   return NextResponse.json(updated)
 }
