@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { prisma } from '@/lib/db'
 import { encrypt, encryptJson, decryptJsonStrict } from '@/lib/encryption'
+import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 const UNSEALER_TOKEN = process.env.ORION_UNSEALER_TOKEN
 
@@ -41,6 +42,17 @@ export async function GET(req: NextRequest) {
   }
 
   const keys = decryptJsonStrict<string[]>(setting.value, "vault.unsealKeys")
+
+  // SOC2: audit vault unseal key retrieval
+  logAudit({
+    userId: 'system:unsealer',
+    action: 'vault_unseal',
+    target: 'vault:unsealKeys',
+    detail: { keyCount: keys.length },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req.headers),
+  }).catch(() => {})
+
   return NextResponse.json({ keys })
 }
 
@@ -80,5 +92,16 @@ export async function POST(req: NextRequest) {
   }
 
   await prisma.$transaction(ops)
+
+  // SOC2: audit vault unseal key migration/overwrite
+  logAudit({
+    userId: 'system:unsealer',
+    action: 'vault_reseal',
+    target: 'vault:unsealKeys',
+    detail: { keyCount: keys.length, adminTokenUpdated: !!adminToken },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req.headers),
+  }).catch(() => {})
+
   return NextResponse.json({ ok: true, migrated: keys.length })
 }

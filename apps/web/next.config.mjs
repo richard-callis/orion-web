@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  poweredByHeader: false,
   // Disable font optimization so builds succeed without internet access to fonts.gstatic.com
   optimizeFonts: false,
   experimental: {
