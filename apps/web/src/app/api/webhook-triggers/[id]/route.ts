@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { parseBodyOrError, UpdateWebhookTriggerSchema } from '@/lib/validate'
+import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 async function guard() {
   try { await requireAdmin() } catch {
@@ -53,11 +54,25 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   return NextResponse.json({ ...trigger, secret: '••••••••', webhookUrl: `/api/webhooks/${id}` })
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const deny = await guard(); if (deny) return deny
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  let adminUser
+  try { adminUser = await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   const { id } = await params
   const existing = await prisma.webhookTrigger.findUnique({ where: { id } })
   if (!existing) return new NextResponse(null, { status: 404 })
   await prisma.webhookTrigger.delete({ where: { id } })
+
+  // SOC2: audit webhook trigger deletion
+  logAudit({
+    userId: adminUser.id,
+    action: 'webhook_trigger_delete',
+    target: `webhook_trigger:${id}`,
+    detail: { name: existing.name },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req.headers),
+  }).catch(() => {})
+
   return new NextResponse(null, { status: 204 })
 }

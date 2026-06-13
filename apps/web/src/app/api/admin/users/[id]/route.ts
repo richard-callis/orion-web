@@ -22,6 +22,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const user = await prisma.user.update({
     where: { id: params.id },
     data: updateData,
+    select: {
+      id: true, username: true, email: true, name: true,
+      role: true, active: true, createdAt: true, lastSeen: true,
+      totpEnabled: true,
+      // explicitly exclude: passwordHash, totpSecret, totpSecretEncrypted, totpRecoveryCodes, totpRecoveryCodesEncrypted
+    },
   })
 
   // SOC2: [M-005] Log user update (non-blocking)
@@ -36,6 +42,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     ipAddress: getClientIp(req),
     userAgent: getUserAgent(req.headers),
   }).catch(() => {})
+
+  // SOC2: log password resets specifically
+  if (data.password !== undefined) {
+    logAudit({
+      userId: admin.id,
+      action: 'password_reset',
+      target: `user:${params.id}`,
+      detail: { resetBy: admin.id },
+      ipAddress: getClientIp(req),
+      userAgent: getUserAgent(req.headers),
+    }).catch(() => {})
+  }
 
   return NextResponse.json(user)
 }
