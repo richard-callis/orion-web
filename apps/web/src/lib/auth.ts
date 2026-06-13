@@ -228,13 +228,16 @@ export const authOptions: NextAuthOptions = {
         // by clearing sub. Middleware treats token without sub as unauthenticated.
         const dbUser = await prisma.user.findUnique({
           where: { id: token.sub },
-          select: { id: true, active: true, role: true },
+          select: { id: true, active: true, role: true, totpEnabled: true },
         })
         if (!dbUser || !dbUser.active) {
           token.sub = undefined
         } else {
           // Re-sync role from DB so demoted admins lose access immediately
           token.role = dbUser.role
+          // SOC2 [M-002]: Re-sync totpEnabled so MFA enforcement activates immediately
+          // after a user enables MFA, without waiting for session expiry.
+          token.totpEnabled = dbUser.totpEnabled
         }
         // MFA verification expires after 15 minutes
         if (token.mfaVerifiedAt && token.mfaVerified) {

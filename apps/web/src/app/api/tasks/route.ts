@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth, requireWriteAccess } from '@/lib/auth'
+import { requireServiceAuth, requireWriteAccess, assertCanModify } from '@/lib/auth'
 import { parseBodyOrError, CreateTaskSchema } from '@/lib/validate'
 import { z } from 'zod'
 
@@ -66,6 +66,21 @@ export async function POST(req: NextRequest) {
   if ('error' in result) return result.error
 
   const { data } = result
+
+  // SOC2 [PRIV-002]: Verify caller owns (or is admin/service for) the target agent
+  // to prevent any authenticated user from queueing tasks against another user's agent.
+  if (data.assignedAgentId) {
+    const agent = await prisma.agent.findUnique({
+      where: { id: data.assignedAgentId },
+      select: { createdBy: true },
+    })
+    if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
+    try {
+      await assertCanModify(caller, isService, agent.createdBy)
+    } catch {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
 
   const task = await prisma.task.create({
     data: {

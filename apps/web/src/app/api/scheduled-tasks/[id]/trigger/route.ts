@@ -1,13 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 import { nextRun } from '@/lib/cron'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  await requireServiceAuth(req)
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
 
-  const schedule = await prisma.scheduledTask.findUnique({ where: { id: params.id } })
+  const schedule = await prisma.scheduledTask.findUnique({
+    where: { id: params.id },
+    include: { agent: { select: { createdBy: true } } },
+  })
   if (!schedule) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // SOC2 [PRIV-003]: Verify caller owns (or is admin/service for) the target agent
+  if (schedule.agent) {
+    try {
+      await assertCanModify(caller, isService, schedule.agent.createdBy)
+    } catch {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
 
   const now = new Date()
 
