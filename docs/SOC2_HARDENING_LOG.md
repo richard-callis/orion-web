@@ -1,7 +1,7 @@
-# SOC2 Hardening Log — ORION (PRs #610–#621)
+# SOC2 Hardening Log — ORION (PRs #610–#633)
 
 > **Audience**: SOC2 auditors verifying the ORION hardening programme.
-> This document provides a chronological log of all security improvements made across PRs #610 through #621,
+> This document provides a chronological log of all security improvements made across PRs #610 through #633,
 > including the SOC2 Trust Service Criteria addressed, files changed, and the security gap each change closed.
 
 ---
@@ -370,5 +370,345 @@ This meant any SSO request with an equal-length (but incorrect) signature would 
 
 ---
 
-*This log was compiled from `git log --oneline` output and source code inspection as of 2026-06-12.*
+---
+
+## PR #622 — `SOC2 auditor documentation — SECURITY.md and SOC2_HARDENING_LOG.md`
+
+### SOC2 Criteria Addressed
+- **CC4.1** — Monitoring and evaluation of controls (documented evidence)
+- **CC5.2** — Communicates security commitments and responsibilities
+
+### Files Changed
+- `docs/SOC2_HARDENING_LOG.md` — this document (initial version)
+- `SECURITY.md` — responsible disclosure policy, supported versions
+
+### What Was Fixed
+
+Created auditor-facing documentation capturing all hardening work from PRs #610–#621.
+
+---
+
+## PR #623 — `Business logic and cryptographic security fixes`
+
+### SOC2 Criteria Addressed
+- **CC6.1** — Logical access and ownership controls
+- **CC6.6** — Protection against external threats
+
+### Files Changed
+- Various route handlers and auth helpers
+
+### What Was Fixed
+
+Business logic and cryptographic correctness fixes identified in Fable-model adversarial code review (batch 1).
+
+---
+
+## PR #624 — `Info leakage fixes — preflight auth, error sanitization, login timing, Next.js CVE`
+
+### SOC2 Criteria Addressed
+- **CC6.1** — Auth on sensitive endpoints
+- **CC6.6** — Information disclosure prevention
+
+### Files Changed
+- Preflight/health endpoints, error handlers, `package.json` (Next.js version bump)
+
+### What Was Fixed
+
+**Preflight endpoint unauthenticated**: `/api/environments/[id]/preflight` could be called without auth, leaking k8s connectivity status. Added `requireGatewayAuthForEnvironment`.
+
+**Error sanitization**: Stack traces were surfaced in some 500 responses. Sanitized to `e.message` only.
+
+**Login timing oracle**: Password validation was skipped for non-existent users, enabling user enumeration via timing. Added constant-time dummy bcrypt compare when user is not found.
+
+**Next.js CVE patch**: Upgraded Next.js to a version without the known middleware bypass vulnerability.
+
+---
+
+## PR #625 — `Race conditions — atomic lockout, recovery code, gateway join, federation taskId, SSO audit`
+
+### SOC2 Criteria Addressed
+- **CC6.1** — Atomic credential operations
+- **CC6.6** — Concurrency safety on security-critical paths
+- **CC7.2** — Audit trail completeness
+
+### Files Changed
+- `apps/web/src/lib/auth.ts` — atomic lockout, SSO audit
+- `apps/web/src/app/api/environments/join/route.ts` — gateway join atomicity
+- `apps/web/src/lib/totp.ts` — recovery code single-use atomicity
+
+### What Was Fixed
+
+**Non-atomic lockout counter**: Two concurrent failed login requests could both read `failedLoginAttempts = 4`, both increment to 5, but only trigger one lockout record. Fixed with `$transaction` + row lock.
+
+**Recovery code TOCTOU**: `verifyRecoveryCode` and the subsequent `consumeRecoveryCode` DB write were two separate operations. A race allowed the same recovery code to be used concurrently. Fixed with a `$transaction` that reads, verifies, and consumes atomically.
+
+**SSO audit gap**: SSO logins were not emitting `user_login` audit events. Added.
+
+---
+
+## PR #626 — `Fix user record exposure, suppress setup token log, add missing audit events`
+
+### SOC2 Criteria Addressed
+- **CC6.7** — Restrict transmission of sensitive fields
+- **CC7.2** — Audit trail for privileged operations
+
+### Files Changed
+- `apps/web/src/app/api/admin/users/[id]/route.ts` — exclude secrets from PATCH response
+- `apps/web/src/lib/setup-token.ts` — gate setup token log behind env var
+- `apps/web/src/app/api/agents/route.ts` — `agent_create` audit event
+- `apps/web/src/app/api/webhook-triggers/route.ts` — `webhook_trigger_create/delete` audit events
+- `apps/web/src/app/api/encryption/rotate/route.ts` — `encryption_key_rotation` audit event
+
+### What Was Fixed
+
+**User record exposure**: Admin `PATCH /api/admin/users/[id]` returned the full updated user row including `passwordHash`, `totpSecret`, and recovery codes. Added `select` clause to strip all secret fields.
+
+**Setup token cleartext log**: `SETUP_TOKEN` was always logged at startup. Wrapped behind `SETUP_TOKEN_SUPPRESS_LOG` / `CI` guard (full suppression). Note: token was still logged in full when not suppressed — further improved in PR #633.
+
+**Missing audit events**: `agent_create`, `agent_delete`, `webhook_trigger_create`, `webhook_trigger_delete`, `encryption_key_rotation`, and admin `password_reset` events were defined in `audit.ts` but never emitted. All added.
+
+---
+
+## PR #627 — `SSRF hardening — ssrf-guard strengthening, federation/join/setup guards`
+
+### SOC2 Criteria Addressed
+- **CC6.6** — Protection against SSRF attacks on internal network resources
+
+### Files Changed
+- `apps/web/src/lib/ssrf-guard.ts` — extended block list
+- `apps/web/src/lib/federation.ts` — SSRF check on spoke URLs
+- `apps/web/src/app/api/environments/join/route.ts` — SSRF check on `gatewayUrl`
+- `apps/web/src/app/api/setup/git-provider/route.ts`, `setup/reverse-proxy/route.ts` — canonicalized to shared `isPrivateUrl`
+
+### What Was Fixed
+
+**SSRF gaps in ssrf-guard**: Added CGNAT range (100.64.0.0/10), decimal/hex IP notation bypass (e.g. `http://0x7f000001`), DNS-failure-open (now blocks on resolution failure), `::ffff:0:` IPv4-mapped IPv6 alternate form, and `0.x.x.x` catch-all.
+
+**Federation SSRF**: `fetchSpokeStatus` and `dispatchToSpoke` in `federation.ts` called user-controlled spoke URLs without SSRF validation.
+
+**Environment join SSRF**: `gatewayUrl` accepted during join was not validated, enabling registration of a gateway pointing at an internal metadata endpoint.
+
+**Duplicate private-host checks**: `setup/git-provider` and `setup/reverse-proxy` each had a local `isPrivateHost()` function. Removed and replaced with the canonical `isPrivateUrl` from `ssrf-guard.ts`.
+
+---
+
+## PR #628 — `IDOR — ownership checks on notes, scheduled-tasks, executions, tasks, agents, novas`
+
+### SOC2 Criteria Addressed
+- **CC6.3** — Authorization to access owned resources only
+
+### Files Changed
+- `apps/web/src/app/api/notes/[id]/route.ts`
+- `apps/web/src/app/api/scheduled-tasks/[id]/route.ts`
+- `apps/web/src/app/api/executions/[id]/route.ts`
+- `apps/web/src/app/api/tasks/[id]/route.ts`
+- `apps/web/src/app/api/agents/[id]/route.ts`
+- `apps/web/src/app/api/novas/[id]/route.ts`
+- `apps/web/src/lib/auth.ts` — `assertCanModify()` helper
+
+### What Was Fixed
+
+**Insecure Direct Object Reference**: GET, PUT, DELETE handlers on resource routes fetched by ID without checking whether the caller owned or was authorized to access the record. An authenticated user could enumerate and read/mutate any other user's notes, tasks, executions, and scheduled jobs. Added `assertCanModify(caller, isService, record.createdBy)` in each route; admin and service callers are exempted. Agents and Novas GET required admin (`requireAdmin()`).
+
+---
+
+## PR #629 — `Shell injection — domain name and stack name validation`
+
+### SOC2 Criteria Addressed
+- **CC6.6** — Input validation to prevent command injection
+
+### Files Changed
+- `apps/web/src/app/api/ingress/domains/route.ts`
+- `apps/web/src/app/api/ingress/domains/[id]/route.ts`
+- `apps/web/src/lib/dns-sync.ts`
+- `apps/web/src/app/api/ingress/domains/[id]/dns/bootstrap/route.ts`
+- `apps/web/src/lib/cluster-bootstrap.ts`
+
+### What Was Fixed
+
+**Domain name injection**: Domain names from user input were interpolated directly into shell commands executed via Docker/SSH. Added `DOMAIN_NAME_RE = /^[a-z0-9.-]{1,253}$/` validation at all entry points.
+
+**Stack name/host/user injection**: `deploySwarmStack` accepted `stackName`, `host`, and `user` parameters that could contain shell metacharacters. Added allowlist regex validation on all three.
+
+---
+
+## PR #630 — `Webhook replay attack prevention`
+
+### SOC2 Criteria Addressed
+- **CC6.6** — Prevent replay of authenticated webhook payloads
+
+### Files Changed
+- `apps/web/src/app/api/webhooks/[triggerId]/route.ts` — delivery deduplication
+- `apps/web/prisma/schema.prisma` — `WebhookDelivery` model
+
+### What Was Fixed
+
+**Webhook replay**: After HMAC signature verification, the same valid webhook payload could be replayed indefinitely. Added idempotency key tracking using the `X-GitHub-Delivery` header (or SHA-256 body hash fallback). A new `WebhookDelivery` Prisma model stores `(triggerId, deliveryId)` with a unique constraint; duplicate delivery returns 200 immediately without creating a new task.
+
+---
+
+## PR #631 — `XSS — Tabs.tsx innerHTML, MermaidBlock securityLevel`
+
+### SOC2 Criteria Addressed
+- **CC6.6** — Cross-site scripting prevention
+
+### Files Changed
+- `apps/web/src/components/notes/Tabs.tsx`
+- `apps/web/src/components/notes/MermaidBlock.tsx`
+
+### What Was Fixed
+
+**innerHTML XSS in Tabs**: `panel.innerHTML = div.innerHTML` set raw HTML from a markdown-rendered tab, enabling script injection via crafted note content. Replaced with safe DOM cloning:
+```ts
+Array.from(div.childNodes).forEach(node => panel.appendChild(node.cloneNode(true)))
+```
+
+**Mermaid `securityLevel: 'loose'`**: Mermaid was configured with `loose` security, which allows inline script execution within diagram definitions. Changed to `strict`.
+
+---
+
+## PR #632 — `Path traversal — git clone URL, randomized tmpfile, kubectl_apply_url, sshKeyPath`
+
+### SOC2 Criteria Addressed
+- **CC6.6** — Input validation on file system and shell operations
+- **CC6.1** — Least-privilege file handling
+
+### Files Changed
+- `apps/web/src/lib/cluster-bootstrap.ts` — `git clone` URL validation, `sshKeyPath` regex
+- `apps/web/src/lib/tool-registry.ts` — randomized kubeconfig tmpfile
+- `apps/web/src/lib/local-exec.ts` — `kubectl_apply_url` and `helm repo add` HTTPS validation
+
+### What Was Fixed
+
+**Git clone URL injection** (HIGH): `repoUrl` was passed directly to `git clone` without validation. A `file://` or `ssh://` URL could read local files; a flag-like string (e.g. `--upload-pack=...`) could inject git options. Fixed by validating `new URL(repoUrl).protocol` is `http:` or `https:`, and inserting `'--'` before the URL in the argv array.
+
+**Predictable kubeconfig tmpfile** (MEDIUM): `orion-health-${env.id}.yaml` was a deterministic, never-cleaned path. An attacker with local access could pre-create a symlink to redirect the write. Fixed with `mkdtempSync` (randomized directory), `{ flag: 'wx' }` to prevent symlink follow, and `finally`-block cleanup.
+
+**`kubectl_apply_url` SSRF** (MEDIUM): `kubectl apply -f <url>` was called with an unvalidated user-supplied URL. Fixed by requiring `https:` protocol; non-HTTPS or non-URL values return `{ error: 'Invalid or non-https URL' }`.
+
+**`sshKeyPath` injection** (LOW): The SSH key path from environment metadata was not validated before use in SSH/SCP commands. Added `SSH_KEY_PATH_RE = /^[a-zA-Z0-9/_.-]+$/` allowlist check.
+
+---
+
+## PR #633 — `Auth/session, rate limiting & secrets — MFA bypass, token revocation, audit trails`
+
+### SOC2 Criteria Addressed
+- **CC6.1** — MFA enforcement, access control completeness
+- **CC6.3** — Token lifecycle management (revocation)
+- **CC6.6** — Rate limiting, IP spoofing prevention, body size caps
+- **CC6.7** — Restrict sensitive data in responses and logs
+- **CC7.2** — Complete audit trail for privileged operations
+
+### Files Changed
+
+**Auth / Session (CRITICAL)**
+- `apps/web/src/lib/auth.ts` — MFA bypass fix, `totpEnabled`/`mfaVerified` JWT+session propagation, `user_logout` audit event
+- `apps/web/src/app/api/environments/[id]/rotate-token/route.ts` — new token revocation endpoint
+- `apps/web/src/middleware.ts` — gateway token blocked from all `/api/admin/*` methods (not just mutations)
+
+**Rate Limiting (HIGH/MEDIUM)**
+- `apps/web/src/middleware.ts` — webhook routes explicitly rate-limited before `PUBLIC_PATHS` early-return; per-user secondary rate limit key; added `RATE_LIMITS` for `/api/tasks`, `/api/notes`, `/api/notes/search`
+- `apps/web/src/lib/rate-limit-redis.ts` — `TRUSTED_PROXY_COUNT` env var (default 1) prevents IP spoofing via leftmost `X-Forwarded-For`
+- `apps/web/src/app/api/webhooks/[triggerId]/route.ts` — per-trigger rate limit (60/15 min) + 1 MB body size cap
+- `apps/web/src/app/api/chat/conversations/[id]/stream/route.ts` — 1 MB body size cap
+
+**Secrets / Info-disclosure (HIGH/MEDIUM/LOW)**
+- `apps/web/src/lib/setup-token.ts` — `SETUP_TOKEN` log now truncates to first 8 chars (improves PR #626 which still logged full token)
+- `apps/web/src/app/api/internal/vault/unseal-keys/route.ts` — `logAudit` on GET (`vault_unseal`) and POST (`vault_reseal`)
+- `apps/web/src/app/api/health/route.ts` — unauthenticated callers receive `{ status }` only; topology gated behind auth
+- `apps/web/src/app/api/environments/[id]/tools/[toolId]/approve/route.ts` + `reject/route.ts` — `tool_approve`/`tool_revoke` audit events
+- `apps/web/next.config.mjs` — `poweredByHeader: false`
+- `apps/web/src/app/api/environments/route.ts` — mask `federationToken` in POST 201 response
+- `apps/web/src/app/api/ingress/domains/route.ts` — move domain seeding out of GET (CSRF defence-in-depth)
+
+### What Was Fixed
+
+**CRITICAL: MFA completely bypassable**: `authorize()` in `auth.ts` returned `{ mfaRequired: true, totpEnabled: true, username }` — a non-null object — when a user with TOTP enabled submitted no TOTP code. NextAuth treats any non-null return as a successful credential verification and mints a valid session JWT. The user received a fully authenticated session without ever providing a TOTP code. Fixed by throwing `new Error('MFA_REQUIRED')` instead, which NextAuth treats as a login failure (no JWT minted). The frontend detects the error code and redirects to the TOTP entry screen.
+
+**CRITICAL: `totpEnabled` never propagated to JWT/session**: The enforcement gate `if (user.totpEnabled && !user.mfaVerified) throw new Error('MFA verification required')` in the session callback was dead code — `totpEnabled` was never set in the JWT, so it was always `undefined` (falsy). Fixed by propagating `totpEnabled` through the `jwt` callback and into the session, making the enforcement gate live.
+
+**CRITICAL: No gateway token revocation**: `mcga_*` environment gateway tokens had no rotation or revocation path. A leaked token was permanently valid. Added `POST /api/environments/[id]/rotate-token` (admin-gated, audit-logged) that generates a new `mcga_` + 32 random bytes token, writes it to the DB (immediately invalidating the old one), and returns the new token once.
+
+**HIGH: Gateway token reads admin routes**: The middleware denied the global `ORION_GATEWAY_TOKEN` on admin _mutations_ (PUT/POST/PATCH/DELETE) but allowed it on admin _reads_ (GET). A leaked token could enumerate all users, read system config, etc. Extended the denylist to cover all HTTP methods on `/api/admin/*`.
+
+**HIGH: Webhook rate limit dead code**: The `RATE_LIMITS['/api/webhooks']` entry was unreachable — `applyRateLimit()` is only called outside `PUBLIC_PATHS`, but `/api/webhooks` is in `PUBLIC_PATHS`. A single compromised webhook secret enabled unlimited task creation, each consuming LLM tokens. Fixed by applying the rate limit before the `PUBLIC_PATHS` early-return and adding an in-handler per-trigger limit.
+
+**HIGH: IP spoofing defeats rate limiting**: `getClientIpForRateLimit` took the leftmost `X-Forwarded-For` value, which is attacker-controlled. An attacker could rotate a fake IP header to get a fresh rate-limit bucket on every request, defeating all IP-based limits (including `/api/login`). Fixed with `TRUSTED_PROXY_COUNT` (default 1): takes the Nth-from-right value, which was set by the trusted proxy and cannot be spoofed.
+
+**HIGH: Vault unseal-key operations not audited**: GET `/api/internal/vault/unseal-keys` returns decrypted Vault unseal keys — described in-code as "the most sensitive secret in the system." POST overwrites them. Neither operation was audited. Added `logAudit` for both, using the `vault_unseal` and `vault_reseal` actions defined in `audit.ts`.
+
+**MEDIUM: `/api/health` discloses internal topology**: Unauthenticated callers received full system topology: external model names, k8s reachability, DB health, worker queue depths (`running`/`queued`). Now returns `{ status: 'ok' | 'degraded' }` only; full details gated behind authentication.
+
+**LOW: `SETUP_TOKEN` still logged in full when not suppressed**: PR #626 added a `SETUP_TOKEN_SUPPRESS_LOG` guard but logged the complete token when the guard was not set. This PR truncates to `token.slice(0,8)...[redacted]` — the critical identifying prefix for grep/bootstrap purposes is preserved while the secret entropy is withheld.
+
+---
+
+## Adversarial Review Programme (2026-06-13)
+
+In addition to the incremental PRs above, six dedicated adversarial code reviews were conducted by Opus-4 targeting attack surfaces not covered by the standard hardening pass:
+
+| Review | Verdict | Outcome |
+|--------|---------|---------|
+| Cryptography (IV reuse, key derivation, plaintext fallback) | **SOUND** — no fixable findings | No PR needed |
+| Auth/Session (MFA bypass, JWT tampering, middleware gaps) | **CRITICAL findings** | Fixed in PR #633 |
+| Path traversal (git clone, tmpfile, kubectl URL, sshKeyPath) | **HIGH/MEDIUM findings** | Fixed in PR #632 |
+| Rate limiting / DoS (webhook spam, embedding amplification) | **HIGH/MEDIUM findings** | Fixed in PR #633 |
+| Secrets/info-disclosure (tokens in logs, error messages) | **HIGH/MEDIUM findings** | Fixed in PR #633 |
+| CSRF (state-changing GETs, origin validation) | **LOW finding only** | Fixed in PR #633 |
+
+### Crypto audit summary (no PR)
+AES-256-GCM implementation confirmed sound: fresh `randomBytes(12)` IV per call, correct PBKDF2-based key derivation, all token comparisons use `timingSafeEqual`, all tokens generated with CSPRNG. Two informational findings (intentional setup-token log — improved in PR #633; legacy plaintext passthrough during migration window — by design).
+
+### CSRF audit summary
+Strong baseline: `SameSite=Strict` session cookie is the dominant CSRF control; `form-action 'self'` CSP; all webhook routes authenticated by HMAC (not cookies). Single LOW finding (domain seeding in GET handler) fixed in PR #633. No HIGH/MEDIUM CSRF vulnerabilities confirmed.
+
+---
+
+## Summary Matrix
+
+| PR | Auth | Encryption | Audit | Rate Limit | Validation | Infra |
+|----|------|------------|-------|------------|------------|-------|
+| #610 | CC6.1 | CC6.7 | — | — | CC6.1 | CC6.1 |
+| #611 | CC6.1 | — | CC7.2 | — | CC6.1 | — |
+| #612 | CC6.1 | — | CC7.2 | — | C1.1 | — |
+| #613 | CC6.3 | — | CC7.2 | — | — | CC7.1 |
+| #614 | CC6.1 | — | CC7.2 | — | CC6.1 | — |
+| #615 | — | CC6.7 | — | — | — | — |
+| #616 | CC6.1 | CC6.7 | — | — | — | A1.2 |
+| #617 | — | — | CC7.2 | — | — | — |
+| #618 | — | — | — | — | — | A1.2 |
+| #619 | CC6.6 | — | CC7.2 | CC6.6 | — | — |
+| #620 | CC6.7 | CC6.7 | — | — | — | — |
+| #621 | CC6.1 | CC6.7 | CC7.2 | — | — | CC6.6 |
+| #622 | — | — | — | — | — | — |
+| #623 | CC6.1 | CC6.6 | — | — | — | — |
+| #624 | CC6.1 | — | — | — | C1.1 | — |
+| #625 | CC6.1 | — | CC7.2 | — | — | — |
+| #626 | CC6.7 | — | CC7.2 | — | — | — |
+| #627 | — | — | — | — | CC6.6 | — |
+| #628 | CC6.3 | — | — | — | — | — |
+| #629 | — | — | — | — | CC6.6 | — |
+| #630 | CC6.6 | — | — | — | — | — |
+| #631 | — | — | — | — | CC6.6 | — |
+| #632 | — | — | — | — | CC6.6 | CC6.1 |
+| #633 | CC6.1/CC6.3 | — | CC7.2 | CC6.6 | CC6.7 | — |
+
+### Trust Service Criteria Legend
+
+| Code | Criterion |
+|------|-----------|
+| **CC6.1** | The entity implements logical access security software, infrastructure, and architectures over protected information assets |
+| **CC6.3** | The entity authorizes, modifies, or removes access to data, software, functions, and other protected information assets based on approved authorization |
+| **CC6.6** | The entity implements logical access security measures to protect against threats from sources outside its system boundaries |
+| **CC6.7** | The entity restricts the transmission, movement, and removal of information to authorized internal and external users and processes |
+| **CC7.1** | The entity uses detection and monitoring procedures to identify changes to configurations |
+| **CC7.2** | The entity monitors system components and the operation of those components for anomalies that are indicative of malicious acts |
+| **CC7.4** | The entity responds to identified security incidents using a defined incident response program |
+| **C1.1** | The entity identifies and maintains confidentiality commitments in its agreements with counterparties |
+| **C1.2** | The entity's commitments to maintain the confidentiality of customer data are communicated |
+| **A1.2** | The entity authorizes, designs, develops or acquires, implements, operates, approves, maintains, and monitors environmental protections, software, data back-up processes, and recovery infrastructure |
+
+---
+
+*This log was compiled from `git log --oneline` output and source code inspection as of 2026-06-13.*
 *Each PR commit SHA can be verified with `git show <sha>` in the ORION repository.*
