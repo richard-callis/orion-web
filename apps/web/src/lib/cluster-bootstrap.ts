@@ -342,6 +342,15 @@ async function deploySwarmStack(
   stackName: string,
   emit: (event: BootstrapEvent) => void,
 ): Promise<void> {
+  if (!/^[a-zA-Z0-9_-]+$/.test(stackName)) {
+    throw new Error(`Invalid stack name: ${stackName}`)
+  }
+  if (!/^[a-zA-Z0-9._-]+$/.test(connection.host)) {
+    throw new Error(`Invalid host: ${connection.host}`)
+  }
+  if (!/^[a-zA-Z0-9._-]+$/.test(connection.user)) {
+    throw new Error(`Invalid user: ${connection.user}`)
+  }
   // Clone the repo locally (needed for docker stack deploy which reads compose files)
   const stackDir = join(tmpdir(), `orion-swarm-${randomBytes(4).toString('hex')}`)
   await mkdir(stackDir, { recursive: true })
