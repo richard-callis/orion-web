@@ -62,5 +62,15 @@ else
   echo "  NOTE: No Vault backup found for this timestamp — skipping"
 fi
 
+# Restore MinIO
+echo "=== Restoring MinIO ==="
+if [ -d "$BACKUP_DIR/minio_${TIMESTAMP}" ]; then
+  mc config host add restore-target "http://localhost:${MINIO_PORT:-9000}" "${MINIO_ROOT_USER:-}" "${MINIO_ROOT_PASSWORD:-}"
+  mc mirror "$BACKUP_DIR/minio_${TIMESTAMP}/" restore-target/
+  echo "MinIO restore complete"
+else
+  echo "WARNING: No MinIO backup found at $BACKUP_DIR/minio_${TIMESTAMP}/"
+fi
+
 echo ""
 echo "Restore complete. Restart ORION: $DEPLOY_DIR/bootstrap.sh"

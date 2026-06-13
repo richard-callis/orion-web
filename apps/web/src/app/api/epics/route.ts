@@ -10,10 +10,11 @@ const EPIC_INCLUDE = {
 }
 
 export const { GET, POST } = makeCrudRoutes({
-  model:        'epic',
-  createSchema: CreateEpicSchema,
-  orderBy:      { updatedAt: 'desc' },
-  include:      EPIC_INCLUDE,
+  model:           'epic',
+  createSchema:    CreateEpicSchema,
+  orderBy:         { updatedAt: 'desc' },
+  include:         EPIC_INCLUDE,
+  scopeByCreatedBy: true,
   transformData: (data, caller) => ({
     title:       data.title,
     description: data.description ?? null,

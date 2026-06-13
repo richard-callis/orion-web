@@ -16,6 +16,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const request = await prisma.toolApprovalRequest.findUnique({ where: { id: params.id } })
   if (!request) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (request.status !== 'pending') return NextResponse.json({ error: 'Already resolved' }, { status: 400 })
+  if (request.userId === admin.id) {
+    return NextResponse.json({ error: 'Cannot approve your own tool request' }, { status: 403 })
+  }
 
   const updated = await prisma.toolApprovalRequest.update({
     where: { id: params.id },

@@ -76,6 +76,22 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   })
   await prisma.user.delete({ where: { id: params.id } })
 
+  // GDPR: anonymize audit log entries referencing the deleted user
+  await prisma.auditLog.updateMany({
+    where: { userId: params.id },
+    data: { userId: '[deleted]' },
+  })
+
+  // GDPR: anonymize ToolApprovalRequest entries referencing the deleted user
+  await prisma.toolApprovalRequest.updateMany({
+    where: { userId: params.id },
+    data: { userId: '[deleted]' },
+  })
+  await prisma.toolApprovalRequest.updateMany({
+    where: { approvedBy: params.id },
+    data: { approvedBy: '[deleted]' },
+  })
+
   // SOC2: [M-005] Log user deletion (non-blocking)
   logAudit({
     userId: admin.id,
