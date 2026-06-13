@@ -21,7 +21,15 @@ export function makeLocalGx(kubeconfig: string) {
   return async function kubectlTool(name: string, args: Record<string, unknown>): Promise<string> {
     if (name === 'kubectl_apply_manifest' || name === 'kubectl_apply_url') {
       if (name === 'kubectl_apply_url') {
-        return (await execFileAsync('kubectl', ['apply', '-f', args.url as string, '--kubeconfig', kc], { timeout: 60_000 })).stdout
+        // Validate URL is https before passing to kubectl
+        const toolUrl = args.url as string
+        try {
+          const parsedUrl = new URL(toolUrl)
+          if (parsedUrl.protocol !== 'https:') throw new Error('URL must use https')
+        } catch {
+          return JSON.stringify({ error: 'Invalid or non-https URL' })
+        }
+        return (await execFileAsync('kubectl', ['apply', '-f', toolUrl, '--kubeconfig', kc], { timeout: 60_000 })).stdout
       }
       const manifest = String(args.manifest)
       const tmpPath = `${tmpDir}/manifest-${Date.now()}.yaml`
@@ -36,7 +44,15 @@ export function makeLocalGx(kubeconfig: string) {
     if (name === 'helm_repo_add' || name === 'helm_upgrade_install' || name === 'helm_uninstall' || name === 'helm_list') {
       let cmd: string[]
       if (name === 'helm_repo_add') {
-        cmd = ['repo', 'add', args.name as string, args.url as string]
+        // Validate repo URL is https before passing to helm
+        const repoUrl = args.url as string
+        try {
+          const parsedRepoUrl = new URL(repoUrl)
+          if (parsedRepoUrl.protocol !== 'https:') throw new Error('URL must use https')
+        } catch {
+          return JSON.stringify({ error: 'Invalid or non-https URL' })
+        }
+        cmd = ['repo', 'add', args.name as string, repoUrl]
       } else if (name === 'helm_uninstall') {
         cmd = ['uninstall', args.release as string, '--namespace', args.namespace as string, '--timeout', String(args.timeout ?? '60s'), '--kubeconfig', kc]
       } else if (name === 'helm_list') {

