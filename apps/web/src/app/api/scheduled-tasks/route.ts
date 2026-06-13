@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 import { parseCron, nextRun } from '@/lib/cron'
 
 export async function GET(req: NextRequest) {
@@ -15,7 +15,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  await requireServiceAuth(req)
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
 
   let body: unknown
   try {
@@ -35,8 +36,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Invalid cron expression: "${cronExpr}"` }, { status: 400 })
   }
 
-  const agent = await prisma.agent.findUnique({ where: { id: agentId }, select: { id: true } })
+  const agent = await prisma.agent.findUnique({ where: { id: agentId }, select: { id: true, createdBy: true } })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
+
+  // SOC2 [PRIV-003]: Verify caller owns (or is admin/service for) the target agent
+  try {
+    await assertCanModify(caller, isService, agent.createdBy)
+  } catch {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   const initialNextRun = nextRun(cronExpr)
 
