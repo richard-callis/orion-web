@@ -1,5 +1,59 @@
 import { prisma } from './db'
 
+// ─── Redis budget lock helpers ────────────────────────────────────────────────
+// SOC2: [H-TOCTOU] Per-agent mutex prevents concurrent tasks from all reading
+// the same "current usage" before any of them records spend.
+
+let _budgetRedisClient: any = null
+
+async function getBudgetRedis(): Promise<any | null> {
+  if (_budgetRedisClient) return _budgetRedisClient
+  try {
+    const ioredis = await import('ioredis')
+    const Redis = ioredis.default || ioredis
+    const url =
+      process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL || 'redis://localhost:6379/0'
+    const client = new Redis(url)
+    await client.ping()
+    _budgetRedisClient = client
+    return _budgetRedisClient
+  } catch {
+    return null
+  }
+}
+
+/**
+ * SOC2: [H-TOCTOU] Acquire a per-agent budget lock using SET NX EX.
+ * Returns the lock token string if acquired, or null if the lock is already held.
+ * Returns 'no-redis' when Redis is unavailable (fail-open — allow the task to proceed).
+ */
+export async function acquireBudgetLock(agentId: string): Promise<string | null> {
+  const redis = await getBudgetRedis()
+  if (!redis) return 'no-redis' // fail open when Redis is unavailable
+  const token = `${Date.now()}-${Math.random()}`
+  const key = `agent:${agentId}:budget:lock`
+  const result = await redis.set(key, token, 'NX', 'EX', 30)
+  return result === 'OK' ? token : null
+}
+
+/**
+ * SOC2: [H-TOCTOU] Release the per-agent budget lock using a Lua check-and-delete
+ * so we only release the lock we own (guards against expiry races).
+ */
+export async function releaseBudgetLock(agentId: string, token: string): Promise<void> {
+  if (token === 'no-redis') return
+  const redis = await getBudgetRedis()
+  if (!redis) return
+  const key = `agent:${agentId}:budget:lock`
+  const lua = `
+    if redis.call('GET', KEYS[1]) == ARGV[1] then
+      return redis.call('DEL', KEYS[1])
+    end
+    return 0
+  `
+  await redis.eval(lua, 1, key, token)
+}
+
 /**
  * Check whether an agent is within its token budget (daily and monthly).
  *
@@ -8,6 +62,10 @@ import { prisma } from './db'
  *
  * Returns { allowed: true } when under budget or no budget is set.
  * Returns { allowed: false, reason: '...' } when a limit is exceeded.
+ *
+ * SOC2: [H-TOCTOU] Callers MUST hold the per-agent budget lock before calling
+ * this function to prevent concurrent tasks reading the same stale usage total.
+ * Use acquireBudgetLock / releaseBudgetLock in the caller (e.g. worker.ts).
  */
 export async function checkAgentBudget(
   agentId: string,
