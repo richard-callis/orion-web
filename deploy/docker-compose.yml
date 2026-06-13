@@ -55,7 +55,7 @@ services:
       AUDIT_EXPORT_S3_BUCKET: ${AUDIT_EXPORT_S3_BUCKET:-orion-audit-logs}
       AUDIT_EXPORT_RETENTION_DAYS: ${AUDIT_EXPORT_RETENTION_DAYS:-30}
       AUDIT_EXPORT_MANIFEST_PATH: ${AUDIT_EXPORT_MANIFEST_PATH:-manifests/}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
       # Redis Sentinel for distributed rate limiting (SOC2: [RATE-001])
       REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-mymaster}
@@ -403,8 +403,8 @@ services:
     volumes:
       - minio-data:/data
     ports:
-      - "9000:9000"    # S3 API
-      - "9001:9001"    # Web console
+      - "127.0.0.1:9000:9000"    # S3 API — localhost only (SOC2)
+      - "127.0.0.1:9001:9001"    # Web console — localhost only (SOC2)
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
@@ -428,7 +428,7 @@ services:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      /usr/bin/mc config host add myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc config host add myminio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
       /usr/bin/mc mb myminio/orion-audit-logs --ignore-existing;
       /usr/bin/mc version enable myminio/orion-audit-logs;
       echo 'MinIO bucket orion-audit-logs initialized with versioning';
@@ -439,7 +439,7 @@ services:
   redis-master:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --appendonly yes --dir /data --requirepass ${REDIS_PASSWORD:-}
+    command: redis-server --appendonly yes --dir /data --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
     volumes:
       - redis-master-data:/data
     ports:
@@ -471,7 +471,7 @@ services:
       - ./redis-sentinel-1.conf:/etc/redis-sentinel.conf:ro
       - redis-sentinel-1-data:/data
     ports:
-      - "26379:26379"
+      - "127.0.0.1:26379:26379"
     healthcheck:
       test: ["CMD", "redis-cli", "-p", "26379", "sentinel", "masters"]
       interval: 10s
@@ -499,7 +499,7 @@ services:
       - ./redis-sentinel-2.conf:/etc/redis-sentinel.conf:ro
       - redis-sentinel-2-data:/data
     ports:
-      - "26380:26380"
+      - "127.0.0.1:26380:26380"
     healthcheck:
       test: ["CMD", "redis-cli", "-p", "26380", "sentinel", "masters"]
       interval: 10s
@@ -527,7 +527,7 @@ services:
       - ./redis-sentinel-3.conf:/etc/redis-sentinel.conf:ro
       - redis-sentinel-3-data:/data
     ports:
-      - "26381:26381"
+      - "127.0.0.1:26381:26381"
     healthcheck:
       test: ["CMD", "redis-cli", "-p", "26381", "sentinel", "masters"]
       interval: 10s

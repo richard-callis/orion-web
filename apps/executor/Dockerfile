@@ -22,6 +22,8 @@ COPY config ./config
 ENV NODE_ENV=production
 ENV PORT=3200
 
+RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
+USER nextjs
 EXPOSE 3200
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
