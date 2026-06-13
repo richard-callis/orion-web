@@ -32,10 +32,14 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Install OpenSSL (Prisma), bash, curl, git, openssh-client, python3 (node-pty runtime)
 RUN apk add --no-cache openssl libc6-compat bash curl git openssh-client
 
+# Create non-root user for security (SOC2)
+RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
+
 # SSH config: auto-accept new host keys for homelab use
-RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh \
- && printf 'Host *\n  StrictHostKeyChecking accept-new\n  UserKnownHostsFile /root/.ssh/known_hosts\n' > /root/.ssh/config \
- && chmod 600 /root/.ssh/config
+RUN mkdir -p /home/nextjs/.ssh && chmod 700 /home/nextjs/.ssh \
+ && printf 'Host *\n  StrictHostKeyChecking accept-new\n  UserKnownHostsFile /home/nextjs/.ssh/known_hosts\n' > /home/nextjs/.ssh/config \
+ && chmod 600 /home/nextjs/.ssh/config \
+ && chown -R nextjs:nodejs /home/nextjs/.ssh
 
 # Install kubectl — architecture-aware, fetch stable version dynamically
 RUN ARCH=${TARGETARCH:-amd64} \
@@ -72,4 +76,5 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
+USER nextjs
 CMD ["sh", "entrypoint.sh"]
