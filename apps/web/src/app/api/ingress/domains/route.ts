@@ -39,9 +39,14 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   const body = await req.json()
+  const DOMAIN_NAME_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/
+  const name = (body.name ?? '').trim().toLowerCase()
+  if (!name || !DOMAIN_NAME_RE.test(name)) {
+    return NextResponse.json({ error: 'Invalid domain name' }, { status: 400 })
+  }
   const domain = await prisma.domain.create({
     data: {
-      name:  body.name.trim().toLowerCase(),
+      name,
       type:  body.type  ?? 'public',
       notes: body.notes ?? null,
     },

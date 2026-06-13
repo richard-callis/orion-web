@@ -80,6 +80,7 @@ export async function syncToDocker(
   domainName: string,
   zoneContent: string,
 ): Promise<void> {
+  validateDomainName(domainName)
   // Write zone file into the running coredns container
   const escaped = zoneContent.replace(/'/g, `'"'"'`)
   await gatewayExec('docker_exec', {

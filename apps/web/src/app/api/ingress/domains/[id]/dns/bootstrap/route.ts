@@ -173,6 +173,10 @@ export async function POST(
     include: { coreDnsEnvironment: true, dnsRecords: { where: { enabled: true } } },
   })
   if (!domain) return new Response(JSON.stringify({ error: 'Domain not found' }), { status: 404 })
+  const DOMAIN_NAME_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/
+  if (!DOMAIN_NAME_RE.test(domain.name)) {
+    return new Response(JSON.stringify({ error: 'Invalid domain name in record' }), { status: 400 })
+  }
   if (!domain.coreDnsEnvironment) return new Response(JSON.stringify({ error: 'No CoreDNS environment selected' }), { status: 422 })
 
   const env = domain.coreDnsEnvironment
