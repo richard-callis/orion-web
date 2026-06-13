@@ -29,6 +29,8 @@ interface SpokeStatus {
  * Returns null on any network or auth error so callers can skip unreachable spokes.
  */
 async function fetchSpokeStatus(spokeUrl: string, token: string): Promise<SpokeStatus | null> {
+  const { isPrivateUrl } = await import('./ssrf-guard')
+  if (await isPrivateUrl(spokeUrl)) return null
   try {
     const res = await fetch(`${spokeUrl}/api/federation/status`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -159,6 +161,8 @@ export async function dispatchToSpoke(
   }
 
   try {
+    const { isPrivateUrl } = await import('./ssrf-guard')
+    if (await isPrivateUrl(spokeUrl)) return false
     const res = await fetch(`${spokeUrl}/api/federation/tasks`, {
       method: 'POST',
       headers: {
