@@ -33,5 +33,7 @@ COPY package*.json ./
 RUN npm install --omit=dev --legacy-peer-deps
 COPY --from=builder /app/dist ./dist
 
+RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
+USER nextjs
 EXPOSE 3001
 CMD ["node", "dist/index.js"]

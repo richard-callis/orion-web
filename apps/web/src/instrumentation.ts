@@ -54,6 +54,11 @@ export async function register() {
       ['REDIS_PASSWORD', 'change-me'],
       ['POSTGRES_PASSWORD', 'change-me'],
     ]
+    // SOC2 CC5: fail startup if critical secrets are set to known placeholder values
+    const FAIL_IF_PLACEHOLDER: Array<[string, string[]]> = [
+      ['NEXTAUTH_SECRET', ['change-me']],
+      ['ORION_GATEWAY_TOKEN', ['change-me']],
+    ]
     for (const v of REQUIRED_SECURITY_VARS) {
       if (!process.env[v]) {
         console.error(`[SOC2][startup] MISSING REQUIRED ENV VAR: ${v} — server security may be compromised`)
@@ -62,6 +67,15 @@ export async function register() {
     for (const [v, def] of WARN_IF_DEFAULT) {
       if (!process.env[v] || process.env[v] === def) {
         console.warn(`[SOC2][startup] SECURITY WARNING: ${v} is unset or using placeholder value`)
+      }
+    }
+    for (const [v, placeholders] of FAIL_IF_PLACEHOLDER) {
+      const val = process.env[v]
+      if (val && (placeholders.some(p => val.startsWith(p)) || placeholders.includes(val))) {
+        throw new Error(
+          `[SOC2][startup] FATAL: ${v} is set to a placeholder value ("${val}"). ` +
+          `Generate a real secret with: openssl rand -base64 32`
+        )
       }
     }
   }
