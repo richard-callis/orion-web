@@ -59,6 +59,14 @@ export async function POST(req: NextRequest) {
   if (!record)                        return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
   if (record.expiresAt < new Date())  return NextResponse.json({ error: 'Token expired' }, { status: 401 })
 
+  // ── SSRF guard — validate gatewayUrl before persisting ─────────────────────
+  if (body.gatewayUrl) {
+    const { isPrivateUrl } = await import('@/lib/ssrf-guard')
+    if (await isPrivateUrl(body.gatewayUrl)) {
+      return NextResponse.json({ error: 'Invalid gateway URL' }, { status: 400 })
+    }
+  }
+
   // ── Idempotent re-join ──────────────────────────────────────────────────────
   // If the token was already used (e.g. gateway restarted before saving credentials),
   // return the existing credentials — but only if the fingerprint matches.

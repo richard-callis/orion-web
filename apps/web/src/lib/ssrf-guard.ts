@@ -1,13 +1,19 @@
 import { promises as dns } from 'dns'
 
 const PRIVATE_IP_PATTERNS = [
-  /^127\./, /^10\./, /^192\.168\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^169\.254\./,
-  /^::1$/, /^::ffff:/i,
-  /^f[cd][0-9a-f]{2}:/i, // fc00::/7 ULA (covers fc00:: and fd00::)
-  /^fe80:/i,
+  /^127\./,                          // loopback
+  /^10\./,                           // RFC1918
+  /^192\.168\./,                     // RFC1918
+  /^172\.(1[6-9]|2\d|3[01])\./,     // RFC1918
+  /^169\.254\./,                     // link-local
+  /^100\.(6[4-9]|[7-9]\d|1([01]\d|2[0-7]))\./,  // CGNAT 100.64.0.0/10
+  /^::1$/,                           // IPv6 loopback
+  /^::ffff:/i,                       // IPv4-mapped
+  /^::ffff:0:/i,                     // IPv4-mapped alternate form
+  /^f[cd][0-9a-f]{2}:/i,            // ULA fc00::/7
+  /^fe80:/i,                         // IPv6 link-local
   /^0\.0\.0\.0$/,
+  /^0\b/,                            // 0.x.x.x
 ]
 
 export function isPrivateIp(ip: string): boolean {
@@ -17,6 +23,9 @@ export function isPrivateIp(ip: string): boolean {
 /**
  * Returns true if the URL should be blocked: non-http/https scheme,
  * hostname resolves to a private/internal IP, or DNS lookup fails.
+ *
+ * Note: DNS is resolved twice in current implementation (here and at fetch time).
+ * Callers should set redirect:'manual' and re-validate on redirects.
  */
 export async function isPrivateUrl(url: string): Promise<boolean> {
   try {
@@ -24,11 +33,15 @@ export async function isPrivateUrl(url: string): Promise<boolean> {
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true
     const { hostname } = parsed
     if (hostname === 'localhost' || hostname === '0.0.0.0') return true
+    // Reject numeric IP encodings (decimal, hex, octal) that bypass hostname check
+    if (/^\d+$/.test(hostname)) return true          // pure decimal
+    if (/^0x[0-9a-f]+$/i.test(hostname)) return true // hex
     if (isPrivateIp(hostname)) return true
     const [v4, v6] = await Promise.all([
       dns.resolve4(hostname).catch(() => [] as string[]),
       dns.resolve6(hostname).catch(() => [] as string[]),
     ])
+    if (v4.length === 0 && v6.length === 0) return true // DNS failed — block
     return [...v4, ...v6].some(isPrivateIp)
   } catch { return true }
 }
