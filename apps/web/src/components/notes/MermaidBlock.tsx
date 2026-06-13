@@ -6,7 +6,8 @@ let initialized = false
 
 // ── SVG sanitizer for XSS prevention ─────────────────────────────────────────
 // Parses SVG string and removes dangerous elements/attributes before rendering.
-// Prevents XSS when mermaid uses securityLevel: 'loose' (needed for interactivity).
+// Now redundant with securityLevel: 'strict' (which disables HTML labels and click
+// handlers in Mermaid diagrams), but kept as defense-in-depth.
 function sanitizeSvg(svgString: string): Element | null {
   const parser = new DOMParser()
   const doc = parser.parseFromString(svgString, 'image/svg+xml')
@@ -57,7 +58,7 @@ export function MermaidBlock({ code }: { code: string }) {
 
   useEffect(() => {
     if (!initialized) {
-      mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' })
+      mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' })
       initialized = true
     }
 
