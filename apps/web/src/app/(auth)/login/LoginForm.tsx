@@ -8,7 +8,12 @@ import { AlertTriangle, Loader2 } from 'lucide-react'
 export default function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const callbackUrl = searchParams.get('callbackUrl') ?? '/'
+  const rawCallbackUrl = searchParams.get('callbackUrl') ?? '/'
+  function isSafeCallbackUrl(url: string): boolean {
+    // Must start with / but not // (protocol-relative URLs would redirect off-origin)
+    return url.startsWith('/') && !url.startsWith('//')
+  }
+  const callbackUrl = isSafeCallbackUrl(rawCallbackUrl) ? rawCallbackUrl : '/'
 
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')

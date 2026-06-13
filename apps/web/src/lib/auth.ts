@@ -384,7 +384,10 @@ export async function getCurrentUser(): Promise<AppUser | null> {
   try {
     const { headers } = await import('next/headers')
     const h = headers()
-    const username = h.get('x-authentik-username') ?? h.get('x-forwarded-user')
+    // SOC2 [LOW-2]: Only accept the signed x-authentik-username header.
+    // x-forwarded-user is not included in the HMAC canonical string and must
+    // not be used as a fallback — accepting it would bypass signature validation.
+    const username = h.get('x-authentik-username')
     if (username) {
       const ssoProvider = await prisma.oIDCProvider.findFirst()
       if (ssoProvider?.enabled && ssoProvider?.headerMode) {
