@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
 import { createSSEStream } from '@/lib/sse'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 
 const POLL_INTERVAL_MS = 2_000
 // M3 fix: 'done' is the actual terminal status in the DB; 'completed'/'cancelled' were
@@ -26,15 +26,28 @@ export async function GET(
   { params }: { params: { id: string } },
 ) {
   // B4 fix: route had no auth — any caller could stream any task's events
-  await requireServiceAuth(req).catch(() => { throw Object.assign(new Error('Unauthorized'), { status: 401 }) })
+  let caller: Awaited<ReturnType<typeof requireServiceAuth>>
+  try {
+    caller = await requireServiceAuth(req)
+  } catch {
+    return new Response('Unauthorized', { status: 401 })
+  }
+  const isService = caller === null
 
   const taskId = params.id
   const afterParam = req.nextUrl.searchParams.get('after') ?? undefined
 
   // Verify the task exists before opening the stream
-  const task = await prisma.task.findUnique({ where: { id: taskId }, select: { id: true, status: true } })
+  const task = await prisma.task.findUnique({ where: { id: taskId }, select: { id: true, status: true, createdBy: true } })
   if (!task) {
     return new Response('Task not found', { status: 404 })
+  }
+
+  // SOC2: IDOR fix — verify the caller owns this task (or is admin/service)
+  try {
+    await assertCanModify(caller, isService, task.createdBy)
+  } catch {
+    return new Response('Forbidden', { status: 403 })
   }
 
   // If already terminal, send a single done event and close immediately

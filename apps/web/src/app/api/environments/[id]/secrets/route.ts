@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { writeVaultSecret } from '@/lib/vault'
+import { logAudit } from '@/lib/audit'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -18,6 +19,15 @@ export async function GET(_: NextRequest, { params }: Params) {
   }
 
   const { id: environmentId } = await params
+
+  // SOC2 HIGH-7: Admins have cross-environment access to secrets by design (infrastructure
+  // management). Log all admin secret-list operations for SOC2 audit trail.
+  void logAudit({
+    userId: user.id,
+    action: 'admin_action',
+    target: `environment:${environmentId}`,
+    detail: { operation: 'secret.list', environmentId },
+  }).catch(() => {})
 
   try {
     const secrets = await prisma.managedSecret.findMany({
@@ -52,6 +62,15 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
 
   const { id: environmentId } = await params
+
+  // SOC2 HIGH-7: Log admin secret-write operations for SOC2 audit trail.
+  void logAudit({
+    userId: user.id,
+    action: 'admin_action',
+    target: `environment:${environmentId}`,
+    detail: { operation: 'secret.write', environmentId },
+  }).catch(() => {})
+
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
 
   const name      = String(body.name      ?? '').trim()

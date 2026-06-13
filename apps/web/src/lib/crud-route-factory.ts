@@ -15,6 +15,7 @@ export function makeCrudRoutes(config: {
   orderBy?: object | object[]
   listFilters?: string[]                 // query param names forwarded as where filters
   take?: number                          // default 500
+  scopeByCreatedBy?: boolean             // if true, non-admin/non-service GET is scoped to caller's records
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   transformData?: (data: any, caller: Caller) => Record<string, unknown>
   afterCreate?: (record: unknown, caller: Caller) => Promise<void>
@@ -23,7 +24,8 @@ export function makeCrudRoutes(config: {
 
   return {
     GET: async (req: NextRequest) => {
-      if (needsAuth) await requireServiceAuth(req)
+      const caller: Caller = needsAuth ? await requireServiceAuth(req) : null
+      const isService = caller === null && needsAuth
       const where: Record<string, unknown> = {}
       if (config.listFilters?.length) {
         const url = new URL(req.url)
@@ -31,6 +33,10 @@ export function makeCrudRoutes(config: {
           const v = url.searchParams.get(f)
           if (v != null) where[f] = v
         }
+      }
+      // SOC2: scope list to the caller's own records unless they are admin or service/gateway
+      if (config.scopeByCreatedBy && !isService && caller && caller.role !== 'admin') {
+        where.createdBy = caller.id
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const records = await (prisma as any)[config.model].findMany({

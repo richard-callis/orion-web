@@ -60,7 +60,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  try { await requireServiceAuth(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  let caller: Awaited<ReturnType<typeof requireServiceAuth>>
+  try { caller = await requireServiceAuth(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  const isService = caller === null
   try {
     const { searchParams } = new URL(req.url)
     const actorId = searchParams.get('actorId')
@@ -70,6 +72,11 @@ export async function GET(req: NextRequest) {
     const where: any = {}
     if (actorId) where.actorId = actorId
     if (status) where.status = status
+
+    // SOC2: scope list to the caller's own executions unless admin or service/gateway
+    if (!isService && caller && caller.role !== 'admin') {
+      where.actorId = caller.id
+    }
 
     const executions = await prisma.toolExecution.findMany({
       where,

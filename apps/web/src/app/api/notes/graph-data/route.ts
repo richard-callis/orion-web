@@ -25,12 +25,22 @@ interface NoteRow {
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  await requireServiceAuth(req)
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
   const { searchParams } = new URL(req.url)
   const includeSemantic = searchParams.get('includeSemantic') !== 'false'
   const threshold = parseFloat(searchParams.get('threshold') ?? '0.5') || 0.5
 
+  // SOC2: scope to caller's notes when the Note model gains a createdBy field.
+  // Notes are currently system-wide (no createdBy column); admin and service
+  // callers see all notes. Regular users see all notes too until the schema is
+  // extended — this is documented as a known limitation.
+  const noteWhere = (!isService && caller && caller.role !== 'admin')
+    ? {} // TODO: add { createdBy: caller.id } once Note.createdBy column exists
+    : {}
+
   const notes = await prisma.note.findMany({
+    where: Object.keys(noteWhere).length ? noteWhere : undefined,
     orderBy: { updatedAt: 'desc' },
     take: 2000,
   })

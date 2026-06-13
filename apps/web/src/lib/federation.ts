@@ -6,6 +6,7 @@
  */
 
 import { prisma } from './db'
+import { logAudit } from './audit'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -30,7 +31,10 @@ interface SpokeStatus {
  */
 async function fetchSpokeStatus(spokeUrl: string, token: string): Promise<SpokeStatus | null> {
   const { isPrivateUrl } = await import('./ssrf-guard')
-  if (await isPrivateUrl(spokeUrl)) return null
+  if (await isPrivateUrl(spokeUrl)) {
+    void logAudit({ action: 'ssrf_blocked', target: spokeUrl, detail: { url: spokeUrl, context: 'federation' }, userId: 'SYSTEM' })
+    return null
+  }
   try {
     const res = await fetch(`${spokeUrl}/api/federation/status`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -162,7 +166,10 @@ export async function dispatchToSpoke(
 
   try {
     const { isPrivateUrl } = await import('./ssrf-guard')
-    if (await isPrivateUrl(spokeUrl)) return false
+    if (await isPrivateUrl(spokeUrl)) {
+      void logAudit({ action: 'ssrf_blocked', target: spokeUrl, detail: { url: spokeUrl, context: 'federation' }, userId: 'SYSTEM' })
+      return false
+    }
     const res = await fetch(`${spokeUrl}/api/federation/tasks`, {
       method: 'POST',
       headers: {
