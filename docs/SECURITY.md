@@ -19,6 +19,7 @@
 9. [Backup and Recovery](#9-backup-and-recovery)
 10. [Webhook Security](#10-webhook-security)
 11. [API Key Security](#11-api-key-security)
+12. [Incident Response](#12-incident-response)
 
 ---
 
@@ -610,6 +611,32 @@ This avoids using a fast hash function (SHA-256) on a secret for lookup, satisfy
 ### Key Visibility
 
 The plaintext key is returned only once at creation time and never stored. The API response for `GET /api/api-keys` returns only `id`, `hashPrefix`, `name`, `active`, `expiresAt`, `lastUsedAt`, and `createdAt` — never the hash or any derivable secret.
+
+---
+
+---
+
+## 12. Incident Response
+
+### Severity Levels
+- **P0 (Critical)**: Active breach, data exfiltration, production down
+- **P1 (High)**: Auth bypass, privilege escalation, significant data exposure
+- **P2 (Medium)**: Non-critical security issue, no active exploitation
+- **P3 (Low)**: Informational finding, defence-in-depth gap
+
+### Response Timeline
+- P0: Acknowledge within 1h, contain within 4h, notify affected parties within 24h
+- P1: Acknowledge within 4h, remediate within 24h
+- P2/P3: Remediate within sprint cycle
+
+### Breach Notification
+If a breach affects user data, affected users must be notified within 72 hours (GDPR Article 33/34). Notification must include: nature of breach, data categories affected, likely consequences, measures taken.
+
+### SSRF/Injection Attempt Response
+Blocked SSRF attempts are logged in the audit trail (`action: ssrf_blocked`). Repeated attempts from a single IP should trigger IP block via CrowdSec integration.
+
+### Escalation
+Security incidents should be reported to: security@[your-domain] or via the GitHub Security Advisory for this repository.
 
 ---
 

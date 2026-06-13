@@ -1,23 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentUser, requireGatewayAuthForEnvironment } from '@/lib/auth'
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  // Support gateway Bearer auth (existing) OR user session auth (SOC2: CR-001)
+  // Support gateway Bearer auth OR admin session auth
   const auth = req.headers.get('authorization')
   if (auth?.startsWith('Bearer ')) {
-    const env = await prisma.environment.findUnique({
-      where: { id: params.id },
-      select: { gatewayToken: true },
-    })
-    if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    if (!env.gatewayToken || auth !== `Bearer ${env.gatewayToken}`) {
+    // Gateway path: validate the token is scoped to this specific environment
+    try {
+      await requireGatewayAuthForEnvironment(req, params.id)
+    } catch {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
   } else {
+    // Session path: require admin (consistent with all other environments/[id]/* sub-routes)
     const user = await getCurrentUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    // SOC2 HIGH-6: verify the caller is admin — environments are admin-scoped resources
+    if (user.role !== 'admin') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
   }
+
+  // Verify environment exists
+  const env = await prisma.environment.findUnique({ where: { id: params.id }, select: { id: true } })
+  if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const { searchParams } = new URL(req.url)
   const enabledOnly = searchParams.get('enabled') === 'true'
@@ -33,9 +40,13 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  // SOC2: CR-001 — require authenticated user
+  // SOC2 HIGH-6: require admin for session callers (consistent with other env sub-routes)
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (user.role !== 'admin') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
   // Verify env exists
   const env = await prisma.environment.findUnique({ where: { id: params.id }, select: { id: true } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
