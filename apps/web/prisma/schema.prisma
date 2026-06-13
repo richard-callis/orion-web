@@ -1833,6 +1833,20 @@ model WebhookTrigger {
   @@index([agentId])
 }
 
+// ── Webhook Delivery Deduplication ────────────────────────────────────────────
+// Stores seen delivery IDs to prevent replay attacks.
+// Records are pruned after 24h by a cleanup job.
+
+model WebhookDelivery {
+  id          String   @id @default(cuid())
+  triggerId   String
+  deliveryId  String   // X-GitHub-Delivery UUID or SHA256(triggerId+rawBody)
+  receivedAt  DateTime @default(now())
+
+  @@unique([triggerId, deliveryId])
+  @@index([receivedAt])
+}
+
 // ── Job Run History ────────────────────────────────────────────────────────────
 // Records every execution of a ScheduledTask, WebhookTrigger, or system job.
 

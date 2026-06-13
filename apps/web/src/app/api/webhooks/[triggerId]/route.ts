@@ -125,6 +125,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tri
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
   }
 
+  // Replay protection: compute a delivery ID from X-GitHub-Delivery or body hash
+  const deliveryHeader = req.headers.get('x-github-delivery') ?? req.headers.get('x-gitea-delivery')
+  const { createHash } = await import('crypto')
+  const deliveryId = deliveryHeader ?? createHash('sha256').update(`${triggerId}:${rawBody}`).digest('hex').slice(0, 32)
+
+  // Check/store delivery ID atomically — unique constraint prevents duplicates
+  try {
+    await prisma.webhookDelivery.create({
+      data: { triggerId, deliveryId },
+    })
+  } catch (e: unknown) {
+    // Unique constraint violation = duplicate delivery
+    const isPrismaUniqueError = (e as { code?: string }).code === 'P2002'
+    if (isPrismaUniqueError) {
+      return NextResponse.json({ ok: true, duplicate: true }, { status: 200 })
+    }
+    throw e
+  }
+
   // Parse payload
   let parsedBody: unknown = {}
   try {
