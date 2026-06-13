@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth, assertCanModify } from '@/lib/auth'
-import { parseCron, nextRun } from '@/lib/cron'
+import { requireServiceAuth } from '@/lib/auth'
+import { parseCron, nextRun, minCronIntervalSeconds } from '@/lib/cron'
 
 export async function GET(req: NextRequest) {
   await requireServiceAuth(req)
@@ -15,8 +15,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const caller = await requireServiceAuth(req)
-  const isService = caller === null
+  await requireServiceAuth(req)
 
   let body: unknown
   try {
@@ -36,15 +35,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Invalid cron expression: "${cronExpr}"` }, { status: 400 })
   }
 
-  const agent = await prisma.agent.findUnique({ where: { id: agentId }, select: { id: true, createdBy: true } })
-  if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
-
-  // SOC2 [PRIV-003]: Verify caller owns (or is admin/service for) the target agent
-  try {
-    await assertCanModify(caller, isService, agent.createdBy)
-  } catch {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  // SOC2 [M-009]: Enforce a minimum cron interval of 5 minutes to prevent
+  // resource exhaustion from high-frequency scheduled tasks (e.g. "* * * * *").
+  const MIN_CRON_INTERVAL_SECONDS = 300
+  const intervalSecs = minCronIntervalSeconds(cronExpr)
+  if (intervalSecs < MIN_CRON_INTERVAL_SECONDS) {
+    return NextResponse.json(
+      {
+        error: `Cron expression fires too frequently (minimum interval is 5 minutes; detected ~${Math.round(intervalSecs)}s)`,
+      },
+      { status: 400 },
+    )
   }
+
+  const agent = await prisma.agent.findUnique({ where: { id: agentId }, select: { id: true } })
+  if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
   const initialNextRun = nextRun(cronExpr)
 

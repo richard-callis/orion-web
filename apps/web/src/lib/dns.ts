@@ -1,4 +1,5 @@
 import * as k8s from '@kubernetes/client-node'
+import * as net from 'net'
 import { kubeConfig } from './k8s'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -43,11 +44,13 @@ export function serializeNodeHosts(entries: DnsEntry[]): string {
 
 
 // Validate IP and hostnames to prevent Corefile injection via newline/whitespace
+const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/
+
 function validateIp(ip: string): boolean {
-  return /^[\d.:a-fA-F]+$/.test(ip)
+  return net.isIP(ip) !== 0
 }
 function validateHostname(h: string): boolean {
-  return /^[a-zA-Z0-9._-]+$/.test(h) && h.length <= 253
+  return HOSTNAME_RE.test(h)
 }
 
 

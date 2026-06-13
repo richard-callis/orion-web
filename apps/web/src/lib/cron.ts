@@ -99,6 +99,37 @@ export function parseCron(expr: string): boolean {
 }
 
 /**
+ * SOC2: [M-009] Calculate the minimum firing interval (in seconds) for a cron expression.
+ * Samples 3 consecutive fire times and returns the smallest gap between them.
+ * Returns Infinity if fewer than 2 fire times can be found within 4 years.
+ */
+export function minCronIntervalSeconds(expr: string, from: Date = new Date()): number {
+  const fields = parseCronFields(expr)
+  if (!fields) return Infinity
+
+  const times: Date[] = []
+  let cursor = from
+  for (let i = 0; i < 3; i++) {
+    try {
+      const t = nextRun(expr, cursor)
+      times.push(t)
+      cursor = t
+    } catch {
+      break
+    }
+  }
+
+  if (times.length < 2) return Infinity
+
+  let minGap = Infinity
+  for (let i = 1; i < times.length; i++) {
+    const gap = (times[i].getTime() - times[i - 1].getTime()) / 1000
+    if (gap < minGap) minGap = gap
+  }
+  return minGap
+}
+
+/**
  * Compute the next run time after `from` (defaults to now) for the given cron expression.
  * Throws if the expression is invalid.
  */

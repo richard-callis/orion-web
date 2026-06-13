@@ -21,7 +21,12 @@ import { resolveAgentGateway } from './lib/agent-gateway'
 import { getAgentsMd } from './lib/agents-md'
 import { startDream } from './lib/dream'
 import { createTrace } from './lib/langfuse'
-import { checkAgentBudget, recordTokenUsage } from './lib/token-budget'
+import {
+  checkAgentBudget,
+  recordTokenUsage,
+  acquireBudgetLock,
+  releaseBudgetLock,
+} from './lib/token-budget'
 import { runCorrelator } from './workers/security-correlator'
 import { runK8sPollerAll } from './jobs/security-poll-k8s'
 import { runElkPollerAll } from './jobs/security-poll-elk'
@@ -467,7 +472,21 @@ async function runTask(taskId: string): Promise<void> {
     log(`Starting task "${task.title}" (${taskId}) → agent "${agent.name}" [${modelId}]`)
 
     // ── Budget gate ────────────────────────────────────────────────────────────
-    const budgetCheck = await checkAgentBudget(agent.id)
+    // SOC2: [H-TOCTOU] Acquire per-agent mutex before reading usage to prevent
+    // concurrent tasks all seeing the same stale usage total before any records.
+    const budgetLockToken = await acquireBudgetLock(agent.id)
+    if (budgetLockToken === null) {
+      // Another task holds the budget lock for this agent — re-queue and retry later.
+      await prisma.task.update({ where: { id: taskId }, data: { status: 'pending' } })
+      log(`Task "${task.title}" (${taskId}) deferred — budget lock held by another task`)
+      return
+    }
+    let budgetCheck: { allowed: boolean; reason?: string }
+    try {
+      budgetCheck = await checkAgentBudget(agent.id)
+    } finally {
+      await releaseBudgetLock(agent.id, budgetLockToken)
+    }
     if (!budgetCheck.allowed) {
       const budgetMsg = `Budget gate: ${budgetCheck.reason} — task paused until budget resets or limit is increased.`
       await Promise.all([

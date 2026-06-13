@@ -37,6 +37,13 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  for (const change of changes) {
+    const { path } = change as { path: string; content: string }
+    if (path.includes('..') || path.startsWith('/')) {
+      return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
+    }
+  }
+
   const env = await prisma.environment.findUnique({ where: { id: environmentId } })
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
   if (!env.gitOwner || !env.gitRepo) {
