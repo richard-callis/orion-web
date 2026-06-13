@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { prisma } from '@/lib/db'
 import { encrypt, decrypt, encryptWithKey } from '@/lib/encryption'
+import { logAudit } from '@/lib/audit'
 
 export async function POST(req: NextRequest) {
   // MAJOR fix: previously authenticated with ORION_ENCRYPTION_KEY itself.
@@ -153,6 +154,14 @@ export async function POST(req: NextRequest) {
       errors.push({ model: 'SystemSetting', id: setting.key, field: 'value', error: 'Key rotation failed' })
     }
   }
+
+  // SOC2: audit key rotation
+  logAudit({
+    userId: 'system',
+    action: 'encryption_key_rotation',
+    target: 'system:encryption',
+    detail: { migrated, failed: errors.length },
+  }).catch(() => {})
 
   return NextResponse.json({
     migrated,
