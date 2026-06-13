@@ -5,7 +5,8 @@ import { parseBodyOrError, UpdateTaskSchema } from '@/lib/validate'
 import { handlePlanPatch } from '@/lib/plan-patch'
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  await requireServiceAuth(req)
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
   const task = await prisma.task.findUnique({
     where: { id: params.id },
     include: {
@@ -16,6 +17,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     },
   })
   if (!task) return new NextResponse(null, { status: 404 })
+  // Scope GET to task creator or admin/service (consistent with PUT/DELETE)
+  await assertCanModify(caller, isService, task.createdBy)
   return NextResponse.json(task)
 }
 

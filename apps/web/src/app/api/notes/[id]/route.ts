@@ -1,18 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { embedNote, computeSemanticEdges } from '@/lib/embeddings'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 import { parseBodyOrError, UpdateNoteSchema } from '@/lib/validate'
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  await requireServiceAuth(req)
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
   const note = await prisma.note.findUnique({ where: { id: params.id } })
-  if (!note) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (!note) return new NextResponse(null, { status: 404 })
+  // Only the creator or admin/service can read notes
+  await assertCanModify(caller, isService, note.createdBy ?? '')
   return NextResponse.json(note)
 }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
-  await requireServiceAuth(req)
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
+
+  // Check ownership before mutation
+  const existing = await prisma.note.findUnique({ where: { id: params.id } })
+  if (!existing) return new NextResponse(null, { status: 404 })
+  await assertCanModify(caller, isService, existing.createdBy ?? '')
+
   // SOC2 [INPUT-001]: Validate request body with Zod schema
   const result = await parseBodyOrError(req, UpdateNoteSchema)
   if ('error' in result) return result.error
@@ -45,7 +55,14 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  await requireServiceAuth(req)
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
+
+  // Check ownership before deletion
+  const existing = await prisma.note.findUnique({ where: { id: params.id } })
+  if (!existing) return new NextResponse(null, { status: 404 })
+  await assertCanModify(caller, isService, existing.createdBy ?? '')
+
   await prisma.note.delete({ where: { id: params.id } })
   return new NextResponse(null, { status: 204 })
 }

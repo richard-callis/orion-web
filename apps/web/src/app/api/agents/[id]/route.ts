@@ -5,6 +5,9 @@ import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   const agent = await prisma.agent.findUnique({
     where: { id: params.id },
     include: {

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 import { parseCron, nextRun } from '@/lib/cron'
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  await requireServiceAuth(req)
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
 
   const task = await prisma.scheduledTask.findUnique({
     where: { id: params.id },
@@ -12,14 +13,17 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   })
 
   if (!task) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await assertCanModify(caller, isService, task.createdBy)
   return NextResponse.json(task)
 }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
-  await requireServiceAuth(req)
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
 
   const existing = await prisma.scheduledTask.findUnique({ where: { id: params.id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await assertCanModify(caller, isService, existing.createdBy)
 
   let body: unknown
   try {
@@ -55,10 +59,12 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  await requireServiceAuth(req)
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
 
   const existing = await prisma.scheduledTask.findUnique({ where: { id: params.id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await assertCanModify(caller, isService, existing.createdBy)
 
   await prisma.scheduledTask.delete({ where: { id: params.id } })
   return NextResponse.json({ ok: true })
