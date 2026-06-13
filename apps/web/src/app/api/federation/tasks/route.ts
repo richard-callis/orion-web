@@ -13,6 +13,22 @@ import { prisma } from '@/lib/db'
 import { decrypt } from '@/lib/encryption'
 import { timingSafeEqual } from 'crypto'
 
+/**
+ * Constant-time string comparison that does not leak token length via timing.
+ * If lengths differ we still call timingSafeEqual (on a dummy buffer) to
+ * prevent an attacker from learning length via response time.
+ */
+function constantTimeEqual(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a)
+  const bBuf = Buffer.from(b)
+  if (aBuf.length !== bBuf.length) {
+    // Compare anyway to avoid timing leak, but return false
+    timingSafeEqual(aBuf, aBuf)
+    return false
+  }
+  return timingSafeEqual(aBuf, bBuf)
+}
+
 async function validateFederationToken(req: NextRequest, environmentId: string): Promise<boolean> {
   if (!environmentId) return false
 
@@ -28,10 +44,7 @@ async function validateFederationToken(req: NextRequest, environmentId: string):
 
   try {
     const stored = decrypt(env.federationToken)  // handles enc:v1: prefix and plaintext passthrough
-    if (stored.length === token.length &&
-        timingSafeEqual(Buffer.from(stored), Buffer.from(token))) {
-      return true
-    }
+    return constantTimeEqual(stored, token)
   } catch { /* fall through */ }
   return false
 }
@@ -64,16 +77,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'taskId and title are required' }, { status: 400 })
   }
 
-  // Verify the agent exists on this spoke (if provided)
+  // Verify the agent exists on this spoke and belongs to the same environment
+  // as the federation relationship (MEDIUM-1: prevents hub from targeting agents
+  // in other environments using a valid token for a different environment).
   if (body.agentId) {
     const agent = await prisma.agent.findUnique({
       where: { id: body.agentId },
-      select: { id: true },
+      select: { id: true, environmentId: true },
     })
     if (!agent) {
       return NextResponse.json(
         { error: `Agent ${body.agentId} not found on this spoke` },
         { status: 422 },
+      )
+    }
+    if (agent.environmentId !== body.environmentId) {
+      return NextResponse.json(
+        { error: `Agent ${body.agentId} does not belong to the federated environment` },
+        { status: 403 },
       )
     }
   }
