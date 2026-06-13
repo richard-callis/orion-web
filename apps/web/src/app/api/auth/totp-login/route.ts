@@ -14,10 +14,19 @@ import { compare } from 'bcryptjs'
 import { verifyTOTP, verifyRecoveryCode, consumeRecoveryCode } from '@/lib/totp'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, TOTPLoginSchema } from '@/lib/validate'
-import { rateLimitRedis } from '@/lib/rate-limit-redis'
+import { rateLimitRedis, getClientIpForRateLimit } from '@/lib/rate-limit-redis'
 import { decrypt, encrypt } from '@/lib/encryption'
 
 export async function POST(req: NextRequest) {
+  // SOC2 [M-007]: Rate-limit TOTP/recovery brute-force attempts.
+  // Must run before any verification so attackers cannot enumerate codes unchecked.
+  // Limit: 10 attempts per IP per 15-minute window.
+  const ip = getClientIpForRateLimit(req)
+  const { allowed: rlAllowed } = await rateLimitRedis(`totp-login:${ip}`, 10, 15 * 60 * 1000)
+  if (!rlAllowed) {
+    return NextResponse.json({ error: 'Too many attempts' }, { status: 429 })
+  }
+
   // SOC2 [INPUT-001]: Validate request body with Zod schema
   const result = await parseBodyOrError(req, TOTPLoginSchema)
   if ('error' in result) return result.error

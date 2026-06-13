@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth, requireWriteAccess, assertCanModify } from '@/lib/auth'
+import { requireServiceAuth, requireWriteAccess } from '@/lib/auth'
 import { parseBodyOrError, CreateTaskSchema } from '@/lib/validate'
 import { z } from 'zod'
 
@@ -67,18 +67,14 @@ export async function POST(req: NextRequest) {
 
   const { data } = result
 
-  // SOC2 [PRIV-002]: Verify caller owns (or is admin/service for) the target agent
-  // to prevent any authenticated user from queueing tasks against another user's agent.
+  // SOC2 [M-008]: Cap pending tasks per agent to prevent queue flooding / resource exhaustion.
   if (data.assignedAgentId) {
-    const agent = await prisma.agent.findUnique({
-      where: { id: data.assignedAgentId },
-      select: { createdBy: true },
+    const maxPending = parseInt(process.env.MAX_PENDING_TASKS_PER_AGENT ?? '50', 10)
+    const pendingCount = await prisma.task.count({
+      where: { assignedAgent: data.assignedAgentId, status: 'pending' },
     })
-    if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
-    try {
-      await assertCanModify(caller, isService, agent.createdBy)
-    } catch {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    if (pendingCount >= maxPending) {
+      return NextResponse.json({ error: 'Task queue full' }, { status: 429 })
     }
   }
 

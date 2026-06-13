@@ -139,7 +139,9 @@ export async function recordTokenUsage(
   outputTokens: number,
   modelId?: string,
 ): Promise<void> {
-  if (inputTokens === 0 && outputTokens === 0) return
+  // SOC2: Do NOT early-return on zero counts — always write an audit row so that
+  // task execution is always recorded. A compromised worker reporting zero counts
+  // would otherwise hide its actual spend and leave no DB record for budget checks.
   await prisma.agentTokenUsage.create({
     data: { agentId, taskId, inputTokens, outputTokens, ...(modelId ? { modelId } : {}) },
   })

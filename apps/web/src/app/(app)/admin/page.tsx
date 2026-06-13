@@ -23,7 +23,7 @@ async function getOverviewData() {
 
 export default async function AdminOverviewPage() {
   const { userCount, modelCount, recentAudit, oidcProvider, userMap } = await getOverviewData()
-  const h = headers()
+  const h = await headers()
   const ssoActive = !!h.get('x-authentik-username')
 
   return (

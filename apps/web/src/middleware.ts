@@ -188,8 +188,10 @@ function buildCsp(nonce: string): string {
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
     `style-src 'self' 'nonce-${nonce}'`,
-    "img-src 'self' data: https:",
-    "connect-src 'self' https:",
+    "img-src 'self' data: blob:",
+    // connect-src: restrict to known origins; operators can extend via CONNECT_SRC_EXTRA
+    // (space-separated list of origins, e.g. "https://my-gateway.example.com wss://my-gateway.example.com")
+    `connect-src 'self' https://api.anthropic.com${process.env.CONNECT_SRC_EXTRA ? ' ' + process.env.CONNECT_SRC_EXTRA : ''}`,
     "font-src 'self'",
     "frame-ancestors 'none'",
     "base-uri 'self'",
@@ -203,7 +205,7 @@ function addSecurityHeaders(res: NextResponse, nonce: string): NextResponse {
   res.headers.set('Content-Security-Policy', buildCsp(nonce))
   res.headers.set('X-Frame-Options', 'DENY')
   res.headers.set('X-Content-Type-Options', 'nosniff')
-  res.headers.set('X-XSS-Protection', '1; mode=block')
+  res.headers.set('X-XSS-Protection', '0') // deprecated; modern browsers use CSP instead
   res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
   res.headers.set('Permissions-Policy',
     'camera=(), microphone=(), geolocation=(), payment=()'

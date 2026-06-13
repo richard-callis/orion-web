@@ -43,9 +43,11 @@ async function validateFederationToken(req: NextRequest, environmentId: string):
   if (!env?.federationToken) return false
 
   try {
-    const stored = decrypt(env.federationToken)  // handles enc:v1: prefix and plaintext passthrough
+    const stored = decrypt(env.federationToken) // handles enc:v1: prefix and plaintext passthrough
     return constantTimeEqual(stored, token)
-  } catch { /* fall through */ }
+  } catch {
+    /* fall through */
+  }
   return false
 }
 
