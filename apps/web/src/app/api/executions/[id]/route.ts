@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  try { await requireServiceAuth(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  let caller
+  try { caller = await requireServiceAuth(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  const isService = caller === null
   try {
     const execution = await prisma.toolExecution.findUnique({
       where: { id: params.id },
@@ -19,6 +21,7 @@ export async function GET(
       )
     }
 
+    await assertCanModify(caller, isService, execution.createdBy ?? '')
     return NextResponse.json(execution)
   } catch (error) {
     console.error('Error getting execution:', error)
@@ -33,8 +36,22 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  try { await requireServiceAuth(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  let caller
+  try { caller = await requireServiceAuth(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  const isService = caller === null
   try {
+    // Load execution first to verify ownership before mutation
+    const existing = await prisma.toolExecution.findUnique({
+      where: { id: params.id },
+    })
+    if (!existing) {
+      return NextResponse.json(
+        { error: 'Execution not found' },
+        { status: 404 }
+      )
+    }
+    await assertCanModify(caller, isService, existing.createdBy ?? '')
+
     const body = await req.json()
 
     const {
