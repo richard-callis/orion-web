@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { decrypt } from '@/lib/encryption'
+import { rateLimitRedis } from '@/lib/rate-limit-redis'
+
+// SOC2: [LOW-1] Maximum allowed request body size (1 MB)
+const MAX_BODY_BYTES = 1_048_576
 
 const MAX_VAR_LENGTH = 200
 
@@ -90,6 +94,35 @@ function parseCustom(body: any): Record<string, string> {
 // ---------------------------------------------------------------------------
 export async function POST(req: NextRequest, { params }: { params: Promise<{ triggerId: string }> }) {
   const { triggerId } = await params
+
+  // SOC2: [LOW-1] Reject oversized bodies before reading them into memory.
+  // Content-Length is set by well-behaved clients and reverse proxies.
+  const contentLength = req.headers.get('content-length')
+  if (contentLength && parseInt(contentLength, 10) > MAX_BODY_BYTES) {
+    return NextResponse.json({ error: 'Payload too large' }, { status: 413 })
+  }
+
+  // SOC2: [H-001] Per-trigger rate limit: 60 requests per 15 minutes.
+  // Keyed by triggerId (not IP) so a valid secret cannot be used to flood a
+  // single trigger from multiple IPs. This runs before any DB lookup so a
+  // non-existent triggerId doesn't consume DB quota on every flood request.
+  const triggerRateKey = `rate-limit:webhook:${triggerId}`
+  const triggerRateResult = await rateLimitRedis(triggerRateKey, 60, 15 * 60 * 1000)
+  if (!triggerRateResult.allowed) {
+    const retryAfterSeconds = Math.ceil((triggerRateResult.resetAt.getTime() - Date.now()) / 1000)
+    return NextResponse.json(
+      { error: 'Too many requests, please try again later' },
+      {
+        status: 429,
+        headers: {
+          'X-RateLimit-Limit': String(triggerRateResult.limit),
+          'X-RateLimit-Remaining': String(triggerRateResult.remaining),
+          'X-RateLimit-Reset': triggerRateResult.resetAt.toISOString(),
+          'Retry-After': String(Math.max(1, retryAfterSeconds)),
+        },
+      }
+    )
+  }
 
   const trigger = await prisma.webhookTrigger.findUnique({
     where: { id: triggerId },

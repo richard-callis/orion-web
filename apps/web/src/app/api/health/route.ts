@@ -1,10 +1,15 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { coreApi } from '@/lib/k8s'
+import { getCurrentUser } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
+  // SOC2: gate sensitive topology details behind authentication
+  const user = await getCurrentUser()
+  const isAuthenticated = !!user
+
   const [k8s, db] = await Promise.all([
     coreApi.listNamespace().then(() => true).catch(() => false),
     prisma.$queryRaw`SELECT 1`.then(() => true).catch(() => false),
@@ -57,6 +62,12 @@ export async function GET() {
     : false
 
   const healthy = db  // k8s optional — not available in Docker-only deployments
+
+  if (!isAuthenticated) {
+    // Public callers only get a simple status — no internal topology
+    return NextResponse.json({ status: healthy ? 'ok' : 'degraded' }, { status: healthy ? 200 : 503 })
+  }
+
   return NextResponse.json({
     k8s, db, claude, externalModels: extHealth,
     worker: {

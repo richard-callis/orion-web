@@ -182,6 +182,12 @@ function parseHostConnection(env: { metadata: unknown; id: string }): HostConnec
   const rawPort  = Number((meta?.sshPort as unknown) ?? 22)
   const keyPath  = meta?.sshKeyPath as string | undefined
 
+  // Validate sshKeyPath contains only safe path characters
+  const SSH_KEY_PATH_RE = /^[a-zA-Z0-9/_.-]+$/
+  if (keyPath && !SSH_KEY_PATH_RE.test(keyPath)) {
+    throw new Error('Invalid sshKeyPath')
+  }
+
   // Validate before interpolating into SSH/SCP commands
   const host = validateSshField(rawHost,  'host',    /^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,252}[a-zA-Z0-9])?$/)
   const user = validateSshField(rawUser,  'sshUser', /^[a-zA-Z0-9_][a-zA-Z0-9_-]{0,31}$/)
@@ -357,8 +363,14 @@ async function deploySwarmStack(
 
   try {
     emit({ type: 'step', message: 'Checking out deployment files...' })
+    // Validate repoUrl is a safe http(s) URL before cloning
+    let parsedRepoUrl: URL
+    try { parsedRepoUrl = new URL(repoUrl) } catch { throw new Error(`Invalid repo URL: ${repoUrl}`) }
+    if (parsedRepoUrl.protocol !== 'http:' && parsedRepoUrl.protocol !== 'https:') {
+      throw new Error(`Repo URL must use http or https: ${repoUrl}`)
+    }
     await runCommand(
-      'git', ['clone', '--depth', '1', repoUrl, stackDir],
+      'git', ['clone', '--depth', '1', '--', repoUrl, stackDir],
       {},
       msg => emit({ type: 'log', message: msg }),
     )
