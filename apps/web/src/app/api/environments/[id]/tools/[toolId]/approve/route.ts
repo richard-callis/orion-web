@@ -16,6 +16,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   const tool = await prisma.mcpTool.findFirst({ where: { id: params.toolId, environmentId: params.id } })
   if (!tool) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (tool.status !== 'pending') return NextResponse.json({ error: 'Tool is not pending' }, { status: 400 })
+  // SOC2: separation of duties — prevent self-approval.
+  // proposedBy stores the userId when the tool was submitted by a human admin.
+  if (tool.proposedBy === user.id) {
+    return NextResponse.json({ error: 'Cannot approve your own tool request' }, { status: 403 })
+  }
 
   // Allow the human to update the command before approving
   const body = await req.json().catch(() => ({}))

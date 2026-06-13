@@ -6,6 +6,7 @@ import { verifyTOTP, verifyRecoveryCode, consumeRecoveryCode } from './totp'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { logAudit } from './audit'
 import { decrypt } from './encryption'
+import { sendNotification } from './security/notification-service'
 
 export interface AppUser {
   id: string
@@ -44,10 +45,18 @@ async function recordFailedLogin(userId: string): Promise<void> {
     select: { failedLoginAttempts: true },
   })
   if (updated.failedLoginAttempts >= 5) {
+    const lockedUntil = new Date(Date.now() + 15 * 60 * 1000)
     await prisma.user.update({
       where: { id: userId },
-      data: { lockedUntil: new Date(Date.now() + 15 * 60 * 1000) },
+      data: { lockedUntil },
     })
+    // SOC2: notify security team when an account is locked out
+    void sendNotification({
+      title: 'Account locked out',
+      body: `Account ${userId} locked after 5 failed login attempts. Locked until ${lockedUntil.toISOString()}.`,
+      priority: 4,
+      tags: ['warning', 'lock'],
+    }, { urgent: true })
   }
 }
 
