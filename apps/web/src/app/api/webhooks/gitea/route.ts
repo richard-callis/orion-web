@@ -20,6 +20,9 @@ import { getGitProvider, getGitProviderConfig } from '@/lib/git-provider'
 // NOTE: No replay protection — a captured valid signed webhook can be re-delivered within
 // the signature window. Impact is limited to re-applying a PR status transition (closed/merged).
 export async function POST(req: NextRequest) {
+  const contentLength = parseInt(req.headers.get('content-length') ?? '0', 10)
+  if (contentLength > 1048576) return NextResponse.json({ error: 'Payload too large' }, { status: 413 })
+
   const rawBody = await req.text()
 
   // Collect all relevant headers for provider-agnostic verification

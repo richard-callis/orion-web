@@ -13,7 +13,7 @@ export async function GET(request: Request) {
   const minutes = searchParams.get('minutes') ? parseInt(searchParams.get('minutes')!) : 60
   const acknowledged = searchParams.get('acknowledged') === 'true'
   const page = searchParams.get('page') ? parseInt(searchParams.get('page')!) : 1
-  const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : 20
+  const limit = Math.min(searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : 20, 200)
 
   const envId = process.env.ENVIRONMENT_ID || ''
 

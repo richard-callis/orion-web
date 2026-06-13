@@ -72,7 +72,7 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = request.nextUrl
   const query = searchParams.get('q') || '*'
-  const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : 50
+  const limit = Math.min(searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : 50, 200)
 
   const env = await prisma.environment.findFirst({
     where: { status: 'connected', gatewayUrl: { not: null } },
