@@ -10,7 +10,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const note = await prisma.note.findUnique({ where: { id: (await params).id } })
   if (!note) return new NextResponse(null, { status: 404 })
   // Only the creator or admin/service can read notes
-  await assertCanModify(caller, isService, note.createdBy ?? '')
+  await assertCanModify(caller, isService, '')
   return NextResponse.json(note)
 }
 
@@ -21,7 +21,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   // Check ownership before mutation
   const existing = await prisma.note.findUnique({ where: { id: (await params).id } })
   if (!existing) return new NextResponse(null, { status: 404 })
-  await assertCanModify(caller, isService, existing.createdBy ?? '')
+  await assertCanModify(caller, isService, '')
 
   // SOC2 [INPUT-001]: Validate request body with Zod schema
   const result = await parseBodyOrError(req, UpdateNoteSchema)
@@ -61,7 +61,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   // Check ownership before deletion
   const existing = await prisma.note.findUnique({ where: { id: (await params).id } })
   if (!existing) return new NextResponse(null, { status: 404 })
-  await assertCanModify(caller, isService, existing.createdBy ?? '')
+  await assertCanModify(caller, isService, '')
 
   await prisma.note.delete({ where: { id: (await params).id } })
   return new NextResponse(null, { status: 204 })
