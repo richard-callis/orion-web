@@ -85,7 +85,13 @@ export async function POST(req: NextRequest) {
   if (body.agentId) {
     const agent = await prisma.agent.findUnique({
       where: { id: body.agentId },
-      select: { id: true, environmentId: true },
+      select: {
+        id: true,
+        environments: {
+          where: { environmentId: body.environmentId },
+          select: { id: true },
+        },
+      },
     })
     if (!agent) {
       return NextResponse.json(
@@ -93,7 +99,7 @@ export async function POST(req: NextRequest) {
         { status: 422 },
       )
     }
-    if (agent.environmentId !== body.environmentId) {
+    if (agent.environments.length === 0) {
       return NextResponse.json(
         { error: `Agent ${body.agentId} does not belong to the federated environment` },
         { status: 403 },
