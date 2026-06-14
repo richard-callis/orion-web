@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Shield, CheckCircle2, XCircle, Loader2, RefreshCw, Save, Database, Zap } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Shield, CheckCircle2, XCircle, Loader2, RefreshCw, Save, Database, Zap, Server } from 'lucide-react'
 
 const sources = [
   { key: 'CROWDSEC_API', name: 'CrowdSec', desc: 'Brute-force & IP blocking', default: 'http://crowdsec-lapi.crowdsec:8080' },
@@ -10,6 +10,10 @@ const sources = [
   { key: 'VICTORIA_METRICS_URL', name: 'VictoriaMetrics', desc: 'Metrics time-series DB', default: 'http://victoria-metrics.monitoring:8428' },
   { key: 'WAZUH_API', name: 'Wazuh', desc: 'Endpoint security & SIEM', default: 'https://wazuh-manager.security:55000' },
 ]
+
+type K8sEnv = { id: string; name: string; monitoringConfig: { stack?: string } | null }
+type JobStatus = 'queued' | 'running' | 'completed' | 'failed'
+type BackgroundJob = { id: string; status: JobStatus; logs: string[]; completedAt: string | null }
 
 export default function SecuritySettings() {
   const [config, setConfig] = useState<Record<string, string>>({})
@@ -23,21 +27,60 @@ export default function SecuritySettings() {
   const [seedingDemo, setSeedingDemo] = useState(false)
   const [seedDemoMsg, setSeedDemoMsg] = useState<string | null>(null)
 
+  const [k8sEnvs, setK8sEnvs] = useState<K8sEnv[]>([])
+  const [selectedEnvId, setSelectedEnvId] = useState<string>('')
+  const [deployStack, setDeployStack] = useState<'basic' | 'full'>('basic')
+  const [deploying, setDeploying] = useState(false)
+  const [deployJobId, setDeployJobId] = useState<string | null>(null)
+  const [deployJob, setDeployJob] = useState<BackgroundJob | null>(null)
+  const [deployError, setDeployError] = useState<string | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const logsEndRef = useRef<HTMLDivElement | null>(null)
+
   useEffect(() => {
     async function load() {
       try {
-        const [cfgRes, rulesRes] = await Promise.all([
+        const [cfgRes, rulesRes, envRes] = await Promise.all([
           fetch('/api/monitoring/security/config'),
           fetch('/api/monitoring/security/seed-rules'),
+          fetch('/api/environments'),
         ])
         const cfgData = await cfgRes.json()
         setConfig(cfgData.config ?? {})
         const rulesData = await rulesRes.json()
         setRules(rulesData.rules ?? [])
+        const envData = await envRes.json() as K8sEnv[]
+        const k8s = (Array.isArray(envData) ? envData : envData).filter((e: any) => e.type === 'kubernetes')
+        setK8sEnvs(k8s)
+        if (k8s.length > 0) setSelectedEnvId(k8s[0].id)
       } catch {}
     }
     load()
   }, [])
+
+  useEffect(() => {
+    if (logsEndRef.current) logsEndRef.current.scrollIntoView({ behavior: 'smooth' })
+  }, [deployJob?.logs])
+
+  useEffect(() => {
+    if (!deployJobId) return
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/jobs/${deployJobId}`)
+        if (res.status === 404) { clearInterval(pollRef.current!); return }
+        const job: BackgroundJob = await res.json()
+        setDeployJob(job)
+        if (job.status === 'completed' || job.status === 'failed') {
+          clearInterval(pollRef.current!)
+          setDeploying(false)
+          if (job.status === 'completed') {
+            setK8sEnvs(prev => prev.map(e => e.id === selectedEnvId ? { ...e, monitoringConfig: { stack: deployStack } } : e))
+          }
+        }
+      } catch {}
+    }, 3000)
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+  }, [deployJobId, selectedEnvId, deployStack])
 
   async function testConnection(key: string) {
     setTesting(key)
@@ -86,6 +129,31 @@ export default function SecuritySettings() {
     } finally {
       setSeedingRules(false)
       setTimeout(() => setSeedRulesMsg(null), 4000)
+    }
+  }
+
+  async function deployMonitoring() {
+    if (!selectedEnvId) return
+    setDeploying(true)
+    setDeployError(null)
+    setDeployJob(null)
+    setDeployJobId(null)
+    try {
+      const res = await fetch(`/api/environments/${selectedEnvId}/monitoring/deploy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stack: deployStack }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setDeployError(data.error ?? 'Deployment failed')
+        setDeploying(false)
+        return
+      }
+      setDeployJobId(data.jobId)
+    } catch {
+      setDeployError('Failed to start deployment')
+      setDeploying(false)
     }
   }
 
@@ -228,6 +296,87 @@ export default function SecuritySettings() {
         <p className="text-[11px] text-text-muted mt-1">
           Injects brute-force, port scan, K8s warnings, anomalies, and a malware signal. Run the correlator after to generate incidents.
         </p>
+      </div>
+      {/* Deploy monitoring stack */}
+      <div className="border-t border-border-subtle pt-5">
+        <div className="flex items-center gap-2 mb-2">
+          <Server size={16} className="text-accent" />
+          <h3 className="text-sm font-semibold text-text-primary">Deploy Monitoring Stack</h3>
+        </div>
+        <p className="text-xs text-text-muted mb-3">
+          Deploy a monitoring stack to a Kubernetes environment. Installs into the cluster directly via kubectl and Helm.
+        </p>
+
+        {k8sEnvs.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border-subtle px-4 py-6 text-center text-xs text-text-muted">
+            No Kubernetes environments found. Add one first.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs text-text-muted mb-1 block">Environment</label>
+              <select
+                value={selectedEnvId}
+                onChange={e => setSelectedEnvId(e.target.value)}
+                disabled={deploying}
+                className="w-full px-3 py-1.5 text-xs bg-bg-surface border border-border-subtle rounded-md text-text-primary focus:outline-none focus:border-accent disabled:opacity-50"
+              >
+                {k8sEnvs.map(e => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}{e.monitoringConfig?.stack ? ` (${e.monitoringConfig.stack} installed)` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className={`flex items-start gap-3 px-3 py-3 rounded-lg border cursor-pointer transition-colors ${deployStack === 'basic' ? 'border-accent bg-accent/5' : 'border-border-subtle hover:border-text-muted'}`}>
+                <input type="radio" name="deployStack" checked={deployStack === 'basic'} onChange={() => setDeployStack('basic')} disabled={deploying} className="accent-accent mt-0.5" />
+                <div>
+                  <div className="text-sm font-medium text-text-primary">Metrics &amp; Traffic</div>
+                  <div className="text-[11px] text-text-muted">VictoriaMetrics + ntopng — metrics time-series and network traffic analysis</div>
+                </div>
+              </label>
+              <label className={`flex items-start gap-3 px-3 py-3 rounded-lg border cursor-pointer transition-colors ${deployStack === 'full' ? 'border-accent bg-accent/5' : 'border-border-subtle hover:border-text-muted'}`}>
+                <input type="radio" name="deployStack" checked={deployStack === 'full'} onChange={() => setDeployStack('full')} disabled={deploying} className="accent-accent mt-0.5" />
+                <div>
+                  <div className="text-sm font-medium text-text-primary">Full SIEM</div>
+                  <div className="text-[11px] text-text-muted">Metrics + ELK stack + Elastiflow — full log ingestion, search, and NetFlow collection</div>
+                </div>
+              </label>
+            </div>
+
+            <button
+              onClick={deployMonitoring}
+              disabled={deploying || !selectedEnvId}
+              className="flex items-center gap-1 px-4 py-2 text-sm font-medium rounded-lg bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors"
+            >
+              {deploying ? <Loader2 size={14} className="animate-spin" /> : <Server size={14} />}
+              {deploying ? 'Deploying…' : 'Deploy'}
+            </button>
+
+            {deployError && (
+              <div className="text-xs text-status-error flex items-center gap-1">
+                <XCircle size={12} /> {deployError}
+              </div>
+            )}
+
+            {deployJob && (
+              <div className="mt-3">
+                <div className="flex items-center gap-2 mb-1">
+                  {deployJob.status === 'completed' && <CheckCircle2 size={12} className="text-status-success" />}
+                  {deployJob.status === 'failed' && <XCircle size={12} className="text-status-error" />}
+                  {(deployJob.status === 'running' || deployJob.status === 'queued') && <Loader2 size={12} className="animate-spin text-accent" />}
+                  <span className="text-xs text-text-muted capitalize">{deployJob.status}</span>
+                </div>
+                <pre className="bg-bg-surface border border-border-subtle rounded-lg p-3 text-[10px] text-text-muted font-mono max-h-48 overflow-y-auto whitespace-pre-wrap">
+                  {deployJob.logs.join('\n')}
+                  <div ref={logsEndRef} />
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
