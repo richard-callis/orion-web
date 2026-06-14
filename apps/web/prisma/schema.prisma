@@ -1119,6 +1119,8 @@ model SourceHealth {
   lastSeenAt    DateTime?
   lastWatermark DateTime? // highest watermark advanced by poller
   staleAfterMs  Int // milliseconds before source is considered stale
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
   @@index([source])
   @@index([environmentId])
