@@ -15,11 +15,11 @@ import { getGitProviderConfig } from '@/lib/git-provider'
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   // Verify gateway token
   const auth = req.headers.get('authorization')
-  const env = await prisma.environment.findUnique({ where: { id: params.id } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const expectedToken = env.gatewayToken

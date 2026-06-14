@@ -33,14 +33,14 @@ interface MiddlewareNovaConfig {
 
 export async function POST(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const point = await prisma.ingressPoint.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: { environment: true },
   })
   if (!point) {

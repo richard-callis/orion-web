@@ -395,7 +395,7 @@ export async function getCurrentUser(): Promise<AppUser | null> {
   // Optional SSO fallback: header-based (only if OIDCProvider.headerMode is enabled)
   try {
     const { headers } = await import('next/headers')
-    const h = headers()
+    const h = await headers()
     // SOC2 [LOW-2]: Only accept the signed x-authentik-username header.
     // x-forwarded-user is not included in the HMAC canonical string and must
     // not be used as a fallback — accepting it would bypass signature validation.

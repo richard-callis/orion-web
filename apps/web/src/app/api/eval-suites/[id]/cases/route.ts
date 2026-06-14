@@ -2,18 +2,18 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireServiceAuth } from '@/lib/auth'
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   await requireServiceAuth(req)
 
   const cases = await prisma.evalCase.findMany({
-    where: { suiteId: params.id },
+    where: { suiteId: (await params).id },
     orderBy: { createdAt: 'asc' },
   })
 
   return NextResponse.json(cases)
 }
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   await requireServiceAuth(req)
 
   let body: {
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const evalCase = await prisma.evalCase.create({
     data: {
-      suiteId: params.id,
+      suiteId: (await params).id,
       title: body.title,
       prompt: body.prompt,
       expectedOutput: body.expectedOutput ?? null,

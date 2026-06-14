@@ -10,14 +10,14 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(
   _req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   // MAJOR fix: GET had no auth — any logged-in user could read nova definition specs
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const nova = await prisma.novaDefinition.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
   })
   if (!nova) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -31,7 +31,7 @@ export async function GET(
  */
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     await requireAdmin()
@@ -57,7 +57,7 @@ export async function PUT(
   if (metadata !== undefined)    updateData.metadata = metadata
 
   const nova = await prisma.novaDefinition.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data: updateData,
   })
   return NextResponse.json(nova)
@@ -69,7 +69,7 @@ export async function PUT(
  */
 export async function DELETE(
   _req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     await requireAdmin()
@@ -78,7 +78,7 @@ export async function DELETE(
   }
   // Check for instances
   const instances = await prisma.nebulaInstance.findFirst({
-    where: { sourceNovaId: params.id },
+    where: { sourceNovaId: (await params).id },
   })
   if (instances) {
     return NextResponse.json(
@@ -86,6 +86,6 @@ export async function DELETE(
       { status: 409 }
     )
   }
-  await prisma.novaDefinition.delete({ where: { id: params.id } })
+  await prisma.novaDefinition.delete({ where: { id: (await params).id } })
   return NextResponse.json({ ok: true })
 }

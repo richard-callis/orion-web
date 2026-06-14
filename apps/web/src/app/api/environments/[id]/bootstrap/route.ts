@@ -16,19 +16,19 @@ import { bootstrapCluster } from '@/lib/cluster-bootstrap'
 
 export async function POST(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
 
-  const env = await prisma.environment.findUnique({ where: { id: params.id } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id } })
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
 
   const jobId = await startJob(
     'cluster-bootstrap',
     `Bootstrap: ${env.name}`,
-    { environmentId: params.id },
+    { environmentId: (await params).id },
     async (log) => {
-      await bootstrapCluster(params.id, (event) => {
+      await bootstrapCluster((await params).id, (event) => {
         const prefix = event.type === 'step'  ? '▶' :
                        event.type === 'error' ? '✗' :
                        event.type === 'done'  ? '✓' : ' '

@@ -4,22 +4,22 @@ import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 import { parseBodyOrError, UpdateEpicSchema } from '@/lib/validate'
 import { handlePlanPatch } from '@/lib/plan-patch'
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   await requireServiceAuth(req)
   const epic = await prisma.epic.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: { features: { include: { _count: { select: { tasks: true } } } } },
   })
   if (!epic) return new NextResponse(null, { status: 404 })
   return NextResponse.json(epic)
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
 
   // Check ownership
-  const existing = await prisma.epic.findUnique({ where: { id: params.id } })
+  const existing = await prisma.epic.findUnique({ where: { id: (await params).id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   await assertCanModify(caller, isService, existing.createdBy)
 
@@ -35,23 +35,23 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (validatedData.status          !== undefined) data.status          = validatedData.status
   if (validatedData.planApprovedBy  !== undefined) data.planApprovedBy  = validatedData.planApprovedBy
   if (validatedData.planApprovedAt  !== undefined) data.planApprovedAt  = validatedData.planApprovedAt ? new Date(validatedData.planApprovedAt) : null
-  const epic = await prisma.epic.update({ where: { id: params.id }, data })
+  const epic = await prisma.epic.update({ where: { id: (await params).id }, data })
   return NextResponse.json(epic)
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  return handlePlanPatch('epic', params.id, req)
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  return handlePlanPatch('epic', (await params).id, req)
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
 
   // Check ownership
-  const existing = await prisma.epic.findUnique({ where: { id: params.id } })
+  const existing = await prisma.epic.findUnique({ where: { id: (await params).id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   await assertCanModify(caller, isService, existing.createdBy)
 
-  await prisma.epic.delete({ where: { id: params.id } })
+  await prisma.epic.delete({ where: { id: (await params).id } })
   return new NextResponse(null, { status: 204 })
 }

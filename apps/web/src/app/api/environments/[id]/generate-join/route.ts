@@ -12,7 +12,7 @@ function hashJoinToken(raw: string): string {
 // to prevent type confusion (e.g. forging localhost type to trigger Docker-socket paths)
 const ALLOWED_GATEWAY_TYPES = new Set(['cluster', 'docker', 'localhost'])
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // B3 fix: generate-join previously had no auth — BEARER_PATHS only checked that
   // the Authorization header started with 'Bearer', not that it was a valid token.
   // Any caller could mint a join token for any environment. Require admin session.
@@ -20,12 +20,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const env = await prisma.environment.findUnique({ where: { id: params.id } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   // Burn any unused tokens for this environment first (only one active at a time)
   await prisma.environmentJoinToken.deleteMany({
-    where: { environmentId: params.id, usedAt: null },
+    where: { environmentId: (await params).id, usedAt: null },
   })
 
   const rawToken = 'mcg_' + randomBytes(24).toString('hex')
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // admin and never persisted. Existing plaintext tokens in the DB still work
   // via the dual-lookup in the join/manifest routes (hash-first, plaintext fallback).
   await prisma.environmentJoinToken.create({
-    data: { token: hashJoinToken(rawToken), environmentId: params.id, expiresAt },
+    data: { token: hashJoinToken(rawToken), environmentId: (await params).id, expiresAt },
   })
 
   // Replace token reference with rawToken in the commands below

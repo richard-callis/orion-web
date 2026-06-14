@@ -10,12 +10,12 @@ export const dynamic = 'force-dynamic'
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string; name: string } }
+  { params }: { params: Promise<{ id: string; name: string }> }
 ) {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const tier = await prisma.environmentUserTier.findUnique({
-    where: { userId_environmentId: { userId: user.id, environmentId: params.id } },
+    where: { userId_environmentId: { userId: user.id, environmentId: (await params).id } },
   })
   const effectiveTier = user.role === 'admin' ? 'admin' : (tier?.tier ?? 'viewer')
   if (!['operator', 'admin'].includes(effectiveTier)) {
@@ -26,7 +26,7 @@ export async function POST(
   }
   const body = await req.json()
   const entry = await prisma.nebulaInstance.findFirst({
-    where: { environmentId: params.id, name: params.name },
+    where: { environmentId: (await params).id, name: (await params).name },
   })
   if (!entry) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })

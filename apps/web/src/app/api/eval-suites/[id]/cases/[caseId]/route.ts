@@ -4,7 +4,7 @@ import { requireServiceAuth } from '@/lib/auth'
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string; caseId: string } }
+  { params }: { params: Promise<{ id: string; caseId: string }> }
 ) {
   await requireServiceAuth(req)
 
@@ -23,7 +23,7 @@ export async function PUT(
   }
 
   const evalCase = await prisma.evalCase.update({
-    where: { id: params.caseId },
+    where: { id: (await params).caseId },
     data: {
       ...(body.title !== undefined && { title: body.title }),
       ...(body.prompt !== undefined && { prompt: body.prompt }),
@@ -38,10 +38,10 @@ export async function PUT(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string; caseId: string } }
+  { params }: { params: Promise<{ id: string; caseId: string }> }
 ) {
   await requireServiceAuth(req)
 
-  await prisma.evalCase.delete({ where: { id: params.caseId } })
+  await prisma.evalCase.delete({ where: { id: (await params).caseId } })
   return NextResponse.json({ ok: true })
 }

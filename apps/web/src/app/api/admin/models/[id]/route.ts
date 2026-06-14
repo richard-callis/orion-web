@@ -11,7 +11,7 @@ function maskKey(key: string | null): string | null {
   return '••••' + key.slice(-4)
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const admin = await requireAdmin()
   const result = await parseBodyOrError(req, UpdateExternalModelSchema)
   if ('error' in result) return result.error
@@ -37,19 +37,19 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (data.apiKey)              updateData.apiKey        = data.apiKey
 
   const model = await prisma.externalModel.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data: updateData,
   })
 
   // If contextSize changed, drop the cached limit so the next agent turn re-reads the new value.
   // Cache is keyed by "ext:<id>" (model-level), not baseUrl, so two models at the same server don't bleed.
-  if ('contextSize' in data) clearContextLimitCache(`ext:${params.id}`)
+  if ('contextSize' in data) clearContextLimitCache(`ext:${(await params).id}`)
 
   // SOC2: [M-005] Log model update (non-blocking)
   logAudit({
     userId: admin.id,
     action: 'model_update',
-    target: `model:${params.id}`,
+    target: `model:${(await params).id}`,
     detail: { name: model.name, provider: model.provider },
     ipAddress: getClientIp(req),
     userAgent: getUserAgent(req.headers),
@@ -58,19 +58,19 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json({ ...model, apiKey: maskKey(model.apiKey) })
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const admin = await requireAdmin()
   const model = await prisma.externalModel.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     select: { name: true },
   })
-  await prisma.externalModel.delete({ where: { id: params.id } })
+  await prisma.externalModel.delete({ where: { id: (await params).id } })
 
   // SOC2: [M-005] Log model delete (non-blocking)
   logAudit({
     userId: admin.id,
     action: 'model_delete',
-    target: `model:${params.id}`,
+    target: `model:${(await params).id}`,
     detail: { name: model?.name },
     ipAddress: getClientIp(_req),
     userAgent: getUserAgent(_req.headers),

@@ -10,16 +10,16 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = params
+  const { id } = await params
   await requireGatewayAuthForEnvironment(req, id).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
 
   const defaults = await prisma.novaDefinition.findMany({
     orderBy: { name: 'asc' },
   })
   const installed = await prisma.nebulaInstance.findMany({
-    where: { environmentId: params.id },
+    where: { environmentId: (await params).id },
     include: { novaDefinition: true },
     orderBy: { name: 'asc' },
   })

@@ -8,14 +8,14 @@ import { assertConversationOwner } from '@/lib/conversation-owner'
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   // B2 fix: any user could inject/read memories in any conversation (no ownership check)
-  const check = await assertConversationOwner(req, params.id)
+  const check = await assertConversationOwner(req, (await params).id)
   if (check instanceof NextResponse) return check
 
   const memories = await prisma.memory.findMany({
-    where: { conversationId: params.id },
+    where: { conversationId: (await params).id },
     orderBy: { createdAt: 'asc' },
   })
 
@@ -28,10 +28,10 @@ export async function GET(
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   // B2 fix: any user could inject/read memories in any conversation (no ownership check)
-  const check = await assertConversationOwner(req, params.id)
+  const check = await assertConversationOwner(req, (await params).id)
   if (check instanceof NextResponse) return check
 
   const { key, value, context } = await req.json()
@@ -53,7 +53,7 @@ export async function POST(
   await prisma.memory.upsert({
     where: {
       conversationId_key: {
-        conversationId: params.id,
+        conversationId: (await params).id,
         key
       }
     },
@@ -63,7 +63,7 @@ export async function POST(
       updatedAt: new Date(),
     },
     create: {
-      conversationId: params.id,
+      conversationId: (await params).id,
       key,
       value,
       context: context || null,
@@ -79,9 +79,9 @@ export async function POST(
  */
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const check = await assertConversationOwner(req, params.id)
+  const check = await assertConversationOwner(req, (await params).id)
   if (check instanceof NextResponse) return check
 
   const searchParams = req.nextUrl.searchParams
@@ -93,7 +93,7 @@ export async function DELETE(
 
   await prisma.memory.deleteMany({
     where: {
-      conversationId: params.id,
+      conversationId: (await params).id,
       key: key,
     },
   })

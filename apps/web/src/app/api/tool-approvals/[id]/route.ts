@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 
 // POST /api/tool-approvals/[id]  body: { action: 'approve'|'deny', adminNote?: string, approvedBy?: string }
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   let admin
   try { admin = await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -13,7 +13,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
   const { action, adminNote } = body as { action: 'approve' | 'deny'; adminNote?: string }
 
-  const request = await prisma.toolApprovalRequest.findUnique({ where: { id: params.id } })
+  const request = await prisma.toolApprovalRequest.findUnique({ where: { id: (await params).id } })
   if (!request) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (request.status !== 'pending') return NextResponse.json({ error: 'Already resolved' }, { status: 400 })
   if (request.userId === admin.id) {
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const updated = await prisma.toolApprovalRequest.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data: {
       status:     action === 'approve' ? 'approved' : 'denied',
       approvedBy: resolvedApprovedBy,

@@ -4,11 +4,11 @@ import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 import { parseBodyOrError, UpdateTaskSchema } from '@/lib/validate'
 import { handlePlanPatch } from '@/lib/plan-patch'
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
   const task = await prisma.task.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: {
       agent:        true,
       assignedUser: true,
@@ -22,12 +22,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json(task)
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
 
   // Check ownership
-  const existing = await prisma.task.findUnique({ where: { id: params.id } })
+  const existing = await prisma.task.findUnique({ where: { id: (await params).id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   await assertCanModify(caller, isService, existing.createdBy)
 
@@ -57,7 +57,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (data.dependsOn       !== undefined) dbData.dependsOn       = data.dependsOn
   if (data.wave            !== undefined) dbData.wave            = data.wave
   const task = await prisma.task.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data: dbData,
     include: { agent: true, assignedUser: true },
   })
@@ -80,19 +80,19 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json(task)
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  return handlePlanPatch('task', params.id, req)
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  return handlePlanPatch('task', (await params).id, req)
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
 
   // Check ownership
-  const existing = await prisma.task.findUnique({ where: { id: params.id } })
+  const existing = await prisma.task.findUnique({ where: { id: (await params).id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   await assertCanModify(caller, isService, existing.createdBy)
 
-  await prisma.task.delete({ where: { id: params.id } })
+  await prisma.task.delete({ where: { id: (await params).id } })
   return new NextResponse(null, { status: 204 })
 }

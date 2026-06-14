@@ -3,9 +3,9 @@ import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { syncDomainDns } from '@/lib/dns-sync'
 
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
-  const domain = await prisma.domain.findUnique({ where: { id: params.id } })
+  const domain = await prisma.domain.findUnique({ where: { id: (await params).id } })
   if (!domain) return NextResponse.json({ error: 'Domain not found' }, { status: 404 })
   if (!domain.coreDnsEnvironmentId || domain.coreDnsStatus !== 'bootstrapped') {
     return NextResponse.json({ error: 'CoreDNS not bootstrapped for this domain' }, { status: 422 })
@@ -29,7 +29,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   }
 
   try {
-    await syncDomainDns(params.id, exec, env.type)
+    await syncDomainDns((await params).id, exec, env.type)
     return NextResponse.json({ ok: true })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

@@ -16,7 +16,7 @@ const updateSchema = z.object({
   description: z.string().optional().nullable(),
 })
 
-export async function PATCH(req: Request, { params }: { params: { id: string; entryId: string } }) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string; entryId: string }> }) {
   try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
   const { id, entryId } = await params

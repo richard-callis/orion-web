@@ -22,7 +22,7 @@ const bodySchema = z.object({
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   let approver: { id: string; username: string }
   try {
@@ -40,7 +40,7 @@ export async function POST(
   }
 
   const { action, note } = parsed.data
-  const auditId = params.id
+  const auditId = (await params).id
 
   // Fetch audit row to get action details for execution
   const audit = await prisma.actionAudit.findUnique({

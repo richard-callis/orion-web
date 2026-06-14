@@ -4,22 +4,22 @@ import { embedNote, computeSemanticEdges } from '@/lib/embeddings'
 import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 import { parseBodyOrError, UpdateNoteSchema } from '@/lib/validate'
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
-  const note = await prisma.note.findUnique({ where: { id: params.id } })
+  const note = await prisma.note.findUnique({ where: { id: (await params).id } })
   if (!note) return new NextResponse(null, { status: 404 })
   // Only the creator or admin/service can read notes
   await assertCanModify(caller, isService, note.createdBy ?? '')
   return NextResponse.json(note)
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
 
   // Check ownership before mutation
-  const existing = await prisma.note.findUnique({ where: { id: params.id } })
+  const existing = await prisma.note.findUnique({ where: { id: (await params).id } })
   if (!existing) return new NextResponse(null, { status: 404 })
   await assertCanModify(caller, isService, existing.createdBy ?? '')
 
@@ -39,12 +39,12 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (data.type    !== undefined) updateData.type    = data.type
   if (data.tags    !== undefined) updateData.tags    = data.tags || null
 
-  const note = await prisma.note.update({ where: { id: params.id }, data: updateData })
+  const note = await prisma.note.update({ where: { id: (await params).id }, data: updateData })
 
   // Re-embed if content or title changed
   if (isContentChange || isTitleChange) {
     // Re-fetch with fresh data (the update may have returned a truncated row)
-    const updated = await prisma.note.findUnique({ where: { id: params.id } })
+    const updated = await prisma.note.findUnique({ where: { id: (await params).id } })
     if (updated) {
       const ok = await embedNote(updated).catch(err => { console.error('[embed] failed for updated note:', err); return false })
       if (ok) computeSemanticEdges(updated.id).catch(() => {})
@@ -54,15 +54,15 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json(note)
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
 
   // Check ownership before deletion
-  const existing = await prisma.note.findUnique({ where: { id: params.id } })
+  const existing = await prisma.note.findUnique({ where: { id: (await params).id } })
   if (!existing) return new NextResponse(null, { status: 404 })
   await assertCanModify(caller, isService, existing.createdBy ?? '')
 
-  await prisma.note.delete({ where: { id: params.id } })
+  await prisma.note.delete({ where: { id: (await params).id } })
   return new NextResponse(null, { status: 204 })
 }

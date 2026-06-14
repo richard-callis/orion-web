@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireServiceAuth } from '@/lib/auth'
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
 
   let body: { agentId: string; modelId?: string }
@@ -18,7 +18,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   // Load suite with cases
   const suite = await prisma.evalSuite.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: { cases: true },
   })
   if (!suite) return NextResponse.json({ error: 'Suite not found' }, { status: 404 })
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // Create EvalRun
   const run = await prisma.evalRun.create({
     data: {
-      suiteId: params.id,
+      suiteId: (await params).id,
       agentId: body.agentId,
       modelId,
       status: 'pending',

@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireServiceAuth } from '@/lib/auth'
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   await requireServiceAuth(req)
 
   const suite = await prisma.evalSuite.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: {
       agent: { select: { id: true, name: true } },
       cases: { orderBy: { createdAt: 'asc' } },
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json(suite)
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   await requireServiceAuth(req)
 
   let body: { name?: string; description?: string; agentId?: string | null }
@@ -36,7 +36,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   }
 
   const suite = await prisma.evalSuite.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data: {
       ...(body.name !== undefined && { name: body.name }),
       ...(body.description !== undefined && { description: body.description }),
@@ -47,9 +47,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json(suite)
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   await requireServiceAuth(req)
 
-  await prisma.evalSuite.delete({ where: { id: params.id } })
+  await prisma.evalSuite.delete({ where: { id: (await params).id } })
   return NextResponse.json({ ok: true })
 }
