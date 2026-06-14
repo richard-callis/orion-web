@@ -1,7 +1,7 @@
 -- Migration: 24_add_webhook_triggers
 -- Adds inbound webhook triggers that create tasks from external events.
 
-CREATE TABLE "WebhookTrigger" (
+CREATE TABLE IF NOT EXISTS "WebhookTrigger" (
     "id"          TEXT NOT NULL,
     "name"        TEXT NOT NULL,
     "agentId"     TEXT NOT NULL,

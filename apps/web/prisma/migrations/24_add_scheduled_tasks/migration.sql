@@ -1,6 +1,6 @@
 -- Add ScheduledTask table for cron-style recurring task scheduling
 
-CREATE TABLE "ScheduledTask" (
+CREATE TABLE IF NOT EXISTS "ScheduledTask" (
   "id" TEXT NOT NULL,
   "name" TEXT NOT NULL,
   "description" TEXT,

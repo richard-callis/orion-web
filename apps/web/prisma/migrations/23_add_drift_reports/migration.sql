@@ -1,4 +1,4 @@
-CREATE TABLE "DriftReport" (
+CREATE TABLE IF NOT EXISTS "DriftReport" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'clean',

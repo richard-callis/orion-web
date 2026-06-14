@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "EvalSuite" (
+CREATE TABLE IF NOT EXISTS "EvalSuite" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
@@ -11,7 +11,7 @@ CREATE TABLE "EvalSuite" (
 );
 
 -- CreateTable
-CREATE TABLE "EvalCase" (
+CREATE TABLE IF NOT EXISTS "EvalCase" (
     "id" TEXT NOT NULL,
     "suiteId" TEXT NOT NULL,
     "title" TEXT NOT NULL,
@@ -25,7 +25,7 @@ CREATE TABLE "EvalCase" (
 );
 
 -- CreateTable
-CREATE TABLE "EvalRun" (
+CREATE TABLE IF NOT EXISTS "EvalRun" (
     "id" TEXT NOT NULL,
     "suiteId" TEXT NOT NULL,
     "agentId" TEXT NOT NULL,
@@ -42,7 +42,7 @@ CREATE TABLE "EvalRun" (
 );
 
 -- CreateTable
-CREATE TABLE "EvalCaseResult" (
+CREATE TABLE IF NOT EXISTS "EvalCaseResult" (
     "id" TEXT NOT NULL,
     "runId" TEXT NOT NULL,
     "caseId" TEXT NOT NULL,

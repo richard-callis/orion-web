@@ -1,7 +1,7 @@
 -- Migration: 26_add_webhook_delivery
 -- Tracks delivered webhook payloads for idempotency (deduplication by delivery ID).
 
-CREATE TABLE "WebhookDelivery" (
+CREATE TABLE IF NOT EXISTS "WebhookDelivery" (
     "id"         TEXT NOT NULL,
     "triggerId"  TEXT NOT NULL,
     "deliveryId" TEXT NOT NULL,
