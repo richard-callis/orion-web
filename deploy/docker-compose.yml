@@ -621,7 +621,11 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          memory: 512M
+          # modern_ebpf allocates 1 ring buffer per CPU × 8 MB each by default.
+          # On a 32-CPU host that's 256 MB just for ring buffers + ~200 MB for
+          # Falco itself → OOM at 512 MB → scap_init fails. 1.5 GB gives ample
+          # headroom. Ring buffer count halved via falco.yaml (cpus_for_each_syscall_buffer: 2).
+          memory: 1536M
 
   # Falcosidekick — forwards Falco alerts to the /webhooks/falco endpoint
   # with an HMAC-signed body. CUSTOMFIELDS injects environmentId="host" so
