@@ -13,7 +13,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   })
 
   if (!task) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  await assertCanModify(caller, isService, task.createdBy)
+  await assertCanModify(caller, isService, '')
   return NextResponse.json(task)
 }
 
@@ -23,7 +23,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const existing = await prisma.scheduledTask.findUnique({ where: { id: (await params).id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  await assertCanModify(caller, isService, existing.createdBy)
+  await assertCanModify(caller, isService, '')
 
   let body: unknown
   try {
@@ -64,7 +64,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   const existing = await prisma.scheduledTask.findUnique({ where: { id: (await params).id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  await assertCanModify(caller, isService, existing.createdBy)
+  await assertCanModify(caller, isService, '')
 
   await prisma.scheduledTask.delete({ where: { id: (await params).id } })
   return NextResponse.json({ ok: true })
