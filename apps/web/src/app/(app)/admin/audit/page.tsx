@@ -40,10 +40,11 @@ function actionColor(action: string): string {
 export default async function AuditLogPage({
   searchParams,
 }: {
-  searchParams: { action?: string; user?: string }
+  searchParams: Promise<{ action?: string; user?: string }>
 }) {
-  const actionFilter = searchParams.action || undefined
-  const userFilter   = searchParams.user   || undefined
+  const { action, user } = await searchParams
+  const actionFilter = action || undefined
+  const userFilter   = user   || undefined
 
   // Fetch matching users if filtering by user substring
   const userIds = userFilter
