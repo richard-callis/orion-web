@@ -52,6 +52,16 @@ export type AuditAction =
   | 'settings_update'
   | 'vault_unseal'
   | 'vault_reseal'
+  | 'password_reset'
+  | 'ssrf_blocked'
+  | 'encryption_key_rotation'
+  | 'webhook_trigger_create'
+  | 'webhook_trigger_delete'
+  | 'logs_deleted'
+  | 'cleanup_requested'
+  | 'cleanup_requested_with_export'
+  | 'cleanup_failed'
+  | 'AUDIT_LOG_CLEANUP'
 
 /**
  * Compute a SHA-256 hash of an audit entry's content for the hash chain.
