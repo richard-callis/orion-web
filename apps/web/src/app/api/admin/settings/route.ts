@@ -5,21 +5,11 @@ import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, UpdateSettingsSchema } from '@/lib/validate'
 import { encrypt } from '@/lib/encryption'
 
-// Keys containing these substrings are sensitive and must be encrypted at rest.
-const SENSITIVE_KEY_PATTERNS = ['token', 'secret', 'password', 'apikey', 'api_key', 'credential']
-
-function isSensitiveKey(key: string): boolean {
-  const lower = key.toLowerCase()
-  return SENSITIVE_KEY_PATTERNS.some(p => lower.includes(p))
-}
-
-// Keys containing these substrings are redacted in GET responses.
-// They hold tokens, secrets, or keys that must not be returned to the browser.
+// Keys matching these substrings are sensitive: encrypted at rest and redacted in GET responses.
 const SENSITIVE_KEY_PATTERNS = ['token', 'secret', 'password', 'apikey', 'api_key', 'key', 'credential']
 
 function isSensitiveKey(key: string): boolean {
-  const lower = key.toLowerCase()
-  return SENSITIVE_KEY_PATTERNS.some(p => lower.includes(p))
+  return SENSITIVE_KEY_PATTERNS.some(p => key.toLowerCase().includes(p))
 }
 
 export async function GET() {
