@@ -75,6 +75,9 @@ export async function POST(req: NextRequest) {
   } else {
     const secret = process.env.HOST_AGENT_WEBHOOK_SECRET
     if (!verifyWebhookHmac(secret, bodyText, signature)) {
+      const computed = `sha256=${crypto.createHmac('sha256', secret).update(bodyText).digest('hex')}`
+      // eslint-disable-next-line no-console
+      console.error('[siem:hmac-debug] 401 body_len=%d body_tail=%s received=%s computed=%s', bodyText.length, JSON.stringify(bodyText.slice(-4)), signature, computed)
       return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
     }
   }
