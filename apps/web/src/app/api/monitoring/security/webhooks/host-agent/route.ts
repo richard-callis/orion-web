@@ -55,12 +55,27 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // 1. Read raw body (for HMAC verification)
+  // 1. Read body and parse outer envelope
+  //
+  // Vector's raw_message codec strips event fields before HTTP sink header
+  // templates are evaluated, so {{ x_signature }} was sent literally instead
+  // of interpolated. Signature is now embedded in the body as:
+  //   { "sig": "sha256=<hex>", "payload": "<json-string>" }
+  // HMAC is verified over `payload` (the exact string Vector signed) before
+  // parsing the inner batch — no re-serialisation, no ordering ambiguity.
   const bodyText = await req.text()
-  const signature = req.headers.get('X-Signature') || req.headers.get('x-host-agent-signature')
   const timestamp = req.headers.get('X-Timestamp') || req.headers.get('x-timestamp')
 
-  // 2. Verify HMAC signature
+  let outerEnvelope: { sig?: string; payload?: string } = {}
+  try {
+    outerEnvelope = JSON.parse(bodyText)
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+  }
+
+  const { sig: signature, payload: payloadStr } = outerEnvelope
+
+  // 2. Verify HMAC over the raw payload string
   if (!process.env.HOST_AGENT_WEBHOOK_SECRET) {
     const refuse = warnMissingWebhookSecret('host_agent', 'HOST_AGENT_WEBHOOK_SECRET')
     if (refuse) {
@@ -74,10 +89,7 @@ export async function POST(req: NextRequest) {
     }
   } else {
     const secret = process.env.HOST_AGENT_WEBHOOK_SECRET
-    if (!verifyWebhookHmac(secret, bodyText, signature)) {
-      const computed = `sha256=${crypto.createHmac('sha256', secret).update(bodyText).digest('hex')}`
-      // eslint-disable-next-line no-console
-      console.error('[siem:hmac-debug] 401 body_len=%d body_tail=%s received=%s computed=%s', bodyText.length, JSON.stringify(bodyText.slice(-4)), signature, computed)
+    if (!payloadStr || !verifyWebhookHmac(secret, payloadStr, signature ?? null)) {
       return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
     }
   }
@@ -87,12 +99,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Request expired (replay window exceeded)' }, { status: 410 })
   }
 
-  // 4. Parse and validate batch
+  // 4. Parse inner payload and validate batch
   let batch: unknown
   try {
-    batch = JSON.parse(bodyText)
+    batch = JSON.parse(payloadStr ?? '')
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+    return NextResponse.json({ error: 'Invalid payload JSON' }, { status: 400 })
   }
 
   let validatedBatch
