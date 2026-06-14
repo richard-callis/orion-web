@@ -472,6 +472,106 @@ function runCommand(
   })
 }
 
+// ── Standalone monitoring deployment ─────────────────────────────────────────
+
+export async function deployMonitoringStack(
+  envId: string,
+  stack: 'basic' | 'full',
+  emit: (event: BootstrapEvent) => void,
+): Promise<void> {
+  const env = await prisma.environment.findUnique({ where: { id: envId } })
+  if (!env) throw new Error('Environment not found')
+  if (env.type !== 'kubernetes') throw new Error('Monitoring deployment is only supported for Kubernetes environments')
+  if (!env.kubeconfig) throw new Error('No kubeconfig stored for this environment')
+
+  const tmpDir = join(tmpdir(), `orion-monitoring-${randomBytes(8).toString('hex')}`)
+  await mkdir(tmpDir, { recursive: true })
+
+  const kubeconfigPath = join(tmpDir, 'kubeconfig')
+  await writeFile(kubeconfigPath, Buffer.from(env.kubeconfig, 'base64').toString('utf8'), { mode: 0o600 })
+
+  const kenv = { KUBECONFIG: kubeconfigPath, KUBECTL_CACHE_DIR: join(tmpDir, 'kubectl-cache') }
+
+  try {
+    emit({ type: 'step', message: 'Verifying cluster connectivity...' })
+    await runCommand('kubectl', ['cluster-info'], kenv, msg => emit({ type: 'log', message: msg }))
+
+    emit({ type: 'step', message: 'Creating monitoring namespace...' })
+    await runQuiet('kubectl', ['create', 'namespace', 'monitoring'], kenv)
+
+    if (stack === 'basic' || stack === 'full') {
+      emit({ type: 'step', message: 'Deploying VictoriaMetrics (metrics & alerting)...' })
+      await runCommand(
+        'helm', [
+          'upgrade', '--install', 'victoria-metrics-k8s-stack', 'victoriametrics/victoria-metrics-k8s-stack',
+          '--namespace', 'victoria-metrics',
+          '--create-namespace',
+          '--wait',
+          '--timeout', '5m',
+          '--set', 'serverServiceEnabled=false',
+          '--set', 'vmsingle.replicas=1',
+        ],
+        kenv,
+        msg => emit({ type: 'log', message: msg }),
+      )
+
+      emit({ type: 'step', message: 'Deploying ntopng (network traffic analysis)...' })
+      await runCommand(
+        'kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/ntopng/service.yaml'],
+        kenv,
+        msg => emit({ type: 'log', message: msg }),
+      )
+    }
+
+    if (stack === 'full') {
+      emit({ type: 'step', message: 'Deploying ELK stack (logs & flow analysis)...' })
+      for (const manifest of [
+        '/opt/orion/deploy/monitoring/elk/namespace.yaml',
+        '/opt/orion/deploy/monitoring/elk/secret.yaml',
+        '/opt/orion/deploy/monitoring/elk/elasticsearch-deployment.yaml',
+        '/opt/orion/deploy/monitoring/elk/logstash-configmap.yaml',
+        '/opt/orion/deploy/monitoring/elk/logstash-deployment.yaml',
+        '/opt/orion/deploy/monitoring/elk/kibana-deployment.yaml',
+      ]) {
+        await runCommand('kubectl', ['apply', '-f', manifest], kenv, msg => emit({ type: 'log', message: msg }))
+      }
+
+      emit({ type: 'step', message: 'Deploying Elastiflow (NetFlow collector)...' })
+      await runCommand(
+        'kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/elastiflow/deployment.yaml'],
+        kenv,
+        msg => emit({ type: 'log', message: msg }),
+      )
+    }
+
+    const namespacesToWait = stack === 'full'
+      ? ['victoria-metrics', 'monitoring', 'elk']
+      : ['victoria-metrics', 'monitoring']
+
+    emit({ type: 'step', message: 'Waiting for monitoring pods to become ready...' })
+    for (const ns of namespacesToWait) {
+      try {
+        await runCommand(
+          'kubectl', ['wait', '--for=condition=Ready', '--all', '-n', ns, '--timeout=300s', 'pods'],
+          kenv,
+          msg => emit({ type: 'log', message: msg }),
+        )
+      } catch {
+        emit({ type: 'log', message: `Some pods in ${ns} not ready yet — continuing` })
+      }
+    }
+
+    await prisma.environment.update({
+      where: { id: envId },
+      data: { monitoringConfig: { stack } },
+    })
+
+    emit({ type: 'done', message: `Monitoring stack (${stack}) deployed successfully.` })
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true })
+  }
+}
+
 // ── ArgoCD manifests ──────────────────────────────────────────────────────────
 
 function toSlug(name: string): string {
