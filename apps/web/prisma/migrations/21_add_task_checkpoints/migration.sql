@@ -1,4 +1,4 @@
-CREATE TABLE "TaskCheckpoint" (
+CREATE TABLE IF NOT EXISTS "TaskCheckpoint" (
     "id" TEXT NOT NULL,
     "taskId" TEXT NOT NULL,
     "stepIndex" INTEGER NOT NULL,
