@@ -269,9 +269,12 @@ codec = "raw_message"
 retry_attempts = 10
 retry_initial_backoff_secs = 1
 
+# Disable sink-level batching: the reduce transform already batches events
+# into a signed envelope. If the sink batches multiple envelopes together the
+# body becomes newline-delimited JSON but X-Signature only covers one, so the
+# server's HMAC check always rejects with 401.
 [sinks.webhook.batch]
-max_events = 100
-timeout_secs = 5
+max_events = 1
 
 [sinks.webhook.healthcheck]
 enabled = true
