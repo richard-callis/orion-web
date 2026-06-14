@@ -589,13 +589,10 @@ services:
   # attempts. Falco's coverage is strictly larger than `docker events` (which
   # vector's docker_lifecycle source already provides).
   #
-  # Uses full falco image (includes falcoctl) which downloads the eBPF probe
-  # for the running kernel at startup. falco-no-driver was previously used
-  # here but lacks the driver loader — it crashed with "need to provide a
-  # path to the bpf object file" because probe: "" in falco.yaml is unset.
-  # modern_ebpf segfaults on kernel 6.8; legacy ebpf probe is downloaded by
-  # falcoctl automatically via the full image's entrypoint.
-  # privileged: true is currently required for Falco's syscall capture even
+  # Uses full falco image (includes falcoctl). falco.yaml uses modern_ebpf
+  # (CO-RE) — no probe file needed; BTF is present on the host kernel.
+  # falcoctl installs modern_ebpf by default; falco.yaml is now aligned.
+  # privileged: true is still required for Falco's syscall capture even
   # with eBPF — see https://falco.org/docs/getting-started/running/#docker.
   falco:
     image: falcosecurity/falco:0.38.2

@@ -481,7 +481,7 @@ export async function deployMonitoringStack(
 ): Promise<void> {
   const env = await prisma.environment.findUnique({ where: { id: envId } })
   if (!env) throw new Error('Environment not found')
-  if (env.type !== 'kubernetes') throw new Error('Monitoring deployment is only supported for Kubernetes environments')
+  if (env.type !== 'cluster') throw new Error('Monitoring deployment is only supported for Kubernetes environments')
   if (!env.kubeconfig) throw new Error('No kubeconfig stored for this environment')
 
   const tmpDir = join(tmpdir(), `orion-monitoring-${randomBytes(8).toString('hex')}`)

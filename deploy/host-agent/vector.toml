@@ -217,7 +217,9 @@ source = """
     "source_file": string(.source_file) ?? "unknown",
     "raw": string(.raw) ?? ""
   }
-  . = { "events": [event] }
+  # Do NOT wrap in an array here — reduce with merge_strategies.events="array"
+  # will collect individual event objects into [e1,e2,...]. Pre-wrapping produces [[e1],[e2],...].
+  . = { "events": event }
 """
 
 # Step 2: reduce events into a batch
