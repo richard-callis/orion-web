@@ -23,7 +23,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import {
   verifyWebhookHmac,
-  isWithinReplayWindow,
   wasAlreadyProcessed,
   shouldAcceptUnauthenticated,
   warnMissingWebhookSecret,
@@ -64,7 +63,6 @@ export async function POST(req: NextRequest) {
   // HMAC is verified over `payload` (the exact string Vector signed) before
   // parsing the inner batch — no re-serialisation, no ordering ambiguity.
   const bodyText = await req.text()
-  const timestamp = req.headers.get('X-Timestamp') || req.headers.get('x-timestamp')
 
   let outerEnvelope: { sig?: string; payload?: string } = {}
   try {
@@ -94,12 +92,10 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 3. Check replay window
-  if (!isWithinReplayWindow(timestamp)) {
-    return NextResponse.json({ error: 'Request expired (replay window exceeded)' }, { status: 410 })
-  }
-
-  // 4. Parse inner payload and validate batch
+  // 3. Parse inner payload and validate batch
+  // Note: no replay-window check here — Vector cannot send a dynamic X-Timestamp
+  // header (HTTP sink templates are not evaluated for raw_message codec). Replay
+  // protection is provided by the 24h dedupKey idempotency check below.
   let batch: unknown
   try {
     batch = JSON.parse(payloadStr ?? '')
