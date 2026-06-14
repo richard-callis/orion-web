@@ -21,7 +21,7 @@ export async function GET(
       )
     }
 
-    await assertCanModify(caller, isService, execution.createdBy ?? '')
+    await assertCanModify(caller, isService, execution.actorId ?? '')
     return NextResponse.json(execution)
   } catch (error) {
     console.error('Error getting execution:', error)
@@ -50,7 +50,7 @@ export async function PATCH(
         { status: 404 }
       )
     }
-    await assertCanModify(caller, isService, existing.createdBy ?? '')
+    await assertCanModify(caller, isService, existing.actorId ?? '')
 
     const body = await req.json()
 
