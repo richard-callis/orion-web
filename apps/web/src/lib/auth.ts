@@ -442,7 +442,7 @@ export async function getCurrentUser(): Promise<AppUser | null> {
         // logins both read existingUser=null before either upsert commits.
         // A new user has createdAt === lastSeen (both just set); an existing user
         // has lastSeen updated but createdAt older.
-        const isNewUser = Math.abs(user.createdAt.getTime() - user.lastSeen.getTime()) < 2000
+        const isNewUser = user.lastSeen != null && Math.abs(user.createdAt.getTime() - user.lastSeen.getTime()) < 2000
         if (isNewUser) {
           void logAudit({
             userId: user.id,
