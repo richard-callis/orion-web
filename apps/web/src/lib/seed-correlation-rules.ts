@@ -19,17 +19,20 @@ const DEFAULT_RULES = [
       type: 'threshold',
       // Plan: "≥5 failed logins, same IP, 5min". Group by the virtual
       // `attackerKey` extractor so the rule fires uniformly across CrowdSec,
-      // Wazuh, ELK, and ntopng — each source surfaces the attacker IP at a
-      // different JSON path. The previous seed hard-coded `rawEvent.srcip`
-      // which silently missed CrowdSec (where the attacker IP lives at
-      // `rawEvent.payload.value`) and ntopng (at `rawEvent.cli.ip`).
-      // See `extractGroupValue` in `lib/security/rule-engine.ts` for the
-      // source-path probe order.
+      // Wazuh, and ELK — each source surfaces the attacker IP at a different
+      // JSON path. See `extractGroupValue` in `lib/security/rule-engine.ts`.
+      //
+      // Scoped to network-source security tools (crowdsec, wazuh, elk) —
+      // host_agent SSH failures are covered by the narrower host.ssh_brute_force
+      // rule. Without a sourceFilter, Docker lifecycle events from host_agent
+      // (container.dead, container.restarted) were bucketed under attackerKey=unknown
+      // and triggered false brute-force incidents on every correlator run.
       field: 'attackerKey',
       op: 'gte' as const,
       value: 5,
       window: 300, // 5 minutes
       groupBy: ['attackerKey'],
+      sourceFilter: ['crowdsec', 'wazuh', 'elk'],
     },
     severity: 70,
     window: 300,
@@ -71,9 +74,10 @@ const DEFAULT_RULES = [
   // ── Host-agent rules (from gigly-sniffing-parasol.md, PR3) ─────────────────
 
   // host.ssh_brute_force — ≥5 SSH failed-password events from same IP in 5min.
-  // This is a narrower variant of the generic brute_force rule that fires
-  // specifically on host_agent source SSH failures (which have structured
-  // metadata from the Vector shipper).
+  // Narrower variant of brute_force, targeting host_agent source specifically.
+  // typeFilter restricts to SSH/auth failures — without it, Docker lifecycle
+  // events (container.dead, container.restarted) from the same host_agent source
+  // are counted as brute-force attempts, which they are not.
   {
     name: 'host.ssh_brute_force',
     ruleType: 'threshold',
@@ -84,9 +88,15 @@ const DEFAULT_RULES = [
       value: 5,
       window: 300, // 5 minutes
       groupBy: ['attackerKey'],
-      // Only match events from the host_agent source — the generic
-      // brute_force rule already handles CrowdSec/Wazuh SSH failures.
       sourceFilter: ['host_agent'],
+      typeFilter: [
+        'auth.ssh.failed_password',
+        'auth.ssh.invalid_user',
+        'auth.ssh.invalid_password',
+        'auth.sudo.failed',
+        'auth.pam.failure',
+        'auth.generic',
+      ],
     },
     severity: 70,
     window: 300,
