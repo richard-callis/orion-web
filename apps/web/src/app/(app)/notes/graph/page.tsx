@@ -1,3 +1,5 @@
+'use client'
+
 import type { ComponentType } from 'react'
 import nextDynamic from 'next/dynamic'
 
@@ -16,10 +18,6 @@ const GraphViewClient = nextDynamic<{ }>(
     ),
   },
 )
-
-// Force dynamic rendering — prevents Next.js from prerendering
-// which crashes on react-force-graph-2d's window access
-export const dynamic = 'force-dynamic'
 
 export default function GraphPage() {
   return <GraphViewClient />
