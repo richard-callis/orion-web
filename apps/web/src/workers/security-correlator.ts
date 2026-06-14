@@ -50,6 +50,19 @@ const LOOKBACK_WINDOW_SEC = 600
 /** Max incidents to create per run (guard against spam). */
 const MAX_INCIDENTS_PER_RUN = 10
 
+/**
+ * Minimum incident severity required to wake Warden. Incidents below this
+ * threshold still get a system-notice in the room (audit trail) but Warden's
+ * agentic loop is not triggered. Default 40 — above operational Docker noise
+ * (10-40) but below real auth/security signals (70+).
+ *
+ * Override with WARDEN_MIN_SEVERITY env var.
+ */
+const WARDEN_MIN_SEVERITY = (() => {
+  const v = Number(process.env.WARDEN_MIN_SEVERITY)
+  return Number.isFinite(v) && v > 0 ? v : 40
+})()
+
 /** How often to update source health staleness check (ms). */
 const STALENESS_CHECK_INTERVAL = 5 * 60 * 1000
 
@@ -333,17 +346,16 @@ async function correlateEnvironment(
           },
         })
 
-        // BUG-2 fix: trigger room agents so Warden actually wakes up on a new
-        // incident. The HTTP message-create paths
-        // (api/chatrooms/[id]/messages/route.ts and api/chatrooms/route.ts)
-        // both call triggerRoomAgentReplies after writing a ChatMessage; the
-        // correlator was skipping this call, so Warden's agent never received
-        // the new-incident notice. Fire-and-forget so a slow agent never
-        // blocks correlation.
-        triggerRoomAgentReplies(securityRoomId, noticeBody).catch((e: unknown) => {
-          // eslint-disable-next-line no-console
-          console.error(`[warden-wakeup] Failed to trigger room agent replies for incident ${incident.id ?? 'unknown'}: ${e instanceof Error ? e.message : e}`)
-        })
+        // Only wake Warden for incidents that meet the minimum severity threshold.
+        // Below-threshold incidents still get the system-notice above (audit trail)
+        // but don't trigger an agentic loop — prevents operational noise (Docker
+        // restarts, stale-source events) from burning tokens on every correlator tick.
+        if (incident.severity >= WARDEN_MIN_SEVERITY) {
+          triggerRoomAgentReplies(securityRoomId, noticeBody).catch((e: unknown) => {
+            // eslint-disable-next-line no-console
+            console.error(`[warden-wakeup] Failed to trigger room agent replies for incident ${incident.id ?? 'unknown'}: ${e instanceof Error ? e.message : e}`)
+          })
+        }
       }
 
       // Update events to reference the new incident

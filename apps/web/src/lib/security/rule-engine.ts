@@ -29,15 +29,15 @@ function envIdFilter(envId: string): string | null {
  * Rule parameter types supported by the correlation engine.
  */
 export type RuleParams =
-  | { type: 'threshold'; field: string; op: 'gte' | 'lte' | 'eq'; value: number; window: number; groupBy: string[]; maxEvents?: number; sourceFilter?: string[] }
-  | { type: 'pattern'; regex: string; field: string; window: number; sourceFilter?: string[]; minSeverity?: number }
+  | { type: 'threshold'; field: string; op: 'gte' | 'lte' | 'eq'; value: number; window: number; groupBy: string[]; maxEvents?: number; sourceFilter?: string[]; typeFilter?: string[] }
+  | { type: 'pattern'; regex: string; field: string; window: number; sourceFilter?: string[]; typeFilter?: string[]; minSeverity?: number }
   | { type: 'malware'; ruleLevel: number; field: string }
   | { type: 'process'; commandPattern: string; window: number }
   | { type: 'composite'; rules: RuleParams[]; combine: 'all' | 'any'; window: number }
   // volume_sum: aggregates a numeric JSON field from rawEvent across all matching
   // events in the window. Fires when the total exceeds `thresholdBytes`.
   // Designed for high-egress / large-transfer detection from ntopng flows.
-  | { type: 'volume_sum'; jsonPath: string; thresholdBytes: number; window: number; sourceFilter?: string[]; groupBy?: string[] }
+  | { type: 'volume_sum'; jsonPath: string; thresholdBytes: number; window: number; sourceFilter?: string[]; typeFilter?: string[]; groupBy?: string[] }
 
 // ── Correlation ───────────────────────────────────────────────────────────────
 
@@ -338,6 +338,7 @@ async function runThresholdRule(
       environmentId: envIdFilter(envId),
       createdAt: { gte: effectiveSince },
       ...(params.sourceFilter?.length ? { source: { in: params.sourceFilter } } : {}),
+      ...(params.typeFilter?.length ? { type: { in: params.typeFilter } } : {}),
     },
     orderBy: { createdAt: 'desc' },
   })
@@ -367,8 +368,12 @@ async function runThresholdRule(
 
     // Calculate severity as max of group events
     const maxSeverity = Math.max(...group.map(e => e.severity))
+    // Only apply the count-based boost when there's a known attacker — infrastructure
+    // events that group under 'unknown' (Docker restarts, stale sources) should not
+    // be artificially boosted to 100 just because the rule sees many of them.
+    const hasKnownAttacker = key !== 'unknown' && key !== ''
     const severity = params.op === 'gte'
-      ? Math.min(100, maxSeverity + (count - params.value) * 5)
+      ? Math.min(100, maxSeverity + (hasKnownAttacker ? (count - params.value) * 5 : 0))
       : maxSeverity
 
     if (!bestGroup || severity > bestGroup.severity) {
@@ -407,6 +412,7 @@ async function runPatternRule(
       environmentId: envIdFilter(envId),
       createdAt: { gte: since },
       ...(params.sourceFilter?.length ? { source: { in: params.sourceFilter } } : {}),
+      ...(params.typeFilter?.length ? { type: { in: params.typeFilter } } : {}),
       ...(params.minSeverity != null ? { severity: { gte: params.minSeverity } } : {}),
     },
     orderBy: { createdAt: 'desc' },
