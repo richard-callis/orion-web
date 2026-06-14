@@ -16,13 +16,15 @@ rules_file:
   - /etc/falco/falco_rules.local.yaml
 
 # ── Engine / driver ─────────────────────────────────────────────────────────
-# Legacy eBPF — broader kernel support than modern_ebpf (CO-RE).
-# modern_ebpf segfaults on this kernel build (6.8); ebpf probe is downloaded
-# by falco-no-driver at startup for the running kernel.
+# modern_ebpf (CO-RE) — no probe file needed; BTF is available on this host
+# at /sys/kernel/btf/vmlinux (kernel 6.8.0-124-generic, PREEMPT_DYNAMIC).
+# The falco:0.38.x image's entrypoint runs `falcoctl driver install` which
+# defaults to modern_ebpf; aligning this config removes the mismatch that
+# caused the crash-loop ("need to provide a path to the bpf object file").
+# Previous note about modern_ebpf segfaulting was on an earlier 6.8 build;
+# verified BTF present before switching.
 engine:
-  kind: ebpf
-  ebpf:
-    probe: ""
+  kind: modern_ebpf
 
 # ── Output channels ─────────────────────────────────────────────────────────
 # http_output: Falco POSTs each alert to Falcosidekick which handles retries,
