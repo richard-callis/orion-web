@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 // SOC2: CR-003 — pod logs are admin-only (vault-namespace logs contain secrets/tokens)
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { ns: string; pod: string } }
+  { params }: { params: Promise<{ ns: string; pod: string }> }
 ) {
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -18,7 +18,7 @@ export async function GET(
   // Validate namespace and pod name as DNS-1123 labels to prevent
   // path-based enumeration of the API server
   const DNS_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
-  if (!DNS_LABEL.test(params.ns) || !DNS_LABEL.test(params.pod)) {
+  if (!DNS_LABEL.test((await params).ns) || !DNS_LABEL.test((await params).pod)) {
     return NextResponse.json({ error: 'Invalid namespace or pod name' }, { status: 400 })
   }
 
@@ -27,8 +27,8 @@ export async function GET(
       try {
         // v0.22: readNamespacedPodLog(name, ns, container, follow, insecureSkipTLS, limitBytes, pretty, previous, sinceSeconds, sinceTime, tailLines, timestamps)
         const res = await coreApi.readNamespacedPodLog(
-          params.pod,
-          params.ns,
+          (await params).pod,
+          (await params).ns,
           undefined,   // container
           false,       // follow
           undefined,   // insecureSkipTLSVerifyBackend

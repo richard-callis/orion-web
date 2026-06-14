@@ -6,10 +6,10 @@ export const dynamic = 'force-dynamic'
 // GET /api/environments/[id]/evals/aggregate
 // Chart data for eval dashboard.
 // Query params: type=conversation|task|skill|hook, window=7|30|90
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
-  const envId = params.id
+  const envId = (await params).id
 
   const env = await prisma.environment.findUnique({ where: { id: envId } })
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })

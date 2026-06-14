@@ -20,10 +20,10 @@ const CreateNebulaInstanceSchema = z.object({
  */
 export async function GET(
   _req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const entries = await prisma.nebulaInstance.findMany({
-    where: { environmentId: params.id },
+    where: { environmentId: (await params).id },
     include: { novaDefinition: { select: { title: true, version: true } } },
     orderBy: { name: 'asc' },
   })
@@ -36,7 +36,7 @@ export async function GET(
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const user = await getCurrentUser()
   if (!user) {
@@ -44,7 +44,7 @@ export async function POST(
   }
   // Require operator or admin tier — check environment-level tier
   const tier = await prisma.environmentUserTier.findUnique({
-    where: { userId_environmentId: { userId: user.id, environmentId: params.id } },
+    where: { userId_environmentId: { userId: user.id, environmentId: (await params).id } },
   })
   const effectiveTier = user.role === 'admin' ? 'admin' : (tier?.tier ?? 'viewer')
   if (!['operator', 'admin'].includes(effectiveTier)) {
@@ -57,7 +57,7 @@ export async function POST(
   if ('error' in result) return result.error
   const { data: body } = result
   const entry = await prisma.nebulaInstance.create({
-    data: { ...body, environmentId: params.id, isForked: true },
+    data: { ...body, environmentId: (await params).id, isForked: true },
   })
   return NextResponse.json(entry)
 }

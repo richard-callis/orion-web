@@ -26,11 +26,11 @@ async function maybeSync(domainId: string) {
   }
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string; recordId: string } }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string; recordId: string }> }) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   const body = await req.json()
   const record = await prisma.dnsRecord.update({
-    where: { id: params.recordId },
+    where: { id: (await params).recordId },
     data: {
       ...(body.ip        !== undefined && { ip:        body.ip.trim() }),
       ...(body.hostnames !== undefined && { hostnames: body.hostnames.map((h: string) => h.trim().toLowerCase()) }),
@@ -38,13 +38,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       ...(body.comment   !== undefined && { comment:   body.comment }),
     },
   })
-  await maybeSync(params.id)
+  await maybeSync((await params).id)
   return NextResponse.json(record)
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string; recordId: string } }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string; recordId: string }> }) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
-  await prisma.dnsRecord.delete({ where: { id: params.recordId } })
-  await maybeSync(params.id)
+  await prisma.dnsRecord.delete({ where: { id: (await params).recordId } })
+  await maybeSync((await params).id)
   return new NextResponse(null, { status: 204 })
 }

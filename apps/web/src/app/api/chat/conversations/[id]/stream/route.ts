@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic'
 // SOC2: [LOW-1] Maximum allowed request body size (1 MB)
 const MAX_BODY_BYTES = 1_048_576
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // SOC2: [LOW-1] Reject oversized bodies before reading them into memory.
   const contentLength = req.headers.get('content-length')
   if (contentLength && parseInt(contentLength, 10) > MAX_BODY_BYTES) {
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return env ? `@${env.name} (environment_id: ${env.id})` : `@${name}`
     })
   }
-  const { id: conversationId } = params
+  const { id: conversationId } = await params
 
   // B3 fix: stream route had no ownership check — any user could read/write any conversation via streaming
   const ownerCheck = await assertConversationOwner(req, conversationId)

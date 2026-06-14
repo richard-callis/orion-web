@@ -14,7 +14,7 @@ import { bootstrapLocalEnvironment, type LocalBootstrapEvent } from '@/lib/local
 
 export async function POST(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
 
@@ -28,7 +28,7 @@ export async function POST(
       }
 
       try {
-        await bootstrapLocalEnvironment(params.id, send)
+        await bootstrapLocalEnvironment((await params).id, send)
       } catch (err) {
         send({ type: 'error', message: err instanceof Error ? err.message : String(err) })
       } finally {

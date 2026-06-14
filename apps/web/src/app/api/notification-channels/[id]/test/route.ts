@@ -5,13 +5,13 @@ import { isPrivateUrl } from '@/lib/ssrf-guard'
 
 export async function POST(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try { await requireAdmin() } catch {
     return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
   }
 
-  const channel = await prisma.notificationChannel.findUnique({ where: { id: params.id } })
+  const channel = await prisma.notificationChannel.findUnique({ where: { id: (await params).id } })
   if (!channel) return NextResponse.json({ ok: false, error: 'Channel not found' }, { status: 404 })
 
   if (await isPrivateUrl(channel.webhookUrl)) {

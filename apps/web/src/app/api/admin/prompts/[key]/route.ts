@@ -9,10 +9,10 @@ import { parseBodyOrError, UpdateSystemPromptSchema } from '@/lib/validate'
 /** GET /api/admin/prompts/:key — get a single prompt's current content */
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { key: string } },
+  { params }: { params: Promise<{ key: string }> },
 ) {
   await requireAdmin()
-  const key = decodeURIComponent(params.key)
+  const key = decodeURIComponent((await params).key)
   const def = PROMPT_DEFAULTS.find(p => p.key === key)
   if (!def) return NextResponse.json({ error: 'Unknown prompt key' }, { status: 404 })
 
@@ -28,14 +28,14 @@ export async function GET(
 /** PUT /api/admin/prompts/:key — save edited prompt content */
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { key: string } },
+  { params }: { params: Promise<{ key: string }> },
 ) {
   await requireAdmin()
   const result = await parseBodyOrError(req, UpdateSystemPromptSchema)
   if ('error' in result) return result.error
   const { data } = result
 
-  const key = decodeURIComponent(params.key)
+  const key = decodeURIComponent((await params).key)
   const def = PROMPT_DEFAULTS.find(p => p.key === key)
   if (!def) {
     return NextResponse.json({ error: 'Unknown prompt key' }, { status: 404 })
@@ -62,10 +62,10 @@ export async function PUT(
 /** POST /api/admin/prompts/:key/reset — restore to default */
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { key: string } },
+  { params }: { params: Promise<{ key: string }> },
 ) {
   await requireAdmin()
-  const key = decodeURIComponent(params.key)
+  const key = decodeURIComponent((await params).key)
   const def = PROMPT_DEFAULTS.find(p => p.key === key)
   if (!def) return NextResponse.json({ error: 'Unknown prompt key' }, { status: 404 })
 

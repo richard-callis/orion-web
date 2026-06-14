@@ -12,15 +12,15 @@ const RunEvalSchema = z.object({
 
 // POST /api/environments/[id]/evals/run
 // Auto-eval trigger — evaluates a conversation or task after completion.
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const { id } = params
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   try {
     await requireGatewayAuthForEnvironment(req, id)
   } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const envId = params.id
+  const envId = (await params).id
 
   // Verify environment exists
   const env = await prisma.environment.findUnique({ where: { id: envId } })

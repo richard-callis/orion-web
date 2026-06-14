@@ -14,14 +14,14 @@ import { requireAdmin } from '@/lib/auth'
 
 export async function POST(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const point = await prisma.ingressPoint.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: {
       domain:      true,
       environment: true,
@@ -78,10 +78,10 @@ export async function POST(
       if (useGateway) {
         await log(`Using gateway at ${gwUrl}`)
         const gc = new GatewayClient(gwUrl!, gwToken!)
-        await bootstrapIngressPointWith(log, (tool, args) => gc.executeTool(tool, args), point, env, isDocker, params.id)
+        await bootstrapIngressPointWith(log, (tool, args) => gc.executeTool(tool, args), point, env, isDocker, (await params).id)
       } else if (useLocal) {
         await log(`Using local kubectl (stored kubeconfig)`)
-        await bootstrapIngressPointWith(log, makeLocalGx(env.kubeconfig!), point, env, isDocker, params.id)
+        await bootstrapIngressPointWith(log, makeLocalGx(env.kubeconfig!), point, env, isDocker, (await params).id)
       }
     },
   )

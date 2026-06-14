@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireServiceAuth } from '@/lib/auth'
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   await requireServiceAuth(req)
 
   const run = await prisma.evalRun.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: {
       suite: { select: { id: true, name: true } },
       agent: { select: { id: true, name: true } },

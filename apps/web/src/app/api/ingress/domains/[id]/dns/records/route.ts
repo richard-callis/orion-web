@@ -22,16 +22,16 @@ async function getGatewayExec(envId: string) {
   }
 }
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   const records = await prisma.dnsRecord.findMany({
-    where: { domainId: params.id },
+    where: { domainId: (await params).id },
     orderBy: { ip: 'asc' },
   })
   return NextResponse.json(records)
 }
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   const body = await req.json()
   if (!body.ip || !Array.isArray(body.hostnames) || body.hostnames.length === 0) {
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const record = await prisma.dnsRecord.create({
     data: {
-      domainId:  params.id,
+      domainId:  (await params).id,
       ip:        body.ip.trim(),
       hostnames: body.hostnames.map((h: string) => h.trim().toLowerCase()),
       comment:   body.comment ?? null,
@@ -49,12 +49,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   })
 
   // Sync to CoreDNS if environment is configured
-  const domain = await prisma.domain.findUnique({ where: { id: params.id } })
+  const domain = await prisma.domain.findUnique({ where: { id: (await params).id } })
   if (domain?.coreDnsEnvironmentId && domain.coreDnsStatus === 'bootstrapped') {
     const gw = await getGatewayExec(domain.coreDnsEnvironmentId)
     if (gw) {
       try {
-        await syncDomainDns(params.id, gw.exec, gw.envType)
+        await syncDomainDns((await params).id, gw.exec, gw.envType)
       } catch (err) {
         console.error('[dns-sync] Sync failed after record create:', err)
       }

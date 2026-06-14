@@ -4,14 +4,14 @@ import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   let caller
   try { caller = await requireServiceAuth(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   const isService = caller === null
   try {
     const execution = await prisma.toolExecution.findUnique({
-      where: { id: params.id },
+      where: { id: (await params).id },
     })
 
     if (!execution) {
@@ -34,7 +34,7 @@ export async function GET(
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   let caller
   try { caller = await requireServiceAuth(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
@@ -42,7 +42,7 @@ export async function PATCH(
   try {
     // Load execution first to verify ownership before mutation
     const existing = await prisma.toolExecution.findUnique({
-      where: { id: params.id },
+      where: { id: (await params).id },
     })
     if (!existing) {
       return NextResponse.json(
@@ -81,7 +81,7 @@ export async function PATCH(
     if (completedAt !== undefined) updateData.completedAt = completedAt
 
     const execution = await prisma.toolExecution.update({
-      where: { id: params.id },
+      where: { id: (await params).id },
       data: updateData,
     })
 

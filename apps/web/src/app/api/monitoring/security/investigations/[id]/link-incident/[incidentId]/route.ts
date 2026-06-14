@@ -11,7 +11,7 @@ import { recordAudit } from '../../../_utils'
 
 export const dynamic = 'force-dynamic'
 
-export async function DELETE(_req: Request, { params }: { params: { id: string; incidentId: string } }) {
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string; incidentId: string }> }) {
   try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
   const { id, incidentId } = await params

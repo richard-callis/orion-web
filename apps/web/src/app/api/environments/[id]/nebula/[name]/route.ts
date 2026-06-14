@@ -18,10 +18,10 @@ async function requireOperator(userId: string, envId: string, role: string) {
  */
 export async function GET(
   _req: Request,
-  { params }: { params: { id: string; name: string } }
+  { params }: { params: Promise<{ id: string; name: string }> }
 ) {
   const entry = await prisma.nebulaInstance.findFirst({
-    where: { environmentId: params.id, name: params.name },
+    where: { environmentId: (await params).id, name: (await params).name },
   })
   if (!entry) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -35,16 +35,16 @@ export async function GET(
  */
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string; name: string } }
+  { params }: { params: Promise<{ id: string; name: string }> }
 ) {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!(await requireOperator(user.id, params.id, user.role))) {
+  if (!(await requireOperator(user.id, (await params).id, user.role))) {
     return NextResponse.json({ error: 'Operator access required' }, { status: 403 })
   }
   const body = await req.json()
   const existing = await prisma.nebulaInstance.findFirst({
-    where: { environmentId: params.id, name: params.name },
+    where: { environmentId: (await params).id, name: (await params).name },
   })
   if (!existing) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -71,15 +71,15 @@ export async function PUT(
  */
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string; name: string } }
+  { params }: { params: Promise<{ id: string; name: string }> }
 ) {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!(await requireOperator(user.id, params.id, user.role))) {
+  if (!(await requireOperator(user.id, (await params).id, user.role))) {
     return NextResponse.json({ error: 'Operator access required' }, { status: 403 })
   }
   await prisma.nebulaInstance.deleteMany({
-    where: { environmentId: params.id, name: params.name },
+    where: { environmentId: (await params).id, name: (await params).name },
   })
   return NextResponse.json({ ok: true })
 }

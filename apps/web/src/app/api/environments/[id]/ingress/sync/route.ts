@@ -20,11 +20,11 @@ export interface K8sIngressRule {
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   // Verify gateway token
   const auth = req.headers.get('authorization')
-  const env = await prisma.environment.findUnique({ where: { id: params.id } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const expectedToken = env.gatewayToken
@@ -59,14 +59,14 @@ export async function POST(
   const ingressPointByDomain = new Map<string, any>()
   for (const [domainSuffix] of parentDomainLookup) {
     let ip = await prisma.ingressPoint.findFirst({
-      where: { environmentId: params.id, type: 'traefik', domainId: parentDomainLookup.get(domainSuffix)!.id },
+      where: { environmentId: (await params).id, type: 'traefik', domainId: parentDomainLookup.get(domainSuffix)!.id },
     })
     if (!ip) {
       const d = parentDomainLookup.get(domainSuffix)!
       ip = await prisma.ingressPoint.create({
         data: {
           domainId:      d.id,
-          environmentId: params.id,
+          environmentId: (await params).id,
           name:          `${env.name} (${d.name})`,
           type:          'traefik',
           certManager:   true,

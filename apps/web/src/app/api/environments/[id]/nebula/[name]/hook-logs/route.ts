@@ -10,13 +10,13 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string; name: string } }
+  { params }: { params: Promise<{ id: string; name: string }> }
 ) {
-  const { id } = params
+  const { id } = await params
   await requireGatewayAuthForEnvironment(req, id).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
 
   const logs = await prisma.hookExecutionLog.findMany({
-    where: { nebula: { environmentId: params.id, name: params.name } },
+    where: { nebula: { environmentId: (await params).id, name: (await params).name } },
     orderBy: { startedAt: 'desc' },
     take: 50,
   })
@@ -29,14 +29,14 @@ export async function GET(
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string; name: string } }
+  { params }: { params: Promise<{ id: string; name: string }> }
 ) {
-  const { id } = params
+  const { id } = await params
   await requireGatewayAuthForEnvironment(req, id).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
 
   const body = await req.json()
   const entry = await prisma.nebulaInstance.findFirst({
-    where: { environmentId: params.id, name: params.name },
+    where: { environmentId: (await params).id, name: (await params).name },
   })
   if (!entry) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })

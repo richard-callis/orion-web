@@ -7,8 +7,8 @@ export const dynamic = 'force-dynamic'
 // List all eval rulesets.
 // POST /api/environments/[id]/evals/rulesets
 // Create or update a ruleset (admin only).
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const envId = params.id
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const envId = (await params).id
 
   const env = await prisma.environment.findUnique({ where: { id: envId } })
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
@@ -30,8 +30,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json(parsed)
 }
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const envId = params.id
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const envId = (await params).id
 
   // Admin check
   try {

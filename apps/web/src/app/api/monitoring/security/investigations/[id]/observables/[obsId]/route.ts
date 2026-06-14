@@ -19,7 +19,7 @@ const updateSchema = z.object({
   role: z.enum(['ioc', 'artifact', 'infrastructure']).optional(),
 })
 
-export async function PATCH(req: Request, { params }: { params: { id: string; obsId: string } }) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string; obsId: string }> }) {
   try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
   const { id, obsId } = await params
@@ -75,7 +75,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string; ob
   return NextResponse.json(updated)
 }
 
-export async function DELETE(_req: Request, { params }: { params: { id: string; obsId: string } }) {
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string; obsId: string }> }) {
   try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
   const { id, obsId } = await params

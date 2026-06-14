@@ -8,11 +8,11 @@ import { requireServiceAuth, assertCanModify } from '@/lib/auth'
  * Cancels a task — used to reject a plan that paused for approval, or to stop a
  * task before it runs. Marks the task 'failed' and records a TaskEvent.
  */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
 
-  const task = await prisma.task.findUnique({ where: { id: params.id } })
+  const task = await prisma.task.findUnique({ where: { id: (await params).id } })
   if (!task) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   await assertCanModify(caller, isService, task.createdBy)
 

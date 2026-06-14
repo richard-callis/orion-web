@@ -7,18 +7,18 @@ import { prisma } from '@/lib/db'
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string; reportId: string } },
+  { params }: { params: Promise<{ id: string; reportId: string }> },
 ) {
-  const { id } = params
+  const { id } = await params
   await requireGatewayAuthForEnvironment(req, id).catch(() => {
     throw Object.assign(new Error('Unauthorized'), { status: 401 })
   })
 
   const report = await prisma.driftReport.findUnique({
-    where: { id: params.reportId },
+    where: { id: (await params).reportId },
   })
 
-  if (!report || report.environmentId !== params.id) {
+  if (!report || report.environmentId !== (await params).id) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 

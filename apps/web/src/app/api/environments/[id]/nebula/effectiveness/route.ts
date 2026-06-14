@@ -10,13 +10,13 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = params
+  const { id } = await params
   await requireGatewayAuthForEnvironment(req, id).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
 
   const entries = await prisma.nebulaInstance.findMany({
-    where: { environmentId: params.id, isInstalled: true },
+    where: { environmentId: (await params).id, isInstalled: true },
     include: {
       hookLogs: { take: 1000, orderBy: { startedAt: 'desc' } },
       skillLogs: { take: 1000, orderBy: { createdAt: 'desc' } },
@@ -26,7 +26,7 @@ export async function GET(
   // AgentScore is on Environment, not NebulaInstance — fetch once per env
   const agentScores = await prisma.agentScore.findMany({
     where: {
-      environmentId: params.id,
+      environmentId: (await params).id,
       targetType: { in: ['skill', 'hook'] },
     },
   })

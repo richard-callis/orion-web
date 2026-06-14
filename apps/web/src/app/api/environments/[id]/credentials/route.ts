@@ -15,11 +15,11 @@ import { prisma } from '@/lib/db'
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
 
-  const env = await prisma.environment.findUnique({ where: { id: params.id } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const body = await req.json() as {
@@ -43,6 +43,6 @@ export async function PATCH(
     data.kubeconfig = body.kubeconfig.trim() || null
   }
 
-  await prisma.environment.update({ where: { id: params.id }, data })
+  await prisma.environment.update({ where: { id: (await params).id }, data })
   return NextResponse.json({ ok: true })
 }

@@ -165,11 +165,11 @@ function buildDockerCorefile(domainName: string): string {
 
 export async function POST(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   const domain = await prisma.domain.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: { coreDnsEnvironment: true, dnsRecords: { where: { enabled: true } } },
   })
   if (!domain) return new Response(JSON.stringify({ error: 'Domain not found' }), { status: 404 })
@@ -263,7 +263,7 @@ export async function POST(
         }
 
         await prisma.domain.update({
-          where: { id: params.id },
+          where: { id: (await params).id },
           data: { coreDnsStatus: 'bootstrapped', ...(assignedIp ? { coreDnsIp: assignedIp } : {}) },
         })
 
@@ -274,7 +274,7 @@ export async function POST(
         const msg = err instanceof Error ? err.message : String(err)
         log(ctrl, `Bootstrap failed: ${msg}`)
         sse(ctrl, { type: 'done', success: false, error: msg })
-        await prisma.domain.update({ where: { id: params.id }, data: { coreDnsStatus: 'error' } })
+        await prisma.domain.update({ where: { id: (await params).id }, data: { coreDnsStatus: 'error' } })
       } finally {
         ctrl.close()
       }
