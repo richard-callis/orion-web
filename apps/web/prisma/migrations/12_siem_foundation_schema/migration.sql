@@ -4,7 +4,7 @@ ALTER TABLE "SecurityEvent" ADD COLUMN "firstSeen" TIMESTAMP(3);
 ALTER TABLE "SecurityEvent" ADD COLUMN "lastSeen" TIMESTAMP(3);
 
 -- CreateTable: Incident
-CREATE TABLE "Incident" (
+CREATE TABLE IF NOT EXISTS "Incident" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT,
     "status" TEXT NOT NULL DEFAULT 'open',
@@ -19,7 +19,7 @@ CREATE TABLE "Incident" (
 );
 
 -- CreateTable: ActionAudit
-CREATE TABLE "ActionAudit" (
+CREATE TABLE IF NOT EXISTS "ActionAudit" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT,
     "incidentId" TEXT,
@@ -39,7 +39,7 @@ CREATE TABLE "ActionAudit" (
 );
 
 -- CreateTable: ActionPolicy
-CREATE TABLE "ActionPolicy" (
+CREATE TABLE IF NOT EXISTS "ActionPolicy" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT,
     "actionType" TEXT NOT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE "ActionPolicy" (
 );
 
 -- CreateTable: CorrelationRule
-CREATE TABLE "CorrelationRule" (
+CREATE TABLE IF NOT EXISTS "CorrelationRule" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT,
     "name" TEXT NOT NULL,
@@ -69,7 +69,7 @@ CREATE TABLE "CorrelationRule" (
 );
 
 -- CreateTable: SourceHealth
-CREATE TABLE "SourceHealth" (
+CREATE TABLE IF NOT EXISTS "SourceHealth" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT,
     "source" TEXT NOT NULL,
@@ -83,7 +83,7 @@ CREATE TABLE "SourceHealth" (
 );
 
 -- CreateTable: Suppression
-CREATE TABLE "Suppression" (
+CREATE TABLE IF NOT EXISTS "Suppression" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT,
     "matchPattern" JSONB NOT NULL,

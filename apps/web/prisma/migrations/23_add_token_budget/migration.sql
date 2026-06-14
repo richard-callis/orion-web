@@ -3,7 +3,7 @@ ALTER TABLE "Agent" ADD COLUMN "tokenBudgetDay"   INTEGER;
 ALTER TABLE "Agent" ADD COLUMN "tokenBudgetMonth" INTEGER;
 
 -- Create AgentTokenUsage table
-CREATE TABLE "AgentTokenUsage" (
+CREATE TABLE IF NOT EXISTS "AgentTokenUsage" (
   "id"           TEXT NOT NULL,
   "agentId"      TEXT NOT NULL,
   "taskId"       TEXT NOT NULL,

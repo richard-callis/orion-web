@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "Conversation" (
+CREATE TABLE IF NOT EXISTS "Conversation" (
     "id" TEXT NOT NULL,
     "title" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -11,7 +11,7 @@ CREATE TABLE "Conversation" (
 );
 
 -- CreateTable
-CREATE TABLE "Message" (
+CREATE TABLE IF NOT EXISTS "Message" (
     "id" TEXT NOT NULL,
     "conversationId" TEXT NOT NULL,
     "role" TEXT NOT NULL,
@@ -26,7 +26,7 @@ CREATE TABLE "Message" (
 );
 
 -- CreateTable
-CREATE TABLE "ClaudeInvocation" (
+CREATE TABLE IF NOT EXISTS "ClaudeInvocation" (
     "id" TEXT NOT NULL,
     "conversationId" TEXT NOT NULL,
     "prompt" TEXT NOT NULL,
@@ -40,7 +40,7 @@ CREATE TABLE "ClaudeInvocation" (
 );
 
 -- CreateTable
-CREATE TABLE "Memory" (
+CREATE TABLE IF NOT EXISTS "Memory" (
     "id" TEXT NOT NULL,
     "conversationId" TEXT NOT NULL,
     "key" TEXT NOT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE "Memory" (
 );
 
 -- CreateTable
-CREATE TABLE "Agent" (
+CREATE TABLE IF NOT EXISTS "Agent" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "type" TEXT NOT NULL DEFAULT 'human',
@@ -68,7 +68,7 @@ CREATE TABLE "Agent" (
 );
 
 -- CreateTable
-CREATE TABLE "Environment" (
+CREATE TABLE IF NOT EXISTS "Environment" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "type" TEXT NOT NULL DEFAULT 'cluster',
@@ -92,7 +92,7 @@ CREATE TABLE "Environment" (
 );
 
 -- CreateTable
-CREATE TABLE "GitOpsPR" (
+CREATE TABLE IF NOT EXISTS "GitOpsPR" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT NOT NULL,
     "prNumber" INTEGER NOT NULL,
@@ -111,7 +111,7 @@ CREATE TABLE "GitOpsPR" (
 );
 
 -- CreateTable
-CREATE TABLE "McpTool" (
+CREATE TABLE IF NOT EXISTS "McpTool" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
@@ -131,7 +131,7 @@ CREATE TABLE "McpTool" (
 );
 
 -- CreateTable
-CREATE TABLE "AgentEnvironment" (
+CREATE TABLE IF NOT EXISTS "AgentEnvironment" (
     "id" TEXT NOT NULL,
     "agentId" TEXT NOT NULL,
     "environmentId" TEXT NOT NULL,
@@ -141,7 +141,7 @@ CREATE TABLE "AgentEnvironment" (
 );
 
 -- CreateTable
-CREATE TABLE "EnvironmentJoinToken" (
+CREATE TABLE IF NOT EXISTS "EnvironmentJoinToken" (
     "id" TEXT NOT NULL,
     "token" TEXT NOT NULL,
     "environmentId" TEXT NOT NULL,
@@ -154,7 +154,7 @@ CREATE TABLE "EnvironmentJoinToken" (
 );
 
 -- CreateTable
-CREATE TABLE "AgentMessage" (
+CREATE TABLE IF NOT EXISTS "AgentMessage" (
     "id" TEXT NOT NULL,
     "agentId" TEXT,
     "channel" TEXT NOT NULL DEFAULT 'general',
@@ -168,7 +168,7 @@ CREATE TABLE "AgentMessage" (
 );
 
 -- CreateTable
-CREATE TABLE "Epic" (
+CREATE TABLE IF NOT EXISTS "Epic" (
     "id" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "description" TEXT,
@@ -182,7 +182,7 @@ CREATE TABLE "Epic" (
 );
 
 -- CreateTable
-CREATE TABLE "Feature" (
+CREATE TABLE IF NOT EXISTS "Feature" (
     "id" TEXT NOT NULL,
     "epicId" TEXT NOT NULL,
     "title" TEXT NOT NULL,
@@ -197,7 +197,7 @@ CREATE TABLE "Feature" (
 );
 
 -- CreateTable
-CREATE TABLE "Task" (
+CREATE TABLE IF NOT EXISTS "Task" (
     "id" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "description" TEXT,
@@ -216,7 +216,7 @@ CREATE TABLE "Task" (
 );
 
 -- CreateTable
-CREATE TABLE "TaskEvent" (
+CREATE TABLE IF NOT EXISTS "TaskEvent" (
     "id" TEXT NOT NULL,
     "taskId" TEXT NOT NULL,
     "eventType" TEXT NOT NULL,
@@ -228,7 +228,7 @@ CREATE TABLE "TaskEvent" (
 );
 
 -- CreateTable
-CREATE TABLE "AuditLog" (
+CREATE TABLE IF NOT EXISTS "AuditLog" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "action" TEXT NOT NULL,
@@ -243,7 +243,7 @@ CREATE TABLE "AuditLog" (
 );
 
 -- CreateTable
-CREATE TABLE "SavedView" (
+CREATE TABLE IF NOT EXISTS "SavedView" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "page" TEXT NOT NULL,
@@ -254,7 +254,7 @@ CREATE TABLE "SavedView" (
 );
 
 -- CreateTable
-CREATE TABLE "SystemSetting" (
+CREATE TABLE IF NOT EXISTS "SystemSetting" (
     "key" TEXT NOT NULL,
     "value" JSONB NOT NULL,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -263,7 +263,7 @@ CREATE TABLE "SystemSetting" (
 );
 
 -- CreateTable
-CREATE TABLE "SystemPrompt" (
+CREATE TABLE IF NOT EXISTS "SystemPrompt" (
     "key" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
@@ -276,7 +276,7 @@ CREATE TABLE "SystemPrompt" (
 );
 
 -- CreateTable
-CREATE TABLE "Note" (
+CREATE TABLE IF NOT EXISTS "Note" (
     "id" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "content" TEXT NOT NULL DEFAULT '',
@@ -291,7 +291,7 @@ CREATE TABLE "Note" (
 );
 
 -- CreateTable
-CREATE TABLE "note_embeddings" (
+CREATE TABLE IF NOT EXISTS "note_embeddings" (
     "noteId" TEXT NOT NULL,
     "embedding" TEXT NOT NULL,
     "dimension" INTEGER NOT NULL,
@@ -304,7 +304,7 @@ CREATE TABLE "note_embeddings" (
 );
 
 -- CreateTable
-CREATE TABLE "semantic_connections" (
+CREATE TABLE IF NOT EXISTS "semantic_connections" (
     "sourceNoteId" TEXT NOT NULL,
     "targetNoteId" TEXT NOT NULL,
     "score" DOUBLE PRECISION NOT NULL,
@@ -315,7 +315,7 @@ CREATE TABLE "semantic_connections" (
 );
 
 -- CreateTable
-CREATE TABLE "User" (
+CREATE TABLE IF NOT EXISTS "User" (
     "id" TEXT NOT NULL,
     "username" TEXT NOT NULL,
     "email" TEXT NOT NULL,
@@ -337,7 +337,7 @@ CREATE TABLE "User" (
 );
 
 -- CreateTable
-CREATE TABLE "api_keys" (
+CREATE TABLE IF NOT EXISTS "api_keys" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "hash" TEXT NOT NULL,
@@ -353,7 +353,7 @@ CREATE TABLE "api_keys" (
 );
 
 -- CreateTable
-CREATE TABLE "Session" (
+CREATE TABLE IF NOT EXISTS "Session" (
     "id" TEXT NOT NULL,
     "sessionToken" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
@@ -363,14 +363,14 @@ CREATE TABLE "Session" (
 );
 
 -- CreateTable
-CREATE TABLE "VerificationToken" (
+CREATE TABLE IF NOT EXISTS "VerificationToken" (
     "identifier" TEXT NOT NULL,
     "token" TEXT NOT NULL,
     "expires" TIMESTAMP(3) NOT NULL
 );
 
 -- CreateTable
-CREATE TABLE "Bug" (
+CREATE TABLE IF NOT EXISTS "Bug" (
     "id" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "description" TEXT,
@@ -386,7 +386,7 @@ CREATE TABLE "Bug" (
 );
 
 -- CreateTable
-CREATE TABLE "ExternalModel" (
+CREATE TABLE IF NOT EXISTS "ExternalModel" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "provider" TEXT NOT NULL,
@@ -402,7 +402,7 @@ CREATE TABLE "ExternalModel" (
 );
 
 -- CreateTable
-CREATE TABLE "OIDCProvider" (
+CREATE TABLE IF NOT EXISTS "OIDCProvider" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL DEFAULT 'Authentik',
     "enabled" BOOLEAN NOT NULL DEFAULT true,
@@ -415,7 +415,7 @@ CREATE TABLE "OIDCProvider" (
 );
 
 -- CreateTable
-CREATE TABLE "ToolGroup" (
+CREATE TABLE IF NOT EXISTS "ToolGroup" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
@@ -428,7 +428,7 @@ CREATE TABLE "ToolGroup" (
 );
 
 -- CreateTable
-CREATE TABLE "ToolGroupTool" (
+CREATE TABLE IF NOT EXISTS "ToolGroupTool" (
     "toolGroupId" TEXT NOT NULL,
     "toolId" TEXT NOT NULL,
 
@@ -436,7 +436,7 @@ CREATE TABLE "ToolGroupTool" (
 );
 
 -- CreateTable
-CREATE TABLE "AgentGroup" (
+CREATE TABLE IF NOT EXISTS "AgentGroup" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
@@ -446,7 +446,7 @@ CREATE TABLE "AgentGroup" (
 );
 
 -- CreateTable
-CREATE TABLE "AgentGroupMember" (
+CREATE TABLE IF NOT EXISTS "AgentGroupMember" (
     "agentGroupId" TEXT NOT NULL,
     "agentId" TEXT NOT NULL,
 
@@ -454,7 +454,7 @@ CREATE TABLE "AgentGroupMember" (
 );
 
 -- CreateTable
-CREATE TABLE "AgentGroupToolAccess" (
+CREATE TABLE IF NOT EXISTS "AgentGroupToolAccess" (
     "agentGroupId" TEXT NOT NULL,
     "toolGroupId" TEXT NOT NULL,
 
@@ -462,7 +462,7 @@ CREATE TABLE "AgentGroupToolAccess" (
 );
 
 -- CreateTable
-CREATE TABLE "ToolAgentRestriction" (
+CREATE TABLE IF NOT EXISTS "ToolAgentRestriction" (
     "toolId" TEXT NOT NULL,
     "agentId" TEXT NOT NULL,
 
@@ -470,7 +470,7 @@ CREATE TABLE "ToolAgentRestriction" (
 );
 
 -- CreateTable
-CREATE TABLE "EnvironmentUserTier" (
+CREATE TABLE IF NOT EXISTS "EnvironmentUserTier" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "environmentId" TEXT NOT NULL,
@@ -480,7 +480,7 @@ CREATE TABLE "EnvironmentUserTier" (
 );
 
 -- CreateTable
-CREATE TABLE "ToolApprovalRequest" (
+CREATE TABLE IF NOT EXISTS "ToolApprovalRequest" (
     "id" TEXT NOT NULL,
     "conversationId" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
@@ -498,7 +498,7 @@ CREATE TABLE "ToolApprovalRequest" (
 );
 
 -- CreateTable
-CREATE TABLE "ToolExecutionGrant" (
+CREATE TABLE IF NOT EXISTS "ToolExecutionGrant" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "environmentId" TEXT NOT NULL,
@@ -511,7 +511,7 @@ CREATE TABLE "ToolExecutionGrant" (
 );
 
 -- CreateTable
-CREATE TABLE "Domain" (
+CREATE TABLE IF NOT EXISTS "Domain" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "type" TEXT NOT NULL DEFAULT 'public',
@@ -526,7 +526,7 @@ CREATE TABLE "Domain" (
 );
 
 -- CreateTable
-CREATE TABLE "DnsRecord" (
+CREATE TABLE IF NOT EXISTS "DnsRecord" (
     "id" TEXT NOT NULL,
     "domainId" TEXT NOT NULL,
     "ip" TEXT NOT NULL,
@@ -540,7 +540,7 @@ CREATE TABLE "DnsRecord" (
 );
 
 -- CreateTable
-CREATE TABLE "IngressPoint" (
+CREATE TABLE IF NOT EXISTS "IngressPoint" (
     "id" TEXT NOT NULL,
     "domainId" TEXT NOT NULL,
     "environmentId" TEXT,
@@ -559,7 +559,7 @@ CREATE TABLE "IngressPoint" (
 );
 
 -- CreateTable
-CREATE TABLE "IngressRoute" (
+CREATE TABLE IF NOT EXISTS "IngressRoute" (
     "id" TEXT NOT NULL,
     "ingressPointId" TEXT NOT NULL,
     "host" TEXT NOT NULL,
@@ -577,7 +577,7 @@ CREATE TABLE "IngressRoute" (
 );
 
 -- CreateTable
-CREATE TABLE "BackgroundJob" (
+CREATE TABLE IF NOT EXISTS "BackgroundJob" (
     "id" TEXT NOT NULL,
     "type" TEXT NOT NULL,
     "title" TEXT NOT NULL,
@@ -594,7 +594,7 @@ CREATE TABLE "BackgroundJob" (
 );
 
 -- CreateTable
-CREATE TABLE "IngressMiddleware" (
+CREATE TABLE IF NOT EXISTS "IngressMiddleware" (
     "id" TEXT NOT NULL,
     "ingressPointId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
@@ -608,7 +608,7 @@ CREATE TABLE "IngressMiddleware" (
 );
 
 -- CreateTable
-CREATE TABLE "nova" (
+CREATE TABLE IF NOT EXISTS "nova" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "displayName" TEXT NOT NULL,
@@ -625,7 +625,7 @@ CREATE TABLE "nova" (
 );
 
 -- CreateTable
-CREATE TABLE "NovaDeployment" (
+CREATE TABLE IF NOT EXISTS "NovaDeployment" (
     "id" TEXT NOT NULL,
     "novaId" TEXT NOT NULL,
     "environmentId" TEXT,
@@ -641,7 +641,7 @@ CREATE TABLE "NovaDeployment" (
 );
 
 -- CreateTable
-CREATE TABLE "NovaRevision" (
+CREATE TABLE IF NOT EXISTS "NovaRevision" (
     "id" TEXT NOT NULL,
     "novaId" TEXT NOT NULL,
     "version" TEXT NOT NULL,
@@ -654,7 +654,7 @@ CREATE TABLE "NovaRevision" (
 );
 
 -- CreateTable
-CREATE TABLE "chat_rooms" (
+CREATE TABLE IF NOT EXISTS "chat_rooms" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
@@ -668,7 +668,7 @@ CREATE TABLE "chat_rooms" (
 );
 
 -- CreateTable
-CREATE TABLE "chat_room_members" (
+CREATE TABLE IF NOT EXISTS "chat_room_members" (
     "id" TEXT NOT NULL,
     "roomId" TEXT NOT NULL,
     "agentId" TEXT,
@@ -681,7 +681,7 @@ CREATE TABLE "chat_room_members" (
 );
 
 -- CreateTable
-CREATE TABLE "chat_messages" (
+CREATE TABLE IF NOT EXISTS "chat_messages" (
     "id" TEXT NOT NULL,
     "roomId" TEXT NOT NULL,
     "agentId" TEXT,

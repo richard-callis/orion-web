@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "NotificationChannel" (
+CREATE TABLE IF NOT EXISTS "NotificationChannel" (
     "id"          TEXT NOT NULL,
     "name"        TEXT NOT NULL,
     "type"        TEXT NOT NULL,

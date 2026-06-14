@@ -1,7 +1,7 @@
 -- Add RoomGoal model: tracks goals set in chat rooms with full history,
 -- status, completion summary, and who set them.
 
-CREATE TABLE "room_goals" (
+CREATE TABLE IF NOT EXISTS "room_goals" (
     "id" TEXT NOT NULL,
     "roomId" TEXT NOT NULL,
     "text" TEXT NOT NULL,

@@ -13,7 +13,7 @@ CREATE TYPE "ObservableRole" AS ENUM ('ioc', 'artifact', 'infrastructure');
 
 -- ── Investigation table ────────────────────────────────────────────────────────
 
-CREATE TABLE "Investigation" (
+CREATE TABLE IF NOT EXISTS "Investigation" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid(),
   "name" TEXT NOT NULL,
   "status" "InvestigationStatus" NOT NULL DEFAULT 'open',
@@ -50,7 +50,7 @@ CREATE INDEX "Investigation_externalId" ON "Investigation"("externalId");
 
 -- ── InvestigationNote table ────────────────────────────────────────────────────
 
-CREATE TABLE "InvestigationNote" (
+CREATE TABLE IF NOT EXISTS "InvestigationNote" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid(),
   "investigationId" UUID NOT NULL,
   "content" TEXT NOT NULL,
@@ -73,7 +73,7 @@ CREATE INDEX "InvestigationNote_searchVector_idx" ON "InvestigationNote" USING g
 
 -- ── InvestigationObservable table ──────────────────────────────────────────────
 
-CREATE TABLE "InvestigationObservable" (
+CREATE TABLE IF NOT EXISTS "InvestigationObservable" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid(),
   "investigationId" UUID NOT NULL,
   "value" TEXT NOT NULL,
@@ -106,7 +106,7 @@ CREATE INDEX "InvestigationObservable_verdict" ON "InvestigationObservable"("ver
 
 -- ── InvestigationTimeline table ────────────────────────────────────────────────
 
-CREATE TABLE "InvestigationTimeline" (
+CREATE TABLE IF NOT EXISTS "InvestigationTimeline" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid(),
   "investigationId" UUID NOT NULL,
   "eventTime" TIMESTAMPTZ(3) NOT NULL,
@@ -127,7 +127,7 @@ CREATE INDEX "InvestigationTimeline_investigationId_eventType" ON "Investigation
 
 -- ── InvestigationAudit table ───────────────────────────────────────────────────
 
-CREATE TABLE "InvestigationAudit" (
+CREATE TABLE IF NOT EXISTS "InvestigationAudit" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid(),
   "investigationId" UUID NOT NULL,
   "actorId" TEXT NOT NULL,
