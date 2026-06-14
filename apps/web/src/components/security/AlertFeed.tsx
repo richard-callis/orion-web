@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { AlertTriangle, CheckCircle2, XCircle, Loader2, Shield, Globe, Database } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { AlertTriangle, CheckCircle2, XCircle, Loader2, Shield, Globe, Database, CheckCheck } from 'lucide-react'
 import Link from 'next/link'
 import { type NotifyMessage } from '@/lib/security/stream-utils'
 
@@ -49,6 +49,7 @@ function SeverityBadge({ severity }: { severity: number }) {
 export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: any[]; compact?: boolean }) {
   const [alerts, setAlerts] = useState(initialAlerts || [])
   const [selected, setSelected] = useState<string[]>([])
+  const [ackingAll, setAckingAll] = useState(false)
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -94,6 +95,17 @@ export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: 
     setSelected([])
   }
 
+  const ackAll = useCallback(async () => {
+    setAckingAll(true)
+    try {
+      await fetch('/api/monitoring/security/alerts/ack-all', { method: 'POST' })
+      setAlerts(prev => prev.map((a: any) => ({ ...a, acknowledged: true })))
+      setSelected([])
+    } finally {
+      setAckingAll(false)
+    }
+  }, [])
+
   if (alerts.length === 0 && !initialAlerts) {
     return (
       <div className="p-8 text-center text-text-muted text-sm">
@@ -116,16 +128,34 @@ export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: 
     )
   }
 
+  const hasUnacked = alerts.some((a: any) => !a.acknowledged)
+
   return (
     <div>
-      {selected.length > 0 && (
-        <div className="px-4 py-2 border-b border-border-subtle flex items-center justify-between bg-bg-raised">
-          <span className="text-xs text-text-muted">{selected.length} selected</span>
-          <button onClick={ackSelected} className="text-xs text-accent hover:underline">
-            Acknowledge selected
-          </button>
-        </div>
-      )}
+      <div className="px-4 py-2 border-b border-border-subtle flex items-center justify-between bg-bg-raised min-h-[36px]">
+        {selected.length > 0 ? (
+          <>
+            <span className="text-xs text-text-muted">{selected.length} selected</span>
+            <button onClick={ackSelected} className="text-xs text-accent hover:underline">
+              Acknowledge selected
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="text-xs text-text-muted">{alerts.filter((a: any) => !a.acknowledged).length} unacknowledged</span>
+            {hasUnacked && (
+              <button
+                onClick={ackAll}
+                disabled={ackingAll}
+                className="flex items-center gap-1.5 text-xs text-text-secondary border border-border-subtle rounded px-2 py-1 hover:text-accent hover:border-accent/40 transition-colors disabled:opacity-50"
+              >
+                <CheckCheck size={11} />
+                {ackingAll ? 'Clearing…' : 'Acknowledge All'}
+              </button>
+            )}
+          </>
+        )}
+      </div>
 
       <div className="divide-y divide-border-subtle">
         {alerts.map((alert: any) => {
