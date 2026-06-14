@@ -12,6 +12,7 @@ interface AgentRow {
   costUsd: number
   savingsUsd: number
   tasks: number
+  last7: number[]
 }
 
 interface DayRow {
@@ -55,17 +56,7 @@ function fmtUsd(n: number): string {
   return `$${n.toFixed(2)}`
 }
 
-function Sparkline({ agentId, days }: { agentId: string; days: Days }) {
-  const [data, setData] = useState<number[]>([])
-  useEffect(() => {
-    fetch(`/api/cost/summary?days=${days}`)
-      .then(r => r.json())
-      .then((s: Summary) => {
-        setData(s.byDay.slice(-7).map(d => d.inputTokens + d.outputTokens))
-      })
-      .catch(() => {})
-  }, [agentId, days])
-
+function Sparkline({ data }: { data: number[] }) {
   if (!data.length) return <div className="w-16 h-5" />
   const max = Math.max(...data, 1)
   return (
@@ -288,7 +279,7 @@ export default function CostPage() {
                             {hasCost    && <td className="py-2 text-right text-status-error">{fmtUsd(a.costUsd)}</td>}
                             {hasSavings && <td className="py-2 text-right text-status-healthy">{fmtUsd(a.savingsUsd)}</td>}
                             <td className="py-2 text-right text-text-secondary">{a.tasks}</td>
-                            <td className="py-2 pl-2"><Sparkline agentId={a.agentId} days={days} /></td>
+                            <td className="py-2 pl-2"><Sparkline data={a.last7} /></td>
                           </tr>
                         )
                       })}

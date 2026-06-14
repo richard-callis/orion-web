@@ -67,6 +67,7 @@ export async function GET(req: NextRequest) {
     inputTokens: number; outputTokens: number
     costUsd: number; savingsUsd: number
     tasks: Set<string>
+    byDay: Map<string, number>
   }>()
   const modelMap = new Map<string, {
     modelId: string; selfHosted: boolean
@@ -92,7 +93,7 @@ export async function GET(req: NextRequest) {
     const agentId   = r.agentId
     const agentName = r.agent?.name ?? agentId
     if (!agentMap.has(agentId)) {
-      agentMap.set(agentId, { agentId, agentName, inputTokens: 0, outputTokens: 0, costUsd: 0, savingsUsd: 0, tasks: new Set() })
+      agentMap.set(agentId, { agentId, agentName, inputTokens: 0, outputTokens: 0, costUsd: 0, savingsUsd: 0, tasks: new Set(), byDay: new Map() })
     }
     const ag = agentMap.get(agentId)!
     ag.inputTokens  += r.inputTokens
@@ -100,6 +101,8 @@ export async function GET(req: NextRequest) {
     ag.costUsd      += costUsd    ?? 0
     ag.savingsUsd   += savingsUsd ?? 0
     if (r.taskId) ag.tasks.add(r.taskId as string)
+    const agDateKey = r.recordedAt.toISOString().slice(0, 10)
+    ag.byDay.set(agDateKey, (ag.byDay.get(agDateKey) ?? 0) + r.inputTokens + r.outputTokens)
 
     // By model
     if (mId) {
@@ -131,6 +134,9 @@ export async function GET(req: NextRequest) {
     byDay.push({ date: key, ...entry })
   }
 
+  // The last 7 day-keys of the window, used for each agent's sparkline series
+  const last7Keys = byDay.slice(-7).map(d => d.date)
+
   const byAgent = Array.from(agentMap.values()).map(a => ({
     agentId:      a.agentId,
     agentName:    a.agentName,
@@ -139,6 +145,7 @@ export async function GET(req: NextRequest) {
     costUsd:      a.costUsd,
     savingsUsd:   a.savingsUsd,
     tasks:        a.tasks.size,
+    last7:        last7Keys.map(k => a.byDay.get(k) ?? 0),
   })).sort((a, b) => (b.inputTokens + b.outputTokens) - (a.inputTokens + a.outputTokens))
 
   const byModel = Array.from(modelMap.values())
