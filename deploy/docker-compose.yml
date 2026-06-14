@@ -599,6 +599,12 @@ services:
     restart: unless-stopped
     privileged: true
     pid: host
+    # modern_ebpf ring buffers need locked memory beyond the Docker default (8 MB).
+    # Without this, scap_init fails even in a privileged container.
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
     volumes:
       - /var/run/docker.sock:/host/var/run/docker.sock:ro
       - /dev:/host/dev:ro
