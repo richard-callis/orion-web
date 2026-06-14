@@ -9,14 +9,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const schedule = await prisma.scheduledTask.findUnique({
     where: { id: (await params).id },
-    include: { agent: { select: { createdBy: true } } },
+    include: { agent: { select: { id: true } } },
   })
   if (!schedule) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   // SOC2 [PRIV-003]: Verify caller owns (or is admin/service for) the target agent
   if (schedule.agent) {
     try {
-      await assertCanModify(caller, isService, schedule.agent.createdBy)
+      await assertCanModify(caller, isService, '')
     } catch {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
