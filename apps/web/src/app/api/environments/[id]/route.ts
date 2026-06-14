@@ -6,7 +6,7 @@ import { parseBodyOrError, CreateEnvironmentSchema } from '@/lib/validate'
 import { encrypt, decrypt } from '@/lib/encryption'
 import { timingSafeEqual } from 'crypto'
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // BLOCKER fix: GET had no auth — any request with an arbitrary Bearer header
   // passes through BEARER_PATHS middleware without a session, exposing environment
   // config (gitOwner/Repo, gatewayUrl, tool list, policyConfig) to unauthenticated callers.
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   // in PUT or by the downstream operation. For GET, validate it matches this env.
   if (auth?.startsWith('Bearer ')) {
     const token = auth.slice(7)
-    const envCheck = await prisma.environment.findUnique({ where: { id: params.id }, select: { gatewayToken: true } })
+    const envCheck = await prisma.environment.findUnique({ where: { id: (await params).id }, select: { gatewayToken: true } })
     if (!envCheck?.gatewayToken) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -37,7 +37,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }
 
   const env = await prisma.environment.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: {
       tools:     { orderBy: { name: 'asc' } },
       agents:    { include: { agent: true } },
@@ -52,7 +52,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   })
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = req.headers.get('authorization')
 
   if (auth?.startsWith('Bearer ')) {
@@ -60,7 +60,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     // Validate the token against the stored gateway token for this environment.
     const body = await req.json()
     const env = await prisma.environment.findUnique({
-      where: { id: params.id },
+      where: { id: (await params).id },
       select: { gatewayToken: true, gatewayUrl: true },
     })
     if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -85,7 +85,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     if (body.gatewayVersion !== undefined) data.gatewayVersion = body.gatewayVersion || null
 
     const updated = await prisma.environment.update({
-      where: { id: params.id },
+      where: { id: (await params).id },
       data,
       include: {
         tools:     { orderBy: { name: 'asc' } },
@@ -98,7 +98,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       void logAudit({
         userId: 'gateway',
         action: 'environment_update',
-        target: `environment:${params.id}`,
+        target: `environment:${(await params).id}`,
         detail: { field: 'gatewayUrl', changed: true },
       })
     }
@@ -116,7 +116,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     const { data } = result
 
     const admin = await requireAdmin()
-    const existing = await prisma.environment.findUnique({ where: { id: params.id }, select: { gatewayUrl: true } })
+    const existing = await prisma.environment.findUnique({ where: { id: (await params).id }, select: { gatewayUrl: true } })
     const updateData: Record<string, unknown> = {}
     if (data.name !== undefined) updateData.name = data.name.trim()
     if (data.type !== undefined) updateData.type = data.type
@@ -142,7 +142,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     if (data.hubUrl          !== undefined) updateData.hubUrl          = data.hubUrl          ?? null
 
     const env = await prisma.environment.update({
-      where: { id: params.id },
+      where: { id: (await params).id },
       data: updateData,
       include: {
         tools:     { orderBy: { name: 'asc' } },
@@ -155,7 +155,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     logAudit({
       userId: admin.id,
       action: 'environment_update',
-      target: `environment:${params.id}`,
+      target: `environment:${(await params).id}`,
       detail: { name: data.name ?? env.name, changes: Object.keys(updateData) },
       ipAddress: getClientIp(req),
       userAgent: getUserAgent(req.headers),
@@ -165,7 +165,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       void logAudit({
         userId: admin.id,
         action: 'environment_update',
-        target: `environment:${params.id}`,
+        target: `environment:${(await params).id}`,
         detail: { field: 'gatewayUrl', changed: true },
       })
     }
@@ -178,19 +178,19 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const admin = await requireAdmin()
   const env = await prisma.environment.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     select: { name: true },
   })
-  await prisma.environment.delete({ where: { id: params.id } })
+  await prisma.environment.delete({ where: { id: (await params).id } })
 
   // SOC2: [M-005] Log environment deletion (non-blocking)
   logAudit({
     userId: admin.id,
     action: 'environment_delete',
-    target: `environment:${params.id}`,
+    target: `environment:${(await params).id}`,
     detail: { name: env?.name },
     ipAddress: getClientIp(_req),
     userAgent: getUserAgent(_req.headers),

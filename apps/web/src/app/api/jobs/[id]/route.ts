@@ -15,24 +15,24 @@ async function guard() {
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const deny = await guard(); if (deny) return deny
-  const job = await prisma.backgroundJob.findUnique({ where: { id: params.id } })
+  const job = await prisma.backgroundJob.findUnique({ where: { id: (await params).id } })
   if (!job) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   return NextResponse.json(job)
 }
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const deny = await guard(); if (deny) return deny
   const parsed = await parseBodyOrError(req, PatchJobSchema)
   if ('error' in parsed) return parsed.error
   const { archived } = parsed.data
   const job = await prisma.backgroundJob.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data: {
       archivedAt: archived ? new Date() : null,
       updatedAt: new Date(),
@@ -43,9 +43,9 @@ export async function PATCH(
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const deny = await guard(); if (deny) return deny
-  await prisma.backgroundJob.delete({ where: { id: params.id } })
+  await prisma.backgroundJob.delete({ where: { id: (await params).id } })
   return new NextResponse(null, { status: 204 })
 }

@@ -7,8 +7,8 @@ import { prisma } from '@/lib/db'
 // Find or create a "direct" ChatRoom between the current user and this agent.
 // Returns { roomId } so the caller can navigate to /messages?r=<roomId>.
 // The Conversation model is no longer used for new chats (SOC2: attribution via ChatRoomMember).
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const agent = await prisma.agent.findUnique({ where: { id: params.id } })
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const agent = await prisma.agent.findUnique({ where: { id: (await params).id } })
   if (!agent) return new NextResponse(null, { status: 404 })
 
   const session = await getServerSession(authOptions)

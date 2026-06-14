@@ -11,12 +11,12 @@ import { computeWaves } from '@/lib/plan-waves'
  * execution wave for every task under the feature. The worker only picks up
  * tasks whose feature has planApprovedAt set.
  */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
 
   const feature = await prisma.feature.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: { tasks: { select: { id: true, dependsOn: true } } },
   })
   if (!feature) return NextResponse.json({ error: 'Not found' }, { status: 404 })

@@ -5,8 +5,8 @@ import { prisma } from '@/lib/db'
 export const dynamic = 'force-dynamic'
 
 /** POST /api/environments/[id]/nebula/hook/report — Report hook execution result */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const { id } = params
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   await requireGatewayAuthForEnvironment(req, id).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
 
   const body = await req.json()
@@ -14,7 +14,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   // Find the nebula instance
   const nebula = await prisma.nebulaInstance.findFirst({
-    where: { id: nebulaId, environmentId: params.id },
+    where: { id: nebulaId, environmentId: (await params).id },
   })
   if (!nebula) {
     return NextResponse.json({ error: 'NebulaInstance not found' }, { status: 404 })

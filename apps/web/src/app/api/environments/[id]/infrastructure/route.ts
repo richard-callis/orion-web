@@ -114,10 +114,10 @@ function parsePod(pod: any): CachedPod {
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
-  const env = await prisma.environment.findUnique({ where: { id: params.id } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id } })
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
   if (!env.gatewayUrl || !env.gatewayToken) {
     const missing = []

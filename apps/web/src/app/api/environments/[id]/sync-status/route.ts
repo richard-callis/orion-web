@@ -24,16 +24,16 @@ interface ArgoCDApp {
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  const { id } = params
+  const { id } = await params
   try {
     await requireGatewayAuthForEnvironment(req, id)
   } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const env = await prisma.environment.findUnique({ where: { id: params.id } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const { applications } = (await req.json()) as { applications: ArgoCDApp[] }
@@ -55,7 +55,7 @@ export async function POST(
     },
   }))
   await prisma.environment.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data: {
       lastSeen: new Date(),
       status: 'connected',
@@ -74,7 +74,7 @@ export async function POST(
     // Best-effort: mark PRs as merged if they're still "open" and the app is now Synced.
     // (A more precise match would require storing the commit SHA at PR creation time.)
     const openPRs = await prisma.gitOpsPR.findMany({
-      where: { environmentId: params.id, status: 'open', decision: 'auto' },
+      where: { environmentId: (await params).id, status: 'open', decision: 'auto' },
     })
 
     for (const pr of openPRs) {
@@ -98,19 +98,19 @@ export async function POST(
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  const { id } = params
+  const { id } = await params
   await requireGatewayAuthForEnvironment(req, id).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
 
-  const env = await prisma.environment.findUnique({ where: { id: params.id } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const meta = (env.metadata as Record<string, unknown>) ?? {}
   const argocd = (meta.argocd as Record<string, unknown>) ?? null
 
   return NextResponse.json({
-    environmentId: params.id,
+    environmentId: (await params).id,
     argocd,
   })
 }

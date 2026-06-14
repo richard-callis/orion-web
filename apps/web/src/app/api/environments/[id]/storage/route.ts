@@ -24,11 +24,11 @@ async function gatewayExec(
   return data.result ?? ''
 }
 
-export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const env = await prisma.environment.findUnique({ where: { id: params.id } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (!env.gatewayUrl || !env.gatewayToken) {
     return NextResponse.json({ error: 'Gateway not connected' }, { status: 422 })

@@ -4,15 +4,15 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { requireAdmin } from '@/lib/auth'
 
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   const session = await getServerSession(authOptions)
 
-  const current = await prisma.ingressRoute.findUniqueOrThrow({ where: { id: params.id } })
+  const current = await prisma.ingressRoute.findUniqueOrThrow({ where: { id: (await params).id } })
   const nowEnabled = !current.enabled
 
   const route = await prisma.ingressRoute.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data: {
       enabled:    nowEnabled,
       disabledAt: nowEnabled ? null : new Date(),

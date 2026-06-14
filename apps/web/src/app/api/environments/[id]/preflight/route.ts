@@ -146,10 +146,10 @@ async function gatewayExec(
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    await requireGatewayAuthForEnvironment(_req, params.id)
+    await requireGatewayAuthForEnvironment(_req, (await params).id)
   } catch {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
   }
@@ -166,7 +166,7 @@ export async function GET(
       const done  = (payload: Record<string, unknown>) => emit({ type: 'done', ...payload })
 
       try {
-        const env = await prisma.environment.findUnique({ where: { id: params.id } })
+        const env = await prisma.environment.findUnique({ where: { id: (await params).id } })
         if (!env) { emit({ type: 'error', message: 'Environment not found' }); return }
         if (env.type !== 'cluster') { emit({ type: 'error', message: 'Preflight only applies to cluster environments' }); return }
 

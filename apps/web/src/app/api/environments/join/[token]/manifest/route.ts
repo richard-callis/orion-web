@@ -12,17 +12,17 @@ function settingStr(setting: { value: unknown } | null, fallback: string): strin
   return typeof setting?.value === 'string' ? setting.value : fallback
 }
 
-export async function GET(req: NextRequest, { params }: { params: { token: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   // Dual lookup: hash-first (new tokens stored as SHA-256), plaintext fallback
   // for tokens created before hashing was introduced. The raw token from the URL
   // is still embedded in the returned manifest (gateway needs it); hashing only
   // protects the at-rest DB copy.
-  const tokenHash = createHash('sha256').update(params.token).digest('hex')
+  const tokenHash = createHash('sha256').update((await params).token).digest('hex')
   const record = await prisma.environmentJoinToken.findUnique({
     where: { token: tokenHash },
     include: { environment: true },
   }) ?? await prisma.environmentJoinToken.findUnique({
-    where: { token: params.token },
+    where: { token: (await params).token },
     include: { environment: true },
   })
 
@@ -67,7 +67,7 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
 # ORION Gateway — auto-generated manifest
 # Environment: ${record.environment.name}
 # Expires: ${record.expiresAt.toISOString()}
-# Apply with: kubectl apply -f <(curl -s '${orionUrl}/api/environments/join/${params.token}/manifest')
+# Apply with: kubectl apply -f <(curl -s '${orionUrl}/api/environments/join/${(await params).token}/manifest')
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -170,7 +170,7 @@ metadata:
     orion/environment-id: "${record.environmentId}"
     orion/expires-at: "${record.expiresAt.toISOString()}"
 stringData:
-  join-token: "${params.token}"
+  join-token: "${(await params).token}"
   orion-url: "${remoteOrionUrl}"
   environment-id: ""
   gateway-token: ""

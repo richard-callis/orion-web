@@ -4,12 +4,12 @@ import { parseBodyOrError, UpdateAgentSchema } from '@/lib/validate'
 import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const agent = await prisma.agent.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: {
       tasks: { orderBy: { updatedAt: 'desc' }, take: 20 },
       messages: { orderBy: { createdAt: 'desc' }, take: 10 },
@@ -19,7 +19,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   return NextResponse.json(agent)
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // Require admin — any authenticated user could otherwise overwrite any agent's
   // systemPrompt or contextConfig (privilege escalation).
   try { await requireAdmin() } catch {
@@ -39,31 +39,31 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (validatedData.tokenBudgetMonth !== undefined) data.tokenBudgetMonth = validatedData.tokenBudgetMonth
   if (validatedData.metadata !== undefined) {
     // Deep merge metadata so callers can update contextConfig without wiping systemPrompt
-    const existing = await prisma.agent.findUnique({ where: { id: params.id }, select: { metadata: true } })
+    const existing = await prisma.agent.findUnique({ where: { id: (await params).id }, select: { metadata: true } })
     const existingMeta = (existing?.metadata ?? {}) as Record<string, unknown>
     data.metadata = { ...existingMeta, ...validatedData.metadata }
   }
-  const agent = await prisma.agent.update({ where: { id: params.id }, data })
+  const agent = await prisma.agent.update({ where: { id: (await params).id }, data })
   return NextResponse.json(agent)
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   let adminUser
   try { adminUser = await requireAdmin() } catch {
     return NextResponse.json({ error: 'Admin privileges required to delete agents' }, { status: 403 })
   }
 
-  const agent = await prisma.agent.findUnique({ where: { id: params.id }, select: { name: true } })
+  const agent = await prisma.agent.findUnique({ where: { id: (await params).id }, select: { name: true } })
 
   // Unassign tasks first to avoid FK violation
-  await prisma.task.updateMany({ where: { assignedAgent: params.id }, data: { assignedAgent: null } })
-  await prisma.agent.delete({ where: { id: params.id } })
+  await prisma.task.updateMany({ where: { assignedAgent: (await params).id }, data: { assignedAgent: null } })
+  await prisma.agent.delete({ where: { id: (await params).id } })
 
   // SOC2: audit agent deletion
   logAudit({
     userId: adminUser.id,
     action: 'agent_delete',
-    target: `agent:${params.id}`,
+    target: `agent:${(await params).id}`,
     detail: { name: agent?.name },
     ipAddress: getClientIp(req),
     userAgent: getUserAgent(req.headers),

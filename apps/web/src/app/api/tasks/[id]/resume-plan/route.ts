@@ -15,11 +15,11 @@ import { requireServiceAuth, assertCanModify } from '@/lib/auth'
  *     When provided, the worker injects a note telling the agent to skip these
  *     steps before executing the rest of the approved plan.
  */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
 
-  const task = await prisma.task.findUnique({ where: { id: params.id } })
+  const task = await prisma.task.findUnique({ where: { id: (await params).id } })
   if (!task) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   await assertCanModify(caller, isService, task.createdBy)
 

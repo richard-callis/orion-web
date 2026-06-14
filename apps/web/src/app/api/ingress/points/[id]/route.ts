@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   const body = await req.json()
   const point = await prisma.ingressPoint.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data: {
       ...(body.name          !== undefined && { name:          body.name.trim() }),
       ...(body.type          !== undefined && { type:          body.type }),
@@ -26,8 +26,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   return NextResponse.json(point)
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
-  await prisma.ingressPoint.delete({ where: { id: params.id } })
+  await prisma.ingressPoint.delete({ where: { id: (await params).id } })
   return new NextResponse(null, { status: 204 })
 }

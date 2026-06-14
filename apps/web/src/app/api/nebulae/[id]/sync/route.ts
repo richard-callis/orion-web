@@ -5,13 +5,13 @@ import { syncNebula } from '@/lib/nebula-loader'
 /**
  * POST /api/nebulae/:id/sync — Trigger a manual sync for a Nebula
  */
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   try {
-    const result = await syncNebula(params.id)
+    const result = await syncNebula((await params).id)
     return NextResponse.json(result)
   } catch (err) {
     return NextResponse.json(

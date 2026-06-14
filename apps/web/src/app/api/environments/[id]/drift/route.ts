@@ -9,18 +9,18 @@ import { detectGitOpsDriftForEnv } from '@/jobs/gitops-drift'
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  const { id } = params
+  const { id } = await params
   await requireGatewayAuthForEnvironment(req, id).catch(() => {
     throw Object.assign(new Error('Unauthorized'), { status: 401 })
   })
 
-  const env = await prisma.environment.findUnique({ where: { id: params.id } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const reports = await prisma.driftReport.findMany({
-    where:   { environmentId: params.id },
+    where:   { environmentId: (await params).id },
     orderBy: { scannedAt: 'desc' },
     take:    10,
   })
@@ -39,18 +39,18 @@ export async function GET(
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  const { id } = params
+  const { id } = await params
   await requireGatewayAuthForEnvironment(req, id).catch(() => {
     throw Object.assign(new Error('Unauthorized'), { status: 401 })
   })
 
-  const env = await prisma.environment.findUnique({ where: { id: params.id } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   try {
-    await detectGitOpsDriftForEnv(params.id)
+    await detectGitOpsDriftForEnv((await params).id)
   } catch (e) {
     console.error('[drift] Drift detection failed:', e)
     return NextResponse.json(
@@ -61,7 +61,7 @@ export async function POST(
 
   // Return the freshly-created report
   const latest = await prisma.driftReport.findFirst({
-    where:   { environmentId: params.id },
+    where:   { environmentId: (await params).id },
     orderBy: { scannedAt: 'desc' },
   })
   if (!latest) return NextResponse.json({ ok: true })

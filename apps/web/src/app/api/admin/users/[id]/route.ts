@@ -5,7 +5,7 @@ import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, UpdateUserSchema } from '@/lib/validate'
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const admin = await requireAdmin()
   const result = await parseBodyOrError(req, UpdateUserSchema)
   if ('error' in result) return result.error
@@ -20,7 +20,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (data.name !== undefined) updateData.name = data.name
 
   const user = await prisma.user.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data: updateData,
     select: {
       id: true, username: true, email: true, name: true,
@@ -37,7 +37,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   logAudit({
     userId: admin.id,
     action: data.role !== undefined ? 'user_role_change' : 'user_update',
-    target: `user:${params.id}`,
+    target: `user:${(await params).id}`,
     detail,
     ipAddress: getClientIp(req),
     userAgent: getUserAgent(req.headers),
@@ -48,7 +48,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     logAudit({
       userId: admin.id,
       action: 'password_reset',
-      target: `user:${params.id}`,
+      target: `user:${(await params).id}`,
       detail: { resetBy: admin.id },
       ipAddress: getClientIp(req),
       userAgent: getUserAgent(req.headers),
@@ -58,37 +58,37 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   return NextResponse.json(user)
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const admin = await requireAdmin()
 
   // BLOCKER fix: prevent deleting the last admin or yourself, causing lockout.
-  if (params.id === admin.id) {
+  if ((await params).id === admin.id) {
     return NextResponse.json({ error: 'Cannot delete your own account' }, { status: 400 })
   }
   const adminCount = await prisma.user.count({ where: { role: 'admin', active: true } })
-  const targetUser = await prisma.user.findUnique({ where: { id: params.id }, select: { role: true, username: true } })
+  const targetUser = await prisma.user.findUnique({ where: { id: (await params).id }, select: { role: true, username: true } })
   if (adminCount <= 1 && targetUser?.role === 'admin') {
     return NextResponse.json({ error: 'Cannot delete the last admin account — this would lock out all admin access' }, { status: 400 })
   }
   const user = await prisma.user.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     select: { username: true },
   })
-  await prisma.user.delete({ where: { id: params.id } })
+  await prisma.user.delete({ where: { id: (await params).id } })
 
   // GDPR: anonymize audit log entries referencing the deleted user
   await prisma.auditLog.updateMany({
-    where: { userId: params.id },
+    where: { userId: (await params).id },
     data: { userId: '[deleted]' },
   })
 
   // GDPR: anonymize ToolApprovalRequest entries referencing the deleted user
   await prisma.toolApprovalRequest.updateMany({
-    where: { userId: params.id },
+    where: { userId: (await params).id },
     data: { userId: '[deleted]' },
   })
   await prisma.toolApprovalRequest.updateMany({
-    where: { approvedBy: params.id },
+    where: { approvedBy: (await params).id },
     data: { approvedBy: '[deleted]' },
   })
 
@@ -96,7 +96,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   logAudit({
     userId: admin.id,
     action: 'user_delete',
-    target: `user:${params.id}`,
+    target: `user:${(await params).id}`,
     detail: { username: user?.username },
     ipAddress: getClientIp(_req),
     userAgent: getUserAgent(_req.headers),

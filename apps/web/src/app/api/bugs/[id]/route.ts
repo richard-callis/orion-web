@@ -3,17 +3,17 @@ import { prisma } from '@/lib/db'
 import { requireServiceAuth } from '@/lib/auth'
 import { parseBodyOrError, UpdateBugSchema } from '@/lib/validate'
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   await requireServiceAuth(req)
   const bug = await prisma.bug.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: { assignedUser: { select: { id: true, name: true, username: true, email: true, role: true } } },
   })
   if (!bug) return new NextResponse(null, { status: 404 })
   return NextResponse.json(bug)
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   await requireServiceAuth(req)
   const parsed = await parseBodyOrError(req, UpdateBugSchema)
   if ('error' in parsed) return parsed.error
@@ -36,15 +36,15 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   }
 
   const bug = await prisma.bug.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data: updateData,
     include: { assignedUser: { select: { id: true, name: true, username: true, email: true, role: true } } },
   })
   return NextResponse.json(bug)
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   await requireServiceAuth(req)
-  await prisma.bug.delete({ where: { id: params.id } })
+  await prisma.bug.delete({ where: { id: (await params).id } })
   return new NextResponse(null, { status: 204 })
 }

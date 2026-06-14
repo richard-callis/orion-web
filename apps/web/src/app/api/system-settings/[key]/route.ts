@@ -15,10 +15,10 @@ const PUBLIC_SETTING_KEYS = new Set([
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { key: string } }
+  { params }: { params: Promise<{ key: string }> }
 ) {
   try {
-    if (!PUBLIC_SETTING_KEYS.has(params.key)) {
+    if (!PUBLIC_SETTING_KEYS.has((await params).key)) {
       // MINOR fix: any logged-in user could read any SystemSetting key, including
       // vault.unsealKeys (encrypted) and other sensitive config. Admin-gate all
       // non-public keys.
@@ -28,7 +28,7 @@ export async function GET(
     }
 
     const setting = await prisma.systemSetting.findUnique({
-      where: { key: params.key },
+      where: { key: (await params).key },
     })
 
     if (!setting) {

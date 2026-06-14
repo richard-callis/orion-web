@@ -10,12 +10,12 @@ export const dynamic = 'force-dynamic'
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string; name: string } }
+  { params }: { params: Promise<{ id: string; name: string }> }
 ) {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const tier = await prisma.environmentUserTier.findUnique({
-    where: { userId_environmentId: { userId: user.id, environmentId: params.id } },
+    where: { userId_environmentId: { userId: user.id, environmentId: (await params).id } },
   })
   const effectiveTier = user.role === 'admin' ? 'admin' : (tier?.tier ?? 'viewer')
   if (!['operator', 'admin'].includes(effectiveTier)) {
@@ -25,7 +25,7 @@ export async function POST(
     )
   }
   const def = await prisma.novaDefinition.findFirst({
-    where: { name: params.name },
+    where: { name: (await params).name },
   })
   if (!def) {
     return NextResponse.json(
@@ -34,7 +34,7 @@ export async function POST(
     )
   }
   const existing = await prisma.nebulaInstance.findFirst({
-    where: { environmentId: params.id, name: params.name },
+    where: { environmentId: (await params).id, name: (await params).name },
   })
   if (existing) {
     return NextResponse.json(
@@ -44,7 +44,7 @@ export async function POST(
   }
   const entry = await prisma.nebulaInstance.create({
     data: {
-      environmentId: params.id,
+      environmentId: (await params).id,
       name: def.name,
       category: def.category,
       spec: def.spec,

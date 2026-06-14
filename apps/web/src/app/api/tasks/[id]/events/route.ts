@@ -7,17 +7,17 @@ const VALID_TASK_STATUSES = new Set([
 ])
 
 // GET /api/tasks/:id/events — fetch all events for a task
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   await requireServiceAuth(req)
   const events = await prisma.taskEvent.findMany({
-    where: { taskId: params.id },
+    where: { taskId: (await params).id },
     orderBy: { createdAt: 'asc' },
   })
   return NextResponse.json(events)
 }
 
 // POST /api/tasks/:id/events — add a comment/status event to a task
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
 
   // M4 fix: previously no validation — malformed JSON threw 500; content/eventType were
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const event = await prisma.taskEvent.create({
     data: {
-      taskId:    params.id,
+      taskId:    (await params).id,
       eventType: (body.eventType as string) ?? 'comment',
       content:   (body.content as string) ?? null,
       agentId:   typeof (caller as any)?.agentId === 'string' ? (caller as any).agentId : null,
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   })
 
   if (body.status) {
-    await prisma.task.update({ where: { id: params.id }, data: { status: body.status } })
+    await prisma.task.update({ where: { id: (await params).id }, data: { status: body.status } })
   }
 
   return NextResponse.json(event, { status: 201 })

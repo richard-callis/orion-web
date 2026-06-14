@@ -13,10 +13,10 @@ function isValidHostname(h: string): boolean {
   return HOSTNAME_RE.test(h)
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { ip: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ ip: string }> }) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
 
-  if (!isValidIp(params.ip)) {
+  if (!isValidIp((await params).ip)) {
     return NextResponse.json({ error: 'Invalid IP address' }, { status: 400 })
   }
 
@@ -27,22 +27,22 @@ export async function PUT(req: NextRequest, { params }: { params: { ip: string }
   }
 
   try {
-    await upsertCustomRecord(params.ip, hostnames)
+    await upsertCustomRecord((await params).ip, hostnames)
     return NextResponse.json({ ip, hostnames })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { ip: string } }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ ip: string }> }) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
 
-  if (!isValidIp(params.ip)) {
+  if (!isValidIp((await params).ip)) {
     return NextResponse.json({ error: 'Invalid IP address' }, { status: 400 })
   }
 
   try {
-    const deleted = await deleteCustomRecord(params.ip)
+    const deleted = await deleteCustomRecord((await params).ip)
     if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     return new NextResponse(null, { status: 204 })
   } catch (err) {

@@ -16,7 +16,7 @@ const updateSchema = z.object({
   isDraft: z.boolean().optional(),
 })
 
-export async function PATCH(req: Request, { params }: { params: { id: string; noteId: string } }) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string; noteId: string }> }) {
   try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
   const { id, noteId } = await params
@@ -53,7 +53,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string; no
   return NextResponse.json(updated)
 }
 
-export async function DELETE(_req: Request, { params }: { params: { id: string; noteId: string } }) {
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string; noteId: string }> }) {
   try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
   const { id, noteId } = await params

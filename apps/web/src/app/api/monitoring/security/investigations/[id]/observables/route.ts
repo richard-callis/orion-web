@@ -23,7 +23,7 @@ const createSchema = z.object({
   context: z.string().optional().nullable(),
 })
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
   const id = (await params).id

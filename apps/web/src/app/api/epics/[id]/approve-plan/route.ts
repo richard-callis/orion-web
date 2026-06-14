@@ -11,12 +11,12 @@ import { computeWaves } from '@/lib/plan-waves'
  * approved. For each such feature it sets planApprovedAt/planApprovedBy and
  * computes execution waves for its tasks.
  */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
 
   const epic = await prisma.epic.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: {
       features: {
         include: { tasks: { select: { id: true, dependsOn: true } } },

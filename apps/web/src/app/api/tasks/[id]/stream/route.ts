@@ -23,7 +23,7 @@ const TERMINAL_STATES  = new Set(['done', 'failed', 'cancelled', 'completed'])
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   // B4 fix: route had no auth — any caller could stream any task's events
   let caller: Awaited<ReturnType<typeof requireServiceAuth>>
@@ -34,7 +34,7 @@ export async function GET(
   }
   const isService = caller === null
 
-  const taskId = params.id
+  const taskId = (await params).id
   const afterParam = req.nextUrl.searchParams.get('after') ?? undefined
 
   // Verify the task exists before opening the stream

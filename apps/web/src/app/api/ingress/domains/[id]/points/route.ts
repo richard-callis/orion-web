@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try { await requireAdmin() } catch { return new Response(JSON.stringify({error:'Unauthorized'}),{status:401,headers:{'Content-Type':'application/json'}}) }
   const body = await req.json()
   const point = await prisma.ingressPoint.create({
     data: {
-      domainId:      params.id,
+      domainId:      (await params).id,
       environmentId: body.environmentId ?? null,
       name:          body.name.trim(),
       type:          body.type          ?? 'traefik',

@@ -3,12 +3,12 @@ import { prisma } from '@/lib/db'
 import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 import { nextRun } from '@/lib/cron'
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
 
   const schedule = await prisma.scheduledTask.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: { agent: { select: { createdBy: true } } },
   })
   if (!schedule) return NextResponse.json({ error: 'Not found' }, { status: 404 })

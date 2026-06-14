@@ -5,10 +5,10 @@ export const dynamic = 'force-dynamic'
 
 // GET /api/environments/[id]/evals/scores/skill/[skillId]
 // Score for a specific skill NebulaInstance.
-export async function GET(_req: NextRequest, { params }: { params: { id: string; skillId: string } }) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string; skillId: string }> }) {
   try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
-  const envId = params.id
+  const envId = (await params).id
 
   const env = await prisma.environment.findUnique({ where: { id: envId } })
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
@@ -18,7 +18,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string;
     where: {
       environmentId_name: {
         environmentId: envId,
-        name: params.skillId,
+        name: (await params).skillId,
       },
       category: 'skill',
     },

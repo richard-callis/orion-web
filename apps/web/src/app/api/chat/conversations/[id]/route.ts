@@ -5,16 +5,16 @@ import { parseBodyOrError, UpdateConversationSchema } from '@/lib/validate'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const check = await assertConversationOwner(req, params.id)
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const check = await assertConversationOwner(req, (await params).id)
   if (check instanceof NextResponse) return check
-  const convo = await prisma.conversation.findUnique({ where: { id: params.id } })
+  const convo = await prisma.conversation.findUnique({ where: { id: (await params).id } })
   if (!convo) return new NextResponse(null, { status: 404 })
   return NextResponse.json(convo)
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const check = await assertConversationOwner(req, params.id)
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const check = await assertConversationOwner(req, (await params).id)
   if (check instanceof NextResponse) return check
 
   // SOC2 [INPUT-001]: Validate request body with Zod schema
@@ -34,18 +34,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   const convo = await prisma.conversation.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data: updateData,
     include: { _count: { select: { messages: true } } },
   })
   return NextResponse.json(convo)
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  const check = await assertConversationOwner(req, params.id)
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const check = await assertConversationOwner(req, (await params).id)
   if (check instanceof NextResponse) return check
   await prisma.conversation.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data: { archivedAt: new Date() },
   })
   return new NextResponse(null, { status: 204 })

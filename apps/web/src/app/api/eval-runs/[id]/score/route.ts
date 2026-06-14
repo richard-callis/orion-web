@@ -82,11 +82,11 @@ Does the response satisfy the expected behavior? Respond with JSON only:
   }
 }
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   await requireServiceAuth(req)
 
   const run = await prisma.evalRun.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: {
       results: {
         include: { case: true },
@@ -168,7 +168,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   // Check if all results are scored
   const allResults = await prisma.evalCaseResult.findMany({
-    where: { runId: params.id },
+    where: { runId: (await params).id },
   })
 
   type CaseResult = (typeof allResults)[number]
@@ -194,7 +194,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const failCount = allResults.filter((r: CaseResult) => r.passed === false).length
 
     await prisma.evalRun.update({
-      where: { id: params.id },
+      where: { id: (await params).id },
       data: {
         status: 'completed',
         scoreTotal,

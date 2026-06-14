@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getCurrentUser, requireGatewayAuthForEnvironment } from '@/lib/auth'
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // Support gateway Bearer auth OR admin session auth
   const auth = req.headers.get('authorization')
   if (auth?.startsWith('Bearer ')) {
     // Gateway path: validate the token is scoped to this specific environment
     try {
-      await requireGatewayAuthForEnvironment(req, params.id)
+      await requireGatewayAuthForEnvironment(req, (await params).id)
     } catch {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }
 
   // Verify environment exists
-  const env = await prisma.environment.findUnique({ where: { id: params.id }, select: { id: true } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id }, select: { id: true } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const { searchParams } = new URL(req.url)
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const tools = await prisma.mcpTool.findMany({
     where: {
-      environmentId: params.id,
+      environmentId: (await params).id,
       ...(enabledOnly ? { enabled: true, status: 'active' } : {}),
     },
     orderBy: [{ builtIn: 'desc' }, { name: 'asc' }],
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json(tools)
 }
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // SOC2 HIGH-6: require admin for session callers (consistent with other env sub-routes)
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   // Verify env exists
-  const env = await prisma.environment.findUnique({ where: { id: params.id }, select: { id: true } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id }, select: { id: true } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const body = await req.json()
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const tool = await prisma.mcpTool.create({
     data: {
-      environmentId: params.id,
+      environmentId: (await params).id,
       name:          body.name.trim(),
       description:   body.description.trim(),
       inputSchema:   body.inputSchema,

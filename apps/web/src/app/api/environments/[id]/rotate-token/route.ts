@@ -17,7 +17,7 @@ import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { randomBytes } from 'crypto'
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // Require admin auth — only admins can rotate environment gateway tokens
   let admin
   try {
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const env = await prisma.environment.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     select: { id: true, name: true, gatewayToken: true },
   })
 
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const newToken = 'mcga_' + randomBytes(32).toString('hex')
 
   await prisma.environment.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data: { gatewayToken: newToken },
   })
 
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   void logAudit({
     userId: admin.id,
     action: 'environment_update',
-    target: `environment:${params.id}`,
+    target: `environment:${(await params).id}`,
     detail: { event: 'gateway_token_rotated', environmentName: env.name },
     ipAddress: getClientIp(req),
     userAgent: getUserAgent(req.headers),
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // The caller must distribute it to the gateway immediately.
   return NextResponse.json({
     ok: true,
-    environmentId: params.id,
+    environmentId: (await params).id,
     gatewayToken: newToken,
     message: 'Gateway token rotated. Distribute the new token to your gateway immediately — it will not be shown again.',
   })

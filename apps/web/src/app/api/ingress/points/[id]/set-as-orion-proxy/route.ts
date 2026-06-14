@@ -20,7 +20,7 @@ import { requireAdmin } from '@/lib/auth'
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -36,7 +36,7 @@ export async function POST(
   }
 
   const point = await prisma.ingressPoint.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: { domain: true },
   })
   if (!point) return NextResponse.json({ error: 'IngressPoint not found' }, { status: 404 })
@@ -47,7 +47,7 @@ export async function POST(
   const publicUrl = `https://${point.domain.name}`
 
   await upsert('reverse-proxy.public-url', publicUrl)
-  await upsert('reverse-proxy.ingress-point-id', params.id)
+  await upsert('reverse-proxy.ingress-point-id', (await params).id)
 
   return NextResponse.json({ ok: true, publicUrl })
 }

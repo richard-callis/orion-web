@@ -21,13 +21,13 @@ async function validateFederationToken(req: NextRequest): Promise<boolean> {
   return env !== null
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!(await validateFederationToken(req))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const task = await prisma.task.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     select: { id: true, status: true, updatedAt: true, metadata: true },
   })
 

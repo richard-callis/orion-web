@@ -12,11 +12,11 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   await requireServiceAuth(req)
   const agent = await prisma.agent.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     select: { tokenBudgetDay: true, tokenBudgetMonth: true },
   })
   if (!agent) return new NextResponse(null, { status: 404 })
@@ -31,15 +31,15 @@ export async function GET(
 
   const [dayAgg, monthAgg, weekRecords] = await Promise.all([
     prisma.agentTokenUsage.aggregate({
-      where: { agentId: params.id, recordedAt: { gte: dayStart } },
+      where: { agentId: (await params).id, recordedAt: { gte: dayStart } },
       _sum: { inputTokens: true, outputTokens: true },
     }),
     prisma.agentTokenUsage.aggregate({
-      where: { agentId: params.id, recordedAt: { gte: monthStart } },
+      where: { agentId: (await params).id, recordedAt: { gte: monthStart } },
       _sum: { inputTokens: true, outputTokens: true },
     }),
     prisma.agentTokenUsage.findMany({
-      where: { agentId: params.id, recordedAt: { gte: sevenDaysAgo } },
+      where: { agentId: (await params).id, recordedAt: { gte: sevenDaysAgo } },
       select: { inputTokens: true, outputTokens: true, recordedAt: true },
       orderBy: { recordedAt: 'asc' },
     }),

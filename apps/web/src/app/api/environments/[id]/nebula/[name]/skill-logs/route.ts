@@ -11,13 +11,13 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string; name: string } }
+  { params }: { params: Promise<{ id: string; name: string }> }
 ) {
-  const { id } = params
+  const { id } = await params
   await requireGatewayAuthForEnvironment(req, id).catch(() => { throw Object.assign(new Error('Unauthorized'), {status:401}) })
 
   const logs = await prisma.skillExecutionLog.findMany({
-    where: { nebula: { environmentId: params.id, name: params.name } },
+    where: { nebula: { environmentId: (await params).id, name: (await params).name } },
     orderBy: { createdAt: 'desc' },
     take: 50,
   })

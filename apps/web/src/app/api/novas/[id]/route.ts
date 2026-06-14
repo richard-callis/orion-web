@@ -7,13 +7,13 @@ import { requireAdmin } from '@/lib/auth'
  */
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const nova = await prisma.nova.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: {
       revisions: { orderBy: { createdAt: 'desc' }, take: 10 },
       deployments: { orderBy: { deployedAt: 'desc' }, take: 20 },
@@ -36,7 +36,7 @@ export async function GET(
  */
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -45,7 +45,7 @@ export async function PUT(
   try { bodyRaw = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
   const body = bodyRaw as { name?: string; displayName?: string; description?: string | null; category?: string; version?: string; config?: unknown; tags?: unknown; reasoning?: string }
   const nova = await prisma.nova.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
   })
 
   if (!nova) {
@@ -67,7 +67,7 @@ export async function PUT(
   const newConfig = data.config || prevConfig
 
   const updatedNova = await prisma.nova.update({
-    where: { id: params.id },
+    where: { id: (await params).id },
     data,
   })
 
@@ -91,13 +91,13 @@ export async function PUT(
  */
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try { await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const nova = await prisma.nova.findUnique({
-    where: { id: params.id },
+    where: { id: (await params).id },
     include: { _count: { select: { deployments: true } } },
   })
 
@@ -113,7 +113,7 @@ export async function DELETE(
   }
 
   await prisma.nova.delete({
-    where: { id: params.id },
+    where: { id: (await params).id },
   })
 
   return new NextResponse(null, { status: 204 })
