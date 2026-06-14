@@ -2,7 +2,7 @@
 ALTER TABLE "managed_secrets" ALTER COLUMN "updatedAt" DROP DEFAULT;
 
 -- CreateTable
-CREATE TABLE "SecurityEvent" (
+CREATE TABLE IF NOT EXISTS "SecurityEvent" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT,
     "type" TEXT NOT NULL,
@@ -22,7 +22,7 @@ CREATE TABLE "SecurityEvent" (
 );
 
 -- CreateTable
-CREATE TABLE "SecurityConfig" (
+CREATE TABLE IF NOT EXISTS "SecurityConfig" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT,
     "key" TEXT NOT NULL,
@@ -34,7 +34,7 @@ CREATE TABLE "SecurityConfig" (
 );
 
 -- CreateTable
-CREATE TABLE "agent_profiles" (
+CREATE TABLE IF NOT EXISTS "agent_profiles" (
     "id" TEXT NOT NULL,
     "agentId" TEXT NOT NULL,
     "domain" TEXT NOT NULL,
@@ -50,7 +50,7 @@ CREATE TABLE "agent_profiles" (
 );
 
 -- CreateTable
-CREATE TABLE "room_knowledge" (
+CREATE TABLE IF NOT EXISTS "room_knowledge" (
     "id" TEXT NOT NULL,
     "roomId" TEXT NOT NULL,
     "title" TEXT NOT NULL,
@@ -64,7 +64,7 @@ CREATE TABLE "room_knowledge" (
 );
 
 -- CreateTable
-CREATE TABLE "agent_knowledge" (
+CREATE TABLE IF NOT EXISTS "agent_knowledge" (
     "id" TEXT NOT NULL,
     "agentId" TEXT NOT NULL,
     "title" TEXT NOT NULL,
@@ -78,7 +78,7 @@ CREATE TABLE "agent_knowledge" (
 );
 
 -- CreateTable
-CREATE TABLE "NovaDefinition" (
+CREATE TABLE IF NOT EXISTS "NovaDefinition" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "category" TEXT NOT NULL,
@@ -94,7 +94,7 @@ CREATE TABLE "NovaDefinition" (
 );
 
 -- CreateTable
-CREATE TABLE "NebulaInstance" (
+CREATE TABLE IF NOT EXISTS "NebulaInstance" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT NOT NULL,
     "sourceNovaId" TEXT,
@@ -111,7 +111,7 @@ CREATE TABLE "NebulaInstance" (
 );
 
 -- CreateTable
-CREATE TABLE "HookExecutionLog" (
+CREATE TABLE IF NOT EXISTS "HookExecutionLog" (
     "id" TEXT NOT NULL,
     "nebulaId" TEXT NOT NULL,
     "triggerEvent" TEXT NOT NULL,
@@ -127,7 +127,7 @@ CREATE TABLE "HookExecutionLog" (
 );
 
 -- CreateTable
-CREATE TABLE "SkillExecutionLog" (
+CREATE TABLE IF NOT EXISTS "SkillExecutionLog" (
     "id" TEXT NOT NULL,
     "nebulaId" TEXT NOT NULL,
     "source" TEXT NOT NULL,
@@ -139,7 +139,7 @@ CREATE TABLE "SkillExecutionLog" (
 );
 
 -- CreateTable
-CREATE TABLE "AgentTrace" (
+CREATE TABLE IF NOT EXISTS "AgentTrace" (
     "id" TEXT NOT NULL,
     "conversationId" TEXT,
     "taskId" TEXT,
@@ -163,7 +163,7 @@ CREATE TABLE "AgentTrace" (
 );
 
 -- CreateTable
-CREATE TABLE "Eval" (
+CREATE TABLE IF NOT EXISTS "Eval" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT NOT NULL,
     "targetType" TEXT NOT NULL,
@@ -182,7 +182,7 @@ CREATE TABLE "Eval" (
 );
 
 -- CreateTable
-CREATE TABLE "Ruleset" (
+CREATE TABLE IF NOT EXISTS "Ruleset" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT NOT NULL,
@@ -194,7 +194,7 @@ CREATE TABLE "Ruleset" (
 );
 
 -- CreateTable
-CREATE TABLE "AgentScore" (
+CREATE TABLE IF NOT EXISTS "AgentScore" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT NOT NULL,
     "targetType" TEXT NOT NULL,

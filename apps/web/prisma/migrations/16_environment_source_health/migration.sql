@@ -5,7 +5,7 @@
 -- (environmentId, source) so each managed environment tracks its own Falco
 -- and K8s-events ingestion health independently.
 
-CREATE TABLE "EnvironmentSourceHealth" (
+CREATE TABLE IF NOT EXISTS "EnvironmentSourceHealth" (
     "id" TEXT NOT NULL,
     "environmentId" TEXT NOT NULL,
     "source" TEXT NOT NULL,

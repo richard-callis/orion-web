@@ -1,7 +1,7 @@
 -- Add ToolExecution table for tracking executor tool calls
 -- Tracks shell_exec, file_read, and system_info execution with Warden approval gating
 
-CREATE TABLE "ToolExecution" (
+CREATE TABLE IF NOT EXISTS "ToolExecution" (
   "id" TEXT NOT NULL,
   "executionId" TEXT NOT NULL,
   "environmentId" TEXT,

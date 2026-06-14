@@ -1,4 +1,4 @@
-CREATE TABLE "JobRun" (
+CREATE TABLE IF NOT EXISTS "JobRun" (
   "id"           TEXT NOT NULL,
   "source"       TEXT NOT NULL,
   "sourceId"     TEXT NOT NULL,
