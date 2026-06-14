@@ -50,7 +50,7 @@ export default function SecuritySettings() {
         const rulesData = await rulesRes.json()
         setRules(rulesData.rules ?? [])
         const envData = await envRes.json() as K8sEnv[]
-        const k8s = (Array.isArray(envData) ? envData : envData).filter((e: any) => e.type === 'kubernetes')
+        const k8s = (Array.isArray(envData) ? envData : envData).filter((e: any) => e.type === 'cluster')
         setK8sEnvs(k8s)
         if (k8s.length > 0) setSelectedEnvId(k8s[0].id)
       } catch {}

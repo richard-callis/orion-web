@@ -244,7 +244,7 @@ source = """
     "events": .events
   }
   body = encode_json(envelope)
-  sig = encode_base16(hmac(body, secret, algorithm: "sha-256"))
+  sig = downcase(encode_base16(hmac(body, secret, algorithm: "sha-256")))
   .x_signature = "sha256=" + sig
   .message = body
 """

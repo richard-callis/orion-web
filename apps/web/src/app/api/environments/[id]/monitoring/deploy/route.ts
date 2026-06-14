@@ -29,7 +29,7 @@ export async function POST(
 
   const env = await prisma.environment.findUnique({ where: { id } })
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
-  if (env.type !== 'kubernetes') {
+  if (env.type !== 'cluster') {
     return NextResponse.json({ error: 'Monitoring deployment is only supported for Kubernetes environments' }, { status: 400 })
   }
   if (!env.kubeconfig) {

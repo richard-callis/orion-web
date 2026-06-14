@@ -589,18 +589,19 @@ services:
   # attempts. Falco's coverage is strictly larger than `docker events` (which
   # vector's docker_lifecycle source already provides).
   #
-  # Uses falco-no-driver image (eBPF-based, no kernel module install needed).
+  # Uses full falco image (includes falcoctl) which downloads the eBPF probe
+  # for the running kernel at startup. falco-no-driver was previously used
+  # here but lacks the driver loader — it crashed with "need to provide a
+  # path to the bpf object file" because probe: "" in falco.yaml is unset.
+  # modern_ebpf segfaults on kernel 6.8; legacy ebpf probe is downloaded by
+  # falcoctl automatically via the full image's entrypoint.
   # privileged: true is currently required for Falco's syscall capture even
   # with eBPF — see https://falco.org/docs/getting-started/running/#docker.
   falco:
-    image: falcosecurity/falco-no-driver:0.38.2
+    image: falcosecurity/falco:0.38.2
     restart: unless-stopped
     privileged: true
     pid: host
-    # engine.kind is set to "ebpf" (legacy) in host-agent/falco/falco.yaml.
-    # modern_ebpf (default) segfaults (SIGSEGV) on this kernel build (6.8).
-    # falco-no-driver uses the config file for engine selection — the --driver
-    # CLI flag does not exist in this image and causes a crash-loop.
     volumes:
       - /var/run/docker.sock:/host/var/run/docker.sock:ro
       - /dev:/host/dev:ro
