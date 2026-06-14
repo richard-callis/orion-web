@@ -233,26 +233,35 @@ max_events = 100
 [transforms.batch_events.merge_strategies]
 events = "array"
 
-# Step 3: add envelope fields + compute HMAC
+# Step 3: build signed envelope
+#
+# Signature approach: the HMAC is embedded in the outer JSON body, NOT a header.
+# Vector's raw_message codec strips event fields before the HTTP sink evaluates
+# header templates, so {{ x_signature }} was sent literally (not interpolated).
+#
+# Instead we produce:
+#   { "sig": "sha256=<hex>", "payload": "<json-string>" }
+#
+# where `payload` is the JSON-serialised inner envelope and `sig` is
+# HMAC-SHA256 over those exact bytes. The server extracts `payload` as a
+# string (no re-serialisation, no ordering ambiguity) and verifies against `sig`.
 
 [transforms.build_envelope]
 type = "remap"
 inputs = ["batch_events"]
 source = """
   secret = get_env_var!("HOST_AGENT_WEBHOOK_SECRET")
-  envelope = {
+  inner = {
     "batch_id": uuid_v4(),
     "hostname": get_hostname!(),
     "events": .events
   }
-  body = encode_json(envelope)
-  sig = downcase(encode_base16(hmac(body, secret, algorithm: "sha-256")))
-  .x_signature = "sha256=" + sig
-  .message = body
+  payload_str = encode_json(inner)
+  sig = "sha256=" + downcase(encode_base16(hmac(payload_str, secret, algorithm: "sha-256")))
+  .message = encode_json({ "sig": sig, "payload": payload_str })
 """
 
 # ── Sink: HTTP → Orion host-agent webhook ───────────────────────────────────
-# Sends pre-built JSON body with HMAC signature header.
 
 [sinks.webhook]
 type = "http"
@@ -264,7 +273,6 @@ method = "post"
 codec = "raw_message"
 
 [sinks.webhook.request.headers]
-"X-Signature" = "{{ x_signature }}"
 "Content-Type" = "application/json"
 
 [sinks.webhook.request]
