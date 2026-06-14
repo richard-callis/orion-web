@@ -25,6 +25,13 @@ rules_file:
 # verified BTF present before switching.
 engine:
   kind: modern_ebpf
+  modern_ebpf:
+    # Default is 1 ring buffer per CPU × 8 MB. On a 32-CPU host that's 256 MB
+    # locked in kernel BPF memory before Falco even starts. Setting this to 2
+    # allocates 1 buffer per 2 CPUs = 16 buffers × 8 MB = 128 MB total.
+    # Halves locked-memory usage while keeping per-CPU coverage adequate for
+    # a lightly-loaded homelab host.
+    cpus_for_each_syscall_buffer: 2
 
 # ── Output channels ─────────────────────────────────────────────────────────
 # http_output: Falco POSTs each alert to Falcosidekick which handles retries,
