@@ -160,6 +160,7 @@ model Environment {
   sourceHealths            SourceHealth[]
   environmentSourceHealths EnvironmentSourceHealth[]
   vulnerabilityFindings    VulnerabilityFinding[]
+  vulnerabilityScans       VulnerabilityScan[]
   suppressions             Suppression[]
   toolExecutions           ToolExecution[]
   driftReports             DriftReport[]
@@ -1209,12 +1210,37 @@ model VulnerabilityFinding {
 
   rawTrivy Json // full Trivy vulnerability object (for forensics)
 
+  title                     String?
+  description               String?   @db.Text
+  fixAvailable              Boolean   @default(false)
+  taskId                    String?
+  acceptedRiskJustification String?   @db.Text
+  acceptedRiskExpiresAt     DateTime?
+  scanId                    String?
+
   @@unique([environmentId, target, cveId, packageName])
   @@index([environmentId])
   @@index([cveId])
   @@index([isKev])
   @@index([status])
   @@index([severity])
+}
+
+model VulnerabilityScan {
+  id            String      @id @default(cuid())
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  driver        String      @default("trivy")
+  status        String      @default("pending")
+  triggeredBy   String?
+  startedAt     DateTime    @default(now())
+  completedAt   DateTime?
+  errorMessage  String?     @db.Text
+  findingsCreated   Int     @default(0)
+  findingsEscalated Int     @default(0)
+  findingsFixed     Int     @default(0)
+  @@index([environmentId, startedAt])
+  @@index([status])
 }
 
 // ── Security: Event suppressions ──────────────────────────────────────────────
