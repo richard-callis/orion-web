@@ -4,7 +4,7 @@
  * route export validation (only HTTP verb handlers are valid exports).
  */
 
-export type StreamChannel = 'incidents' | 'events' | 'approvals'
+export type StreamChannel = 'incidents' | 'events' | 'approvals' | 'sources'
 
 /**
  * Per R7 (SIEM_PLAN.md Risk Register), SSE frames carry ID-only payloads.
