@@ -4,13 +4,33 @@ import { embedNote, computeSemanticEdges } from '@/lib/embeddings'
 import { requireServiceAuth, assertCanModify } from '@/lib/auth'
 import { parseBodyOrError, UpdateNoteSchema } from '@/lib/validate'
 
+/**
+ * Map an assertCanModify rejection to the right HTTP status.
+ * Returns null when access is allowed.
+ */
+async function guardAccess(
+  caller: Awaited<ReturnType<typeof requireServiceAuth>>,
+  isService: boolean,
+  recordCreatedBy: string | null,
+): Promise<NextResponse | null> {
+  try {
+    await assertCanModify(caller, isService, recordCreatedBy)
+    return null
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : ''
+    if (msg === 'Forbidden') return new NextResponse(null, { status: 403 })
+    return new NextResponse(null, { status: 401 })
+  }
+}
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const caller = await requireServiceAuth(req)
   const isService = caller === null
   const note = await prisma.note.findUnique({ where: { id: (await params).id } })
   if (!note) return new NextResponse(null, { status: 404 })
-  // Only the creator or admin/service can read notes
-  await assertCanModify(caller, isService, '')
+  // Only the creator, admin, or service can read owned notes; shared (createdBy=null) notes are visible to all.
+  const denied = await guardAccess(caller, isService, note.createdBy ?? null)
+  if (denied) return denied
   return NextResponse.json(note)
 }
 
@@ -21,7 +41,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   // Check ownership before mutation
   const existing = await prisma.note.findUnique({ where: { id: (await params).id } })
   if (!existing) return new NextResponse(null, { status: 404 })
-  await assertCanModify(caller, isService, '')
+  const denied = await guardAccess(caller, isService, existing.createdBy ?? null)
+  if (denied) return denied
 
   // SOC2 [INPUT-001]: Validate request body with Zod schema
   const result = await parseBodyOrError(req, UpdateNoteSchema)
@@ -61,7 +82,8 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   // Check ownership before deletion
   const existing = await prisma.note.findUnique({ where: { id: (await params).id } })
   if (!existing) return new NextResponse(null, { status: 404 })
-  await assertCanModify(caller, isService, '')
+  const denied = await guardAccess(caller, isService, existing.createdBy ?? null)
+  if (denied) return denied
 
   await prisma.note.delete({ where: { id: (await params).id } })
   return new NextResponse(null, { status: 204 })

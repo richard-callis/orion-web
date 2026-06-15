@@ -31,12 +31,10 @@ export async function GET(req: NextRequest) {
   const includeSemantic = searchParams.get('includeSemantic') !== 'false'
   const threshold = parseFloat(searchParams.get('threshold') ?? '0.5') || 0.5
 
-  // SOC2: scope to caller's notes when the Note model gains a createdBy field.
-  // Notes are currently system-wide (no createdBy column); admin and service
-  // callers see all notes. Regular users see all notes too until the schema is
-  // extended — this is documented as a known limitation.
+  // SOC2: scope notes for non-admin session callers to "mine OR shared (null)".
+  // Admin and service/gateway callers see all notes.
   const noteWhere = (!isService && caller && caller.role !== 'admin')
-    ? {} // TODO: add { createdBy: caller.id } once Note.createdBy column exists
+    ? { OR: [{ createdBy: caller.id }, { createdBy: null }] }
     : {}
 
   const notes = await prisma.note.findMany({

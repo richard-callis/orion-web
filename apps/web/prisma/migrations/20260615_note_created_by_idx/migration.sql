@@ -1,0 +1,12 @@
+-- Index on Note.createdBy for per-user scoping queries.
+--
+-- NOTE: CREATE INDEX CONCURRENTLY cannot run inside a transaction, and Prisma
+-- wraps each migration in a transaction. This statement must be run MANUALLY
+-- against the database (outside a transaction) by an operator, e.g.:
+--
+--   psql "$DATABASE_URL" -c 'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Note_createdBy_idx" ON "Note"("createdBy");'
+--
+-- The Prisma schema declares @@index([createdBy]) so `prisma migrate diff`
+-- considers the index present once created. On a small Note table a brief
+-- blocking CREATE INDEX (non-concurrent) is also acceptable.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "Note_createdBy_idx" ON "Note"("createdBy");

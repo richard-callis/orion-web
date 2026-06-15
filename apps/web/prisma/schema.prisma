@@ -387,10 +387,14 @@ model Note {
   // llm-context notes are auto-injected into every agent system prompt
   type      String   @default("note")
   tags      Json? // string[]
+  createdBy String?
+  creator   User?    @relation("NoteCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   embeddings NoteEmbedding[]
+
+  @@index([createdBy])
 }
 
 // ── Knowledge Graph: Note Embeddings (pgvector) ────────────────────────────────
@@ -462,6 +466,7 @@ model User {
   chatRoomMembers  ChatRoomMember[]
   chatMessages     ChatMessage[]
   managedSecrets   ManagedSecret[]
+  notes            Note[]                @relation("NoteCreator")
 }
 
 model ApiKey {
