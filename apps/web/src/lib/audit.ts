@@ -62,6 +62,8 @@ export type AuditAction =
   | 'cleanup_requested_with_export'
   | 'cleanup_failed'
   | 'AUDIT_LOG_CLEANUP'
+  | 'vulnerability_scan_trigger'
+  | 'cve_finding_accept_risk'
 
 /**
  * Compute a SHA-256 hash of an audit entry's content for the hash chain.
