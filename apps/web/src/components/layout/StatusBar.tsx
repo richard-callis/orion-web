@@ -33,7 +33,7 @@ export function StatusBar() {
 
   useEffect(() => {
     fetch('/api/setup/status')
-      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error(`Request failed: ${r.status}`); return r.json() })
       .then(d => { if (d.internalDomain) setDomain(d.internalDomain) })
       .catch((e) => console.error("[fetch]", e))
   }, [])
@@ -41,8 +41,8 @@ export function StatusBar() {
   useEffect(() => {
     const check = () =>
       Promise.all([
-        fetch('/api/health').then(r => r.json()).catch(() => null),
-        fetch('/api/models').then(r => r.json()).catch(() => []),
+        fetch('/api/health').then(r => { if (!r.ok) throw new Error(`Request failed: ${r.status}`); return r.json() }).catch(() => null),
+        fetch('/api/models').then(r => { if (!r.ok) throw new Error(`Request failed: ${r.status}`); return r.json() }).catch(() => []),
       ]).then(([h, m]) => {
         setHealth(h)
         setModels(Array.isArray(m) ? m : [])
