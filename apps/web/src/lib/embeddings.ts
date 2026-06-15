@@ -293,6 +293,8 @@ export async function retrieveKnowledgeContext(
     const result = await generateEmbedding(query.slice(0, 2000))
     if (!result) return ''
 
+    // llm-context notes are intentionally unscoped (no createdBy filter) —
+    // they are system-wide context for agent prompts and must remain globally visible.
     const hits = await vectorSearch(result.vector, topK)
     const relevant = hits.filter(h => h.score >= minScore)
     if (relevant.length === 0) return ''

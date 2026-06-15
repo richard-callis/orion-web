@@ -522,17 +522,20 @@ export async function requireServiceAuth(
  * Check if a user (or service) is authorized to modify a resource.
  *
  * Allows if:
+ * - caller is the service/gateway (isService)
+ * - the record has no owner (createdBy null/empty) → shared/system record, visible to all authenticated users
  * - caller is an admin
  * - caller created the resource
- * - caller is the service/gateway (nullUser)
  */
 export async function assertCanModify(
   user: AppUser | null,
   isService: boolean,
-  recordCreatedBy: string
+  recordCreatedBy: string | null
 ): Promise<void> {
   if (isService) return // gateway has full access
   if (!user) throw new Error('Unauthorized')
+  // Null/empty owner = shared/system record. Any authenticated user may access it.
+  if (!recordCreatedBy) return
   if (user.role === 'admin') return
   if (user.id === recordCreatedBy) return
   throw new Error('Forbidden')
