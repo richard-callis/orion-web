@@ -43,7 +43,9 @@ export function PendingPlanApprovals() {
 
   const fetchPending = useCallback(async () => {
     try {
-      const data: PendingTask[] = await fetch('/api/tasks?status=pending_validation').then(r => r.json())
+      const res = await fetch('/api/tasks?status=pending_validation')
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`)
+      const data: PendingTask[] = await res.json()
       setTasks(
         (Array.isArray(data) ? data : []).filter(t => {
           const meta = (t.metadata ?? {}) as Record<string, unknown>

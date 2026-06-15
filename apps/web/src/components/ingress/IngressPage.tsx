@@ -1524,6 +1524,7 @@ function DnsBootstrapPanel({ domain, environments, onDone }: {
     })
     try {
       const res = await fetch(`/api/ingress/domains/${domain.id}/dns/bootstrap`, { method: 'POST' })
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`)
       if (!res.body) throw new Error('No response body')
       const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
       while (true) {
