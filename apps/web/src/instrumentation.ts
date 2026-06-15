@@ -22,6 +22,9 @@ export async function register() {
     const { ensureSecurityRetentionJobScheduled } = await import('./jobs/security-retention-daily')
     await ensureSecurityRetentionJobScheduled()
 
+    const { ensureSecurityStaleCheckJobScheduled } = await import('./jobs/security-stale-check')
+    await ensureSecurityStaleCheckJobScheduled()
+
     // Wire the daily SOC2 audit export (was dead code — never scheduled).
     const { ensureAuditExportJobScheduled } = await import('./jobs/audit-export-daily')
     await ensureAuditExportJobScheduled()

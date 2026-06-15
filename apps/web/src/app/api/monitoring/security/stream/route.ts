@@ -7,13 +7,14 @@
  * wake the consumer instantly — no polling during idle.
  *
  * Query params:
- *   channel=incidents|events|approvals (default: events)
+ *   channel=incidents|events|approvals|sources (default: events)
  *   since=ISO8601 (optional, fetch events since this time)
  *
  * Supported channels:
  *   - events: new SecurityEvent rows
  *   - incidents: new/updated Incident rows
  *   - approvals: new/denied ActionAudit rows (tier=approve, pending)
+ *   - sources: SourceHealth + EnvironmentSourceHealth health changes
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -43,9 +44,9 @@ export async function GET(request: NextRequest) {
   const sinceParam = searchParams.get('since')
   const since = sinceParam ? new Date(sinceParam) : undefined
 
-  if (!['incidents', 'events', 'approvals'].includes(channel)) {
+  if (!['incidents', 'events', 'approvals', 'sources'].includes(channel)) {
     return NextResponse.json(
-      { error: 'Invalid channel. Use: incidents, events, or approvals' },
+      { error: 'Invalid channel. Use: incidents, events, approvals, or sources' },
       { status: 400 }
     )
   }
@@ -148,6 +149,8 @@ async function getInitialEvents(
     securityEvent: { findMany: (opts: unknown) => unknown[] }
     incident: { findMany: (opts: unknown) => unknown[] }
     actionAudit: { findMany: (opts: unknown) => unknown[] }
+    sourceHealth: { findMany: (opts: unknown) => Promise<{ id: string }[]> }
+    environmentSourceHealth: { findMany: (opts: unknown) => Promise<{ id: string }[]> }
   }
   const now = new Date().toISOString()
 
@@ -191,6 +194,17 @@ async function getInitialEvents(
       return (audits as { id: string }[]).map((a) => ({
         channel: 'approvals',
         payload: { id: a.id, type: 'created', timestamp: now },
+      }))
+    }
+
+    case 'sources': {
+      const [global, env] = await Promise.all([
+        prismaClient.sourceHealth.findMany({ select: { id: true } }),
+        prismaClient.environmentSourceHealth.findMany({ select: { id: true } }),
+      ])
+      return [...global, ...env].map((s) => ({
+        channel: 'sources' as StreamChannel,
+        payload: { id: s.id, type: 'created', timestamp: now },
       }))
     }
   }
