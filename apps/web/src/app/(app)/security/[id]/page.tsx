@@ -1,6 +1,6 @@
-import { notFound } from 'next/navigation'
+import { redirect } from 'next/navigation'
 
 export default async function SecurityDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  await params
-  return notFound()
+  const { id } = await params
+  redirect(`/security/incidents/${id}`)
 }
