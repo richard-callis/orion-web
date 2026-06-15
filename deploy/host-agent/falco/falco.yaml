@@ -18,11 +18,10 @@ rules_file:
 # ── Engine / driver ─────────────────────────────────────────────────────────
 # modern_ebpf (CO-RE) — no probe file needed; BTF is available on this host
 # at /sys/kernel/btf/vmlinux (kernel 6.8.0-124-generic, PREEMPT_DYNAMIC).
-# The falco:0.38.x image's entrypoint runs `falcoctl driver install` which
-# defaults to modern_ebpf; aligning this config removes the mismatch that
-# caused the crash-loop ("need to provide a path to the bpf object file").
-# Previous note about modern_ebpf segfaulting was on an earlier 6.8 build;
-# verified BTF present before switching.
+# Requires falco >= 0.40.0: Ubuntu 6.8 kernel vmlinux BTF omits the
+# btf_trace_page_fault_kernel type, causing pf_kernel (tp_btf/page_fault_kernel)
+# PROG_LOAD to fail EINVAL and scap_init to abort. 0.40.0 treats pf_kernel
+# as optional — skipped when the BTF type is absent rather than crashing.
 engine:
   kind: modern_ebpf
   modern_ebpf:
