@@ -28,7 +28,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import {
   constantTimeCompare,
-  isWithinReplayWindow,
   shouldAcceptUnauthenticated,
   warnMissingWebhookSecret,
   checkWebhookBodySize,
@@ -72,7 +71,6 @@ export async function POST(req: NextRequest) {
     req.headers.get('X-Orion-Falco-Signature') ||
     req.headers.get('x-orion-falco-signature') ||
     req.headers.get('X-Signature')
-  const timestamp = req.headers.get('X-Timestamp') || req.headers.get('x-timestamp')
 
   // 2. Verify token — Falcosidekick sends the raw secret as a custom header
   // (it cannot compute HMAC). We do a constant-time equality check instead of
@@ -98,13 +96,10 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 3. Replay window
-  if (!isWithinReplayWindow(timestamp)) {
-    return NextResponse.json(
-      { error: 'Request expired (replay window exceeded)' },
-      { status: 410 }
-    )
-  }
+  // 3. Replay window — skipped for Falco: Falcosidekick cannot inject
+  // X-Timestamp headers, so the check always fails in production (same
+  // issue as host-agent, fixed in PR #660). Auth is already handled by
+  // the constant-time secret comparison above.
 
   // 4. Parse + validate Falco alert shape
   let parsed: unknown
