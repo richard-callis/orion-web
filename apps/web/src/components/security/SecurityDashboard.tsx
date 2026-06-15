@@ -86,6 +86,20 @@ export default function SecurityDashboard() {
     return () => { clearInterval(interval); controller.abort() }
   }, [loadOverview])
 
+  // Real-time incident updates via SSE, alongside the 30s poll above.
+  // Debounce/coalesce bursts within 2s to avoid a refetch storm when many
+  // incidents land at once (e.g. correlation engine opening a batch).
+  useEffect(() => {
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    const source = new EventSource('/api/monitoring/security/stream?channel=incidents')
+    source.onmessage = () => {
+      if (timeout) clearTimeout(timeout)
+      timeout = setTimeout(() => loadOverview(), 2000)
+    }
+    source.onerror = () => {} // auto-reconnects
+    return () => { source.close(); if (timeout) clearTimeout(timeout) }
+  }, [loadOverview])
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">

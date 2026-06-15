@@ -10,6 +10,15 @@ interface SourceHealth {
   staleAfterMs: number
   environmentId: string
   status: 'healthy' | 'stale' | 'down'
+  alertCount24h: number
+}
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return 'never'
+  const ms = Date.now() - new Date(iso).getTime()
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s ago`
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`
+  return `${Math.round(ms / 3_600_000)}h ago`
 }
 
 const SOURCE_ICONS: Record<string, React.ElementType> = {
@@ -47,6 +56,15 @@ export default function SourceHealthPanel() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // Real-time: refetch on any 'sources' SSE frame. We do a full refetch
+  // rather than trying to use the frame's ID-only payload (R7 invariant).
+  useEffect(() => {
+    const source = new EventSource('/api/monitoring/security/stream?channel=sources')
+    source.onmessage = () => { load() }
+    source.onerror = () => {} // EventSource auto-reconnects
+    return () => { source.close() }
+  }, [load])
 
   if (loading) {
     return (
@@ -87,7 +105,7 @@ export default function SourceHealthPanel() {
           {sources.map(source => {
             const Icon = SOURCE_ICONS[source.source] || Shield
             const label = SOURCE_LABELS[source.source] || source.source
-            const lastSeen = source.lastSeenAt ? new Date(source.lastSeenAt).toLocaleString() : 'Never'
+            const lastSeen = relativeTime(source.lastSeenAt)
             const statusColor = source.status === 'healthy' ? 'text-status-healthy' :
               source.status === 'stale' ? 'text-status-warning' : 'text-status-error'
 
@@ -103,6 +121,11 @@ export default function SourceHealthPanel() {
                 <div className="flex items-center gap-3 mb-2">
                   <Icon size={16} className={statusColor} />
                   <span className="text-sm font-medium text-text-primary">{label}</span>
+                  {source.alertCount24h > 0 && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-status-warning/15 text-status-warning">
+                      {source.alertCount24h} alerts/24h
+                    </span>
+                  )}
                   <span className={`ml-auto text-[10px] font-bold uppercase tracking-wide ${statusColor}`}>
                     {source.status}
                   </span>
