@@ -594,8 +594,14 @@ services:
   # falcoctl installs modern_ebpf by default; falco.yaml is now aligned.
   # privileged: true is still required for Falco's syscall capture even
   # with eBPF — see https://falco.org/docs/getting-started/running/#docker.
+  #
+  # 0.38.x crash-loop root cause: Ubuntu 6.8 kernel vmlinux BTF omits the
+  # btf_trace_page_fault_kernel type, so the tp_btf/page_fault_kernel BPF
+  # program (named "pf_kernel") fails PROG_LOAD with EINVAL and scap_init
+  # fails. 0.40.0 makes pf_kernel optional — it is skipped when BTF type
+  # is absent rather than aborting startup.
   falco:
-    image: falcosecurity/falco:0.38.2
+    image: falcosecurity/falco:0.40.0
     restart: unless-stopped
     privileged: true
     pid: host
