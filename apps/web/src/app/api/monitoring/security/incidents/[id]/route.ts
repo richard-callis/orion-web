@@ -5,6 +5,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
@@ -102,4 +103,30 @@ export async function GET(
     actions,
     chatMessages,
   })
+}
+
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  const { id } = await params
+  const body = z.object({
+    status: z.enum(['open', 'triaged', 'contained', 'closed']).optional(),
+    rootCauseSummary: z.string().optional().nullable(),
+  }).safeParse(await req.json())
+  if (!body.success) return NextResponse.json({ error: body.error.errors }, { status: 400 })
+
+  const incident = await prisma.incident.findUnique({ where: { id } })
+  if (!incident) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  const updated = await prisma.incident.update({
+    where: { id },
+    data: {
+      ...(body.data.status ? { status: body.data.status } : {}),
+      ...(body.data.rootCauseSummary !== undefined ? { rootCauseSummary: body.data.rootCauseSummary } : {}),
+      ...(body.data.status === 'closed' && !incident.closedAt ? { closedAt: new Date() } : {}),
+    },
+  })
+  return NextResponse.json(updated)
 }
