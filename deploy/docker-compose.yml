@@ -658,6 +658,81 @@ services:
           cpus: '0.25'
           memory: 128M
 
+  # ── ArgoCD (hub) ──────────────────────────────────────────────────────────────
+  # Runs on the Docker host as the central GitOps hub managing all cluster
+  # spokes (Talos + any future environments) via kubeconfig.
+  # Orion calls the API at http://host.docker.internal:8083.
+  #
+  # --namespace argocd is required: kubeconfig defaults to `namespace: default`
+  # but ArgoCD's ConfigMap and CRDs live in the `argocd` namespace on the cluster.
+  # KUBECONFIG=/kubeconfig/config maps /root/.kube/config from the host.
+
+  argocd-redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+
+  argocd-repo-server:
+    image: quay.io/argoproj/argocd:v3.3.8
+    restart: unless-stopped
+    command: argocd-repo-server
+    environment:
+      KUBECONFIG: /kubeconfig/config
+    volumes:
+      - argocd-data:/shared
+      - /root/.kube:/kubeconfig:ro
+    depends_on:
+      - argocd-redis
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  argocd-server:
+    image: quay.io/argoproj/argocd:v3.3.8
+    restart: unless-stopped
+    command: argocd-server --insecure --namespace argocd
+    environment:
+      KUBECONFIG: /kubeconfig/config
+      ARGOCD_SERVER_INSECURE: "true"
+    volumes:
+      - argocd-data:/home/argocd
+      - /root/.kube:/kubeconfig:ro
+    ports:
+      - "8083:8080"
+    depends_on:
+      - argocd-redis
+      - argocd-repo-server
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  argocd-application-controller:
+    image: quay.io/argoproj/argocd:v3.3.8
+    restart: unless-stopped
+    command: argocd-application-controller --redis argocd-redis:6379 --namespace argocd
+    environment:
+      KUBECONFIG: /kubeconfig/config
+    volumes:
+      - argocd-data:/shared
+      - /root/.kube:/kubeconfig:ro
+    depends_on:
+      - argocd-redis
+      - argocd-repo-server
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
   # orion-executor — contained localhost execution service with Warden gating.
   # Receives tool calls from gateway, classifies risk, gates on Warden approval,
   # executes in this container (limited mounts + resource caps), logs to Orion.
@@ -708,3 +783,4 @@ volumes:
   redis-sentinel-3-data:
   traefik-letsencrypt:
   vault-audit:
+  argocd-data:
