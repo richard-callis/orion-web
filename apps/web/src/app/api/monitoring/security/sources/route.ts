@@ -65,6 +65,19 @@ export async function GET() {
     ...[...envBySource.values()].filter(s => !globalNames.has(s.source)),
   ]
 
+  // Count SecurityEvents per source in the last 24h to surface alert volume.
+  // Known limitation (best-effort): ELK events are written with source='elk'
+  // but the corresponding health rows use 'elk_syslog'/'elk_flow', so those
+  // ELK health rows won't match and will report alertCount24h: 0. We map
+  // defensively — any source name with no matching event group gets 0.
+  const since24h = new Date(Date.now() - 86_400_000)
+  const alertCounts = await prisma.securityEvent.groupBy({
+    by: ['source'],
+    where: { createdAt: { gte: since24h } },
+    _count: { id: true },
+  })
+  const alertCountMap = new Map(alertCounts.map(r => [r.source, r._count.id]))
+
   const result = merged.map(s => {
     const lastSeen = s.lastSeenAt ? new Date(s.lastSeenAt).getTime() : 0
     const status = computeSourceStatus(lastSeen, now, s.staleAfterMs)
@@ -75,6 +88,7 @@ export async function GET() {
       staleAfterMs: s.staleAfterMs,
       environmentId: s.environmentId,
       status,
+      alertCount24h: alertCountMap.get(s.source) ?? 0,
     }
   })
 
