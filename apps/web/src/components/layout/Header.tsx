@@ -13,7 +13,7 @@ export function Header() {
 
   useEffect(() => {
     fetch('/api/admin/settings')
-      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error(`Request failed: ${r.status}`); return r.json() })
       .then(d => { if (d['app.name']) setAppName(d['app.name'] as string) })
       .catch((e) => console.error("[fetch]", e))
   }, [])
@@ -44,7 +44,7 @@ export function Header() {
           <button
             onClick={() => setOpen(o => !o)}
             className="w-8 h-8 rounded-full bg-accent/20 border border-accent/30 flex items-center justify-center text-xs font-semibold text-accent hover:bg-accent/30 transition-colors"
-            title={session.user?.name ?? session.user?.email ?? ''}
+            title={(session.user?.name ?? session.user?.email ?? '').replace(/"/g, '&quot;')}
           >
             {initials}
           </button>

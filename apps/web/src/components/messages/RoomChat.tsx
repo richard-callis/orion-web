@@ -161,6 +161,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   const loadRoom = useCallback(async (limit?: number) => {
     try {
       const res = await fetch(`/api/chatrooms/${roomId}?messages=${limit ?? messageLimit}`)
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`)
       const detail = await res.json()
       setRoom(detail)
       setTokenState({ count: detail.tokenCount ?? 0, limit: detail.tokenLimit ?? null })
@@ -314,11 +315,12 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
               : taskId    ? `/api/tasks/${taskId}`
               : null
     if (!url) return
-    await fetch(url, {
+    const undoRes = await fetch(url, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ plan: planToast.prevPlan }),
     })
+    if (!undoRes.ok) return
     setPlanToast(null)
     setSavedPlanMsgId(null)
   }, [room, planToast])
@@ -337,8 +339,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       // Messages will arrive via SSE in real-time, no need to poll
       // Just reload room once for metadata/counts
       await loadRoom()
-    } catch { /* ignore */ }
-    setSending(false)
+    } catch { /* ignore */ } finally { setSending(false) }
   }
 
   const loadInviteOptions = useCallback(async () => {
