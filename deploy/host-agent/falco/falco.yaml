@@ -39,6 +39,7 @@ http_output:
   enabled: true
   url: http://falcosidekick:2801
   user_agent: falcosecurity/falco
+  keep_alive: false
 
 stdout_output:
   enabled: true

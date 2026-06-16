@@ -620,6 +620,7 @@ services:
       - /usr:/host/usr:ro
       - /etc:/host/etc:ro
       - ./host-agent/falco/falco.yaml:/etc/falco/falco.yaml:ro
+      - ./host-agent/falco/falco_rules.local.yaml:/etc/falco/falco_rules.local.yaml:ro
     environment:
       FALCO_GRPC_ENABLED: "true"
       FALCO_GRPC_BIND_ADDRESS: "0.0.0.0:5060"
