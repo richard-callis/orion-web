@@ -1,0 +1,3 @@
+- rule: Read sensitive file untrusted
+  condition: and not (proc.name = pg_isready and fd.name = /etc/shadow)
+  append: true
