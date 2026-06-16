@@ -58,6 +58,9 @@ export class OrionClient {
   async listExecutions(params: { status?: string } = {}): Promise<ToolExecution[]> {
     const query = params.status ? `?status=${encodeURIComponent(params.status)}` : ''
     const response = await this.client.get(`/api/executions${query}`)
+    if (!Array.isArray(response.data)) {
+      throw new Error(`listExecutions: expected array, got ${typeof response.data} — possible auth failure`)
+    }
     return response.data
   }
 
