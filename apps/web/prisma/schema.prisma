@@ -75,6 +75,8 @@ model Agent {
   nova             Nova?                  @relation(fields: [novaId], references: [id], onDelete: SetNull)
   tokenBudgetDay   Int? // max tokens per day (input+output combined), null = unlimited
   tokenBudgetMonth Int? // max tokens per calendar month, null = unlimited
+  createdBy        String?
+  creator          User?                  @relation("AgentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   messages         AgentMessage[]
   tasks            Task[]                 @relation("AssignedTasks")
   environments     AgentEnvironment[]
@@ -90,6 +92,8 @@ model Agent {
   tokenUsage       AgentTokenUsage[]
   webhookTriggers  WebhookTrigger[]       @relation("WebhookTriggerAgent")
   scheduledTasks   ScheduledTask[]        @relation("ScheduledTaskAgent")
+
+  @@index([createdBy])
 }
 
 model AgentTokenUsage {
@@ -468,6 +472,7 @@ model User {
   chatMessages     ChatMessage[]
   managedSecrets   ManagedSecret[]
   notes            Note[]                @relation("NoteCreator")
+  agentsCreated    Agent[]               @relation("AgentCreator")
 }
 
 model ApiKey {

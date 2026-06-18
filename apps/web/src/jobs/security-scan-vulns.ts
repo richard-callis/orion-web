@@ -51,7 +51,7 @@ export interface ScanResult {
  * Daily scan entry point. Iterates all envs (+ host) and scans them.
  * Returns per-target results.
  */
-export async function runDailyScan(): Promise<ScanResult[]> {
+export async function runDailyScan(environmentId?: string): Promise<ScanResult[]> {
   const results: ScanResult[] = []
 
   // 1. Refresh the KEV cache up front so all scans in this pass share it.
@@ -59,7 +59,7 @@ export async function runDailyScan(): Promise<ScanResult[]> {
 
   // 2. Per-env scans.
   const envs = await prisma.environment.findMany({
-    where: { status: 'connected' },
+    where: { status: 'connected', ...(environmentId ? { id: environmentId } : {}) },
     select: { id: true, type: true, gatewayUrl: true, gatewayToken: true, monitoringConfig: true },
   })
 
@@ -405,6 +405,8 @@ async function persistFindings(
           severity,
           status: 'open',
           rawTrivy: c.rawTrivy as any,
+          fixAvailable: !!c.fixedVersion,
+          title: (c.rawTrivy as any)?.Title ?? null,
         },
       })
 
@@ -425,6 +427,36 @@ async function persistFindings(
           },
         }).catch(() => {})
         result.findingsCreated++
+
+        // Auto-create an ORION task for Critical/High CVEs with a fix available.
+        if (severity >= 70 && c.fixedVersion) {
+          const majorBump =
+            c.fixedVersion && c.packageVersion.split('.')[0] !== c.fixedVersion.split('.')[0]
+          const severityLabel = severity >= 90 ? 'Critical' : 'High'
+          const task = await prisma.task.create({
+            data: {
+              title: `[${severityLabel} CVE] ${c.cveId} in ${c.packageName}`,
+              description: [
+                `**CVE**: ${c.cveId}`,
+                `**Severity**: ${severityLabel} (score ${severity}/100, CVSS ${c.cvssScore ?? 'N/A'})`,
+                `**Package**: ${c.packageName} ${c.packageVersion} → fix: ${c.fixedVersion}`,
+                `**Target**: ${c.target}`,
+                majorBump
+                  ? `\n⚠️ **Breaking change warning**: fix requires major version bump (${c.packageVersion.split('.')[0]}.x → ${c.fixedVersion.split('.')[0]}.x). Review for breaking changes before upgrading.`
+                  : '',
+              ]
+                .filter(Boolean)
+                .join('\n'),
+              status: 'pending',
+              priority: severity >= 90 ? 'urgent' : 'high',
+              createdBy: 'vuln-scanner',
+            },
+          })
+          await prisma.vulnerabilityFinding.update({
+            where: { id: upserted.id },
+            data: { taskId: task.id, fixAvailable: true },
+          })
+        }
       } else if (severity > existing.severity) {
         // Escalation — emit vuln.escalated event.
         await prisma.securityEvent.create({

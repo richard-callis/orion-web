@@ -100,6 +100,22 @@ export async function runSecurityRetentionJob(log: JobLogger): Promise<void> {
   })
   await log(`Action audits purged: ${deletedAudits.count} rows older than ${auditCutoff.toISOString()}`)
 
+  // 4. Reopen CVE findings where accepted-risk period has expired
+  const reopened = await prisma.vulnerabilityFinding.updateMany({
+    where: {
+      status: 'accepted',
+      acceptedRiskExpiresAt: { lt: new Date() },
+    },
+    data: {
+      status: 'open',
+      acceptedRiskJustification: null,
+      acceptedRiskExpiresAt: null,
+    },
+  })
+  if (reopened.count > 0) {
+    console.log(`[retention] Reopened ${reopened.count} expired accepted-risk CVE findings`)
+  }
+
   await log(
     `Security retention complete: ${deletedEvents.count} events, ${deletedIncidents.count} incidents, ${deletedAudits.count} audits purged`,
   )
