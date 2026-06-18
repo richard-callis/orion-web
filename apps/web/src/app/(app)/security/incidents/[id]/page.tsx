@@ -100,6 +100,11 @@ export default function IncidentDetailPage() {
   const [loadingInvestigation, setLoadingInvestigation] = useState(false)
   const [noteContent, setNoteContent] = useState('')
   const [savingNote, setSavingNote] = useState(false)
+  const [observables, setObservables] = useState<Observable[] | null>(null)
+  const [loadingObservables, setLoadingObservables] = useState(false)
+  const [obsCategory, setObsCategory] = useState<string>('ipv4')
+  const [obsValue, setObsValue] = useState('')
+  const [addingObs, setAddingObs] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -140,13 +145,31 @@ export default function IncidentDetailPage() {
     }
   }, [investigationId])
 
+  const loadObservables = useCallback(async () => {
+    if (!investigationId) return
+    setLoadingObservables(true)
+    try {
+      const r = await fetch(`/api/monitoring/security/investigations/${investigationId}/observables`)
+      if (!r.ok) throw new Error(`${r.status}`)
+      const d = await r.json()
+      setObservables(d.observables ?? [])
+    } catch {
+      setObservables([])
+    } finally {
+      setLoadingObservables(false)
+    }
+  }, [investigationId])
+
   // Lazy-load investigation data when an investigation-dependent tab is opened.
   useEffect(() => {
     if (!investigationId) return
-    if ((activeTab === 'observables' || activeTab === 'notes' || activeTab === 'timeline') && !investigation) {
+    if ((activeTab === 'notes' || activeTab === 'timeline') && !investigation) {
       loadInvestigation()
     }
-  }, [activeTab, investigationId, investigation, loadInvestigation])
+    if (activeTab === 'observables' && observables === null) {
+      loadObservables()
+    }
+  }, [activeTab, investigationId, investigation, loadInvestigation, observables, loadObservables])
 
   async function handleCreateInvestigation() {
     setCreatingInvestigation(true)
@@ -183,6 +206,28 @@ export default function IncidentDetailPage() {
       await load()
     } finally {
       setUpdatingStatus(false)
+    }
+  }
+
+  async function addObservable() {
+    if (!investigationId || !obsValue.trim()) return
+    setAddingObs(true)
+    try {
+      const r = await fetch(`/api/monitoring/security/investigations/${investigationId}/observables`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: obsValue.trim(), category: obsCategory }),
+      })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ error: 'Unknown error' }))
+        console.error('[addObservable] failed:', err)
+        return
+      }
+      setObsValue('')
+      setObservables(null)
+      await loadObservables()
+    } finally {
+      setAddingObs(false)
     }
   }
 
@@ -459,45 +504,95 @@ export default function IncidentDetailPage() {
       )}
 
       {activeTab === 'observables' && (
-        <div className="bg-bg-surface border border-border-subtle rounded-xl">
-          <div className="px-4 py-3 border-b border-border-subtle">
-            <span className="text-sm font-medium text-text-primary">
-              Observables{investigation ? ` (${investigation.observables.length})` : ''}
-            </span>
-          </div>
-          {!investigationId ? noInvestigationCta : loadingInvestigation ? (
-            <div className="px-4 py-10 flex justify-center"><Loader2 size={20} className="animate-spin text-accent" /></div>
-          ) : !investigation || investigation.observables.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-text-muted">No observables recorded</div>
+        <div className="space-y-4">
+          {!investigationId ? (
+            <div className="bg-bg-surface border border-border-subtle rounded-xl">
+              <div className="px-4 py-10 text-center text-sm text-text-muted">
+                No investigation linked — click &apos;Open Investigation&apos; to enable observables.
+              </div>
+            </div>
           ) : (
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border-subtle text-text-muted text-left">
-                  <th className="px-4 py-2 font-medium">Value</th>
-                  <th className="px-4 py-2 font-medium">Category</th>
-                  <th className="px-4 py-2 font-medium">Role</th>
-                  <th className="px-4 py-2 font-medium">Verdict</th>
-                  <th className="px-4 py-2 font-medium">Confidence</th>
-                  <th className="px-4 py-2 font-medium">First Seen</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-subtle">
-                {investigation.observables.map(obs => (
-                  <tr key={obs.id} className="hover:bg-bg-raised transition-colors">
-                    <td className="px-4 py-2 font-mono text-text-primary truncate max-w-48">{obs.displayValue || obs.value}</td>
-                    <td className="px-4 py-2 text-text-muted">{obs.category}</td>
-                    <td className="px-4 py-2 text-text-muted">{obs.role}</td>
-                    <td className="px-4 py-2">
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${verdictClass(obs.verdict)}`}>
-                        {obs.verdict}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2 text-text-muted">{obs.confidence}%</td>
-                    <td className="px-4 py-2 text-text-muted">{new Date(obs.firstSeen).toLocaleDateString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <>
+              {/* Add Observable form */}
+              <div className="bg-bg-surface border border-border-subtle rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Eye size={14} className="text-text-muted" />
+                  <span className="text-sm font-medium text-text-primary">Add Observable</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={obsCategory}
+                    onChange={e => setObsCategory(e.target.value)}
+                    className="px-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none focus:border-accent"
+                  >
+                    {['ipv4', 'ipv6', 'domain', 'url', 'file_hash_md5', 'file_hash_sha1', 'file_hash_sha256', 'mac_address', 'email', 'username', 'file_path', 'registry_key', 'mutex', 'asn'].map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={obsValue}
+                    onChange={e => setObsValue(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') addObservable() }}
+                    placeholder="Value (e.g. 1.2.3.4, evil.com)"
+                    className="flex-1 px-3 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent font-mono"
+                  />
+                  <button
+                    onClick={addObservable}
+                    disabled={addingObs || !obsValue.trim()}
+                    className="px-3 py-1.5 text-xs bg-accent text-white rounded hover:bg-accent/90 disabled:opacity-50 transition-colors flex items-center gap-1 shrink-0"
+                  >
+                    {addingObs ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                    Add
+                  </button>
+                </div>
+              </div>
+
+              {/* Observables table */}
+              <div className="bg-bg-surface border border-border-subtle rounded-xl">
+                <div className="px-4 py-3 border-b border-border-subtle">
+                  <span className="text-sm font-medium text-text-primary">
+                    Observables{observables ? ` (${observables.length})` : ''}
+                  </span>
+                </div>
+                {loadingObservables ? (
+                  <div className="px-4 py-10 flex justify-center"><Loader2 size={20} className="animate-spin text-accent" /></div>
+                ) : !observables || observables.length === 0 ? (
+                  <div className="px-4 py-8 text-center text-sm text-text-muted">No observables yet — add one above.</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-border-subtle text-text-muted text-left">
+                          <th className="px-4 py-2 font-medium">Value</th>
+                          <th className="px-4 py-2 font-medium">Category</th>
+                          <th className="px-4 py-2 font-medium">Role</th>
+                          <th className="px-4 py-2 font-medium">Verdict</th>
+                          <th className="px-4 py-2 font-medium">Confidence</th>
+                          <th className="px-4 py-2 font-medium">First Seen</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border-subtle">
+                        {observables.map(obs => (
+                          <tr key={obs.id} className="hover:bg-bg-raised transition-colors">
+                            <td className="px-4 py-2 font-mono text-text-primary truncate max-w-48">{obs.displayValue || obs.value}</td>
+                            <td className="px-4 py-2 text-text-muted">{obs.category}</td>
+                            <td className="px-4 py-2 text-text-muted">{obs.role}</td>
+                            <td className="px-4 py-2">
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${verdictClass(obs.verdict)}`}>
+                                {obs.verdict}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2 text-text-muted">{obs.confidence}%</td>
+                            <td className="px-4 py-2 text-text-muted">{new Date(obs.firstSeen).toLocaleDateString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       )}

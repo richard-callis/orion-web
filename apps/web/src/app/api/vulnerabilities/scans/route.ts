@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
         where: { id: scan.id },
         data: { status: 'running', startedAt: new Date() },
       })
-      const results = await runDailyScan()
+      const results = await runDailyScan(parsed.data.environmentId)
       const totals = results.reduce(
         (acc, r) => ({
           findingsCreated: acc.findingsCreated + r.findingsCreated,

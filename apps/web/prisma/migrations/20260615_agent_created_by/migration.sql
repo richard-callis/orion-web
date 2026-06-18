@@ -1,0 +1,3 @@
+ALTER TABLE "Agent" ADD COLUMN "createdBy" TEXT;
+ALTER TABLE "Agent" ADD CONSTRAINT "Agent_createdBy_fkey"
+  FOREIGN KEY ("createdBy") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
