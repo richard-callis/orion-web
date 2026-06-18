@@ -463,6 +463,15 @@ export async function getCurrentUser(): Promise<AppUser | null> {
 }
 
 /**
+ * SOC2: Require a logged-in user (any role). Throws if not logged in.
+ */
+export async function requireAuth(): Promise<AppUser> {
+  const user = await getCurrentUser()
+  if (!user) throw new Error('Unauthorized')
+  return user
+}
+
+/**
  * SOC2: Require a logged-in user with write access (any role except readonly).
  * Require an authenticated user (any role). Throws if not logged in.
  */

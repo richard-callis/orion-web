@@ -1,8 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { parseBodyOrError, UpdateAgentSchema } from '@/lib/validate'
-import { requireAdmin } from '@/lib/auth'
+import { requireAdmin, requireAuth, assertCanModify } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
+
+/**
+ * Map an assertCanModify rejection to the right HTTP status.
+ * Returns null when access is allowed.
+ */
+async function guardAccess(
+  caller: Awaited<ReturnType<typeof requireAuth>> | null,
+  recordCreatedBy: string | null,
+): Promise<NextResponse | null> {
+  try {
+    await assertCanModify(caller, /* isService */ false, recordCreatedBy)
+    return null
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : ''
+    if (msg === 'Forbidden') return new NextResponse(null, { status: 403 })
+    return new NextResponse(null, { status: 401 })
+  }
+}
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try { await requireAdmin() } catch {
@@ -20,11 +38,17 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  // Require admin — any authenticated user could otherwise overwrite any agent's
-  // systemPrompt or contextConfig (privilege escalation).
-  try { await requireAdmin() } catch {
-    return NextResponse.json({ error: 'Admin privileges required to modify agents' }, { status: 403 })
+  // Require authenticated user; admin or creator may modify.
+  let caller
+  try { caller = await requireAuth() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  const existing = await prisma.agent.findUnique({ where: { id: (await params).id }, select: { createdBy: true, metadata: true } })
+  if (!existing) return new NextResponse(null, { status: 404 })
+
+  const denied = await guardAccess(caller, existing.createdBy ?? null)
+  if (denied) return denied
 
   // SOC2 [INPUT-001]: Validate request body with Zod schema
   const result = await parseBodyOrError(req, UpdateAgentSchema)
@@ -39,7 +63,6 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (validatedData.tokenBudgetMonth !== undefined) data.tokenBudgetMonth = validatedData.tokenBudgetMonth
   if (validatedData.metadata !== undefined) {
     // Deep merge metadata so callers can update contextConfig without wiping systemPrompt
-    const existing = await prisma.agent.findUnique({ where: { id: (await params).id }, select: { metadata: true } })
     const existingMeta = (existing?.metadata ?? {}) as Record<string, unknown>
     data.metadata = { ...existingMeta, ...validatedData.metadata }
   }
@@ -48,12 +71,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  let adminUser
-  try { adminUser = await requireAdmin() } catch {
-    return NextResponse.json({ error: 'Admin privileges required to delete agents' }, { status: 403 })
+  let caller
+  try { caller = await requireAuth() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const agent = await prisma.agent.findUnique({ where: { id: (await params).id }, select: { name: true } })
+  const agent = await prisma.agent.findUnique({ where: { id: (await params).id }, select: { name: true, createdBy: true } })
+  if (!agent) return new NextResponse(null, { status: 404 })
+
+  const denied = await guardAccess(caller, agent.createdBy ?? null)
+  if (denied) return denied
 
   // Unassign tasks first to avoid FK violation
   await prisma.task.updateMany({ where: { assignedAgent: (await params).id }, data: { assignedAgent: null } })
@@ -61,7 +88,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   // SOC2: audit agent deletion
   logAudit({
-    userId: adminUser.id,
+    userId: caller.id,
     action: 'agent_delete',
     target: `agent:${(await params).id}`,
     detail: { name: agent?.name },
