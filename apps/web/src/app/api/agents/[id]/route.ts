@@ -12,6 +12,13 @@ async function guardAccess(
   caller: Awaited<ReturnType<typeof requireAuth>> | null,
   recordCreatedBy: string | null,
 ): Promise<NextResponse | null> {
+  // Null createdBy = shared/system agent. Only admins may modify these.
+  if (recordCreatedBy === null) {
+    try { await requireAdmin() } catch {
+      return new NextResponse(null, { status: 403 })
+    }
+    return null
+  }
   try {
     await assertCanModify(caller, /* isService */ false, recordCreatedBy)
     return null

@@ -213,11 +213,16 @@ export default function IncidentDetailPage() {
     if (!investigationId || !obsValue.trim()) return
     setAddingObs(true)
     try {
-      await fetch(`/api/monitoring/security/investigations/${investigationId}/observables`, {
+      const r = await fetch(`/api/monitoring/security/investigations/${investigationId}/observables`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value: obsValue.trim(), category: obsCategory }),
       })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ error: 'Unknown error' }))
+        console.error('[addObservable] failed:', err)
+        return
+      }
       setObsValue('')
       setObservables(null)
       await loadObservables()

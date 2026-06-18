@@ -51,7 +51,7 @@ export interface ScanResult {
  * Daily scan entry point. Iterates all envs (+ host) and scans them.
  * Returns per-target results.
  */
-export async function runDailyScan(): Promise<ScanResult[]> {
+export async function runDailyScan(environmentId?: string): Promise<ScanResult[]> {
   const results: ScanResult[] = []
 
   // 1. Refresh the KEV cache up front so all scans in this pass share it.
@@ -59,7 +59,7 @@ export async function runDailyScan(): Promise<ScanResult[]> {
 
   // 2. Per-env scans.
   const envs = await prisma.environment.findMany({
-    where: { status: 'connected' },
+    where: { status: 'connected', ...(environmentId ? { id: environmentId } : {}) },
     select: { id: true, type: true, gatewayUrl: true, gatewayToken: true, monitoringConfig: true },
   })
 
