@@ -64,6 +64,18 @@ data_dir = "/var/lib/vector"
 type = "docker_logs"
 include_containers = ["traefik", "authentik", "authentik-worker"]
 
+# ── Source 5: UDM Pro syslog ─────────────────────────────────────────────────
+# Receives syslog from the UniFi Dream Machine Pro (UDP, port 5514).
+# Configure UDM Pro: Settings → System → Logging → Remote Syslog Server → this
+# host IP, port 5514. Vector runs as 1000:1000 so cannot bind 514.
+# UDM Pro events go to Loki only (raw retention + LogQL). High-severity
+# patterns can be promoted to Orion SecurityEvents via a future filter.
+
+[sources.udm_syslog]
+type = "syslog"
+mode = "udp"
+address = "0.0.0.0:5514"
+
 # ── Transform 1: journald auth → structured event ───────────────────────────
 # Maps journald log lines into the HostAgentEvent shape.
 
@@ -202,6 +214,29 @@ source = """
   .raw = msg
 """
 
+# ── Transform 5: UDM Pro syslog → structured event ──────────────────────────
+# Minimal transform — keeps the raw syslog message for Loki; does NOT feed
+# the Orion webhook (too high volume for SecurityEvent table).
+
+[transforms.udm_to_event]
+type = "remap"
+inputs = ["udm_syslog"]
+source = """
+  .category = "network"
+  .severity = 10
+  .source_file = string(.appname) ?? "udm-pro"
+  .raw = string(.message) ?? ""
+  if contains(string(.message) ?? "", "UFW BLOCK") || contains(string(.message) ?? "", "[Drop]") {
+    .subtype = "firewall.drop"
+    .severity = 20
+  } else if contains(string(.message) ?? "", "ALERT") {
+    .subtype = "ids.alert"
+    .severity = 50
+  } else {
+    .subtype = "syslog.generic"
+  }
+"""
+
 # ── Batching pipeline ─────────────────────────────────────────────────────────
 # Step 1: wrap each event into an events array
 
@@ -288,3 +323,34 @@ max_events = 1
 
 [sinks.webhook.healthcheck]
 enabled = true
+
+# ── Sink: Loki — raw log retention ──────────────────────────────────────────
+# Secondary sink alongside the Orion webhook. Receives all transformed events
+# (including UDM Pro syslog which does NOT go to the Orion webhook). Labels
+# are indexed by Loki for LogQL filtering; the full event JSON is the log line.
+
+[sinks.loki]
+type = "loki"
+inputs = [
+  "journald_to_event",
+  "docker_lifecycle_to_event",
+  "vault_to_event",
+  "edge_to_event",
+  "udm_to_event",
+]
+endpoint = "http://loki:3100"
+encoding.codec = "json"
+
+[sinks.loki.labels]
+category = "{{ category }}"
+subtype = "{{ subtype }}"
+source = "{{ source_file }}"
+host = "{{ host }}"
+
+[sinks.loki.batch]
+max_events = 500
+timeout_secs = 5
+
+[sinks.loki.request]
+retry_attempts = 5
+retry_initial_backoff_secs = 1
