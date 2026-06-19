@@ -7,6 +7,7 @@ import AlertFeed from './AlertFeed'
 import FlowTable from './FlowTable'
 import SourceHealthPanel from './SourceHealthPanel'
 import SecuritySettings from './SecuritySettings'
+import LogExplorer from './LogExplorer'
 
 function RiskScoreGauge({ score }: { score: number }) {
   const getColor = (s: number) => {
@@ -56,7 +57,7 @@ function StatCard({ icon: Icon, label, value, color }: {
   )
 }
 
-type Tab = 'incidents' | 'investigations' | 'alerts' | 'approvals' | 'flows' | 'sources' | 'settings'
+type Tab = 'incidents' | 'investigations' | 'alerts' | 'approvals' | 'flows' | 'sources' | 'logs' | 'settings'
 
 export default function SecurityDashboard() {
   const [data, setData] = useState<any>(null)
@@ -123,6 +124,7 @@ export default function SecurityDashboard() {
     { key: 'approvals', label: 'Approvals', badge: data?.pendingApprovals, href: '/security/approvals' },
     { key: 'flows', label: 'Flows' },
     { key: 'sources', label: 'Sources' },
+    { key: 'logs', label: 'Logs' },
     { key: 'settings', label: 'Settings' },
   ]
 
@@ -318,6 +320,8 @@ export default function SecurityDashboard() {
       )}
 
       {tab === 'sources' && <SourceHealthPanel />}
+
+      {tab === 'logs' && <LogExplorer />}
 
       {tab === 'settings' && (
         <div className="bg-bg-surface border border-border-subtle rounded-xl">

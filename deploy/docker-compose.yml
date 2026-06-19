@@ -71,6 +71,8 @@ services:
       ORION_MCP_TOKEN: ${ORION_MCP_TOKEN:-}
       # Host-agent webhook secret — must match the value passed to the vector service
       HOST_AGENT_WEBHOOK_SECRET: ${HOST_AGENT_WEBHOOK_SECRET:-}
+      # Loki — log query proxy
+      LOKI_URL: http://loki:3100
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -564,6 +566,8 @@ services:
     user: "1000:1000"
     group_add:
       - "${DOCKER_GID:-999}"
+    ports:
+      - "5514:5514/udp"
     environment:
       HOST_AGENT_WEBHOOK_SECRET: "${HOST_AGENT_WEBHOOK_SECRET:-}"
       ORION_HOST_AGENT_WEBHOOK_URL: "http://orion:3000/api/monitoring/security/webhooks/host-agent"
@@ -771,6 +775,29 @@ services:
           memory: 512M
           pids: 64
 
+  # ── Loki — log retention store ────────────────────────────────────────────
+  # Time-series log store for raw host and network logs. Vector ships logs here
+  # as a secondary sink (primary sink is the Orion host-agent webhook for
+  # structured SecurityEvents). Orion proxies LogQL queries via /api/logs/*.
+  # Not exposed publicly — Orion is the only external query path.
+  loki:
+    image: grafana/loki:3.0.0
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
 volumes:
   gitea-data:
   postgres-data:
@@ -785,3 +812,4 @@ volumes:
   traefik-letsencrypt:
   vault-audit:
   argocd-data:
+  loki-data:
