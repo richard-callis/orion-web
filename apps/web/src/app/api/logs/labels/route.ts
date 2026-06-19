@@ -19,7 +19,8 @@ export async function GET(req: NextRequest) {
     const res = await fetch(`${LOKI_URL}/loki/api/v1/labels?${lokiParams}`, {
       signal: AbortSignal.timeout(10_000),
     })
-    const data = await res.json()
+    const ct = res.headers.get('content-type') ?? ''
+    const data = ct.includes('application/json') ? await res.json() : { error: await res.text() }
     return NextResponse.json(data, { status: res.status })
   } catch (err) {
     return NextResponse.json({ error: 'Loki unreachable', detail: String(err) }, { status: 502 })
