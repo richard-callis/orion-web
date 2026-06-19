@@ -472,16 +472,6 @@ export async function requireAuth(): Promise<AppUser> {
 }
 
 /**
- * SOC2: Require a logged-in user with write access (any role except readonly).
- * Require an authenticated user (any role). Throws if not logged in.
- */
-export async function requireAuth(): Promise<AppUser> {
-  const user = await getCurrentUser()
-  if (!user) throw new Error('Unauthorized')
-  return user
-}
-
-/**
  * Use this for POST/PUT/DELETE handlers to block readonly users.
  */
 export async function requireWriteAccess(): Promise<AppUser> {
