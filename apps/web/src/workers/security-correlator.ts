@@ -350,7 +350,14 @@ async function correlateEnvironment(
         // Below-threshold incidents still get the system-notice above (audit trail)
         // but don't trigger an agentic loop — prevents operational noise (Docker
         // restarts, stale-source events) from burning tokens on every correlator tick.
-        if (incident.severity >= WARDEN_MIN_SEVERITY) {
+        // Only dispatch Warden once per incident. triageDispatchedAt is set the
+        // first time we wake Warden; subsequent correlator ticks that re-touch the
+        // same incident skip the agentic loop and avoid burning tokens.
+        if (incident.severity >= WARDEN_MIN_SEVERITY && !incident.triageDispatchedAt) {
+          await prisma.incident.update({
+            where: { id: incident.id },
+            data: { triageDispatchedAt: new Date() },
+          })
           triggerRoomAgentReplies(securityRoomId, noticeBody).catch((e: unknown) => {
             // eslint-disable-next-line no-console
             console.error(`[warden-wakeup] Failed to trigger room agent replies for incident ${incident.id ?? 'unknown'}: ${e instanceof Error ? e.message : e}`)
