@@ -75,8 +75,6 @@ function flattenStreams(streams: LokiStream[]): LogEntry[] {
 function LogRow({ entry }: { entry: LogEntry }) {
   const [expanded, setExpanded] = useState(false)
   const msg = entry.parsed?.raw as string | undefined ?? entry.raw
-
-  const subtype = entry.labels.subtype ?? ''
   const isError = entry.parsed?.severity != null && Number(entry.parsed.severity) >= 50
 
   return (
@@ -121,6 +119,7 @@ function LogRow({ entry }: { entry: LogEntry }) {
 export default function LogExplorer() {
   const [query, setQuery] = useState('{category!=""}')
   const [presetIdx, setPresetIdx] = useState(1) // 1h default
+  const [lastRunPresetIdx, setLastRunPresetIdx] = useState(1)
   const [entries, setEntries] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -129,6 +128,8 @@ export default function LogExplorer() {
   const [showLabelPicker, setShowLabelPicker] = useState(false)
   const [expandedLabel, setExpandedLabel] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const runGenRef = useRef(0)
+  const labelPickerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     fetch('/api/logs/labels')
@@ -137,19 +138,44 @@ export default function LogExplorer() {
       .catch(() => {})
   }, [])
 
+  // Close label picker on outside click
+  useEffect(() => {
+    if (!showLabelPicker) return
+    const handler = (e: MouseEvent) => {
+      if (labelPickerRef.current && !labelPickerRef.current.contains(e.target as Node)) {
+        setShowLabelPicker(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showLabelPicker])
+
   const fetchValues = useCallback(async (label: string) => {
     if (labelValues[label]) { setExpandedLabel(label); return }
-    const r = await fetch(`/api/logs/label/${encodeURIComponent(label)}/values`)
-    const d = await r.json()
-    setLabelValues(prev => ({ ...prev, [label]: d?.data ?? [] }))
-    setExpandedLabel(label)
+    try {
+      const r = await fetch(`/api/logs/label/${encodeURIComponent(label)}/values`)
+      const d = await r.json()
+      setLabelValues(prev => ({ ...prev, [label]: d?.data ?? [] }))
+      setExpandedLabel(label)
+    } catch {
+      setLabelValues(prev => ({ ...prev, [label]: [] }))
+      setExpandedLabel(label)
+    }
   }, [labelValues])
 
   const injectFilter = useCallback((label: string, value: string) => {
-    const filter = `${label}="${value}"`
+    // Escape backslashes and double-quotes so the LogQL label matcher is valid
+    const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    const filter = `${label}="${escaped}"`
     setQuery(prev => {
-      const stripped = prev.replace(/^\{/, '').replace(/\}$/, '').trim()
-      return stripped ? `{${stripped}, ${filter}}` : `{${filter}}`
+      // Locate the stream selector by finding the first closing brace,
+      // then treat everything after it as pipeline stages (|= ..., | json, etc.)
+      const closeIdx = prev.indexOf('}')
+      if (closeIdx === -1) return `{${filter}}`
+      const inner = prev.slice(1, closeIdx).trim()
+      const pipeline = prev.slice(closeIdx + 1)
+      const newSelector = inner ? `{${inner}, ${filter}}` : `{${filter}}`
+      return `${newSelector}${pipeline}`
     })
     setShowLabelPicker(false)
   }, [])
@@ -157,6 +183,7 @@ export default function LogExplorer() {
   const run = useCallback(async () => {
     abortRef.current?.abort()
     abortRef.current = new AbortController()
+    const gen = ++runGenRef.current
     setLoading(true)
     setError(null)
 
@@ -173,14 +200,16 @@ export default function LogExplorer() {
     try {
       const res = await fetch(`/api/logs/query?${params}`, { signal: abortRef.current.signal })
       const data: LokiResponse = await res.json()
+      if (gen !== runGenRef.current) return
       if (data.error) { setError(data.error); setEntries([]); return }
       if (data.data?.resultType !== 'streams') { setError('Unexpected result type'); setEntries([]); return }
       setEntries(flattenStreams(data.data.result))
+      setLastRunPresetIdx(presetIdx)
     } catch (e: unknown) {
       if (e instanceof DOMException && e.name === 'AbortError') return
-      setError(e instanceof Error ? e.message : 'Query failed')
+      if (gen === runGenRef.current) setError(e instanceof Error ? e.message : 'Query failed')
     } finally {
-      setLoading(false)
+      if (gen === runGenRef.current) setLoading(false)
     }
   }, [query, presetIdx])
 
@@ -219,7 +248,7 @@ export default function LogExplorer() {
         </div>
 
         {/* Label picker toggle */}
-        <div className="relative">
+        <div className="relative" ref={labelPickerRef}>
           <button
             onClick={() => setShowLabelPicker(s => !s)}
             className="px-3 py-1.5 text-xs font-medium rounded-lg border border-border-subtle bg-bg-raised text-text-muted hover:text-text-primary transition-colors"
@@ -284,7 +313,7 @@ export default function LogExplorer() {
             ? <span className="text-status-error">{error}</span>
             : loading
               ? 'Running query…'
-              : `${entries.length} log line${entries.length !== 1 ? 's' : ''} · last ${PRESETS[presetIdx].label}`
+              : `${entries.length} log line${entries.length !== 1 ? 's' : ''} · last ${PRESETS[lastRunPresetIdx].label}`
           }
         </div>
 
