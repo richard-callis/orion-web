@@ -67,8 +67,10 @@ export function parseAcasOutput(
       if (cves.length === 0) continue // skip non-CVE plugins
 
       const nessusServerity = parseInt(item['@_severity'] ?? '0', 10)
-      const cvss3Score = item.cvss3_base_score ? parseFloat(item.cvss3_base_score) : null
-      const cvss2Score = item.cvss_base_score ? parseFloat(item.cvss_base_score) : null
+      const cvss3Raw = parseFloat(item.cvss3_base_score)
+      const cvss2Raw = parseFloat(item.cvss_base_score)
+      const cvss3Score = Number.isFinite(cvss3Raw) ? cvss3Raw : null
+      const cvss2Score = Number.isFinite(cvss2Raw) ? cvss2Raw : null
       const cvssScore = cvss3Score ?? cvss2Score ?? NESSUS_TO_CVSS[nessusServerity] ?? 0
 
       const cvssVector: string | null = item.cvss3_vector ?? item.cvss_vector ?? null

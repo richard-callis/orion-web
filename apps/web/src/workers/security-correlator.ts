@@ -353,11 +353,13 @@ async function correlateEnvironment(
         // Only dispatch Warden once per incident. triageDispatchedAt is set the
         // first time we wake Warden; subsequent correlator ticks that re-touch the
         // same incident skip the agentic loop and avoid burning tokens.
-        if (incident.severity >= WARDEN_MIN_SEVERITY && !incident.triageDispatchedAt) {
-          await prisma.incident.update({
-            where: { id: incident.id },
+        if (incident.severity >= WARDEN_MIN_SEVERITY) {
+          // Atomic claim: only the first correlator tick to set triageDispatchedAt wins.
+          const claimed = await prisma.incident.updateMany({
+            where: { id: incident.id, triageDispatchedAt: null },
             data: { triageDispatchedAt: new Date() },
           })
+          if (claimed.count === 0) continue // another tick already dispatched Warden
           triggerRoomAgentReplies(securityRoomId, noticeBody).catch((e: unknown) => {
             // eslint-disable-next-line no-console
             console.error(`[warden-wakeup] Failed to trigger room agent replies for incident ${incident.id ?? 'unknown'}: ${e instanceof Error ? e.message : e}`)

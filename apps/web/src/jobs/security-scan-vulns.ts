@@ -101,15 +101,17 @@ export async function runDailyScan(
     }
   }
 
-  // 3. Host scan — runs via the localhost gateway.
-  const localhost = await prisma.environment.findFirst({
-    where: { name: 'localhost' },
-    select: { id: true, gatewayUrl: true, gatewayToken: true, monitoringConfig: true },
-  })
-  if (localhost?.gatewayUrl) {
-    const client = new GatewayClient(localhost.gatewayUrl, localhost.gatewayToken ?? '')
-    const localhostMonCfg = (localhost.monitoringConfig ?? {}) as { isInternetFacing?: boolean }
-    results.push(await scanHost(client, localhost.id, kev, localhostMonCfg.isInternetFacing ?? false))
+  // 3. Host scan — Trivy only. ACAS scans hosts through the per-env loop above.
+  if (driver === 'trivy') {
+    const localhost = await prisma.environment.findFirst({
+      where: { name: 'localhost' },
+      select: { id: true, gatewayUrl: true, gatewayToken: true, monitoringConfig: true },
+    })
+    if (localhost?.gatewayUrl) {
+      const client = new GatewayClient(localhost.gatewayUrl, localhost.gatewayToken ?? '')
+      const localhostMonCfg = (localhost.monitoringConfig ?? {}) as { isInternetFacing?: boolean }
+      results.push(await scanHost(client, localhost.id, kev, localhostMonCfg.isInternetFacing ?? false))
+    }
   }
 
   return results
