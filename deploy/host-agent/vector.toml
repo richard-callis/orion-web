@@ -134,6 +134,7 @@ source = """
   .category = "docker"
   .source_file = name
   .raw = .message
+  .host = get_hostname!()
 """
 
 # ── Transform 3: Vault audit → structured event ─────────────────────────────
@@ -222,14 +223,15 @@ source = """
 type = "remap"
 inputs = ["udm_syslog"]
 source = """
+  msg = string(.message) ?? ""
   .category = "network"
   .severity = 10
   .source_file = string(.appname) ?? "udm-pro"
-  .raw = string(.message) ?? ""
-  if contains(string(.message) ?? "", "UFW BLOCK") || contains(string(.message) ?? "", "[Drop]") {
+  .raw = msg
+  if contains(msg, "UFW BLOCK") || contains(msg, "[Drop]") {
     .subtype = "firewall.drop"
     .severity = 20
-  } else if contains(string(.message) ?? "", "ALERT") {
+  } else if contains(msg, "ALERT") {
     .subtype = "ids.alert"
     .severity = 50
   } else {
@@ -340,6 +342,7 @@ inputs = [
 ]
 endpoint = "http://loki:3100"
 encoding.codec = "json"
+out_of_order_action = "accept"
 
 [sinks.loki.labels]
 category = "{{ category }}"
