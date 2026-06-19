@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
   const lokiParams = new URLSearchParams({ query })
   const start = searchParams.get('start')
   const end = searchParams.get('end')
-  const limit = searchParams.get('limit') || '500'
+  const limit = String(Math.min(parseInt(searchParams.get('limit') || '500', 10) || 500, 1000))
   const direction = searchParams.get('direction') || 'backward'
   if (start) lokiParams.set('start', start)
   if (end) lokiParams.set('end', end)
@@ -26,7 +26,8 @@ export async function GET(req: NextRequest) {
     const res = await fetch(`${LOKI_URL}/loki/api/v1/query_range?${lokiParams}`, {
       signal: AbortSignal.timeout(30_000),
     })
-    const data = await res.json()
+    const ct = res.headers.get('content-type') ?? ''
+    const data = ct.includes('application/json') ? await res.json() : { error: await res.text() }
     return NextResponse.json(data, { status: res.status })
   } catch (err) {
     return NextResponse.json({ error: 'Loki unreachable', detail: String(err) }, { status: 502 })

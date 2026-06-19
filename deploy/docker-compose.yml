@@ -562,6 +562,8 @@ services:
     depends_on:
       orion:
         condition: service_healthy
+      loki:
+        condition: service_healthy
     read_only: true
     user: "1000:1000"
     group_add:
