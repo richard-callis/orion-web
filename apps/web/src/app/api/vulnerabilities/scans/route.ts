@@ -7,6 +7,7 @@ import { runDailyScan } from '@/jobs/security-scan-vulns'
 
 const TriggerSchema = z.object({
   environmentId: z.string().min(1).max(100),
+  driver: z.enum(['trivy', 'acas']).default('trivy'),
 })
 
 export async function GET() {
@@ -44,7 +45,7 @@ export async function POST(req: NextRequest) {
   const scan = await prisma.vulnerabilityScan.create({
     data: {
       environmentId: parsed.data.environmentId,
-      driver: 'trivy',
+      driver: parsed.data.driver,
       status: 'pending',
       triggeredBy: 'user',
     },
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
         where: { id: scan.id },
         data: { status: 'running', startedAt: new Date() },
       })
-      const results = await runDailyScan(parsed.data.environmentId)
+      const results = await runDailyScan(parsed.data.environmentId, parsed.data.driver)
       const totals = results.reduce(
         (acc, r) => ({
           findingsCreated: acc.findingsCreated + r.findingsCreated,

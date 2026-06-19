@@ -35,6 +35,7 @@ import {
   enrichNvd,
   computeVulnSeverity,
 } from '@/lib/security/cve-enrichment'
+import { parseAcasOutput } from '@/lib/security/normalize/acas'
 
 const EVENT_TRIGGERED_LOOKBACK_HOURS = 6
 
@@ -51,7 +52,10 @@ export interface ScanResult {
  * Daily scan entry point. Iterates all envs (+ host) and scans them.
  * Returns per-target results.
  */
-export async function runDailyScan(environmentId?: string): Promise<ScanResult[]> {
+export async function runDailyScan(
+  environmentId?: string,
+  driver: 'trivy' | 'acas' = 'trivy'
+): Promise<ScanResult[]> {
   const results: ScanResult[] = []
 
   // 1. Refresh the KEV cache up front so all scans in this pass share it.
@@ -85,24 +89,29 @@ export async function runDailyScan(environmentId?: string): Promise<ScanResult[]
       continue
     }
 
-    for (const image of images) {
-      results.push(await scanImage(client, env.id, image, kev, isInternetFacing))
-    }
-
-    if (env.type === 'cluster') {
-      results.push(await scanK8sMisconfigs(client, env.id))
+    if (driver === 'acas') {
+      results.push(await scanAcasHost(client, env.id, env.gatewayUrl!, kev, isInternetFacing))
+    } else {
+      for (const image of images) {
+        results.push(await scanImage(client, env.id, image, kev, isInternetFacing))
+      }
+      if (env.type === 'cluster') {
+        results.push(await scanK8sMisconfigs(client, env.id))
+      }
     }
   }
 
-  // 3. Host scan — runs via the localhost gateway.
-  const localhost = await prisma.environment.findFirst({
-    where: { name: 'localhost' },
-    select: { id: true, gatewayUrl: true, gatewayToken: true, monitoringConfig: true },
-  })
-  if (localhost?.gatewayUrl) {
-    const client = new GatewayClient(localhost.gatewayUrl, localhost.gatewayToken ?? '')
-    const localhostMonCfg = (localhost.monitoringConfig ?? {}) as { isInternetFacing?: boolean }
-    results.push(await scanHost(client, localhost.id, kev, localhostMonCfg.isInternetFacing ?? false))
+  // 3. Host scan — Trivy only. ACAS scans hosts through the per-env loop above.
+  if (driver === 'trivy') {
+    const localhost = await prisma.environment.findFirst({
+      where: { name: 'localhost' },
+      select: { id: true, gatewayUrl: true, gatewayToken: true, monitoringConfig: true },
+    })
+    if (localhost?.gatewayUrl) {
+      const client = new GatewayClient(localhost.gatewayUrl, localhost.gatewayToken ?? '')
+      const localhostMonCfg = (localhost.monitoringConfig ?? {}) as { isInternetFacing?: boolean }
+      results.push(await scanHost(client, localhost.id, kev, localhostMonCfg.isInternetFacing ?? false))
+    }
   }
 
   return results
@@ -202,6 +211,35 @@ async function scanImage(
   }
 
   const candidates = parseTrivyImageOutput(trivyOutput, environmentId, target)
+  await persistFindings(candidates, kev, result, isInternetFacing)
+  return result
+}
+
+async function scanAcasHost(
+  client: GatewayClient,
+  environmentId: string,
+  gatewayUrl: string,
+  kev: { cves: Set<string>; dueDates: Map<string, string> },
+  isInternetFacing = false
+): Promise<ScanResult> {
+  const target = `acas:host:${gatewayUrl}`
+  const result: ScanResult = {
+    environmentId,
+    target,
+    findingsCreated: 0,
+    findingsEscalated: 0,
+    findingsFixed: 0,
+    errors: [],
+  }
+  let xml: string
+  try {
+    xml = await client.executeTool('acas_fetch_report', { target: gatewayUrl })
+  } catch (e) {
+    // acas_fetch_report not yet available — return stub empty result
+    result.errors.push(`acas_fetch_report not available: ${e instanceof Error ? e.message : String(e)}`)
+    return result
+  }
+  const candidates = parseAcasOutput(xml, environmentId, target)
   await persistFindings(candidates, kev, result, isInternetFacing)
   return result
 }
