@@ -703,6 +703,13 @@ Details: <brief explanation>
           'observable_add',
           'observable_set_verdict',
           'timeline_add',
+          // Warden SIEM management tools (incident-facing triage; see lib/siem/warden-management-tools.ts)
+          'siem_get_incident',
+          'siem_create_investigation',
+          'siem_add_observable',
+          'siem_add_note',
+          'siem_update_incident_status',
+          'siem_add_timeline_entry',
           // Chat — orion_send_message is the real tool name (chat_post does not exist)
           'orion_send_message',
         ],

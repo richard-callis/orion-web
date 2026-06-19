@@ -20,6 +20,11 @@ import {
 // Ensure all tools are registered by importing the registry side-effects
 import '@/lib/tool-registry'
 
+// Register Warden SIEM management tools (siem_get_incident, siem_create_investigation,
+// siem_add_observable, siem_add_note, siem_update_incident_status, siem_add_timeline_entry).
+import { registerWardenManagementTools } from '@/lib/siem/warden-management-tools'
+registerWardenManagementTools()
+
 // SOC2 [INPUT-001]: mirrors the reserved-name check in POST /api/agents
 export { RESERVED_AGENT_NAMES }
 

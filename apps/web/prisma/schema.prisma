@@ -1043,6 +1043,9 @@ model Incident {
   chatMessages     ChatMessage[]
   investigation    Investigation?  @relation(fields: [investigationId], references: [id], onDelete: SetNull)
   investigationId  String? // Soft back-reference to investigation case
+  // Set once when Warden is first dispatched to triage this incident. Used by the
+  // correlator as an idempotency guard so Warden isn't re-triggered on every tick.
+  triageDispatchedAt DateTime?
 
   @@index([environmentId, status])
   @@index([environmentId, severity])
