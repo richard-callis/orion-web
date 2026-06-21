@@ -33,6 +33,7 @@ services:
       GITEA_ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-}
       GITEA_WEBHOOK_SECRET: ${GITEA_WEBHOOK_SECRET:-}
       MANAGEMENT_IP: ${MANAGEMENT_IP:-}
+      ALLOW_PRIVATE_GATEWAY_URLS: ${ALLOW_PRIVATE_GATEWAY_URLS:-false}
       # URL gateways/clusters use to reach ORION (bypasses Cloudflare, works from cluster nodes).
       # Defaults to http://<management IP>:3000 during initial setup.
       # Override in .env with your public domain once HTTPS is configured.
