@@ -24,6 +24,10 @@ export function isPrivateIp(ip: string): boolean {
  * Returns true if the URL should be blocked: non-http/https scheme,
  * hostname resolves to a private/internal IP, or DNS lookup fails.
  *
+ * Set ALLOW_PRIVATE_GATEWAY_URLS=true to permit RFC1918 addresses —
+ * useful for self-hosted / homelab deployments where the gateway runs
+ * on the same private network as ORION.
+ *
  * Note: DNS is resolved twice in current implementation (here and at fetch time).
  * Callers should set redirect:'manual' and re-validate on redirects.
  */
@@ -36,12 +40,15 @@ export async function isPrivateUrl(url: string): Promise<boolean> {
     // Reject numeric IP encodings (decimal, hex, octal) that bypass hostname check
     if (/^\d+$/.test(hostname)) return true          // pure decimal
     if (/^0x[0-9a-f]+$/i.test(hostname)) return true // hex
-    if (isPrivateIp(hostname)) return true
+    const allowPrivate = process.env.ALLOW_PRIVATE_GATEWAY_URLS === 'true'
+    // If hostname is a direct IP address, no DNS needed
+    if (isPrivateIp(hostname)) return !allowPrivate
+    if (/^[\d.]+$/.test(hostname) || /^[0-9a-f:]+$/i.test(hostname)) return false // non-private IP
     const [v4, v6] = await Promise.all([
       dns.resolve4(hostname).catch(() => [] as string[]),
       dns.resolve6(hostname).catch(() => [] as string[]),
     ])
     if (v4.length === 0 && v6.length === 0) return true // DNS failed — block
-    return [...v4, ...v6].some(isPrivateIp)
+    return allowPrivate ? false : [...v4, ...v6].some(isPrivateIp)
   } catch { return true }
 }
