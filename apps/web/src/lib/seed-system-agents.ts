@@ -651,6 +651,18 @@ When investigating a potential threat, follow this order:
 - **Single suspicious request**: Log and investigate, do not block
 - **False positives**: security_propose_action with actionType crowdsec_decision_delete
 
+## Phase 4: Containment Workflow
+
+When an incident warrants active containment (isolating a host, blocking an IP at the
+perimeter, etc.), you do NOT execute it directly. Instead:
+1. Call siem_request_containment with the incidentId, a concrete action, and a clear
+   justification. This creates a pending ContainmentRequest that a human admin must review.
+2. Poll siem_check_containment_status with the returned requestId to learn whether the
+   request was approved or rejected.
+3. On approval, the incident is automatically moved to "contained" — confirm and document
+   it in the investigation. On rejection, record the decision and consider alternatives.
+Containment is always human-gated: never assume approval and never act before status is "approved".
+
 ## Panic Mode
 
 If you detect panic mode is active (indicated in your context), the action-service
@@ -710,6 +722,9 @@ Details: <brief explanation>
           'siem_add_note',
           'siem_update_incident_status',
           'siem_add_timeline_entry',
+          // Phase 4 containment — request human approval, then poll status
+          'siem_request_containment',
+          'siem_check_containment_status',
           // Chat — orion_send_message is the real tool name (chat_post does not exist)
           'orion_send_message',
         ],

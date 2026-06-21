@@ -27,7 +27,8 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   // SOC2: CR-002 — require admin to create environments
-  const user = await requireAdmin()
+  const admin = await requireAdmin()
+  const user = admin
 
   // SOC2: Input validation — validate and sanitize all request body fields
   const rawBody = await req.json().catch(() => ({}))
@@ -58,6 +59,7 @@ export async function POST(req: NextRequest) {
       kubeconfig:     parsed.data.kubeconfig ?? null,
       metadata:       (parsed.data.metadata ?? undefined) as any,
       federationToken: federationTokenToStore,
+      createdBy:      admin.id,
     },
     include: { tools: true, agents: { include: { agent: true } } },
   })
