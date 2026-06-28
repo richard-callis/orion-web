@@ -25,6 +25,11 @@ import '@/lib/tool-registry'
 import { registerWardenManagementTools } from '@/lib/siem/warden-management-tools'
 registerWardenManagementTools()
 
+// Register GitHub agent tools (github_list_repos, github_get_file,
+// github_create_or_update_file, github_create_branch, github_create_pull_request).
+import { registerGithubTools } from '@/lib/github-tools'
+registerGithubTools()
+
 // SOC2 [INPUT-001]: mirrors the reserved-name check in POST /api/agents
 export { RESERVED_AGENT_NAMES }
 

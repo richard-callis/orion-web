@@ -59,9 +59,16 @@ export async function POST(req: NextRequest) {
 
   // Verify agentId refers to a real agent (prevents audit-trail forgery)
   let agentId: string | undefined
+  let agentAllowedTools: string[] | null = null
   if (rawAgentId) {
-    const agent = await prisma.agent.findUnique({ where: { id: rawAgentId }, select: { id: true } })
+    const agent = await prisma.agent.findUnique({ where: { id: rawAgentId }, select: { id: true, metadata: true } })
     agentId = agent?.id  // undefined if not found — tools run with unknown actor
+    // Per-agent tool allowlist: metadata.contextConfig.allowedTools, if present, restricts
+    // which tools this agent can list/call. Absent/null means "no restriction".
+    const allowed = (agent?.metadata as { contextConfig?: { allowedTools?: unknown } } | null)?.contextConfig?.allowedTools
+    if (Array.isArray(allowed)) {
+      agentAllowedTools = allowed.filter((t): t is string => typeof t === 'string')
+    }
   }
 
   // ── Parse body ───────────────────────────────────────────────────────────
@@ -94,7 +101,10 @@ export async function POST(req: NextRequest) {
 
     // Tool discovery — return tools filtered to 'chat' context
     case 'tools/list': {
-      const tools = getToolsForContext('chat')
+      let tools = getToolsForContext('chat')
+      if (agentAllowedTools) {
+        tools = tools.filter(t => agentAllowedTools!.includes(t.name))
+      }
       return ok(id, {
         tools: tools.map(t => ({
           name:        t.name,
@@ -111,6 +121,14 @@ export async function POST(req: NextRequest) {
       const toolArgs = p?.arguments ?? {}
 
       if (!toolName) return err(id, -32602, 'Missing required param: name')
+
+      // Per-agent tool allowlist enforcement — reject tools not in the agent's allowedTools.
+      if (agentAllowedTools && !agentAllowedTools.includes(toolName)) {
+        return ok(id, {
+          content: [{ type: 'text', text: `Error: Tool '${toolName}' is not permitted for this agent.` }],
+          isError: true,
+        })
+      }
 
       // BLOCKER fix: MCP route previously bypassed checkToolPermission entirely.
       // Every other execution path (openai-runner, ollama-runner, claude.ts) gates
