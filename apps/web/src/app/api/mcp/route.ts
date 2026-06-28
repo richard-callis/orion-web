@@ -13,6 +13,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getToolsForContext, executeRegisteredTool } from '@/lib/tool-registry'
 import { checkToolPermission } from '@/lib/tool-permissions'
 import { prisma } from '@/lib/db'
+// Side-effect import: ensures ALL tools are registered (core + Warden SIEM + GitHub),
+// not just the core tools defined inline in tool-registry. Without this the MCP path
+// only sees core tools because tool-registry does not import the extra registrations.
+import '@/lib/management-tools'
 
 const MCP_TOKEN = process.env.ORION_MCP_TOKEN
 
