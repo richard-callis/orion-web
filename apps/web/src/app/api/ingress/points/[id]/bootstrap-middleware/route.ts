@@ -237,6 +237,26 @@ metadata:
   })
   await log('  Namespace crowdsec ready with privileged PodSecurity labels ✓')
 
+  // Generate a random API key so the bouncer secret and LAPI registration are
+  // both set before any pods start — no manual cscli step needed.
+  const bouncerApiKey = require('crypto').randomBytes(32).toString('hex')
+
+  // Create the secret first so the bouncer deployment never hits a missing-secret error.
+  await log('Creating Traefik bouncer API key secret...')
+  await gx('kubectl_apply_manifest', {
+    manifest: `apiVersion: v1
+kind: Secret
+metadata:
+  name: crowdsec-traefik-bouncer
+  namespace: crowdsec
+type: Opaque
+stringData:
+  api_key: "${bouncerApiKey}"`,
+  })
+  await log('  Secret crowdsec-traefik-bouncer created ✓')
+
+  // Pass the same key to the LAPI via BOUNCER_KEY_* env var so CrowdSec
+  // auto-registers it on startup — identical to the K3s approach.
   const valuesFile = `agent:
   acquisition:
     - namespace: kube-system
@@ -254,6 +274,9 @@ metadata:
 lapi:
   dashboard:
     enabled: false
+  env:
+    - name: BOUNCER_KEY_traefik-bouncer
+      value: "${bouncerApiKey}"
 `
 
   await log('Installing CrowdSec via Helm...')
@@ -262,12 +285,6 @@ lapi:
     namespace: 'crowdsec', createNamespace: false, valuesFile, wait: false, timeout: '300s',
   })
   await log('  CrowdSec Helm release installed ✓')
-
-  // Generate a bouncer API key via cscli inside the LAPI pod, then deploy the bouncer
-  await log('Registering Traefik bouncer API key with CrowdSec LAPI...')
-  await log('  NOTE: Run the following after pods are ready to get the API key:')
-  await log('  kubectl exec -n crowdsec deploy/crowdsec-lapi -- cscli bouncers add traefik-bouncer -o raw')
-  await log('  Then patch: kubectl create secret generic crowdsec-traefik-bouncer -n crowdsec --from-literal=api_key=<KEY> --dry-run=client -o yaml | kubectl apply -f -')
 
   await log('Deploying Traefik bouncer...')
   await gx('kubectl_apply_manifest', {
@@ -298,7 +315,7 @@ spec:
             - name: CROWDSEC_AGENT_HOST
               value: crowdsec-service.crowdsec.svc.cluster.local:8080
           ports:
-            - containerPort: 8068
+            - containerPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -310,8 +327,8 @@ spec:
     app: crowdsec-traefik-bouncer
   ports:
     - name: http
-      port: 8068
-      targetPort: 8068
+      port: 8080
+      targetPort: 8080
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
@@ -320,7 +337,7 @@ metadata:
   namespace: security
 spec:
   forwardAuth:
-    address: http://crowdsec-traefik-bouncer.crowdsec.svc.cluster.local:8068/api/v1/forwardAuth
+    address: http://crowdsec-traefik-bouncer.crowdsec.svc.cluster.local:8080/api/v1/forwardAuth
     trustForwardHeader: true`,
   })
   await log('  Traefik bouncer deployed ✓')
