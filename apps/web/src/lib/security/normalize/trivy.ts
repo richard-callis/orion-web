@@ -62,7 +62,7 @@ export interface VulnerabilityFindingCandidate {
   cvssScore: number | null
   cvssVector: string | null
   severity: number // base severity (CVSS*10); enrichment may raise it later
-  rawTrivy: Record<string, unknown>
+  rawScanner: Record<string, unknown>
 }
 
 /**
@@ -99,7 +99,7 @@ export function parseTrivyImageOutput(
         cvssScore: score,
         cvssVector: vector,
         severity: score !== null ? Math.round(score * 10) : 0,
-        rawTrivy: vuln as unknown as Record<string, unknown>,
+        rawScanner: vuln as unknown as Record<string, unknown>,
       })
     }
   }

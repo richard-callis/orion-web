@@ -123,6 +123,7 @@ model Environment {
   lastSeen         DateTime?
   metadata         Json?
   monitoringConfig Json? // { stack: 'none' | 'basic' | 'full' }
+  createdBy        String?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -168,6 +169,9 @@ model Environment {
   suppressions             Suppression[]
   toolExecutions           ToolExecution[]
   driftReports             DriftReport[]
+  creator                  User?                     @relation("EnvironmentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([createdBy])
 }
 
 /// Tracks every PR opened by the GitOps loop — open, auto-merged, or awaiting review.
@@ -292,7 +296,8 @@ model Task {
   agent             Agent?             @relation("AssignedTasks", fields: [assignedAgent], references: [id])
   assignedUserId    String?
   assignedUser      User?              @relation("AssignedUserTasks", fields: [assignedUserId], references: [id], onDelete: SetNull)
-  createdBy         String
+  createdBy         String?
+  creator           User?              @relation("TaskCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   planProgress      Int?
@@ -311,6 +316,7 @@ model Task {
 
   // Worker poll: pollOnce queries status+assignedAgent ordered by wave,priority,createdAt every 15s
   @@index([status, assignedAgent, wave, priority, createdAt])
+  @@index([createdBy])
 }
 
 model FederatedDispatch {
@@ -459,6 +465,10 @@ model User {
   totpSecretEncrypted        String? // AES-256-GCM encrypted TOTP secret (enc:v1: prefix)
   totpRecoveryCodesEncrypted String? // AES-256-GCM encrypted JSON array of bcrypt-hashed recovery codes
 
+  // GitHub integration: per-user Personal Access Token (encrypted) for agent GitHub tools
+  githubTokenEncrypted  String?
+  githubUsername        String?
+
   // SOC2: [M-006] Per-account login lockout
   failedLoginAttempts Int       @default(0)
   lockedUntil         DateTime?
@@ -473,6 +483,8 @@ model User {
   managedSecrets   ManagedSecret[]
   notes            Note[]                @relation("NoteCreator")
   agentsCreated    Agent[]               @relation("AgentCreator")
+  environmentsCreated Environment[]      @relation("EnvironmentCreator")
+  tasksCreated     Task[]                @relation("TaskCreator")
 }
 
 model ApiKey {
@@ -1040,6 +1052,7 @@ model Incident {
   updatedAt        DateTime        @updatedAt
   events           SecurityEvent[]
   actionAudits     ActionAudit[]
+  containmentRequests ContainmentRequest[]
   chatMessages     ChatMessage[]
   investigation    Investigation?  @relation(fields: [investigationId], references: [id], onDelete: SetNull)
   investigationId  String? // Soft back-reference to investigation case
@@ -1050,6 +1063,31 @@ model Incident {
   @@index([environmentId, status])
   @@index([environmentId, severity])
   @@index([investigationId])
+}
+
+// ── Security: Containment requests (Phase 4) ──────────────────────────────────
+// Warden proposes a containment action; a human admin must approve or reject it.
+
+enum ContainmentStatus {
+  pending
+  approved
+  rejected
+}
+
+model ContainmentRequest {
+  id            String            @id @default(uuid())
+  incidentId    String
+  incident      Incident          @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  action        String
+  justification String
+  status        ContainmentStatus @default(pending)
+  requestedBy   String
+  reviewedBy    String?
+  reviewedAt    DateTime?
+  createdAt     DateTime          @default(now())
+
+  @@index([incidentId])
+  @@index([status])
 }
 
 // ── Security: Action audit log ────────────────────────────────────────────────
@@ -1216,7 +1254,7 @@ model VulnerabilityFinding {
   lastSeenAt  DateTime  @updatedAt
   fixedAt     DateTime?
 
-  rawTrivy Json // full Trivy vulnerability object (for forensics)
+  rawScanner Json // full scanner vulnerability object (for forensics)
 
   title                     String?
   description               String?   @db.Text

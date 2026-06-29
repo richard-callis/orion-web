@@ -64,6 +64,10 @@ export type AuditAction =
   | 'AUDIT_LOG_CLEANUP'
   | 'vulnerability_scan_trigger'
   | 'cve_finding_accept_risk'
+  | 'containment_approve'
+  | 'containment_reject'
+  | 'github_connect'
+  | 'github_disconnect'
 
 /**
  * Compute a SHA-256 hash of an audit entry's content for the hash chain.
