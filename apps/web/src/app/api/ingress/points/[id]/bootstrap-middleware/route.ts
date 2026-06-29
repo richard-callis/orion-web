@@ -433,16 +433,23 @@ function makeKubectlRunner(kubeconfig: string) {
     const { promisify } = require('util')
     const exec = promisify(execFile)
 
+    // Build positional args (resource + optional name) and flags separately.
+    // Previously Object.values(args) leaked namespace/output values into
+    // positional args, producing e.g. `kubectl get secret crowdsec json -n crowdsec`.
+    const positional: string[] = []
+    if (args.resource) positional.push(String(args.resource))
+    if (args.name) positional.push(String(args.name))
+
     const flags: string[] = []
     for (const [key, val] of Object.entries(args)) {
-      if (key === 'manifest') continue
-      if (key === 'namespace') { flags.push('-n'); flags.push(String(val)) }
-      else if (key === 'output') { flags.push(`-o${val === '' ? '' : val}`) }
-      else { flags.push(`--${key.replace(/_/g, '-')}`); flags.push(String(val)) }
+      if (key === 'manifest' || key === 'resource' || key === 'name') continue
+      if (key === 'namespace') { flags.push('-n', String(val)) }
+      else if (key === 'output') { flags.push(`-o${val}`) }
+      else { flags.push(`--${key.replace(/_/g, '-')}`, String(val)) }
     }
 
     try {
-      const { stdout } = await exec('kubectl', [cmd, ...Object.values(args).filter(v => typeof v === 'string').filter(s => !s.includes('/')) || [String(args.name)], ...flags, '--kubeconfig', `${tmpDir}/kubeconfig`], { timeout: 30_000 })
+      const { stdout } = await exec('kubectl', [cmd, ...positional, ...flags, '--kubeconfig', `${tmpDir}/kubeconfig`], { timeout: 30_000 })
       return stdout
     } catch (e: unknown) {
       throw new Error(`kubectl ${cmd} failed: ${e instanceof Error ? e.message : String(e)}`)
