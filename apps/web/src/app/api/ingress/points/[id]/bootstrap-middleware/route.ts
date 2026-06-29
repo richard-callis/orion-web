@@ -106,8 +106,12 @@ export async function POST(
         await bootstrapMiddleware(gwExecFn(gc), log, { novaName })
       } else {
         await log(`Using local kubectl (stored kubeconfig) for cluster operations`)
-        const localKubectl = makeKubectlRunner(env.kubeconfig!)
-        await bootstrapMiddleware(localKubectl, log, { novaName })
+        const { tool: localKubectl, cleanup } = makeKubectlRunner(env.kubeconfig!)
+        try {
+          await bootstrapMiddleware(localKubectl, log, { novaName })
+        } finally {
+          cleanup()
+        }
       }
     },
   )
@@ -355,16 +359,23 @@ spec:
 
 // ── Local kubectl runner (fallback when gateway unavailable) ──────────────────
 
-function makeKubectlRunner(kubeconfig: string) {
+function makeKubectlRunner(kubeconfig: string): {
+  tool: (name: string, args: Record<string, unknown>) => Promise<string>
+  cleanup: () => void
+} {
   const tmpDir = `/tmp/orion-kubectl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  const { mkdirSync, writeFileSync } = require('fs')
+  const { mkdirSync, writeFileSync, rmSync } = require('fs')
 
   try {
     mkdirSync(tmpDir, { recursive: true })
     writeFileSync(`${tmpDir}/kubeconfig`, Buffer.from(kubeconfig, 'base64').toString('utf8'), { mode: 0o600 })
   } catch { /* best effort */ }
 
-  return async function kubectlTool(name: string, args: Record<string, unknown>): Promise<string> {
+  const cleanup = () => {
+    try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* best effort */ }
+  }
+
+  const tool = async function kubectlTool(name: string, args: Record<string, unknown>): Promise<string> {
     if (name === 'kubectl_apply_manifest') {
       const manifest = String(args.manifest)
       const tmpPath = `${tmpDir}/manifest-${Date.now()}.yaml`
@@ -380,46 +391,38 @@ function makeKubectlRunner(kubeconfig: string) {
       }
     }
 
-    if (name === 'helm_repo_add' || name === 'helm_upgrade_install') {
+    if (name === 'helm_upgrade_install') {
       const { execFile } = require('child_process')
       const { unlinkSync } = require('fs')
       const { promisify } = require('util')
       const exec = promisify(execFile)
 
       try {
-        let cmd: string[]
-        if (name === 'helm_repo_add') {
-          cmd = ['repo', 'add', args.name as string, args.url as string]
-        } else {
-          cmd = ['upgrade', '--install', args.release as string, args.chart as string, '--kubeconfig', `${tmpDir}/kubeconfig`]
-          if (args.repo && String(args.repo).startsWith('http')) {
-            cmd.push('--repo', args.repo as string)
-          }
-          cmd.push('--namespace', args.namespace as string, '--timeout', String(args.timeout ?? '120s'))
-          if (args.createNamespace) cmd.push('--create-namespace')
-          if (args.wait !== false) cmd.push('--wait')
-          // Handle valuesFile (YAML string for complex/nested values including arrays)
-          if (args.valuesFile) {
-            const tmpPath = `${tmpDir}/helm-values-${Date.now()}.yaml`
-            writeFileSync(tmpPath, String(args.valuesFile), { mode: 0o600 })
-            cmd.push('--values', tmpPath)
-            try {
-              const result = await exec('helm', cmd, { timeout: 600_000 })
-              return result.stdout
-            } finally {
-              try { unlinkSync(tmpPath) } catch { /* ignore */ }
-            }
-          }
-          const values = args.values as Record<string, unknown> | undefined
-          if (values) {
-            for (const [k, v] of Object.entries(values)) {
-              cmd.push('--set', `${k}=${v}`)
-            }
+        const cmd = ['upgrade', '--install', args.release as string, args.chart as string, '--kubeconfig', `${tmpDir}/kubeconfig`]
+        if (args.repo && String(args.repo).startsWith('http')) {
+          cmd.push('--repo', args.repo as string)
+        }
+        cmd.push('--namespace', args.namespace as string, '--timeout', String(args.timeout ?? '120s'))
+        if (args.createNamespace) cmd.push('--create-namespace')
+        if (args.wait !== false) cmd.push('--wait')
+        if (args.valuesFile) {
+          const tmpPath = `${tmpDir}/helm-values-${Date.now()}.yaml`
+          writeFileSync(tmpPath, String(args.valuesFile), { mode: 0o600 })
+          cmd.push('--values', tmpPath)
+          try {
+            const result = await exec('helm', cmd, { timeout: 600_000 })
+            return result.stdout
+          } finally {
+            try { unlinkSync(tmpPath) } catch { /* ignore */ }
           }
         }
-        const result = await exec('helm', cmd, {
-          timeout: name === 'helm_upgrade_install' ? 600_000 : 30_000,
-        })
+        const values = args.values as Record<string, unknown> | undefined
+        if (values) {
+          for (const [k, v] of Object.entries(values)) {
+            cmd.push('--set', `${k}=${v}`)
+          }
+        }
+        const result = await exec('helm', cmd, { timeout: 600_000 })
         return result.stdout
       } catch (e: unknown) {
         throw new Error(`helm failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -455,4 +458,6 @@ function makeKubectlRunner(kubeconfig: string) {
       throw new Error(`kubectl ${cmd} failed: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
+
+  return { tool, cleanup }
 }
