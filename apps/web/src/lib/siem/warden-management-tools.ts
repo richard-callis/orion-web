@@ -69,6 +69,16 @@ const addTimelineEntrySchema = z.object({
   eventType: z.string().min(1, 'eventType is required'),
 })
 
+const requestContainmentSchema = z.object({
+  incidentId: z.string().min(1, 'incidentId is required'),
+  action: z.string().min(1, 'action is required'),
+  justification: z.string().min(1, 'justification is required'),
+})
+
+const checkContainmentStatusSchema = z.object({
+  requestId: z.string().min(1, 'requestId is required'),
+})
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatZodError(err: z.ZodError): string {
@@ -245,6 +255,41 @@ async function siemAddTimelineEntry(args: unknown, _ctx: ToolExecutionContext): 
   return JSON.stringify({ entryId: entry.id })
 }
 
+async function siemRequestContainment(args: unknown, _ctx: ToolExecutionContext): Promise<string> {
+  const parsed = requestContainmentSchema.safeParse(args)
+  if (!parsed.success) return formatZodError(parsed.error)
+  const { incidentId, action, justification } = parsed.data
+
+  const incident = await prisma.incident.findUnique({ where: { id: incidentId } })
+  if (!incident) return `Error: incident ${incidentId} not found`
+
+  const request = await prisma.containmentRequest.create({
+    data: { incidentId, action, justification, requestedBy: 'warden', status: 'pending' },
+  })
+
+  return JSON.stringify({ requestId: request.id, status: request.status })
+}
+
+async function siemCheckContainmentStatus(args: unknown, _ctx: ToolExecutionContext): Promise<string> {
+  const parsed = checkContainmentStatusSchema.safeParse(args)
+  if (!parsed.success) return formatZodError(parsed.error)
+
+  const request = await prisma.containmentRequest.findUnique({ where: { id: parsed.data.requestId } })
+  if (!request) return `Error: containment request ${parsed.data.requestId} not found`
+
+  return JSON.stringify({
+    requestId: request.id,
+    incidentId: request.incidentId,
+    action: request.action,
+    justification: request.justification,
+    status: request.status,
+    requestedBy: request.requestedBy,
+    reviewedBy: request.reviewedBy,
+    reviewedAt: request.reviewedAt,
+    createdAt: request.createdAt,
+  })
+}
+
 // ── Tool definitions ─────────────────────────────────────────────────────────
 
 export const wardenManagementTools = [
@@ -355,6 +400,40 @@ export const wardenManagementTools = [
     availableIn: 'chat' as const,
     category: 'security' as const,
     handler: siemAddTimelineEntry,
+  },
+  {
+    name: 'siem_request_containment',
+    description: 'Phase 4: Request human approval to contain an incident (e.g. isolate host, block IP). Creates a pending ContainmentRequest that an admin must approve or reject. Returns { requestId, status }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        incidentId:    { type: 'string', description: 'Incident to contain' },
+        action:        { type: 'string', description: 'Proposed containment action (e.g. isolate_host, block_ip)' },
+        justification: { type: 'string', description: 'Why containment is warranted' },
+      },
+      required: ['incidentId', 'action', 'justification'],
+    },
+    tier: 'write' as const,
+    parallelSafe: false,
+    availableIn: 'chat' as const,
+    category: 'security' as const,
+    handler: siemRequestContainment,
+  },
+  {
+    name: 'siem_check_containment_status',
+    description: 'Check the status (pending / approved / rejected) of a previously submitted containment request.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        requestId: { type: 'string', description: 'Containment request ID returned by siem_request_containment' },
+      },
+      required: ['requestId'],
+    },
+    tier: 'read' as const,
+    parallelSafe: true,
+    availableIn: 'chat' as const,
+    category: 'security' as const,
+    handler: siemCheckContainmentStatus,
   },
 ]
 

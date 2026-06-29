@@ -1,10 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireAdmin } from '@/lib/auth'
+import { requireAdmin, requireAuth, assertCanModify } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, CreateEnvironmentSchema } from '@/lib/validate'
 import { encrypt, decrypt } from '@/lib/encryption'
 import { timingSafeEqual } from 'crypto'
+
+/**
+ * Map an assertCanModify rejection to the right HTTP status.
+ * Returns null when access is allowed.
+ * Null createdBy = shared/system environment. Only admins may modify these.
+ */
+async function guardAccess(
+  caller: Awaited<ReturnType<typeof requireAuth>> | null,
+  recordCreatedBy: string | null,
+): Promise<NextResponse | null> {
+  if (recordCreatedBy === null) {
+    try { await requireAdmin() } catch {
+      return new NextResponse(null, { status: 403 })
+    }
+    return null
+  }
+  try {
+    await assertCanModify(caller, /* isService */ false, recordCreatedBy)
+    return null
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : ''
+    if (msg === 'Forbidden') return new NextResponse(null, { status: 403 })
+    return new NextResponse(null, { status: 401 })
+  }
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // BLOCKER fix: GET had no auth — any request with an arbitrary Bearer header
@@ -115,8 +140,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if ('error' in result) return result.error
     const { data } = result
 
-    const admin = await requireAdmin()
-    const existing = await prisma.environment.findUnique({ where: { id: (await params).id }, select: { gatewayUrl: true } })
+    // Admin or creator may modify. Null createdBy = shared/system env → admin only.
+    let caller
+    try { caller = await requireAuth() } catch {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    const existing = await prisma.environment.findUnique({ where: { id: (await params).id }, select: { gatewayUrl: true, createdBy: true } })
+    if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+    const denied = await guardAccess(caller, existing.createdBy ?? null)
+    if (denied) return denied
+    const admin = caller
     const updateData: Record<string, unknown> = {}
     if (data.name !== undefined) updateData.name = data.name.trim()
     if (data.type !== undefined) updateData.type = data.type

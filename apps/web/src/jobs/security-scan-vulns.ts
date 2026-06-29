@@ -423,7 +423,7 @@ async function persistFindings(
           kevDueDate: kevDue ? new Date(kevDue) : null,
           severity,
           status: 'open',
-          rawTrivy: c.rawTrivy as any,
+          rawScanner: c.rawScanner as any,
         },
         create: {
           environmentId: c.environmentId,
@@ -442,9 +442,9 @@ async function persistFindings(
           kevDueDate: kevDue ? new Date(kevDue) : null,
           severity,
           status: 'open',
-          rawTrivy: c.rawTrivy as any,
+          rawScanner: c.rawScanner as any,
           fixAvailable: !!c.fixedVersion,
-          title: (c.rawTrivy as any)?.Title ?? null,
+          title: (c.rawScanner as any)?.Title ?? null,
         },
       })
 
@@ -487,7 +487,7 @@ async function persistFindings(
                 .join('\n'),
               status: 'pending',
               priority: severity >= 90 ? 'urgent' : 'high',
-              createdBy: 'vuln-scanner',
+              createdBy: null, // service-created task (no real User id); FK is SetNull
             },
           })
           await prisma.vulnerabilityFinding.update({

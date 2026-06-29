@@ -5,7 +5,7 @@
  * VulnerabilityFinding upsert candidates — one row per (host, plugin, CVE).
  *
  * Notes / constraints:
- *   - `rawTrivy` is required by VulnerabilityFindingCandidate and is populated
+ *   - `rawScanner` is required by VulnerabilityFindingCandidate and is populated
  *     with the ReportItem metadata.
  *   - persistFindings ignores `candidate.severity` and recomputes via
  *     computeVulnSeverity({ cvssScore, ... }); we set `cvssScore` from
@@ -82,7 +82,7 @@ export function parseAcasOutput(
       const versionMatch = pluginOutput.match(/\b(\d+\.\d+[\.\d]*)\b/)
       const packageVersion: string = versionMatch?.[1] ?? ''
 
-      const rawTrivy: Record<string, unknown> = {
+      const rawScanner: Record<string, unknown> = {
         pluginID,
         pluginName,
         synopsis: item.synopsis ?? null,
@@ -104,7 +104,7 @@ export function parseAcasOutput(
           cvssScore,
           cvssVector,
           severity: 0, // ignored by persistFindings; recomputed from cvssScore
-          rawTrivy,
+          rawScanner,
         })
       }
     }

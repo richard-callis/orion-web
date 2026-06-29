@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
       featureId:      data.featureId     ?? null,
       assignedAgent:  data.assignedAgentId ?? null,
       assignedUserId: data.assignedUserId  ?? null,
-      createdBy:      caller?.id           ?? 'gateway',
+      createdBy:      isService ? null : (caller?.id ?? null),
     },
     include: { agent: true },
   })
