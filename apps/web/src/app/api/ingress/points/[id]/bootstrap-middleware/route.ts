@@ -8,6 +8,7 @@
  *
  * Returns { jobId } immediately — progress tracked via /api/jobs/[id].
  */
+import { randomBytes } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { startJob, type JobLogger } from '@/lib/job-runner'
@@ -214,7 +215,7 @@ async function deployCrowdSec(gx: (tool: string, args: Record<string, unknown>) 
     const result = await gx('kubectl_get', { resource: 'secret', namespace: 'crowdsec', output: 'json' })
     const secrets = JSON.parse(result || '{}')
     const hasHelmRelease = (secrets.items || []).some((s: any) =>
-      (s.metadata?.labels || {}).release === 'crowdsec',
+      (s.metadata?.labels || {})['meta.helm.sh/release-name'] === 'crowdsec',
     )
     if (hasHelmRelease) {
       await log('  CrowdSec already installed ✓')
@@ -239,7 +240,7 @@ metadata:
 
   // Generate a random API key so the bouncer secret and LAPI registration are
   // both set before any pods start — no manual cscli step needed.
-  const bouncerApiKey = require('crypto').randomBytes(32).toString('hex')
+  const bouncerApiKey = randomBytes(32).toString('hex')
 
   // Create the secret first so the bouncer deployment never hits a missing-secret error.
   await log('Creating Traefik bouncer API key secret...')
@@ -285,6 +286,14 @@ lapi:
     namespace: 'crowdsec', createNamespace: false, valuesFile, wait: false, timeout: '300s',
   })
   await log('  CrowdSec Helm release installed ✓')
+
+  // Ensure security namespace exists before applying the Traefik Middleware into it.
+  await gx('kubectl_apply_manifest', {
+    manifest: `apiVersion: v1
+kind: Namespace
+metadata:
+  name: security`,
+  })
 
   await log('Deploying Traefik bouncer...')
   await gx('kubectl_apply_manifest', {
