@@ -53,6 +53,12 @@ export async function checkToolPermission(
   // ── ToolAgentRestriction check ────────────────────────────────────────────
   // Gateway tools (McpTool rows) may be restricted to specific agents.
   // If restriction rows exist and this agent is NOT in them, deny.
+  //
+  // FAIL-CLOSED: if resolvedEnvId is null (agent has no environment link), we cannot
+  // scope the check to one environment — but we must not silently skip it. Instead we
+  // check whether ANY restriction rows exist for this tool across all environments. If
+  // they do, deny (restricted tool + no env context = denied). Only if no restrictions
+  // exist anywhere do we fall through to the tier check.
   if (resolvedEnvId) {
     const allRestrictions = await prisma.toolAgentRestriction.findMany({
       where: {
@@ -70,6 +76,18 @@ export async function checkToolPermission(
         }
       }
     }
+  } else {
+    // No environment context — check for any restriction rows across all environments.
+    const anyRestriction = await prisma.toolAgentRestriction.findFirst({
+      where: { tool: { name: toolName } },
+      select: { agentId: true },
+    })
+    if (anyRestriction) {
+      return {
+        allowed: false,
+        reason: `\`${toolName}\` is restricted to specific agents in one or more environments. This agent (${agentId ?? 'unknown'}) has no environment link — cannot verify authorization. Assign this agent to an environment to use restricted tools.`,
+      }
+    }
   }
 
   // ── AgentGroupToolAccess check ────────────────────────────────────────────
@@ -78,6 +96,8 @@ export async function checkToolPermission(
   // those ToolGroups. Tools in no ToolGroup remain unrestricted.
   // Previously this mechanism was stored in the DB but never enforced — the
   // admin UI showed group→tool-group access grants that had zero runtime effect.
+  //
+  // FAIL-CLOSED: same as above — if no env context, check across all environments.
   if (resolvedEnvId) {
     const groupMemberships = await prisma.toolGroupTool.findMany({
       where: { tool: { name: toolName, environmentId: resolvedEnvId } },
@@ -106,6 +126,18 @@ export async function checkToolPermission(
           allowed: false,
           reason: `\`${toolName}\` belongs to a tool group this agent has not been granted access to. Add the agent to an agent group with access to the tool group.`,
         }
+      }
+    }
+  } else {
+    // No environment context — check for any tool-group memberships across all environments.
+    const anyGroupMembership = await prisma.toolGroupTool.findFirst({
+      where: { tool: { name: toolName } },
+      select: { toolGroupId: true },
+    })
+    if (anyGroupMembership) {
+      return {
+        allowed: false,
+        reason: `\`${toolName}\` belongs to a restricted tool group in one or more environments. This agent (${agentId ?? 'unknown'}) has no environment link — cannot verify group authorization. Assign this agent to an environment to use tool-group-restricted tools.`,
       }
     }
   }
