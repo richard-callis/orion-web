@@ -57,9 +57,29 @@ export async function POST(req: NextRequest) {
   // agentId and roomId come from query params set by the orion-claude sidecar.
   // We validate agentId against the DB to prevent impersonation by arbitrary
   // string injection — the sidecar is trusted, but any token holder can set these.
+  //
+  // KNOWN SECURITY GAP: ORION_MCP_TOKEN is a shared secret; any holder can set
+  // agentId to any value. True per-agent token binding (e.g. per-agent MCP tokens)
+  // would eliminate this gap but is not yet implemented. As a defence-in-depth
+  // measure we require that the x-orion-agent-id header matches the agentId query
+  // param. This prevents casual param-swapping attacks — the caller must set both
+  // consistently — while the shared-token gap is documented for future resolution.
   const { searchParams } = new URL(req.url)
   const rawAgentId = searchParams.get('agentId') ?? undefined
   const roomId     = searchParams.get('roomId')  ?? undefined
+
+  // Consistency check: x-orion-agent-id header must match the agentId query param.
+  // If an agentId is provided, the header must be present and identical.
+  if (rawAgentId) {
+    const headerAgentId = req.headers.get('x-orion-agent-id')
+    if (!headerAgentId || headerAgentId !== rawAgentId) {
+      console.warn(`[mcp] agentId mismatch: query="${rawAgentId}" header="${headerAgentId}" — rejecting`)
+      return NextResponse.json(
+        { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized: x-orion-agent-id header must match agentId query param' }, id: null },
+        { status: 401 },
+      )
+    }
+  }
 
   // Verify agentId refers to a real agent (prevents audit-trail forgery)
   let agentId: string | undefined
