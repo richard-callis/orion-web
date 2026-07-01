@@ -34,18 +34,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const finding = await prisma.vulnerabilityFinding.findUnique({ where: { id } })
   if (!finding) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const updated = await prisma.vulnerabilityFinding.update({
-    where: { id },
-    data: {
-      status,
-      acceptedRiskJustification: status === 'accepted' ? acceptedRiskJustification : null,
-      acceptedRiskExpiresAt: status === 'accepted' && acceptedRiskExpiresAt
-        ? new Date(acceptedRiskExpiresAt) : null,
-    },
-  })
+  let updated
+  try {
+    updated = await prisma.vulnerabilityFinding.update({
+      where: { id },
+      data: {
+        status,
+        acceptedRiskJustification: status === 'accepted' ? acceptedRiskJustification : null,
+        acceptedRiskExpiresAt: status === 'accepted' && acceptedRiskExpiresAt
+          ? new Date(acceptedRiskExpiresAt) : null,
+      },
+    })
+  } catch (e: any) {
+    if (e?.code === 'P2025') return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    throw e
+  }
 
   if (status === 'accepted') {
-    await logAudit({
+    logAudit({
       userId: user.id,
       action: 'cve_finding_accept_risk',
       target: `vulnerability:${id}`,
@@ -55,7 +61,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         justification: acceptedRiskJustification,
         expiresAt: acceptedRiskExpiresAt ?? null,
       },
-    })
+    }).catch(() => {})
   }
 
   return NextResponse.json(updated)

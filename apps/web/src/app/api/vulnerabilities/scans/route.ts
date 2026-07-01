@@ -64,12 +64,17 @@ export async function POST(req: NextRequest) {
           findingsCreated: acc.findingsCreated + r.findingsCreated,
           findingsEscalated: acc.findingsEscalated + r.findingsEscalated,
           findingsFixed: acc.findingsFixed + r.findingsFixed,
+          errors: [...acc.errors, ...r.errors],
         }),
-        { findingsCreated: 0, findingsEscalated: 0, findingsFixed: 0 }
+        { findingsCreated: 0, findingsEscalated: 0, findingsFixed: 0, errors: [] as string[] }
       )
+      const allErrored = results.length === 0 || results.every(r => r.errors.length > 0)
+      const someErrored = totals.errors.length > 0
+      const status = allErrored ? 'failed' : someErrored ? 'completed_with_errors' : 'completed'
+      const errorMessage = totals.errors.length > 0 ? totals.errors.join('\n') : undefined
       await prisma.vulnerabilityScan.update({
         where: { id: scan.id },
-        data: { status: 'completed', completedAt: new Date(), ...totals },
+        data: { status, completedAt: new Date(), findingsCreated: totals.findingsCreated, findingsEscalated: totals.findingsEscalated, findingsFixed: totals.findingsFixed, ...(errorMessage ? { errorMessage } : {}) },
       })
     } catch (e) {
       await prisma.vulnerabilityScan.update({
