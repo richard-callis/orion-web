@@ -1716,20 +1716,63 @@ async function main() {
   // library and the timing self-heals across worker restarts.
   // lastDailyScanDate is persisted to DB so a restart between 02:00-03:00
   // doesn't re-run the scan, and a restart that spans 02:00 doesn't skip it.
-  setInterval(() => {
+  const runScheduledDailyScan = () => {
     const now = new Date()
     const dateKey = now.toISOString().slice(0, 10)
-    if (now.getHours() !== 2) return
     prisma.systemSetting.findUnique({ where: { key: 'worker.lastDailyScanDate' } })
-      .then(row => {
+      .then(async row => {
         if (row?.value === dateKey) return
-        return prisma.systemSetting.upsert({
-          where: { key: 'worker.lastDailyScanDate' },
-          update: { value: dateKey },
-          create: { key: 'worker.lastDailyScanDate', value: dateKey },
-        }).then(() => runDailyScan().catch(e => err(`Daily vuln scan failed: ${e}`)))
+        const localhostEnv = await prisma.environment.findFirst({ where: { name: 'localhost' }, select: { id: true } }).catch(() => null)
+        const scan = localhostEnv ? await prisma.vulnerabilityScan.create({
+          data: { environmentId: localhostEnv.id, driver: 'trivy', status: 'running', triggeredBy: 'schedule', startedAt: new Date() },
+        }).catch(() => null) : null
+        try {
+          const results = await runDailyScan(undefined, 'trivy', scan?.id)
+          const totals = results.reduce(
+            (acc, r) => ({
+              findingsCreated: acc.findingsCreated + r.findingsCreated,
+              findingsEscalated: acc.findingsEscalated + r.findingsEscalated,
+              findingsFixed: acc.findingsFixed + r.findingsFixed,
+            }),
+            { findingsCreated: 0, findingsEscalated: 0, findingsFixed: 0 }
+          )
+          if (scan) {
+            await prisma.vulnerabilityScan.update({
+              where: { id: scan.id },
+              data: { status: 'completed', completedAt: new Date(), ...totals },
+            }).catch(() => {})
+          }
+          await prisma.systemSetting.upsert({
+            where: { key: 'worker.lastDailyScanDate' },
+            update: { value: dateKey },
+            create: { key: 'worker.lastDailyScanDate', value: dateKey },
+          })
+        } catch (e) {
+          err(`Daily vuln scan failed: ${e}`)
+          if (scan) {
+            await prisma.vulnerabilityScan.update({
+              where: { id: scan.id },
+              data: { status: 'failed', completedAt: new Date(), errorMessage: String(e) },
+            }).catch(() => {})
+          }
+        }
       })
       .catch(e => err(`Daily scan guard failed: ${e}`))
+  }
+
+  // Startup catch-up: if the worker restarted and we missed 02:00, run the scan now.
+  {
+    const now = new Date()
+    const dateKey = now.toISOString().slice(0, 10)
+    prisma.systemSetting.findUnique({ where: { key: 'worker.lastDailyScanDate' } })
+      .then(row => { if (row?.value !== dateKey) runScheduledDailyScan() })
+      .catch(() => {})
+  }
+
+  setInterval(() => {
+    const now = new Date()
+    if (now.getHours() !== 2) return
+    runScheduledDailyScan()
   }, 60 * 60 * 1000)
 
   // Goal heartbeat — every 5 min, re-trigger agents in rooms whose active goal

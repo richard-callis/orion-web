@@ -38,9 +38,10 @@ export async function POST(req: NextRequest) {
 
   const env = await prisma.environment.findUnique({
     where: { id: parsed.data.environmentId },
-    select: { id: true, name: true },
+    select: { id: true, name: true, status: true },
   })
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
+  if (env.status !== 'connected') return NextResponse.json({ error: 'Environment is not connected' }, { status: 409 })
 
   const scan = await prisma.vulnerabilityScan.create({
     data: {
@@ -58,7 +59,7 @@ export async function POST(req: NextRequest) {
         where: { id: scan.id },
         data: { status: 'running', startedAt: new Date() },
       })
-      const results = await runDailyScan(parsed.data.environmentId, parsed.data.driver)
+      const results = await runDailyScan(parsed.data.environmentId, parsed.data.driver, scan.id)
       const totals = results.reduce(
         (acc, r) => ({
           findingsCreated: acc.findingsCreated + r.findingsCreated,
