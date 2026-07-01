@@ -13,8 +13,8 @@ export async function GET(req: NextRequest) {
   const statusFilter = searchParams.get('status') ?? undefined
   const severityFilter = searchParams.get('severity') ?? undefined
   const fixAvailable = searchParams.get('fixAvailable')
-  const limit = Math.min(parseInt(searchParams.get('limit') ?? '100', 10), 500)
-  const offset = parseInt(searchParams.get('offset') ?? '0', 10)
+  const limit = Math.min(Math.max(parseInt(searchParams.get('limit') ?? '100', 10) || 100, 1), 500)
+  const offset = Math.max(parseInt(searchParams.get('offset') ?? '0', 10) || 0, 0)
 
   const severityRanges: Record<string, { gte?: number; lt?: number }> = {
     critical: { gte: 90 },

@@ -89,15 +89,21 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const denied = await guardAccess(caller, agent.createdBy ?? null)
   if (denied) return denied
 
+  const agentId = (await params).id
   // Unassign tasks first to avoid FK violation
-  await prisma.task.updateMany({ where: { assignedAgent: (await params).id }, data: { assignedAgent: null } })
-  await prisma.agent.delete({ where: { id: (await params).id } })
+  await prisma.task.updateMany({ where: { assignedAgent: agentId }, data: { assignedAgent: null } })
+  try {
+    await prisma.agent.delete({ where: { id: agentId } })
+  } catch (e: any) {
+    if (e?.code === 'P2025') return new NextResponse(null, { status: 404 })
+    throw e
+  }
 
   // SOC2: audit agent deletion
   logAudit({
     userId: caller.id,
     action: 'agent_delete',
-    target: `agent:${(await params).id}`,
+    target: `agent:${agentId}`,
     detail: { name: agent?.name },
     ipAddress: getClientIp(req),
     userAgent: getUserAgent(req.headers),

@@ -5,7 +5,7 @@ import { prisma } from './db'
 import { verifyTOTP, verifyRecoveryCode, consumeRecoveryCode } from './totp'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { logAudit } from './audit'
-import { decrypt } from './encryption'
+import { decrypt, decryptStrict } from './encryption'
 import { sendNotification } from './security/notification-service'
 
 export interface AppUser {
@@ -144,7 +144,7 @@ export const authOptions: NextAuthOptions = {
           if (isRecovery) {
             // Recovery code login
             const code = credentials.totpCode as string
-            const rawCodes = user.totpRecoveryCodesEncrypted ? decrypt(user.totpRecoveryCodesEncrypted) : user.totpRecoveryCodes
+            const rawCodes = user.totpRecoveryCodesEncrypted ? decryptStrict(user.totpRecoveryCodesEncrypted, 'totpRecoveryCodesEncrypted') : user.totpRecoveryCodes
             const hashedCodes: string[] = rawCodes ? JSON.parse(rawCodes) : []
             if (!code || !(await verifyRecoveryCode(code, hashedCodes))) {
               void logAudit({ userId: user.id, action: 'user_login_failure', target: user.id, detail: { reason: 'invalid_recovery_code' } })
@@ -173,7 +173,7 @@ export const authOptions: NextAuthOptions = {
           } else {
             // TOTP code login
             const code = credentials.totpCode as string
-            const rawSecret = user.totpSecretEncrypted ? decrypt(user.totpSecretEncrypted) : user.totpSecret
+            const rawSecret = user.totpSecretEncrypted ? decryptStrict(user.totpSecretEncrypted, 'totpSecretEncrypted') : user.totpSecret
             if (!rawSecret) return null
             if (!code || typeof code !== 'string') {
               // No TOTP code provided — throw a detectable error so NextAuth returns
@@ -572,7 +572,10 @@ export async function requireGatewayAuthForEnvironment(
   })
   if (!env?.gatewayToken) throw new Error('Unauthorized')
 
-  const storedToken = decrypt(env.gatewayToken)
+  // Use strict decrypt: if the stored token lacks the enc:v1: prefix, fail auth rather
+  // than passing through the raw value. A plaintext gatewayToken allows a substitution
+  // attack where an attacker writes a known plaintext and authenticates with it directly.
+  const storedToken = decryptStrict(env.gatewayToken, 'gatewayToken')
   if (
     storedToken.length !== bearerToken.length ||
     !timingSafeEqual(Buffer.from(storedToken), Buffer.from(bearerToken))

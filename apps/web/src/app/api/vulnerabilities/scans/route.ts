@@ -38,9 +38,10 @@ export async function POST(req: NextRequest) {
 
   const env = await prisma.environment.findUnique({
     where: { id: parsed.data.environmentId },
-    select: { id: true, name: true },
+    select: { id: true, name: true, status: true },
   })
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
+  if (env.status !== 'connected') return NextResponse.json({ error: 'Environment is not connected' }, { status: 409 })
 
   const scan = await prisma.vulnerabilityScan.create({
     data: {
@@ -58,18 +59,23 @@ export async function POST(req: NextRequest) {
         where: { id: scan.id },
         data: { status: 'running', startedAt: new Date() },
       })
-      const results = await runDailyScan(parsed.data.environmentId, parsed.data.driver)
+      const results = await runDailyScan(parsed.data.environmentId, parsed.data.driver, scan.id)
       const totals = results.reduce(
         (acc, r) => ({
           findingsCreated: acc.findingsCreated + r.findingsCreated,
           findingsEscalated: acc.findingsEscalated + r.findingsEscalated,
           findingsFixed: acc.findingsFixed + r.findingsFixed,
+          errors: [...acc.errors, ...r.errors],
         }),
-        { findingsCreated: 0, findingsEscalated: 0, findingsFixed: 0 }
+        { findingsCreated: 0, findingsEscalated: 0, findingsFixed: 0, errors: [] as string[] }
       )
+      const allErrored = results.length === 0 || results.every(r => r.errors.length > 0)
+      const someErrored = totals.errors.length > 0
+      const status = allErrored ? 'failed' : someErrored ? 'completed_with_errors' : 'completed'
+      const errorMessage = totals.errors.length > 0 ? totals.errors.join('\n') : undefined
       await prisma.vulnerabilityScan.update({
         where: { id: scan.id },
-        data: { status: 'completed', completedAt: new Date(), ...totals },
+        data: { status, completedAt: new Date(), findingsCreated: totals.findingsCreated, findingsEscalated: totals.findingsEscalated, findingsFixed: totals.findingsFixed, ...(errorMessage ? { errorMessage } : {}) },
       })
     } catch (e) {
       await prisma.vulnerabilityScan.update({

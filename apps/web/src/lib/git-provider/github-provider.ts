@@ -87,7 +87,7 @@ export class GitHubGitProvider implements GitProvider {
     )
     await this.fetch(`/repos/${owner}/${repo}/git/refs`, {
       method: 'POST',
-      body: JSON.stringify({ ref: `refs/heads/${encodeURIComponent(branch)}`, sha: ref.object.sha }),
+      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: ref.object.sha }),
     })
   }
 

@@ -59,7 +59,7 @@ const addNoteSchema = z.object({
 
 const updateIncidentStatusSchema = z.object({
   incidentId: z.string().min(1, 'incidentId is required'),
-  status: z.enum(['triaged', 'contained']),
+  status: z.enum(['triaged', 'contained', 'closed']),
   rootCauseSummary: z.string().optional(),
 })
 
@@ -70,8 +70,8 @@ const addTimelineEntrySchema = z.object({
 })
 
 const requestContainmentSchema = z.object({
-  incidentId: z.string().min(1, 'incidentId is required'),
-  action: z.string().min(1, 'action is required'),
+  incidentId:    z.string().min(1, 'incidentId is required'),
+  action:        z.string().min(1, 'action is required'),
   justification: z.string().min(1, 'justification is required'),
 })
 
@@ -83,6 +83,21 @@ const checkContainmentStatusSchema = z.object({
 
 function formatZodError(err: z.ZodError): string {
   return 'Error: ' + err.issues.map(i => i.message).join('; ')
+}
+
+/**
+ * Verify that ctx.agentId belongs to the Warden agent. Write tools call this before
+ * mutating SIEM data to prevent non-Warden agents from operating on incidents.
+ * Returns the Warden agent ID if the check passes, or null if it fails.
+ */
+async function requireWardenAgent(ctx: ToolExecutionContext): Promise<string | null> {
+  const warden = await prisma.agent.findFirst({
+    where: { name: 'Warden' },
+    select: { id: true },
+  })
+  if (!warden) return null
+  if (ctx.agentId !== warden.id) return null
+  return warden.id
 }
 
 // ── Handlers ────────────────────────────────────────────────────────────────
@@ -148,7 +163,12 @@ async function siemCreateInvestigation(args: unknown, _ctx: ToolExecutionContext
   return JSON.stringify({ investigationId: investigation.id })
 }
 
-async function siemAddObservable(args: unknown, _ctx: ToolExecutionContext): Promise<string> {
+async function siemAddObservable(args: unknown, ctx: ToolExecutionContext): Promise<string> {
+  const wardenId = await requireWardenAgent(ctx)
+  if (!wardenId) {
+    return `Error: siem_add_observable is restricted to the Warden agent. Caller agentId: ${ctx.agentId ?? 'none'}`
+  }
+
   const parsed = addObservableSchema.safeParse(args)
   if (!parsed.success) return formatZodError(parsed.error)
   const { investigationId, value, category, context } = parsed.data
@@ -170,12 +190,12 @@ async function siemAddObservable(args: unknown, _ctx: ToolExecutionContext): Pro
       verdict,
       confidence,
       context: context ?? 'Added by Warden',
-      ...(setVerdict ? { verdictBy: 'warden', verdictAt: new Date() } : {}),
+      ...(setVerdict ? { verdictBy: ctx.agentId ?? 'warden', verdictAt: new Date() } : {}),
     },
     update: {
       lastSeen: new Date(),
       confidence,
-      ...(setVerdict ? { verdict, verdictBy: 'warden', verdictAt: new Date() } : {}),
+      ...(setVerdict ? { verdict, verdictBy: ctx.agentId ?? 'warden', verdictAt: new Date() } : {}),
       ...(context ? { context } : {}),
     },
   })
@@ -207,7 +227,12 @@ async function siemAddNote(args: unknown, _ctx: ToolExecutionContext): Promise<s
   return JSON.stringify({ noteId: note.id })
 }
 
-async function siemUpdateIncidentStatus(args: unknown, _ctx: ToolExecutionContext): Promise<string> {
+async function siemUpdateIncidentStatus(args: unknown, ctx: ToolExecutionContext): Promise<string> {
+  const wardenId = await requireWardenAgent(ctx)
+  if (!wardenId) {
+    return `Error: siem_update_incident_status is restricted to the Warden agent. Caller agentId: ${ctx.agentId ?? 'none'}`
+  }
+
   const parsed = updateIncidentStatusSchema.safeParse(args)
   if (!parsed.success) return formatZodError(parsed.error)
   const { incidentId, status, rootCauseSummary } = parsed.data
@@ -255,7 +280,12 @@ async function siemAddTimelineEntry(args: unknown, _ctx: ToolExecutionContext): 
   return JSON.stringify({ entryId: entry.id })
 }
 
-async function siemRequestContainment(args: unknown, _ctx: ToolExecutionContext): Promise<string> {
+async function siemRequestContainment(args: unknown, ctx: ToolExecutionContext): Promise<string> {
+  const wardenId = await requireWardenAgent(ctx)
+  if (!wardenId) {
+    return `Error: siem_request_containment is restricted to the Warden agent. Caller agentId: ${ctx.agentId ?? 'none'}`
+  }
+
   const parsed = requestContainmentSchema.safeParse(args)
   if (!parsed.success) return formatZodError(parsed.error)
   const { incidentId, action, justification } = parsed.data
@@ -264,7 +294,7 @@ async function siemRequestContainment(args: unknown, _ctx: ToolExecutionContext)
   if (!incident) return `Error: incident ${incidentId} not found`
 
   const request = await prisma.containmentRequest.create({
-    data: { incidentId, action, justification, requestedBy: 'warden', status: 'pending' },
+    data: { incidentId, action, justification, requestedBy: ctx.agentId ?? 'warden', status: 'pending' },
   })
 
   return JSON.stringify({ requestId: request.id, status: request.status })
@@ -278,15 +308,15 @@ async function siemCheckContainmentStatus(args: unknown, _ctx: ToolExecutionCont
   if (!request) return `Error: containment request ${parsed.data.requestId} not found`
 
   return JSON.stringify({
-    requestId: request.id,
-    incidentId: request.incidentId,
-    action: request.action,
+    requestId:     request.id,
+    incidentId:    request.incidentId,
+    action:        request.action,
     justification: request.justification,
-    status: request.status,
-    requestedBy: request.requestedBy,
-    reviewedBy: request.reviewedBy,
-    reviewedAt: request.reviewedAt,
-    createdAt: request.createdAt,
+    status:        request.status,
+    requestedBy:   request.requestedBy,
+    reviewedBy:    request.reviewedBy,
+    reviewedAt:    request.reviewedAt,
+    createdAt:     request.createdAt,
   })
 }
 
@@ -367,12 +397,12 @@ export const wardenManagementTools = [
   },
   {
     name: 'siem_update_incident_status',
-    description: 'Transition an incident forward through its lifecycle (open → triaged → contained → closed). Only forward transitions are allowed.',
+    description: 'Transition an incident forward through its lifecycle (open → triaged → contained → closed). Only forward transitions are allowed. Use "closed" to close a fully contained incident.',
     inputSchema: {
       type: 'object',
       properties: {
         incidentId:       { type: 'string' },
-        status:           { type: 'string', enum: ['triaged', 'contained'] },
+        status:           { type: 'string', enum: ['triaged', 'contained', 'closed'] },
         rootCauseSummary: { type: 'string', description: 'Optional free-text root-cause summary' },
       },
       required: ['incidentId', 'status'],
@@ -403,7 +433,7 @@ export const wardenManagementTools = [
   },
   {
     name: 'siem_request_containment',
-    description: 'Phase 4: Request human approval to contain an incident (e.g. isolate host, block IP). Creates a pending ContainmentRequest that an admin must approve or reject. Returns { requestId, status }.',
+    description: 'Request human approval to contain an incident (e.g. isolate host, block IP). Creates a pending ContainmentRequest that an admin must approve or reject. Restricted to the Warden agent. Returns { requestId, status }.',
     inputSchema: {
       type: 'object',
       properties: {

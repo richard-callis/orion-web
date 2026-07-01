@@ -68,14 +68,38 @@ export async function POST(req: NextRequest) {
   const { data } = result
 
   // SOC2 [M-008]: Cap pending tasks per agent to prevent queue flooding / resource exhaustion.
+  // count + create in a serializable transaction to prevent TOCTOU bypass by concurrent POSTs.
   if (data.assignedAgentId) {
     const maxPending = parseInt(process.env.MAX_PENDING_TASKS_PER_AGENT ?? '50', 10)
-    const pendingCount = await prisma.task.count({
-      where: { assignedAgent: data.assignedAgentId, status: 'pending' },
-    })
-    if (pendingCount >= maxPending) {
-      return NextResponse.json({ error: 'Task queue full' }, { status: 429 })
+    let task: Awaited<ReturnType<typeof prisma.task.create>> | null = null
+    try {
+      task = await prisma.$transaction(async (tx) => {
+        const pendingCount = await tx.task.count({
+          where: { assignedAgent: data.assignedAgentId, status: 'pending' },
+        })
+        if (pendingCount >= maxPending) return null as any
+        return tx.task.create({
+          data: {
+            title:          data.title,
+            description:    data.description   ?? null,
+            priority:       data.priority      ?? 'medium',
+            featureId:      data.featureId     ?? null,
+            assignedAgent:  data.assignedAgentId ?? null,
+            assignedUserId: data.assignedUserId  ?? null,
+            createdBy:      isService ? null : (caller?.id ?? null),
+          },
+          include: { agent: true },
+        })
+      }, { isolationLevel: 'Serializable' })
+    } catch (e: any) {
+      // Serialization failure — retry is the caller's responsibility
+      if (e?.code === 'P2034') {
+        return NextResponse.json({ error: 'Conflict, please retry' }, { status: 409 })
+      }
+      throw e
     }
+    if (!task) return NextResponse.json({ error: 'Task queue full' }, { status: 429 })
+    return NextResponse.json(task, { status: 201 })
   }
 
   const task = await prisma.task.create({
