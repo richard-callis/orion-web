@@ -213,18 +213,28 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const admin = await requireAdmin()
+  let admin
+  try { admin = await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const { id } = await params
   const env = await prisma.environment.findUnique({
-    where: { id: (await params).id },
+    where: { id },
     select: { name: true },
   })
-  await prisma.environment.delete({ where: { id: (await params).id } })
+  if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  try {
+    await prisma.environment.delete({ where: { id } })
+  } catch (e: any) {
+    if (e?.code === 'P2025') return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    throw e
+  }
 
   // SOC2: [M-005] Log environment deletion (non-blocking)
   logAudit({
     userId: admin.id,
     action: 'environment_delete',
-    target: `environment:${(await params).id}`,
+    target: `environment:${id}`,
     detail: { name: env?.name },
     ipAddress: getClientIp(_req),
     userAgent: getUserAgent(_req.headers),
