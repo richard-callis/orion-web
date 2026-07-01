@@ -149,9 +149,20 @@ export async function logAudit(params: {
  * Works with NextRequest and other request objects.
  */
 export function getClientIp(req: NextRequest | { headers: Headers; ip?: string }): string | undefined {
-  // Next.js App Router: check x-forwarded-for header (set by Traefik/reverse proxy)
+  // Prefer x-real-ip — set by the reverse proxy (Traefik/nginx) and not forwarded
+  // from the client, making it harder to forge than X-Forwarded-For.
+  const realIp = req.headers.get('x-real-ip')
+  if (realIp) return realIp.trim()
+
+  // Fall back to x-forwarded-for. Take the LAST token — the one appended by the
+  // closest (most trusted) proxy — rather than the first, which is attacker-controlled.
+  // The first XFF token is whatever the client sends; the last is what our proxy adds.
   const forwarded = req.headers.get('x-forwarded-for')
-  if (forwarded) return forwarded.split(',')[0].trim()
+  if (forwarded) {
+    const tokens = forwarded.split(',')
+    return tokens[tokens.length - 1].trim()
+  }
+
   // Fallback: NextRequest.ip (available in some deployments)
   if ('ip' in req && req.ip) return req.ip
   return undefined

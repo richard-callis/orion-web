@@ -61,6 +61,31 @@ export function decryptJson<T>(value: unknown): T {
 }
 
 /**
+ * Strict variant of decrypt — throws if the value does not have the enc:v1: prefix.
+ *
+ * Use for high-value secrets (gateway tokens, TOTP secrets) where a missing prefix
+ * should be a hard auth failure, not a silent plaintext passthrough. An attacker who
+ * can write a DB row with a known plaintext would otherwise authenticate using that
+ * value directly (substitution attack).
+ */
+export function decryptStrict(value: string, keyName?: string): string {
+  if (!value.startsWith(PREFIX)) {
+    throw new Error(
+      `Unauthorized: expected an encrypted value${keyName ? ` for '${keyName}'` : ''} ` +
+      `but got a plaintext string. This may indicate a substitution attack or unencrypted DB row.`
+    )
+  }
+  const key    = getKey()
+  const packed = Buffer.from(value.slice(PREFIX.length), 'base64')
+  const iv         = packed.subarray(0, IV_BYTES)
+  const tag        = packed.subarray(IV_BYTES, IV_BYTES + TAG_BYTES)
+  const ciphertext = packed.subarray(IV_BYTES + TAG_BYTES)
+  const decipher = createDecipheriv(ALGORITHM, key, iv)
+  decipher.setAuthTag(tag)
+  return decipher.update(ciphertext).toString('utf8') + decipher.final('utf8')
+}
+
+/**
  * Strict variant of decryptJson — throws if the value is not encrypted with the prefix.
  *
  * Use for high-value secrets (vault tokens, git provider config, API keys) where
