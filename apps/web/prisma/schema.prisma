@@ -313,6 +313,7 @@ model Task {
   chatRooms         ChatRoom[]         @relation("ChatRoomTask")
   chatMessages      ChatMessage[]
   federatedDispatch FederatedDispatch?
+  vulnerabilityFindings VulnerabilityFinding[]
 
   // Worker poll: pollOnce queries status+assignedAgent ordered by wave,priority,createdAt every 15s
   @@index([status, assignedAgent, wave, priority, createdAt])
@@ -1260,9 +1261,11 @@ model VulnerabilityFinding {
   description               String?   @db.Text
   fixAvailable              Boolean   @default(false)
   taskId                    String?
+  task                      Task?             @relation(fields: [taskId], references: [id], onDelete: SetNull)
   acceptedRiskJustification String?   @db.Text
   acceptedRiskExpiresAt     DateTime?
   scanId                    String?
+  scan                      VulnerabilityScan? @relation(fields: [scanId], references: [id], onDelete: SetNull)
 
   @@unique([environmentId, target, cveId, packageName])
   @@index([environmentId])
@@ -1285,6 +1288,7 @@ model VulnerabilityScan {
   findingsCreated   Int     @default(0)
   findingsEscalated Int     @default(0)
   findingsFixed     Int     @default(0)
+  findings          VulnerabilityFinding[]
   @@index([environmentId, startedAt])
   @@index([status])
 }
