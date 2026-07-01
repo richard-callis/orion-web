@@ -59,7 +59,7 @@ const addNoteSchema = z.object({
 
 const updateIncidentStatusSchema = z.object({
   incidentId: z.string().min(1, 'incidentId is required'),
-  status: z.enum(['triaged', 'contained']),
+  status: z.enum(['triaged', 'contained', 'closed']),
   rootCauseSummary: z.string().optional(),
 })
 
@@ -367,12 +367,12 @@ export const wardenManagementTools = [
   },
   {
     name: 'siem_update_incident_status',
-    description: 'Transition an incident forward through its lifecycle (open → triaged → contained → closed). Only forward transitions are allowed.',
+    description: 'Transition an incident forward through its lifecycle (open → triaged → contained → closed). Only forward transitions are allowed. Use "closed" to close a fully contained incident.',
     inputSchema: {
       type: 'object',
       properties: {
         incidentId:       { type: 'string' },
-        status:           { type: 'string', enum: ['triaged', 'contained'] },
+        status:           { type: 'string', enum: ['triaged', 'contained', 'closed'] },
         rootCauseSummary: { type: 'string', description: 'Optional free-text root-cause summary' },
       },
       required: ['incidentId', 'status'],
