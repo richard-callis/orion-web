@@ -92,6 +92,7 @@ export default function IncidentDetailPage() {
   const router = useRouter()
   const [data, setData] = useState<IncidentData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadErrorType, setLoadErrorType] = useState<'not-found' | 'error' | null>(null)
   const [activeTab, setActiveTab] = useState<'events' | 'actions' | 'chat' | 'observables' | 'notes' | 'timeline'>('events')
   const [creatingInvestigation, setCreatingInvestigation] = useState(false)
   const [newStatus, setNewStatus] = useState('')
@@ -105,16 +106,23 @@ export default function IncidentDetailPage() {
   const [obsCategory, setObsCategory] = useState<string>('ipv4')
   const [obsValue, setObsValue] = useState('')
   const [addingObs, setAddingObs] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
+    setLoadErrorType(null)
     try {
       const r = await fetch(`/api/monitoring/security/incidents/${params.id}`)
-      if (!r.ok) throw new Error(`${r.status}`)
+      if (!r.ok) {
+        setData(null)
+        setLoadErrorType(r.status === 404 ? 'not-found' : 'error')
+        return
+      }
       const d = await r.json()
       setData(d)
       setNewStatus(d.incident.status)
     } catch {
       setData(null)
+      setLoadErrorType('error')
     } finally {
       setLoading(false)
     }
@@ -173,6 +181,7 @@ export default function IncidentDetailPage() {
 
   async function handleCreateInvestigation() {
     setCreatingInvestigation(true)
+    setActionError(null)
     try {
       const r = await fetch(`/api/monitoring/security/incidents/${params.id}/create-investigation`, {
         method: 'POST',
@@ -188,7 +197,7 @@ export default function IncidentDetailPage() {
       const d = await r.json()
       router.push(`/security/investigations/${d.investigation.id}`)
     } catch {
-      // non-critical — user can retry
+      setActionError('Failed to open investigation. Please try again.')
     } finally {
       setCreatingInvestigation(false)
     }
@@ -196,6 +205,7 @@ export default function IncidentDetailPage() {
 
   async function patchStatus(status: string) {
     setUpdatingStatus(true)
+    setActionError(null)
     try {
       const r = await fetch(`/api/monitoring/security/incidents/${params.id}`, {
         method: 'PATCH',
@@ -204,6 +214,8 @@ export default function IncidentDetailPage() {
       })
       if (!r.ok) throw new Error(`${r.status}`)
       await load()
+    } catch {
+      setActionError('Failed to update status. Please try again.')
     } finally {
       setUpdatingStatus(false)
     }
@@ -212,6 +224,7 @@ export default function IncidentDetailPage() {
   async function addObservable() {
     if (!investigationId || !obsValue.trim()) return
     setAddingObs(true)
+    setActionError(null)
     try {
       const r = await fetch(`/api/monitoring/security/investigations/${investigationId}/observables`, {
         method: 'POST',
@@ -219,13 +232,14 @@ export default function IncidentDetailPage() {
         body: JSON.stringify({ value: obsValue.trim(), category: obsCategory }),
       })
       if (!r.ok) {
-        const err = await r.json().catch(() => ({ error: 'Unknown error' }))
-        console.error('[addObservable] failed:', err)
+        setActionError('Failed to add observable. Please try again.')
         return
       }
       setObsValue('')
       setObservables(null)
       await loadObservables()
+    } catch {
+      setActionError('Failed to add observable. Please try again.')
     } finally {
       setAddingObs(false)
     }
@@ -234,14 +248,21 @@ export default function IncidentDetailPage() {
   async function addNote() {
     if (!investigationId || !noteContent.trim()) return
     setSavingNote(true)
+    setActionError(null)
     try {
-      await fetch(`/api/monitoring/security/investigations/${investigationId}/notes`, {
+      const r = await fetch(`/api/monitoring/security/investigations/${investigationId}/notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: noteContent }),
       })
+      if (!r.ok) {
+        setActionError('Failed to save note. Please try again.')
+        return
+      }
       setNoteContent('')
       await loadInvestigation()
+    } catch {
+      setActionError('Failed to save note. Please try again.')
     } finally {
       setSavingNote(false)
     }
@@ -256,9 +277,22 @@ export default function IncidentDetailPage() {
   }
 
   if (!data) {
+    if (loadErrorType === 'not-found') {
+      return (
+        <div className="text-status-error text-sm p-4 border border-status-error/20 bg-status-error/5 rounded-lg">
+          Incident not found.
+        </div>
+      )
+    }
     return (
-      <div className="text-status-error text-sm p-4 border border-status-error/20 bg-status-error/5 rounded-lg">
-        Incident not found.
+      <div className="p-4 border border-status-error/20 bg-status-error/5 rounded-lg space-y-3">
+        <p className="text-status-error text-sm">Failed to load incident.</p>
+        <button
+          onClick={load}
+          className="text-xs px-3 py-1.5 rounded border border-border-subtle bg-bg-raised text-text-primary hover:border-accent transition-colors"
+        >
+          Retry
+        </button>
       </div>
     )
   }
@@ -354,6 +388,11 @@ export default function IncidentDetailPage() {
             <span className="text-text-muted">Target: </span>
             <code className="text-sm font-mono text-text-secondary">{incident.hostKey}</code>
           </div>
+        )}
+
+        {/* Action error */}
+        {actionError && (
+          <p className="text-xs text-status-error pt-2">{actionError}</p>
         )}
 
         {/* Status controls */}

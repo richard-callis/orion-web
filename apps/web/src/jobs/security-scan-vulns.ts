@@ -54,7 +54,8 @@ export interface ScanResult {
  */
 export async function runDailyScan(
   environmentId?: string,
-  driver: 'trivy' | 'acas' = 'trivy'
+  driver: 'trivy' | 'acas' = 'trivy',
+  scanId?: string
 ): Promise<ScanResult[]> {
   const results: ScanResult[] = []
 
@@ -73,27 +74,27 @@ export async function runDailyScan(
     const monCfg = (env.monitoringConfig ?? {}) as { isInternetFacing?: boolean }
     const isInternetFacing = monCfg.isInternetFacing ?? false
 
-    // List running images via the existing kubectl/docker tools.
-    let images: string[] = []
-    try {
-      images = await listRunningImages(client, env.type as 'cluster' | 'docker')
-    } catch (err) {
-      results.push({
-        environmentId: env.id,
-        target: 'list_images',
-        findingsCreated: 0,
-        findingsEscalated: 0,
-        findingsFixed: 0,
-        errors: [String(err)],
-      })
-      continue
-    }
-
     if (driver === 'acas') {
-      results.push(await scanAcasHost(client, env.id, env.gatewayUrl!, kev, isInternetFacing))
+      results.push(await scanAcasHost(client, env.id, env.gatewayUrl!, kev, isInternetFacing, scanId))
     } else {
+      // List running images via the existing kubectl/docker tools.
+      let images: string[] = []
+      try {
+        images = await listRunningImages(client, env.type as 'cluster' | 'docker')
+      } catch (err) {
+        results.push({
+          environmentId: env.id,
+          target: 'list_images',
+          findingsCreated: 0,
+          findingsEscalated: 0,
+          findingsFixed: 0,
+          errors: [String(err)],
+        })
+        continue
+      }
+
       for (const image of images) {
-        results.push(await scanImage(client, env.id, image, kev, isInternetFacing))
+        results.push(await scanImage(client, env.id, image, kev, isInternetFacing, scanId))
       }
       if (env.type === 'cluster') {
         results.push(await scanK8sMisconfigs(client, env.id))
@@ -110,7 +111,7 @@ export async function runDailyScan(
     if (localhost?.gatewayUrl) {
       const client = new GatewayClient(localhost.gatewayUrl, localhost.gatewayToken ?? '')
       const localhostMonCfg = (localhost.monitoringConfig ?? {}) as { isInternetFacing?: boolean }
-      results.push(await scanHost(client, localhost.id, kev, localhostMonCfg.isInternetFacing ?? false))
+      results.push(await scanHost(client, localhost.id, kev, localhostMonCfg.isInternetFacing ?? false, scanId))
     }
   }
 
@@ -191,7 +192,8 @@ async function scanImage(
   environmentId: string,
   image: string,
   kev: { cves: Set<string>; dueDates: Map<string, string> },
-  isInternetFacing = false
+  isInternetFacing = false,
+  scanId?: string
 ): Promise<ScanResult> {
   const target = `image:${image}`
   const result: ScanResult = {
@@ -211,7 +213,7 @@ async function scanImage(
   }
 
   const candidates = parseTrivyImageOutput(trivyOutput, environmentId, target)
-  await persistFindings(candidates, kev, result, isInternetFacing)
+  await persistFindings(candidates, kev, result, isInternetFacing, scanId)
   return result
 }
 
@@ -220,7 +222,8 @@ async function scanAcasHost(
   environmentId: string,
   gatewayUrl: string,
   kev: { cves: Set<string>; dueDates: Map<string, string> },
-  isInternetFacing = false
+  isInternetFacing = false,
+  scanId?: string
 ): Promise<ScanResult> {
   const target = `acas:host:${gatewayUrl}`
   const result: ScanResult = {
@@ -240,7 +243,7 @@ async function scanAcasHost(
     return result
   }
   const candidates = parseAcasOutput(xml, environmentId, target)
-  await persistFindings(candidates, kev, result, isInternetFacing)
+  await persistFindings(candidates, kev, result, isInternetFacing, scanId)
   return result
 }
 
@@ -248,7 +251,8 @@ async function scanHost(
   client: GatewayClient,
   environmentId: string,
   kev: { cves: Set<string>; dueDates: Map<string, string> },
-  isInternetFacing = false
+  isInternetFacing = false,
+  scanId?: string
 ): Promise<ScanResult> {
   const target = 'host'
   const result: ScanResult = {
@@ -267,7 +271,7 @@ async function scanHost(
     return result
   }
   const candidates = parseTrivyImageOutput(out, environmentId, target)
-  await persistFindings(candidates, kev, result, isInternetFacing)
+  await persistFindings(candidates, kev, result, isInternetFacing, scanId)
   return result
 }
 
@@ -325,7 +329,8 @@ async function persistFindings(
   candidates: VulnerabilityFindingCandidate[],
   kev: { cves: Set<string>; dueDates: Map<string, string> },
   result: ScanResult,
-  isInternetFacing = false
+  isInternetFacing = false,
+  scanId?: string
 ) {
   if (candidates.length === 0) return
 
@@ -424,6 +429,7 @@ async function persistFindings(
           severity,
           status: 'open',
           rawScanner: c.rawScanner as any,
+          ...(scanId ? { scanId } : {}),
         },
         create: {
           environmentId: c.environmentId,
@@ -445,6 +451,7 @@ async function persistFindings(
           rawScanner: c.rawScanner as any,
           fixAvailable: !!c.fixedVersion,
           title: (c.rawScanner as any)?.Title ?? null,
+          ...(scanId ? { scanId } : {}),
         },
       })
 
@@ -515,6 +522,33 @@ async function persistFindings(
       }
     } catch (e) {
       result.errors.push(`finding ${c.cveId}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  // Detection sweep: mark as fixed any open findings for this (environmentId, target)
+  // whose cveId+packageName was NOT present in the candidate set.
+  // Only run if we have a non-empty candidate set (absence of candidates means
+  // the scan didn't run, not that everything was fixed).
+  if (candidates.length > 0) {
+    const environmentId = candidates[0].environmentId
+    const target = candidates[0].target
+    const seen = new Set(candidates.map(c => `${c.cveId}|${c.packageName}`))
+    try {
+      const openFindings = await prisma.vulnerabilityFinding.findMany({
+        where: { environmentId, target, status: 'open' },
+        select: { id: true, cveId: true, packageName: true, fixedVersion: true },
+      })
+      for (const f of openFindings) {
+        if (!seen.has(`${f.cveId}|${f.packageName}`)) {
+          await prisma.vulnerabilityFinding.update({
+            where: { id: f.id },
+            data: { status: 'fixed', fixedAt: new Date() },
+          })
+          result.findingsFixed++
+        }
+      }
+    } catch (e) {
+      result.errors.push(`detection sweep: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 }

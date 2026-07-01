@@ -23,6 +23,7 @@ import http from 'http'
 import { DEPLOYMENT_TEMPLATES, getTemplate } from '@/lib/deployment-templates'
 import { writeVaultSecret } from '@/lib/vault'
 import { randomBytes } from 'crypto'
+import { isPrivateUrl } from '@/lib/ssrf-guard'
 
 const execAsync = promisify(exec)
 
@@ -1200,10 +1201,16 @@ function checkSSLCert(hostname: string): Promise<{ valid: boolean; daysUntilExpi
   })
 }
 
-function checkHTTPReachability(hostname: string): Promise<{ statusCode: number; reachable: boolean; error?: string }> {
+async function checkHTTPReachability(hostname: string): Promise<{ statusCode: number; reachable: boolean; error?: string }> {
+  // SSRF guard: block requests to private/internal IP ranges. Agents that can write
+  // IngressRoute hostnames could otherwise redirect health checks to internal services.
+  const url = `https://${hostname}`
+  if (await isPrivateUrl(url)) {
+    return { statusCode: 0, reachable: false, error: 'SSRF blocked: hostname resolves to a private/internal address' }
+  }
   return new Promise((resolve) => {
     const req = https.get(
-      `https://${hostname}`,
+      url,
       { timeout: 8_000, headers: { 'User-Agent': 'ORION-HealthCheck/1.0' } },
       (res) => {
         const statusCode = res.statusCode ?? 0
@@ -1219,7 +1226,12 @@ function checkHTTPReachability(hostname: string): Promise<{ statusCode: number; 
   })
 }
 
-function checkGatewayReachability(rawUrl: string): Promise<{ reachable: boolean; statusCode: number; error?: string }> {
+async function checkGatewayReachability(rawUrl: string): Promise<{ reachable: boolean; statusCode: number; error?: string }> {
+  // SSRF guard: block requests to private/internal IP ranges. Agents that can write
+  // environment.gatewayUrl or system.service.* settings could pivot to internal hosts.
+  if (await isPrivateUrl(rawUrl)) {
+    return { reachable: false, statusCode: 0, error: 'SSRF blocked: URL resolves to a private/internal address' }
+  }
   return new Promise((resolve) => {
     let parsed: URL
     try { parsed = new URL(rawUrl) }
