@@ -427,7 +427,11 @@ async function persistFindings(
           isKev,
           kevDueDate: kevDue ? new Date(kevDue) : null,
           severity,
-          status: 'open',
+          // Preserve 'accepted' status when the finding is actively accepted and
+          // the acceptance has not expired — a rescan should not clobber it.
+          status: existing?.status === 'accepted' && existing.acceptedRiskExpiresAt && existing.acceptedRiskExpiresAt > new Date()
+            ? 'accepted'
+            : 'open',
           rawScanner: c.rawScanner as any,
           ...(scanId ? { scanId } : {}),
         },
