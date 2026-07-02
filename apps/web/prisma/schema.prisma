@@ -92,6 +92,7 @@ model Agent {
   tokenUsage       AgentTokenUsage[]
   webhookTriggers  WebhookTrigger[]       @relation("WebhookTriggerAgent")
   scheduledTasks   ScheduledTask[]        @relation("ScheduledTaskAgent")
+  mcpToken         String? // AES-GCM encrypted per-agent MCP token (no @unique — random IV means ciphertext differs each time)
 
   @@index([createdBy])
 }
@@ -469,6 +470,7 @@ model User {
   // GitHub integration: per-user Personal Access Token (encrypted) for agent GitHub tools
   githubTokenEncrypted  String?
   githubUsername        String?
+  githubAllowedRepos    String[] @default([])
 
   // SOC2: [M-006] Per-account login lockout
   failedLoginAttempts Int       @default(0)

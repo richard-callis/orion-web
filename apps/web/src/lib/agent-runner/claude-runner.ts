@@ -1,5 +1,7 @@
 import type { AgentRunner, AgentEvent, TaskRunContext } from './types'
 import { getPrompt, interpolate } from '@/lib/system-prompts'
+import { prisma } from '@/lib/db'
+import { decryptStrict } from '@/lib/encryption'
 
 const CLAUDE_URL = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
 
@@ -37,6 +39,23 @@ export const claudeRunner: AgentRunner = {
       fullPrompt += `\n\n---\nThe following tool steps were already completed in a previous run. Do not repeat them:\n${steps}\n---`
     }
 
+    // Fetch per-agent MCP token so the sidecar can set it as x-mcp-token in
+    // the MCP transport headers when writing the per-request .mcp.json config.
+    let mcpTokenForSidecar: string | undefined
+    if (ctx.agentId) {
+      try {
+        const agentRow = await prisma.agent.findUnique({
+          where:  { id: ctx.agentId },
+          select: { mcpToken: true },
+        })
+        if (agentRow?.mcpToken) {
+          mcpTokenForSidecar = decryptStrict(agentRow.mcpToken, 'mcpToken')
+        }
+      } catch {
+        // Non-fatal: sidecar will fall back to ORION_MCP_TOKEN if mcpToken omitted
+      }
+    }
+
     try {
       const res = await fetch(`${CLAUDE_URL}/run/collect`, {
         method:  'POST',
@@ -48,6 +67,7 @@ export const claudeRunner: AgentRunner = {
           agentId:      ctx.agentId,
           maxTurns:     20,
           ...(ctx.nebula && { nebula: ctx.nebula }),
+          ...(mcpTokenForSidecar && { mcpToken: mcpTokenForSidecar }),
         }),
         signal: AbortSignal.timeout(300_000),
       })
