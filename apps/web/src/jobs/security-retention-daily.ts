@@ -38,7 +38,14 @@ const ACTION_AUDIT_RETENTION_DAYS = 365
  *   - Existing codebase already uses interval-based patterns in worker.ts
  *   - Synchronous registration at module load is ideal for cron schedules
  */
+// Guard against duplicate cron registrations if this module is evaluated
+// more than once (e.g. hot-reload or multiple import paths in the same process).
+let _scheduled = false
+
 export function ensureSecurityRetentionJobScheduled(): void {
+  if (_scheduled) return
+  _scheduled = true
+
   // Set up daily cron schedule (4 AM)
   cron.schedule('0 4 * * *', () => {
     startJob(
@@ -71,10 +78,17 @@ export async function runSecurityRetentionJob(log: JobLogger): Promise<void> {
   const incidentCutoff = new Date(now.getTime() - INCIDENT_RETENTION_DAYS * 24 * 60 * 60 * 1000)
   const auditCutoff = new Date(now.getTime() - ACTION_AUDIT_RETENTION_DAYS * 24 * 60 * 60 * 1000)
 
-  // 1. Delete old security events (those not currently linked to a recent
-  //    incident still in the 365d retention window are removed here).
+  // 1. Delete old security events — but exclude events still linked to open or
+  //    active incidents (non-closed). Deleting live evidence would destroy the
+  //    audit trail for ongoing investigations.
   const deletedEvents = await prisma.securityEvent.deleteMany({
-    where: { createdAt: { lt: eventCutoff } },
+    where: {
+      createdAt: { lt: eventCutoff },
+      OR: [
+        { incidentId: null },
+        { incident: { status: { in: ['closed'] } } },
+      ],
+    },
   })
   await log(`Security events purged: ${deletedEvents.count} rows older than ${eventCutoff.toISOString()}`)
 
