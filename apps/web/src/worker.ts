@@ -226,17 +226,17 @@ async function recoverStuckTasks() {
     }
     const retries = ((task.metadata as any)?.recoveryCount ?? 0) as number
     const MAX_RECOVERY = 2
-    const newStatus = retries < MAX_RECOVERY ? 'open' : 'failed'
+    const newStatus = retries < MAX_RECOVERY ? 'pending' : 'failed'
     const newMeta = { ...(task.metadata as object ?? {}), recoveryCount: retries + 1 }
     await prisma.task.update({
       where: { id: task.id },
-      data: { status: newStatus, assignedAgent: newStatus === 'open' ? task.assignedAgent : null, metadata: newMeta as any }
+      data: { status: newStatus, assignedAgent: newStatus === 'pending' ? task.assignedAgent : null, metadata: newMeta as any }
     })
     await prisma.taskEvent.create({
       data: {
         taskId: task.id,
         eventType: 'system',
-        content: newStatus === 'open'
+        content: newStatus === 'pending'
           ? `Task re-queued after crashed worker (${stuckMinutes}min inactivity). Recovery attempt ${retries + 1}/${MAX_RECOVERY}.`
           : `Task failed after ${MAX_RECOVERY} recovery attempts. Use orion_reopen_task to retry manually.`,
         agentId: null
@@ -1636,6 +1636,19 @@ async function main() {
   // Recover any tasks that were in_progress when the worker last crashed
   await recoverStuckTasks().catch(e => err(`Startup recovery failed: ${e}`))
 
+  // Periodic stuck-task recovery — every 5 minutes, re-queue tasks that have
+  // been in_progress longer than the configured threshold. Startup handles the
+  // initial pass; the interval handles tasks that hang post-startup (e.g. a
+  // runner that stops emitting events but never throws). Three hung tasks would
+  // otherwise consume all MAX_CONCURRENT slots and deadlock the worker.
+  // Note: abort signals propagate to the AbortController inside runTask(), but
+  // tool executions inside the runner observe the signal only between LLM events
+  // (not mid-tool). Recovery therefore relies on the stuck-task cutoff rather
+  // than a hard kill.
+  setInterval(() => {
+    recoverStuckTasks().catch(e => err(`Periodic recovery failed: ${e}`))
+  }, 5 * 60_000)
+
   // Initial poll
   await pollOnce().catch(e => err(`Initial poll failed: ${e}`))
 
@@ -1716,7 +1729,12 @@ async function main() {
   // library and the timing self-heals across worker restarts.
   // lastDailyScanDate is persisted to DB so a restart between 02:00-03:00
   // doesn't re-run the scan, and a restart that spans 02:00 doesn't skip it.
+  // dailyScanInFlight prevents the startup catch-up and the hourly tick from
+  // both passing the dateKey guard before either upserts the setting (TOCTOU fix).
+  let dailyScanInFlight = false
   const runScheduledDailyScan = () => {
+    if (dailyScanInFlight) return
+    dailyScanInFlight = true
     const now = new Date()
     const dateKey = now.toISOString().slice(0, 10)
     prisma.systemSetting.findUnique({ where: { key: 'worker.lastDailyScanDate' } })
@@ -1758,6 +1776,7 @@ async function main() {
         }
       })
       .catch(e => err(`Daily scan guard failed: ${e}`))
+      .finally(() => { dailyScanInFlight = false })
   }
 
   // Startup catch-up: if the worker restarted and we missed 02:00, run the scan now.
