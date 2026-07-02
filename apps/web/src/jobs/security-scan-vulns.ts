@@ -531,9 +531,13 @@ async function persistFindings(
 
   // Detection sweep: mark as fixed any open findings for this (environmentId, target)
   // whose cveId+packageName was NOT present in the candidate set.
-  // Only run if we have a non-empty candidate set (absence of candidates means
-  // the scan didn't run, not that everything was fixed).
-  if (candidates.length > 0) {
+  // Guard conditions:
+  //   1. candidates.length > 0 — absence of candidates means the scan didn't run, not
+  //      that everything was fixed.
+  //   2. result.errors.length === 0 — if the scan produced any errors (e.g. truncated
+  //      Trivy output that still parsed to ≥1 candidate), the candidate set may be
+  //      incomplete and a sweep would produce mass false-positive fixes.
+  if (candidates.length > 0 && result.errors.length === 0) {
     const environmentId = candidates[0].environmentId
     const target = candidates[0].target
     const seen = new Set(candidates.map(c => `${c.cveId}|${c.packageName}`))
@@ -548,6 +552,22 @@ async function persistFindings(
             where: { id: f.id },
             data: { status: 'fixed', fixedAt: new Date() },
           })
+          // Emit vuln.fixed SecurityEvent to maintain a consistent audit trail —
+          // mirrors the event emitted by the version-match fixed path above.
+          await prisma.securityEvent.create({
+            data: {
+              environmentId,
+              type: 'vuln.fixed',
+              source: 'trivy',
+              severity: 10,
+              title: `Vulnerability fixed: ${f.cveId} in ${f.packageName}`,
+              description: `${f.cveId} in ${f.packageName} on ${target} no longer detected by Trivy scan${f.fixedVersion ? ` (fix version: ${f.fixedVersion})` : ''}.`,
+              rawEvent: { cveId: f.cveId, package: f.packageName, fixedVersion: f.fixedVersion ?? null, detectionMethod: 'absence_sweep' } as any,
+              dedupKey: hashKey(`vuln.fixed|${environmentId}|${target}|${f.cveId}|${f.packageName}`),
+              firstSeen: new Date(),
+              lastSeen: new Date(),
+            },
+          }).catch(() => {})
           result.findingsFixed++
         }
       }
