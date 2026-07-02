@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
-import { logAudit } from '@/lib/audit'
+import { logAudit, getClientIp } from '@/lib/audit'
 import { parseBodyOrError, PatchAdminToolSchema } from '@/lib/validate'
 
 // GET /api/admin/tools — list all MCP tools with environment and agent restriction info
@@ -49,7 +49,7 @@ export async function PATCH(req: NextRequest) {
     action: auditAction,
     target: `mcpTool:${tool.id}`,
     detail: { toolName: tool.name, operation, enabled: tool.enabled, status: tool.status },
-    ipAddress: req.headers.get('x-forwarded-for') ?? req.headers.get('x-real-ip'),
+    ipAddress: getClientIp(req),
     userAgent: req.headers.get('user-agent'),
   })
 
