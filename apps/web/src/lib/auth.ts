@@ -38,7 +38,7 @@ const IS_SECURE = process.env.NODE_ENV === 'production' || process.env.HEADER_X_
  * SOC2: [M-006] Record a failed login attempt for a user.
  * Increments the counter; locks the account for 15 minutes after 5 failures.
  */
-async function recordFailedLogin(userId: string): Promise<void> {
+export async function recordFailedLogin(userId: string): Promise<void> {
   const updated = await prisma.user.update({
     where: { id: userId },
     data: { failedLoginAttempts: { increment: 1 } },
@@ -113,7 +113,7 @@ export const authOptions: NextAuthOptions = {
             role: true, active: true, passwordHash: true,
             totpEnabled: true, totpSecret: true, totpSecretEncrypted: true,
             totpRecoveryCodes: true, totpRecoveryCodesEncrypted: true,
-            failedLoginAttempts: true, lockedUntil: true,
+            failedLoginAttempts: true, lockedUntil: true, lastUsedTotpAt: true,
           },
         })
 
@@ -187,6 +187,13 @@ export const authOptions: NextAuthOptions = {
               await recordFailedLogin(user.id)
               return null
             }
+            // SOC2: [M-002] TOTP replay prevention — reject if same 30-second time step
+            const currentStep = Math.floor(Date.now() / 30000)
+            if (user.lastUsedTotpAt && Math.floor(user.lastUsedTotpAt.getTime() / 30000) === currentStep) {
+              void logAudit({ userId: user.id, action: 'user_login_failure', target: user.id, detail: { reason: 'totp_replay' } })
+              return null
+            }
+            await prisma.user.update({ where: { id: user.id }, data: { lastUsedTotpAt: new Date() } })
           }
 
           // MFA verified — reset lockout counters, update lastSeen, and return full user
@@ -198,6 +205,7 @@ export const authOptions: NextAuthOptions = {
             email: user.email,
             username: user.username,
             role: user.role,
+            totpEnabled: user.totpEnabled,
             mfaVerified: true,
           }
         }
@@ -214,6 +222,7 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           username: user.username,
           role: user.role,
+          totpEnabled: user.totpEnabled,
           mfaVerified: false,
         }
       },
