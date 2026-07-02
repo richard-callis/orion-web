@@ -15,7 +15,8 @@ import { verifyTOTP, verifyRecoveryCode, consumeRecoveryCode } from '@/lib/totp'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, TOTPLoginSchema } from '@/lib/validate'
 import { rateLimitRedis, getClientIpForRateLimit } from '@/lib/rate-limit-redis'
-import { decrypt, encrypt } from '@/lib/encryption'
+import { decryptStrict, encrypt } from '@/lib/encryption'
+import { recordFailedLogin } from '@/lib/auth'
 
 export async function POST(req: NextRequest) {
   // SOC2 [M-007]: Rate-limit TOTP/recovery brute-force attempts.
@@ -52,11 +53,18 @@ export async function POST(req: NextRequest) {
         totpEnabled: true,
         totpRecoveryCodes: true,
         totpRecoveryCodesEncrypted: true,
+        failedLoginAttempts: true,
+        lockedUntil: true,
       },
     })
 
     if (!user || !user.active) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+    }
+
+    // SOC2: [M-006] Check account lockout before any verification
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      return NextResponse.json({ error: 'Account locked. Try again later.' }, { status: 401 })
     }
 
     // Verify password
@@ -65,11 +73,17 @@ export async function POST(req: NextRequest) {
     }
     const valid = await compare(data.password, user.passwordHash)
     if (!valid) {
+      await recordFailedLogin(user.id)
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
     }
 
     // Verify recovery code — prefer encrypted field
-    const rawCodes = user.totpRecoveryCodesEncrypted ? decrypt(user.totpRecoveryCodesEncrypted) : user.totpRecoveryCodes
+    let rawCodes: string | null = null
+    if (user.totpRecoveryCodesEncrypted) {
+      try { rawCodes = decryptStrict(user.totpRecoveryCodesEncrypted, 'totpRecoveryCodesEncrypted') } catch { return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 }) }
+    } else {
+      rawCodes = user.totpRecoveryCodes
+    }
     const hashedCodes: string[] = rawCodes ? JSON.parse(rawCodes) : []
     if (!hashedCodes.length || !(await verifyRecoveryCode(data.code, hashedCodes))) {
       // SOC2: [M-005] Log MFA verification failure (non-blocking)
@@ -78,26 +92,32 @@ export async function POST(req: NextRequest) {
         detail: { method: 'recovery_code', reason: 'invalid_code' },
         ipAddress: getClientIp(req),
       }).catch(() => {})
+      await recordFailedLogin(user.id)
       return NextResponse.json({ error: 'Invalid recovery code' }, { status: 401 })
     }
 
-    // BLOCKER fix: consume recovery code (make it single-use)
-    const updatedCodes = await consumeRecoveryCode(data.code, hashedCodes)
-    const updatedCodesJson = JSON.stringify(updatedCodes)
-    const recoveryWriteData: Record<string, unknown> = { totpRecoveryCodes: updatedCodesJson }
-    if (process.env.ORION_ENCRYPTION_KEY) {
-      recoveryWriteData.totpRecoveryCodesEncrypted = encrypt(updatedCodesJson)
+    // SOC2: [M-002] Atomically consume the recovery code inside a transaction to prevent
+    // concurrent requests from both consuming the same code (TOCTOU race condition fix).
+    const consumed = await prisma.$transaction(async (tx) => {
+      const fresh = await tx.user.findUnique({
+        where: { id: user.id },
+        select: { totpRecoveryCodes: true, totpRecoveryCodesEncrypted: true },
+      })
+      const freshRaw = fresh?.totpRecoveryCodesEncrypted ? decryptStrict(fresh.totpRecoveryCodesEncrypted, 'totpRecoveryCodesEncrypted') : fresh?.totpRecoveryCodes
+      const freshCodes: string[] = freshRaw ? JSON.parse(freshRaw) : []
+      const updatedCodes = await consumeRecoveryCode(data.code!, freshCodes)
+      if (!updatedCodes) return false  // code already consumed by concurrent request
+      const updatedCodesJson = JSON.stringify(updatedCodes)
+      const writeData: Record<string, unknown> = { totpRecoveryCodes: updatedCodesJson, lastSeen: new Date() }
+      if (process.env.ORION_ENCRYPTION_KEY && fresh?.totpRecoveryCodesEncrypted) {
+        writeData.totpRecoveryCodesEncrypted = encrypt(updatedCodesJson)
+      }
+      await tx.user.update({ where: { id: user.id }, data: writeData })
+      return true
+    })
+    if (!consumed) {
+      return NextResponse.json({ error: 'Invalid recovery code' }, { status: 401 })
     }
-    await prisma.user.update({
-      where: { id: user.id },
-      data: recoveryWriteData,
-    })
-
-    // Update last seen
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { lastSeen: new Date() },
-    })
 
     // SOC2: [M-005] Log successful recovery code login (non-blocking)
     logAudit({
@@ -137,12 +157,25 @@ export async function POST(req: NextRequest) {
       totpEnabled: true,
       totpSecret: true,
       totpSecretEncrypted: true,
+      failedLoginAttempts: true,
+      lockedUntil: true,
+      lastUsedTotpAt: true,
     },
   })
 
-  const rawSecret = user?.totpSecretEncrypted ? decrypt(user.totpSecretEncrypted) : user?.totpSecret
+  let rawSecret: string | null | undefined = null
+  if (user?.totpSecretEncrypted) {
+    try { rawSecret = decryptStrict(user.totpSecretEncrypted, 'totpSecretEncrypted') } catch { return NextResponse.json({ error: 'MFA not enabled for this account' }, { status: 403 }) }
+  } else {
+    rawSecret = user?.totpSecret
+  }
   if (!user || !user.active || !user.totpEnabled || !rawSecret) {
     return NextResponse.json({ error: 'MFA not enabled for this account' }, { status: 403 })
+  }
+
+  // SOC2: [M-006] Check account lockout before any verification
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    return NextResponse.json({ error: 'Account locked. Try again later.' }, { status: 401 })
   }
 
   // Verify password
@@ -151,6 +184,7 @@ export async function POST(req: NextRequest) {
   }
   const valid = await compare(data.password, user.passwordHash)
   if (!valid) {
+    await recordFailedLogin(user.id)
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 
@@ -162,13 +196,25 @@ export async function POST(req: NextRequest) {
       detail: { reason: 'invalid_totp_code' },
       ipAddress: getClientIp(req),
     }).catch(() => {})
+    await recordFailedLogin(user.id)
     return NextResponse.json({ error: 'Invalid TOTP code' }, { status: 401 })
   }
 
-  // Update last seen
+  // SOC2: [M-002] TOTP replay prevention — reject if same 30-second time step
+  const currentStep = Math.floor(Date.now() / 30000)
+  if (user.lastUsedTotpAt && Math.floor(user.lastUsedTotpAt.getTime() / 30000) === currentStep) {
+    logAudit({
+      userId: user.id, action: 'mfa_verify_failure', target: 'mfa:totp',
+      detail: { reason: 'totp_replay' },
+      ipAddress: getClientIp(req),
+    }).catch(() => {})
+    return NextResponse.json({ error: 'TOTP code already used. Wait for next code.' }, { status: 401 })
+  }
+
+  // Update last seen and lastUsedTotpAt
   await prisma.user.update({
     where: { id: user.id },
-    data: { lastSeen: new Date() },
+    data: { lastSeen: new Date(), lastUsedTotpAt: new Date() },
   })
 
   // SOC2: [M-005] Log successful TOTP login (non-blocking)
