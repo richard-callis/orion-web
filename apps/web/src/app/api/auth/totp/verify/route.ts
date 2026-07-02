@@ -13,7 +13,7 @@ import { getCurrentUser } from '@/lib/auth'
 import { verifyTOTP } from '@/lib/totp'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, TOTPVerifySchema } from '@/lib/validate'
-import { decrypt } from '@/lib/encryption'
+import { decryptStrict } from '@/lib/encryption'
 
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser()
@@ -32,7 +32,12 @@ export async function POST(req: NextRequest) {
     select: { totpSecret: true, totpSecretEncrypted: true, totpRecoveryCodes: true },
   })
 
-  const rawSecret = dbUser?.totpSecretEncrypted ? decrypt(dbUser.totpSecretEncrypted) : dbUser?.totpSecret
+  let rawSecret: string | null | undefined = null
+  if (dbUser?.totpSecretEncrypted) {
+    try { rawSecret = decryptStrict(dbUser.totpSecretEncrypted, 'totpSecretEncrypted') } catch { return NextResponse.json({ error: 'No pending TOTP setup. Call /api/auth/totp/generate first' }, { status: 400 }) }
+  } else {
+    rawSecret = dbUser?.totpSecret
+  }
   if (!rawSecret) {
     return NextResponse.json(
       { error: 'No pending TOTP setup. Call /api/auth/totp/generate first' },
