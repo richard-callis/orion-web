@@ -92,6 +92,7 @@ model Agent {
   tokenUsage       AgentTokenUsage[]
   webhookTriggers  WebhookTrigger[]       @relation("WebhookTriggerAgent")
   scheduledTasks   ScheduledTask[]        @relation("ScheduledTaskAgent")
+  mcpToken         String? // AES-GCM encrypted per-agent MCP token (no @unique — random IV means ciphertext differs each time)
 
   @@index([createdBy])
 }

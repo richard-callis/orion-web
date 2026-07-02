@@ -11,7 +11,9 @@
  * System agents: Alpha (coordinator), Veritas (QA gate), Planner (planning specialist), Atlas (environment specialist), Pulse (cluster health watcher), Mentor (agent effectiveness reviewer).
  */
 
+import { randomBytes } from 'crypto'
 import { prisma } from './db'
+import { encrypt } from './encryption'
 
 // ── Nova + Agent definitions ──────────────────────────────────────────────────
 
@@ -818,9 +820,18 @@ export async function ensureSystemAgents(): Promise<void> {
             data:  { novaId: nova.id },
           })
         }
+        // Ensure per-agent MCP token is set
+        if (!existing.mcpToken) {
+          const rawToken = randomBytes(32).toString('hex')
+          await prisma.agent.update({
+            where: { id: existing.id },
+            data:  { mcpToken: encrypt(rawToken) },
+          })
+        }
         continue
       }
 
+      const newMcpToken = randomBytes(32).toString('hex')
       const agent = await prisma.agent.create({
         data: {
           name:        def.nova.displayName,
@@ -829,6 +840,7 @@ export async function ensureSystemAgents(): Promise<void> {
           description: def.agent.description,
           status:      'online',
           novaId:      nova.id,
+          mcpToken:    encrypt(newMcpToken),
           metadata: {
             systemPrompt:  def.agent.systemPrompt,
             contextConfig: { ...def.agent.contextConfig, llm: defaultLlm },
@@ -962,6 +974,22 @@ export async function ensureSystemAgents(): Promise<void> {
     }).catch(() => {})
 
     console.log(`[seed] AgentProfile: ${pd.agentName} → ${pd.domain}`)
+  }
+
+  // Backfill: ensure every agent in the DB has an mcpToken
+  const agentsWithoutToken = await prisma.agent.findMany({
+    where:  { mcpToken: null },
+    select: { id: true },
+  })
+  for (const a of agentsWithoutToken) {
+    const rawToken = randomBytes(32).toString('hex')
+    await prisma.agent.update({
+      where: { id: a.id },
+      data:  { mcpToken: encrypt(rawToken) },
+    }).catch(() => {})
+  }
+  if (agentsWithoutToken.length > 0) {
+    console.log(`[seed] Backfilled mcpToken for ${agentsWithoutToken.length} agent(s)`)
   }
 }
 

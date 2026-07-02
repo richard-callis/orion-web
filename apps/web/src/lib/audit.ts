@@ -115,6 +115,7 @@ export type AuditAction =
   | 'github_connect'
   | 'github_disconnect'
   | 'github_allowlist_update'
+  | 'mcp_token_rotate'
 
 /**
  * Compute a hash of an audit entry's content for the hash chain.
