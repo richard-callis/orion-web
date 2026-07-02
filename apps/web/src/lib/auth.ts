@@ -1,3 +1,21 @@
+// SSO anti-replay nonce cache: maps nonce → expiry timestamp (ms)
+const _ssoNonceCache = new Map<string, number>()
+
+/**
+ * Check that `nonce` has not been seen before and record it for `windowMs`.
+ * Returns true (consume OK) or false (replay detected).
+ * Evicts expired entries on each call to prevent unbounded growth.
+ */
+function _checkAndConsumeNonce(nonce: string, windowMs: number): boolean {
+  const now = Date.now()
+  for (const [k, exp] of _ssoNonceCache) {
+    if (exp < now) _ssoNonceCache.delete(k)
+  }
+  if (_ssoNonceCache.has(nonce)) return false
+  _ssoNonceCache.set(nonce, now + windowMs)
+  return true
+}
+
 import { getServerSession, type NextAuthOptions } from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import { compare } from 'bcryptjs'
@@ -322,6 +340,7 @@ async function validateSSoHeaderHmac(headers: Headers): Promise<boolean> {
   const uid = headers.get('x-authentik-uid')
   const timestamp = headers.get('x-authentik-timestamp')
   const signature = headers.get('x-authentik-hmac')
+  const nonce = headers.get('x-authentik-nonce')
 
   // If signature header is missing but secret is set, reject (requires HMAC)
   if (!signature) {
@@ -339,8 +358,27 @@ async function validateSSoHeaderHmac(headers: Headers): Promise<boolean> {
     return false
   }
 
-  // Reconstruct canonical string (order matters!)
-  const canonical = [username, email, name, uid, timestamp].join('|')
+  // SOC2 [SSO-002]: Nonce handling for anti-replay protection.
+  // SSO_NONCE_REQUIRED=true enforces nonce on all requests (fully deployed).
+  // When flag is off (rollout mode), nonce is optional but used if present.
+  const nonceRequired = process.env.SSO_NONCE_REQUIRED === 'true'
+  const noncePresent = typeof nonce === 'string' && nonce.length >= 16
+
+  if (nonceRequired && !noncePresent) {
+    // Nonce enforcement is on — reject requests without a valid nonce
+    return false
+  }
+
+  // Reconstruct canonical string (order matters!).
+  // Include nonce only when it is present — old-format proxies omit it and
+  // must produce a matching signature over the shorter canonical string.
+  const canonical = noncePresent
+    ? [username, email, name, uid, timestamp, nonce].join('|')
+    : [username, email, name, uid, timestamp].join('|')
+
+  if (!noncePresent) {
+    console.warn('[SSO] x-authentik-nonce header absent — replay protection disabled. Upgrade proxy to include nonce or set SSO_NONCE_REQUIRED=true.')
+  }
 
   // Try current secret first
   let expected: string
@@ -368,7 +406,10 @@ async function validateSSoHeaderHmac(headers: Headers): Promise<boolean> {
           // timingSafeEqual returns false on mismatch (does NOT throw).
           // Capture the result — without this the return value was discarded
           // and return true was always reached, accepting any equal-length signature.
-          return timingSafeEqual(signatureBuf, expectedPrevBuf)
+          if (!timingSafeEqual(signatureBuf, expectedPrevBuf)) return false
+          // Previous-secret branch: consume nonce after successful verification
+          if (noncePresent && !_checkAndConsumeNonce(nonce!, 35_000)) return false
+          return true
         } catch {
           return false
         }
@@ -378,7 +419,11 @@ async function validateSSoHeaderHmac(headers: Headers): Promise<boolean> {
     // timingSafeEqual returns false on mismatch (does NOT throw).
     // The original code discarded the return value and always returned true
     // for any equal-length signature — a complete HMAC bypass.
-    return timingSafeEqual(signatureBuf, expectedBuf)
+    if (!timingSafeEqual(signatureBuf, expectedBuf)) return false
+    // Primary-secret branch: consume nonce after successful verification.
+    // TTL is 35 s (timestamp window is -5 s..+30 s = 35 s span).
+    if (noncePresent && !_checkAndConsumeNonce(nonce!, 35_000)) return false
+    return true
   } catch {
     return false
   }
