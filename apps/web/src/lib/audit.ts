@@ -4,14 +4,60 @@
  * Creates audit log entries with IP address and user-agent tracking.
  * Non-blocking — failures are silently logged to prevent impact on request processing.
  *
- * Hash chain for tamper-evidence: each entry's `previousHash` is SHA-256 of
+ * Hash chain for tamper-evidence: each entry's `previousHash` is HMAC-SHA-256
+ * (when ORION_AUDIT_HMAC_KEY is set) or unkeyed SHA-256 of
  * (previous entry's action + timestamp + detail + previousHash).
  * This allows verification that the log has not been modified.
+ *
+ * IMPORTANT: Key rotation (changing ORION_AUDIT_HMAC_KEY) destroys the hash chain —
+ * entries before and after the rotation will not verify as a continuous chain.
+ * Record the rotation event and chain-start marker before rotating.
+ *
+ * Set ORION_AUDIT_HMAC_KEY to a base64-encoded 32-byte secret for SOC2-grade
+ * tamper-evidence. Without it, an attacker with UPDATE on AuditLog can modify
+ * rows and recompute the chain. Generate with:
+ *   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
  */
 
 import { prisma } from './db'
 import type { NextRequest } from 'next/server'
-import { createHash } from 'crypto'
+import { createHash, createHmac } from 'crypto'
+
+// Module-level cache for the HMAC key (null = no key / fallback to SHA-256)
+let _auditHmacKeyCache: Buffer | null | undefined = undefined
+let _auditHmacWarnedOnce = false
+// Tracks whether we have already recorded the audit.hmac_chain_start SystemSetting
+let _chainStartRecorded = false
+
+/**
+ * Return the 32-byte HMAC key from ORION_AUDIT_HMAC_KEY, or null if absent/invalid.
+ * Result is cached for the lifetime of the process.
+ * Soft-fail: logs a one-time warning and falls back to unkeyed SHA-256 rather than
+ * throwing, so audit logging is never blocked by a missing env var.
+ */
+function getAuditHmacKey(): Buffer | null {
+  if (_auditHmacKeyCache !== undefined) return _auditHmacKeyCache
+  const raw = process.env.ORION_AUDIT_HMAC_KEY
+  if (!raw) {
+    if (!_auditHmacWarnedOnce) {
+      console.warn(
+        '[audit] ORION_AUDIT_HMAC_KEY not set — using unkeyed SHA-256. ' +
+        'Tamper-evidence is degraded. Set the env var for SOC2 compliance.',
+      )
+      _auditHmacWarnedOnce = true
+    }
+    _auditHmacKeyCache = null
+    return null
+  }
+  const key = Buffer.from(raw, 'base64')
+  if (key.byteLength !== 32) {
+    console.error('[audit] ORION_AUDIT_HMAC_KEY must be 32 bytes base64 — falling back to unkeyed SHA-256')
+    _auditHmacKeyCache = null
+    return null
+  }
+  _auditHmacKeyCache = key
+  return key
+}
 
 export type AuditAction =
   | 'user_login'
@@ -68,9 +114,13 @@ export type AuditAction =
   | 'containment_reject'
   | 'github_connect'
   | 'github_disconnect'
+  | 'github_allowlist_update'
 
 /**
- * Compute a SHA-256 hash of an audit entry's content for the hash chain.
+ * Compute a hash of an audit entry's content for the hash chain.
+ * Uses HMAC-SHA-256 when ORION_AUDIT_HMAC_KEY is set; falls back to unkeyed SHA-256.
+ * The algorithm used matches what getPreviousHash and any verifier must use —
+ * both are keyed or both are unkeyed for the same environment.
  */
 function hashAuditEntry(entry: {
   id: string
@@ -94,6 +144,10 @@ function hashAuditEntry(entry: {
     createdAt: entry.createdAt.toISOString(),
     previousHash: entry.previousHash,
   })
+  const key = getAuditHmacKey()
+  if (key) {
+    return createHmac('sha256', key).update(data).digest('hex')
+  }
   return createHash('sha256').update(data).digest('hex')
 }
 
