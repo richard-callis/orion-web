@@ -47,21 +47,6 @@ export function decrypt(value: string): string {
   return decipher.update(ciphertext).toString('utf8') + decipher.final('utf8')
 }
 
-/**
- * Strict variant of decrypt — throws if the value does not carry the encrypted prefix.
- *
- * Use for high-value string secrets (PATs, TOTP secrets, recovery codes) where a
- * missing prefix must be a hard failure rather than a silent plaintext passthrough.
- */
-export function decryptStrict(value: string, keyName?: string): string {
-  if (!value.startsWith(PREFIX)) {
-    throw new Error(
-      `decryptStrict: expected an encrypted value${keyName ? ` for '${keyName}'` : ''} but the enc:v1: prefix is missing — refusing to use plaintext as a secret`,
-    )
-  }
-  return decrypt(value)
-}
-
 /** Encrypt a JSON-serialisable value. Returns an encrypted string. */
 export function encryptJson(value: unknown): string {
   return encrypt(JSON.stringify(value))
