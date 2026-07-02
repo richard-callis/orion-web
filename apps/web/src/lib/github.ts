@@ -11,7 +11,7 @@
  */
 
 import { prisma } from '@/lib/db'
-import { encrypt, decrypt } from '@/lib/encryption'
+import { encrypt, decryptStrict } from '@/lib/encryption'
 
 export async function getGithubTokenForUser(userId: string | null | undefined): Promise<string | null> {
   if (!userId) return null
@@ -21,7 +21,7 @@ export async function getGithubTokenForUser(userId: string | null | undefined): 
   })
   if (!user?.githubTokenEncrypted) return null
   try {
-    const token = decrypt(user.githubTokenEncrypted)
+    const token = decryptStrict(user.githubTokenEncrypted, 'githubToken')
     // Validate it looks like a GitHub token — guards against the silent plaintext
     // passthrough in decrypt() returning a substituted/garbage value.
     if (!token.startsWith('ghp_') && !token.startsWith('github_pat_')) {

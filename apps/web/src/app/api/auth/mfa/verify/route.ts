@@ -18,7 +18,7 @@ import { compare } from 'bcryptjs'
 import { verifyTOTP, verifyRecoveryCode, consumeRecoveryCode } from '@/lib/totp'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, MfaVerifySchema } from '@/lib/validate'
-import { decrypt, encrypt } from '@/lib/encryption'
+import { decryptStrict, encrypt } from '@/lib/encryption'
 
 export async function POST(req: NextRequest) {
   // BLOCKER fix: per-account rate limit on MFA verify (5 attempts/15min)
@@ -49,7 +49,12 @@ async function handleTotpLogin(username: string, password: string, code?: string
     },
   })
 
-  const rawSecret = user?.totpSecretEncrypted ? decrypt(user.totpSecretEncrypted) : user?.totpSecret
+  let rawSecret: string | null | undefined = null
+  if (user?.totpSecretEncrypted) {
+    try { rawSecret = decryptStrict(user.totpSecretEncrypted, 'totpSecretEncrypted') } catch { return NextResponse.json({ error: 'MFA not enabled for this account' }, { status: 403 }) }
+  } else {
+    rawSecret = user?.totpSecret
+  }
   if (!user || !user.active || !user.totpEnabled || !rawSecret) {
     return NextResponse.json({ error: 'MFA not enabled for this account' }, { status: 403 })
   }
@@ -137,7 +142,12 @@ async function handleRecoveryLogin(username: string, password: string, code?: st
   }
 
   // Verify recovery code — prefer encrypted field
-  const rawCodes = user.totpRecoveryCodesEncrypted ? decrypt(user.totpRecoveryCodesEncrypted) : user.totpRecoveryCodes
+  let rawCodes: string | null = null
+  if (user.totpRecoveryCodesEncrypted) {
+    try { rawCodes = decryptStrict(user.totpRecoveryCodesEncrypted, 'totpRecoveryCodesEncrypted') } catch { return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 }) }
+  } else {
+    rawCodes = user.totpRecoveryCodes
+  }
   const hashedCodes: string[] = rawCodes ? JSON.parse(rawCodes) : []
   if (!hashedCodes.length || !(await verifyRecoveryCode(code, hashedCodes))) {
     // SOC2: [M-005] Log MFA verification failure (non-blocking)

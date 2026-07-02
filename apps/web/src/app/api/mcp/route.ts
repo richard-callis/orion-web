@@ -86,10 +86,17 @@ export async function POST(req: NextRequest) {
   let agentAllowedTools: string[] | null = null
   if (rawAgentId) {
     const agent = await prisma.agent.findUnique({ where: { id: rawAgentId }, select: { id: true, metadata: true } })
-    agentId = agent?.id  // undefined if not found — tools run with unknown actor
+    if (!agent) {
+      // agentId was supplied but not found — reject rather than silently falling back to unrestricted posture
+      return NextResponse.json(
+        { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized: agentId not found' }, id: null },
+        { status: 401 },
+      )
+    }
+    agentId = agent.id
     // Per-agent tool allowlist: metadata.contextConfig.allowedTools, if present, restricts
     // which tools this agent can list/call. Absent/null means "no restriction".
-    const allowed = (agent?.metadata as { contextConfig?: { allowedTools?: unknown } } | null)?.contextConfig?.allowedTools
+    const allowed = (agent.metadata as { contextConfig?: { allowedTools?: unknown } } | null)?.contextConfig?.allowedTools
     if (Array.isArray(allowed)) {
       agentAllowedTools = allowed.filter((t): t is string => typeof t === 'string')
     }
