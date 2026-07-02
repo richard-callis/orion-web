@@ -295,12 +295,22 @@ export async function middleware(req: NextRequest) {
   }
 
   // MCP service calls — x-mcp-token header is the auth, route handler validates value.
+  // Legacy fast-path: token matches ORION_MCP_TOKEN env var → pass through immediately.
+  // Per-agent token path: token doesn't match env var but agentId query param is present
+  // → fall through to the route handler which does per-agent DB lookup + decryption.
   const mcpToken = process.env.ORION_MCP_TOKEN
-  if (
-    pathname.startsWith('/api/mcp') &&
-    mcpToken &&
-    timingSafeCompare(req.headers.get('x-mcp-token') ?? '', mcpToken)
-  ) {
+  if (pathname.startsWith('/api/mcp')) {
+    const incomingToken = req.headers.get('x-mcp-token') ?? ''
+    if (mcpToken && timingSafeCompare(incomingToken, mcpToken)) {
+      // Legacy shared token — fast path
+      return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
+    }
+    // Per-agent token: if agentId query param is present, let the route handler verify
+    const agentId = new URL(req.url).searchParams.get('agentId')
+    if (agentId) {
+      return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
+    }
+    // No matching token and no agentId — the route handler will return 401
     return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
   }
 
