@@ -20,6 +20,19 @@ function validateOwnerRepo(owner: string, repo: string): string | null {
   return null
 }
 
+// Check if a repo is in the user's allowlist (empty list = allow all)
+async function assertRepoAllowed(userId: string, owner: string, repo: string): Promise<string | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { githubAllowedRepos: true },
+  })
+  const list = (user?.githubAllowedRepos ?? []).map(r => r.toLowerCase())
+  if (list.length === 0) return null  // empty = allow all
+  const slug = `${owner}/${repo}`.toLowerCase()
+  if (list.includes(slug)) return null
+  return `Repository "${owner}/${repo}" is not in your GitHub allowlist.`
+}
+
 // Resolve the user who owns this agent
 async function resolveUserId(ctx: ToolExecutionContext): Promise<string | null> {
   if (!ctx.agentId) return null
@@ -76,6 +89,11 @@ async function githubGetFile(args: unknown, ctx: ToolExecutionContext): Promise<
   const { owner, repo, path, ref } = parsed.data
   const validationError = validateOwnerRepo(owner, repo)
   if (validationError) return validationError
+  const userId = await resolveUserId(ctx)
+  if (userId) {
+    const allowErr = await assertRepoAllowed(userId, owner, repo)
+    if (allowErr) return allowErr
+  }
   const encodedPath = path.split('/').map(encodeURIComponent).join('/')
   const query = ref ? `?ref=${encodeURIComponent(ref)}` : ''
   const res = await githubFetch(tok.token, `/repos/${owner}/${repo}/contents/${encodedPath}${query}`)
@@ -105,6 +123,11 @@ async function githubCreateOrUpdateFile(args: unknown, ctx: ToolExecutionContext
   const { owner, repo, path, message, content, branch, sha: providedSha } = parsed.data
   const validationError = validateOwnerRepo(owner, repo)
   if (validationError) return validationError
+  const userId = await resolveUserId(ctx)
+  if (userId) {
+    const allowErr = await assertRepoAllowed(userId, owner, repo)
+    if (allowErr) return allowErr
+  }
   const encodedPath = path.split('/').map(encodeURIComponent).join('/')
 
   let sha = providedSha
@@ -153,6 +176,11 @@ async function githubCreateBranch(args: unknown, ctx: ToolExecutionContext): Pro
   const { owner, repo, branch, from_branch } = parsed.data
   const validationError = validateOwnerRepo(owner, repo)
   if (validationError) return validationError
+  const userId = await resolveUserId(ctx)
+  if (userId) {
+    const allowErr = await assertRepoAllowed(userId, owner, repo)
+    if (allowErr) return allowErr
+  }
 
   // Get the SHA of the source branch
   const refRes = await githubFetch(tok.token, `/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(from_branch)}`)
@@ -190,6 +218,11 @@ async function githubCreatePullRequest(args: unknown, ctx: ToolExecutionContext)
   const { owner, repo, title, body, head, base, draft } = parsed.data
   const validationError = validateOwnerRepo(owner, repo)
   if (validationError) return validationError
+  const userId = await resolveUserId(ctx)
+  if (userId) {
+    const allowErr = await assertRepoAllowed(userId, owner, repo)
+    if (allowErr) return allowErr
+  }
 
   const res = await githubFetch(tok.token, `/repos/${owner}/${repo}/pulls`, {
     method: 'POST',

@@ -13,11 +13,12 @@ export async function GET() {
   }
   const dbUser = await prisma.user.findUnique({
     where: { id: user.id },
-    select: { githubTokenEncrypted: true, githubUsername: true },
+    select: { githubTokenEncrypted: true, githubUsername: true, githubAllowedRepos: true },
   })
   return NextResponse.json({
     connected: !!dbUser?.githubTokenEncrypted,
     githubUsername: dbUser?.githubUsername ?? null,
+    allowedRepos: dbUser?.githubAllowedRepos ?? [],
   })
 }
 
@@ -51,6 +52,39 @@ export async function POST(req: NextRequest) {
     userAgent: getUserAgent(req.headers),
   }).catch(() => {})
   return NextResponse.json({ connected: true, githubUsername: verified.login })
+}
+
+const AllowlistSchema = z.object({
+  allowedRepos: z.array(z.string().regex(/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/)).max(100),
+})
+
+export async function PUT(req: NextRequest) {
+  let user
+  try { user = await requireWriteAccess() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  let body: unknown
+  try { body = await req.json() } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+  }
+  const parsed = AllowlistSchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Validation failed', issues: parsed.error.issues }, { status: 400 })
+  }
+  const normalized = parsed.data.allowedRepos.map(r => r.toLowerCase())
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { githubAllowedRepos: normalized },
+  })
+  logAudit({
+    userId: user.id,
+    action: 'github_allowlist_update',
+    target: `user:${user.id}`,
+    detail: { allowedRepos: normalized },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req.headers),
+  }).catch(() => {})
+  return NextResponse.json({ allowedRepos: normalized })
 }
 
 export async function DELETE(req: NextRequest) {

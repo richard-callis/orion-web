@@ -10,9 +10,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeEqual } from 'crypto'
 import { getToolsForContext, executeRegisteredTool } from '@/lib/tool-registry'
 import { checkToolPermission } from '@/lib/tool-permissions'
 import { prisma } from '@/lib/db'
+import { decryptStrict } from '@/lib/encryption'
 // Side-effect import: ensures ALL tools are registered (core + Warden SIEM + GitHub),
 // not just the core tools defined inline in tool-registry. Without this the MCP path
 // only sees core tools because tool-registry does not import the extra registrations.
@@ -37,69 +39,96 @@ function err(id: unknown, code: number, message: string) {
 
 export async function POST(req: NextRequest) {
   // ── Auth ──────────────────────────────────────────────────────────────────
-  // Fail CLOSED when MCP_TOKEN is not configured — the previous code accepted
-  // all requests when the env var was unset, silently disabling auth.
-  if (!MCP_TOKEN) {
-    return NextResponse.json(
-      { jsonrpc: '2.0', error: { code: -32001, message: 'MCP server not configured (ORION_MCP_TOKEN not set)' }, id: null },
-      { status: 503 },
-    )
-  }
-  const token = req.headers.get('x-mcp-token')
-  if (token !== MCP_TOKEN) {
+  // Token transport: x-mcp-token header (preferred) or Authorization: Bearer <token>
+  const bearer =
+    req.headers.get('x-mcp-token') ??
+    (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '') ||
+    null
+
+  if (!bearer) {
     return NextResponse.json(
       { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null },
       { status: 401 },
     )
   }
 
-  // ── Per-request context (agent and room for tool execution) ───────────────
-  // agentId and roomId come from query params set by the orion-claude sidecar.
-  // We validate agentId against the DB to prevent impersonation by arbitrary
-  // string injection — the sidecar is trusted, but any token holder can set these.
-  //
-  // KNOWN SECURITY GAP: ORION_MCP_TOKEN is a shared secret; any holder can set
-  // agentId to any value. True per-agent token binding (e.g. per-agent MCP tokens)
-  // would eliminate this gap but is not yet implemented. As a defence-in-depth
-  // measure we require that the x-orion-agent-id header matches the agentId query
-  // param. This prevents casual param-swapping attacks — the caller must set both
-  // consistently — while the shared-token gap is documented for future resolution.
   const { searchParams } = new URL(req.url)
   const rawAgentId = searchParams.get('agentId') ?? undefined
   const roomId     = searchParams.get('roomId')  ?? undefined
 
-  // Consistency check: x-orion-agent-id header must match the agentId query param.
-  // If an agentId is provided, the header must be present and identical.
-  if (rawAgentId) {
-    const headerAgentId = req.headers.get('x-orion-agent-id')
-    if (!headerAgentId || headerAgentId !== rawAgentId) {
-      console.warn(`[mcp] agentId mismatch: query="${rawAgentId}" header="${headerAgentId}" — rejecting`)
-      return NextResponse.json(
-        { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized: x-orion-agent-id header must match agentId query param' }, id: null },
-        { status: 401 },
-      )
+  // ── Legacy shared-token path ──────────────────────────────────────────────
+  // ORION_MCP_TOKEN is kept for outbound service auth and legacy inbound compat.
+  // When it matches, allow immediately (no per-agent lookup needed).
+  let usedLegacyToken = false
+  if (MCP_TOKEN) {
+    const aLen = Buffer.byteLength(bearer)
+    const bLen = Buffer.byteLength(MCP_TOKEN)
+    if (aLen === bLen && timingSafeEqual(Buffer.from(bearer), Buffer.from(MCP_TOKEN))) {
+      usedLegacyToken = true
+      console.warn('[mcp] Legacy ORION_MCP_TOKEN used — migrate to per-agent tokens')
     }
   }
 
-  // Verify agentId refers to a real agent (prevents audit-trail forgery)
+  // ── Per-request context (agent and room for tool execution) ───────────────
+  // Verify agentId refers to a real agent and, for per-agent token path, verify the token.
   let agentId: string | undefined
   let agentAllowedTools: string[] | null = null
   if (rawAgentId) {
-    const agent = await prisma.agent.findUnique({ where: { id: rawAgentId }, select: { id: true, metadata: true } })
+    const agent = await prisma.agent.findUnique({
+      where:  { id: rawAgentId },
+      select: { id: true, metadata: true, mcpToken: true },
+    })
     if (!agent) {
-      // agentId was supplied but not found — reject rather than silently falling back to unrestricted posture
       return NextResponse.json(
         { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized: agentId not found' }, id: null },
         { status: 401 },
       )
     }
+
+    if (!usedLegacyToken) {
+      // Per-agent token verification: look up agent, decrypt stored token, timingSafeEqual
+      if (!agent.mcpToken) {
+        return NextResponse.json(
+          { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null },
+          { status: 401 },
+        )
+      }
+      let storedToken: string
+      try {
+        storedToken = decryptStrict(agent.mcpToken, 'mcpToken')
+      } catch {
+        return NextResponse.json(
+          { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null },
+          { status: 401 },
+        )
+      }
+      const aBytes = Buffer.from(bearer)
+      const bBytes = Buffer.from(storedToken)
+      if (aBytes.length !== bBytes.length || !timingSafeEqual(aBytes, bBytes)) {
+        return NextResponse.json(
+          { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null },
+          { status: 401 },
+        )
+      }
+    }
+
     agentId = agent.id
-    // Per-agent tool allowlist: metadata.contextConfig.allowedTools, if present, restricts
-    // which tools this agent can list/call. Absent/null means "no restriction".
     const allowed = (agent.metadata as { contextConfig?: { allowedTools?: unknown } } | null)?.contextConfig?.allowedTools
     if (Array.isArray(allowed)) {
       agentAllowedTools = allowed.filter((t): t is string => typeof t === 'string')
     }
+  } else if (!usedLegacyToken) {
+    // No agentId and token didn't match the legacy env var — reject
+    return NextResponse.json(
+      { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null },
+      { status: 401 },
+    )
+  } else if (!MCP_TOKEN) {
+    // MCP_TOKEN not set and no agentId — reject
+    return NextResponse.json(
+      { jsonrpc: '2.0', error: { code: -32001, message: 'MCP server not configured (ORION_MCP_TOKEN not set)' }, id: null },
+      { status: 503 },
+    )
   }
 
   // ── Parse body ───────────────────────────────────────────────────────────
