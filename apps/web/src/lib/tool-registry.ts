@@ -1178,7 +1178,13 @@ interface HealthResult extends IngressEntry {
   taskKey: string
 }
 
-function checkSSLCert(hostname: string): Promise<{ valid: boolean; daysUntilExpiry: number; error?: string }> {
+async function checkSSLCert(hostname: string): Promise<{ valid: boolean; daysUntilExpiry: number; error?: string }> {
+  // SSRF guard: block TLS probes to private/internal addresses. An agent that can
+  // write IngressRoute hostnames could otherwise use checkSSLCert to probe internal
+  // services on port 443 (e.g. cluster API server, internal dashboards).
+  if (await isPrivateUrl(`https://${hostname}`)) {
+    return { valid: false, daysUntilExpiry: 0, error: 'SSRF: private/internal addresses are not permitted' }
+  }
   return new Promise((resolve) => {
     const socket = tls.connect(443, hostname, { servername: hostname }, () => {
       const cert = socket.getPeerCertificate()

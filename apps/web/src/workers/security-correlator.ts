@@ -308,19 +308,36 @@ async function correlateEnvironment(
       }
 
       const incidentEnvId = isGlobal ? null : draft.environmentId
-      const incident = await prisma.incident.create({
-        data: {
-          environmentId: incidentEnvId,
-          severity: draft.severity,
-          rootCauseSummary: draft.rootCauseSummary ?? null,
-          attackerKey: draft.attackerKey ?? null,
-          hostKey: draft.hostKey ?? null,
-          status: 'open',
-          openedAt: new Date(),
-          events: {
-            connect: draft.eventIds.slice(0, 50).map(id => ({ id })),
+
+      // Atomically create the incident and link its events so a crash between
+      // the two writes cannot leave events with incidentId=null and cause
+      // duplicate incidents on the next correlator run.
+      const incident = await prisma.$transaction(async (tx) => {
+        const inc = await tx.incident.create({
+          data: {
+            environmentId: incidentEnvId,
+            severity: draft.severity,
+            rootCauseSummary: draft.rootCauseSummary ?? null,
+            attackerKey: draft.attackerKey ?? null,
+            hostKey: draft.hostKey ?? null,
+            status: 'open',
+            openedAt: new Date(),
+            events: {
+              connect: draft.eventIds.slice(0, 50).map(id => ({ id })),
+            },
           },
-        },
+        })
+        await tx.securityEvent.updateMany({
+          where: {
+            id: { in: draft.eventIds.slice(0, 50) },
+            incidentId: null,
+          },
+          data: {
+            incidentId: inc.id,
+            lastSeen: new Date(),
+          },
+        })
+        return inc
       })
 
       // Notify Warden in the security room. The typed `incidentId` link
@@ -350,34 +367,24 @@ async function correlateEnvironment(
         // Below-threshold incidents still get the system-notice above (audit trail)
         // but don't trigger an agentic loop — prevents operational noise (Docker
         // restarts, stale-source events) from burning tokens on every correlator tick.
-        // Only dispatch Warden once per incident. triageDispatchedAt is set the
-        // first time we wake Warden; subsequent correlator ticks that re-touch the
-        // same incident skip the agentic loop and avoid burning tokens.
-        if (incident.severity >= WARDEN_MIN_SEVERITY) {
-          // Atomic claim: only the first correlator tick to set triageDispatchedAt wins.
-          const claimed = await prisma.incident.updateMany({
-            where: { id: incident.id, triageDispatchedAt: null },
-            data: { triageDispatchedAt: new Date() },
-          })
-          if (claimed.count === 0) continue // another tick already dispatched Warden
-          triggerRoomAgentReplies(securityRoomId, noticeBody).catch((e: unknown) => {
+        // Only dispatch Warden once per incident. triageDispatchedAt is set only
+        // AFTER triggerRoomAgentReplies resolves — if the trigger fails, the flag
+        // stays null so the next correlator run can retry the dispatch.
+        if (incident.severity >= WARDEN_MIN_SEVERITY && !incident.triageDispatchedAt) {
+          try {
+            await triggerRoomAgentReplies(securityRoomId, noticeBody)
+            // Mark dispatched only after the trigger succeeded (atomic claim still
+            // guards against two concurrent runs both calling triggerRoomAgentReplies).
+            await prisma.incident.updateMany({
+              where: { id: incident.id, triageDispatchedAt: null },
+              data: { triageDispatchedAt: new Date() },
+            })
+          } catch (e: unknown) {
             // eslint-disable-next-line no-console
             console.error(`[warden-wakeup] Failed to trigger room agent replies for incident ${incident.id ?? 'unknown'}: ${e instanceof Error ? e.message : e}`)
-          })
+          }
         }
       }
-
-      // Update events to reference the new incident
-      await prisma.securityEvent.updateMany({
-        where: {
-          id: { in: draft.eventIds.slice(0, 50) },
-          incidentId: null,
-        },
-        data: {
-          incidentId: incident.id,
-          lastSeen: new Date(),
-        },
-      })
 
       // R4 / MAJOR-2 — feed the per-rule rate-limit bucket so a runaway
       // rule is capped on subsequent runs. The cap is enforced inside
