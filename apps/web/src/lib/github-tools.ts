@@ -12,6 +12,14 @@ import { registerTool, type ToolExecutionContext } from '@/lib/tool-registry'
 import { getGithubTokenForUser, githubFetch, handleGithubError } from '@/lib/github'
 import { prisma } from '@/lib/db'
 
+const SAFE_OWNER_REPO = /^[A-Za-z0-9._-]+$/
+
+function validateOwnerRepo(owner: string, repo: string): string | null {
+  if (!SAFE_OWNER_REPO.test(owner)) return `Invalid owner: "${owner}"`
+  if (!SAFE_OWNER_REPO.test(repo)) return `Invalid repo: "${repo}"`
+  return null
+}
+
 // Resolve the user who owns this agent
 async function resolveUserId(ctx: ToolExecutionContext): Promise<string | null> {
   if (!ctx.agentId) return null
@@ -66,8 +74,11 @@ async function githubGetFile(args: unknown, ctx: ToolExecutionContext): Promise<
   const tok = await getTokenForCtx(ctx)
   if ('error' in tok) return tok.error
   const { owner, repo, path, ref } = parsed.data
+  const validationError = validateOwnerRepo(owner, repo)
+  if (validationError) return validationError
+  const encodedPath = path.split('/').map(encodeURIComponent).join('/')
   const query = ref ? `?ref=${encodeURIComponent(ref)}` : ''
-  const res = await githubFetch(tok.token, `/repos/${owner}/${repo}/contents/${path}${query}`)
+  const res = await githubFetch(tok.token, `/repos/${owner}/${repo}/contents/${encodedPath}${query}`)
   if (!res.ok) return handleGithubError(res)
   const data = await res.json() as { content: string; sha: string; encoding: string; size: number }
   const content = Buffer.from(data.content, 'base64').toString('utf8')
@@ -92,11 +103,14 @@ async function githubCreateOrUpdateFile(args: unknown, ctx: ToolExecutionContext
   const tok = await getTokenForCtx(ctx)
   if ('error' in tok) return tok.error
   const { owner, repo, path, message, content, branch, sha: providedSha } = parsed.data
+  const validationError = validateOwnerRepo(owner, repo)
+  if (validationError) return validationError
+  const encodedPath = path.split('/').map(encodeURIComponent).join('/')
 
   let sha = providedSha
   if (!sha) {
     // Fetch existing file to get SHA (required for updates)
-    const existing = await githubFetch(tok.token, `/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(branch)}`)
+    const existing = await githubFetch(tok.token, `/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(branch)}`)
     if (existing.ok) {
       const data = await existing.json() as { sha: string }
       sha = data.sha
@@ -113,7 +127,7 @@ async function githubCreateOrUpdateFile(args: unknown, ctx: ToolExecutionContext
   }
   if (sha) body.sha = sha
 
-  const res = await githubFetch(tok.token, `/repos/${owner}/${repo}/contents/${path}`, {
+  const res = await githubFetch(tok.token, `/repos/${owner}/${repo}/contents/${encodedPath}`, {
     method: 'PUT',
     body: JSON.stringify(body),
   })
@@ -137,6 +151,8 @@ async function githubCreateBranch(args: unknown, ctx: ToolExecutionContext): Pro
   const tok = await getTokenForCtx(ctx)
   if ('error' in tok) return tok.error
   const { owner, repo, branch, from_branch } = parsed.data
+  const validationError = validateOwnerRepo(owner, repo)
+  if (validationError) return validationError
 
   // Get the SHA of the source branch
   const refRes = await githubFetch(tok.token, `/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(from_branch)}`)
@@ -172,6 +188,8 @@ async function githubCreatePullRequest(args: unknown, ctx: ToolExecutionContext)
   const tok = await getTokenForCtx(ctx)
   if ('error' in tok) return tok.error
   const { owner, repo, title, body, head, base, draft } = parsed.data
+  const validationError = validateOwnerRepo(owner, repo)
+  if (validationError) return validationError
 
   const res = await githubFetch(tok.token, `/repos/${owner}/${repo}/pulls`, {
     method: 'POST',
