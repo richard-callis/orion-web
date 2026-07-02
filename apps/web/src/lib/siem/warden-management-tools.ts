@@ -88,16 +88,22 @@ function formatZodError(err: z.ZodError): string {
 /**
  * Verify that ctx.agentId belongs to the Warden agent. Write tools call this before
  * mutating SIEM data to prevent non-Warden agents from operating on incidents.
- * Returns the Warden agent ID if the check passes, or null if it fails.
+ * Returns a denial error string if the check fails, or null if the caller is Warden.
+ *
+ * We order by id asc to always resolve the original seeded Warden agent rather
+ * than a later impostor that happens to share the same name. Agent IDs are CUIDs
+ * which embed a timestamp and are lexicographically monotone, so the earliest ID
+ * corresponds to the first-created (legitimate) Warden record.
  */
 async function requireWardenAgent(ctx: ToolExecutionContext): Promise<string | null> {
   const warden = await prisma.agent.findFirst({
     where: { name: 'Warden' },
+    orderBy: { id: 'asc' },
     select: { id: true },
   })
-  if (!warden) return null
-  if (ctx.agentId !== warden.id) return null
-  return warden.id
+  if (!warden) return `Error: Warden agent not found — this tool is restricted to the Warden agent`
+  if (ctx.agentId !== warden.id) return `Error: this tool is restricted to the Warden agent. Caller agentId: ${ctx.agentId ?? 'none'}`
+  return null
 }
 
 // ── Handlers ────────────────────────────────────────────────────────────────
@@ -135,7 +141,10 @@ async function siemGetIncident(args: unknown, _ctx: ToolExecutionContext): Promi
   }, null, 2)
 }
 
-async function siemCreateInvestigation(args: unknown, _ctx: ToolExecutionContext): Promise<string> {
+async function siemCreateInvestigation(args: unknown, ctx: ToolExecutionContext): Promise<string> {
+  const denied = await requireWardenAgent(ctx)
+  if (denied) return denied
+
   const parsed = createInvestigationSchema.safeParse(args)
   if (!parsed.success) return formatZodError(parsed.error)
   const { incidentId, title, severity } = parsed.data
@@ -164,10 +173,8 @@ async function siemCreateInvestigation(args: unknown, _ctx: ToolExecutionContext
 }
 
 async function siemAddObservable(args: unknown, ctx: ToolExecutionContext): Promise<string> {
-  const wardenId = await requireWardenAgent(ctx)
-  if (!wardenId) {
-    return `Error: siem_add_observable is restricted to the Warden agent. Caller agentId: ${ctx.agentId ?? 'none'}`
-  }
+  const denied = await requireWardenAgent(ctx)
+  if (denied) return denied
 
   const parsed = addObservableSchema.safeParse(args)
   if (!parsed.success) return formatZodError(parsed.error)
@@ -203,7 +210,10 @@ async function siemAddObservable(args: unknown, ctx: ToolExecutionContext): Prom
   return JSON.stringify({ observableId: observable.id })
 }
 
-async function siemAddNote(args: unknown, _ctx: ToolExecutionContext): Promise<string> {
+async function siemAddNote(args: unknown, ctx: ToolExecutionContext): Promise<string> {
+  const denied = await requireWardenAgent(ctx)
+  if (denied) return denied
+
   const parsed = addNoteSchema.safeParse(args)
   if (!parsed.success) return formatZodError(parsed.error)
   const { investigationId, content } = parsed.data
@@ -228,10 +238,8 @@ async function siemAddNote(args: unknown, _ctx: ToolExecutionContext): Promise<s
 }
 
 async function siemUpdateIncidentStatus(args: unknown, ctx: ToolExecutionContext): Promise<string> {
-  const wardenId = await requireWardenAgent(ctx)
-  if (!wardenId) {
-    return `Error: siem_update_incident_status is restricted to the Warden agent. Caller agentId: ${ctx.agentId ?? 'none'}`
-  }
+  const denied = await requireWardenAgent(ctx)
+  if (denied) return denied
 
   const parsed = updateIncidentStatusSchema.safeParse(args)
   if (!parsed.success) return formatZodError(parsed.error)
@@ -265,7 +273,10 @@ async function siemUpdateIncidentStatus(args: unknown, ctx: ToolExecutionContext
   })
 }
 
-async function siemAddTimelineEntry(args: unknown, _ctx: ToolExecutionContext): Promise<string> {
+async function siemAddTimelineEntry(args: unknown, ctx: ToolExecutionContext): Promise<string> {
+  const denied = await requireWardenAgent(ctx)
+  if (denied) return denied
+
   const parsed = addTimelineEntrySchema.safeParse(args)
   if (!parsed.success) return formatZodError(parsed.error)
   const { investigationId, title, eventType } = parsed.data
@@ -281,10 +292,8 @@ async function siemAddTimelineEntry(args: unknown, _ctx: ToolExecutionContext): 
 }
 
 async function siemRequestContainment(args: unknown, ctx: ToolExecutionContext): Promise<string> {
-  const wardenId = await requireWardenAgent(ctx)
-  if (!wardenId) {
-    return `Error: siem_request_containment is restricted to the Warden agent. Caller agentId: ${ctx.agentId ?? 'none'}`
-  }
+  const denied = await requireWardenAgent(ctx)
+  if (denied) return denied
 
   const parsed = requestContainmentSchema.safeParse(args)
   if (!parsed.success) return formatZodError(parsed.error)
