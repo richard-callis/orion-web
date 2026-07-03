@@ -626,10 +626,11 @@ export async function requireGatewayAuthForEnvironment(
   })
   if (!env?.gatewayToken) throw new Error('Unauthorized')
 
-  // Use strict decrypt: if the stored token lacks the enc:v1: prefix, fail auth rather
-  // than passing through the raw value. A plaintext gatewayToken allows a substitution
-  // attack where an attacker writes a known plaintext and authenticates with it directly.
-  const storedToken = decryptStrict(env.gatewayToken, 'gatewayToken')
+  // The Prisma encryption middleware automatically decrypts `gatewayToken` on read, so by
+  // the time we see env.gatewayToken it is already plaintext. Using decryptStrict here would
+  // throw on every request because the plaintext token lacks the enc:v1: prefix. Use the
+  // lenient decrypt() which returns the value unchanged when it is already plaintext.
+  const storedToken = decrypt(env.gatewayToken)
   if (
     storedToken.length !== bearerToken.length ||
     !timingSafeEqual(Buffer.from(storedToken), Buffer.from(bearerToken))
