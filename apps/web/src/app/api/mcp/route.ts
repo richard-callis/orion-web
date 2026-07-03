@@ -42,8 +42,7 @@ export async function POST(req: NextRequest) {
   // Token transport: x-mcp-token header (preferred) or Authorization: Bearer <token>
   const bearer =
     req.headers.get('x-mcp-token') ??
-    (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '') ||
-    null
+    ((req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '') || null)
 
   if (!bearer) {
     return NextResponse.json(
@@ -110,6 +109,23 @@ export async function POST(req: NextRequest) {
           { status: 401 },
         )
       }
+    } else if (agent.mcpToken) {
+      // Legacy token path: agentId isolation relies on the caller being trusted (not a
+      // random token holder). Remove ORION_MCP_TOKEN to enforce per-agent token isolation.
+      //
+      // If the agent already has a per-agent mcpToken, the legacy shared token must NOT be
+      // accepted as a substitute — doing so would let any holder of ORION_MCP_TOKEN
+      // impersonate agents that have already been migrated to per-agent tokens.
+      // Only agents that have NOT yet received a mcpToken are permitted through on the
+      // legacy path (they haven't been migrated yet and have no per-agent secret to verify).
+      console.warn(`[mcp] Legacy ORION_MCP_TOKEN used to access agent ${agent.id} which has a per-agent token — rejecting. Rotate the caller to use the per-agent token.`)
+      return NextResponse.json(
+        { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized: agent requires per-agent token' }, id: null },
+        { status: 401 },
+      )
+    } else {
+      // Legacy-only agent (no mcpToken yet, not yet migrated). Allow, but warn.
+      console.warn(`[mcp] Legacy ORION_MCP_TOKEN used to access agent ${agent.id} — migrate this agent to a per-agent token.`)
     }
 
     agentId = agent.id
@@ -122,12 +138,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null },
       { status: 401 },
-    )
-  } else if (!MCP_TOKEN) {
-    // MCP_TOKEN not set and no agentId — reject
-    return NextResponse.json(
-      { jsonrpc: '2.0', error: { code: -32001, message: 'MCP server not configured (ORION_MCP_TOKEN not set)' }, id: null },
-      { status: 503 },
     )
   }
 

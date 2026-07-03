@@ -43,13 +43,13 @@ async function resolveUserId(ctx: ToolExecutionContext): Promise<string | null> 
   return agent?.createdBy ?? null
 }
 
-async function getTokenForCtx(ctx: ToolExecutionContext): Promise<{ token: string } | { error: string }> {
+async function getTokenForCtx(ctx: ToolExecutionContext): Promise<{ token: string; userId: string } | { error: string }> {
   if (!ctx.agentId) return { error: 'GitHub tools require a user-owned agent' }
   const userId = await resolveUserId(ctx)
   if (!userId) return { error: 'GitHub tools require a user-owned agent' }
   const token = await getGithubTokenForUser(userId)
   if (!token) return { error: 'GitHub not connected. Ask the agent owner to connect their GitHub account at /settings/github.' }
-  return { token }
+  return { token, userId }
 }
 
 // ── github_list_repos ──────────────────────────────────────────────────────
@@ -89,11 +89,8 @@ async function githubGetFile(args: unknown, ctx: ToolExecutionContext): Promise<
   const { owner, repo, path, ref } = parsed.data
   const validationError = validateOwnerRepo(owner, repo)
   if (validationError) return validationError
-  const userId = await resolveUserId(ctx)
-  if (userId) {
-    const allowErr = await assertRepoAllowed(userId, owner, repo)
-    if (allowErr) return allowErr
-  }
+  const allowErr = await assertRepoAllowed(tok.userId, owner, repo)
+  if (allowErr) return allowErr
   const encodedPath = path.split('/').map(encodeURIComponent).join('/')
   const query = ref ? `?ref=${encodeURIComponent(ref)}` : ''
   const res = await githubFetch(tok.token, `/repos/${owner}/${repo}/contents/${encodedPath}${query}`)
@@ -123,11 +120,8 @@ async function githubCreateOrUpdateFile(args: unknown, ctx: ToolExecutionContext
   const { owner, repo, path, message, content, branch, sha: providedSha } = parsed.data
   const validationError = validateOwnerRepo(owner, repo)
   if (validationError) return validationError
-  const userId = await resolveUserId(ctx)
-  if (userId) {
-    const allowErr = await assertRepoAllowed(userId, owner, repo)
-    if (allowErr) return allowErr
-  }
+  const allowErr = await assertRepoAllowed(tok.userId, owner, repo)
+  if (allowErr) return allowErr
   const encodedPath = path.split('/').map(encodeURIComponent).join('/')
 
   let sha = providedSha
@@ -176,11 +170,8 @@ async function githubCreateBranch(args: unknown, ctx: ToolExecutionContext): Pro
   const { owner, repo, branch, from_branch } = parsed.data
   const validationError = validateOwnerRepo(owner, repo)
   if (validationError) return validationError
-  const userId = await resolveUserId(ctx)
-  if (userId) {
-    const allowErr = await assertRepoAllowed(userId, owner, repo)
-    if (allowErr) return allowErr
-  }
+  const allowErr = await assertRepoAllowed(tok.userId, owner, repo)
+  if (allowErr) return allowErr
 
   // Get the SHA of the source branch
   const refRes = await githubFetch(tok.token, `/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(from_branch)}`)
@@ -218,11 +209,8 @@ async function githubCreatePullRequest(args: unknown, ctx: ToolExecutionContext)
   const { owner, repo, title, body, head, base, draft } = parsed.data
   const validationError = validateOwnerRepo(owner, repo)
   if (validationError) return validationError
-  const userId = await resolveUserId(ctx)
-  if (userId) {
-    const allowErr = await assertRepoAllowed(userId, owner, repo)
-    if (allowErr) return allowErr
-  }
+  const allowErr = await assertRepoAllowed(tok.userId, owner, repo)
+  if (allowErr) return allowErr
 
   const res = await githubFetch(tok.token, `/repos/${owner}/${repo}/pulls`, {
     method: 'POST',

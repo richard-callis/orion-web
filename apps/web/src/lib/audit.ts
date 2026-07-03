@@ -13,6 +13,10 @@
  * entries before and after the rotation will not verify as a continuous chain.
  * Record the rotation event and chain-start marker before rotating.
  *
+ * On first deployment with ORION_AUDIT_HMAC_KEY set, the SystemSetting row
+ * `audit.hmac_chain_start` is written automatically (inside the first audit
+ * transaction) to mark where the HMAC-keyed chain begins.
+ *
  * Set ORION_AUDIT_HMAC_KEY to a base64-encoded 32-byte secret for SOC2-grade
  * tamper-evidence. Without it, an attacker with UPDATE on AuditLog can modify
  * rows and recompute the chain. Generate with:
@@ -26,8 +30,6 @@ import { createHash, createHmac } from 'crypto'
 // Module-level cache for the HMAC key (null = no key / fallback to SHA-256)
 let _auditHmacKeyCache: Buffer | null | undefined = undefined
 let _auditHmacWarnedOnce = false
-// Tracks whether we have already recorded the audit.hmac_chain_start SystemSetting
-let _chainStartRecorded = false
 
 /**
  * Return the 32-byte HMAC key from ORION_AUDIT_HMAC_KEY, or null if absent/invalid.
@@ -153,24 +155,12 @@ function hashAuditEntry(entry: {
 }
 
 /**
- * Compute the hash of the previous audit log entry for the hash chain.
- * Returns null if this is the first entry.
- */
-async function getPreviousHash(): Promise<string | null> {
-  try {
-    const prev = await prisma.auditLog.findFirst({
-      orderBy: { createdAt: 'desc' },
-    })
-    if (!prev) return null
-    // Compute the hash of the previous entry's full content
-    return hashAuditEntry(prev)
-  } catch {
-    return null
-  }
-}
-
-/**
  * Log an audit event. Non-blocking — never throws.
+ *
+ * The hash-chain read and write are wrapped in a Serializable transaction so
+ * concurrent calls cannot both read the same predecessor and fork the chain.
+ * If the transaction fails (transient DB error) the entry is simply not written
+ * rather than being written with a broken chain (missing previousHash).
  */
 export async function logAudit(params: {
   userId: string
@@ -180,21 +170,54 @@ export async function logAudit(params: {
   ipAddress?: string | null
   userAgent?: string | null
 }): Promise<void> {
+  const key = getAuditHmacKey()
   try {
-    const prevHash = await getPreviousHash()
-    await prisma.auditLog.create({
-      data: {
-        userId: params.userId,
-        action: params.action,
-        target: params.target,
-        detail: (params.detail ?? {}) as any,
-        ipAddress: params.ipAddress ?? undefined,
-        userAgent: params.userAgent ?? undefined,
-        previousHash: prevHash ?? undefined,
-      },
-    })
+    await prisma.$transaction(async (tx) => {
+      // Read and write inside the same serializable transaction to prevent
+      // concurrent logAudit calls from both reading the same predecessor
+      // and forking the hash chain.
+      const prev = await tx.auditLog.findFirst({
+        orderBy: [{ id: 'desc' }],
+        select: {
+          id: true,
+          userId: true,
+          action: true,
+          target: true,
+          detail: true,
+          ipAddress: true,
+          userAgent: true,
+          createdAt: true,
+          previousHash: true,
+        },
+      })
+      const previousHash = prev ? hashAuditEntry(prev as Parameters<typeof hashAuditEntry>[0]) : undefined
+
+      await tx.auditLog.create({
+        data: {
+          userId: params.userId,
+          action: params.action,
+          target: params.target,
+          detail: (params.detail ?? {}) as any,
+          ipAddress: params.ipAddress ?? undefined,
+          userAgent: params.userAgent ?? undefined,
+          previousHash,
+        },
+      })
+
+      // If this is the first HMAC-keyed entry, record the chain-start marker so
+      // verifiers know where the keyed chain begins.
+      if (key && !prev) {
+        await tx.systemSetting.upsert({
+          where: { key: 'audit.hmac_chain_start' },
+          update: {},
+          create: { key: 'audit.hmac_chain_start', value: { startedAt: new Date().toISOString() } },
+        })
+      }
+    }, { isolationLevel: 'Serializable' })
   } catch (e) {
-    // Non-blocking — audit logging failures must not impact normal operations
+    // Non-blocking — audit logging failures must not impact normal operations.
+    // We do NOT write an entry with previousHash: undefined on error, as that
+    // would create a spurious chain restart that looks like tampering.
     console.error('[audit] logAudit failed:', e)
   }
 }

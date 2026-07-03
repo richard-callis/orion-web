@@ -369,6 +369,17 @@ async function validateSSoHeaderHmac(headers: Headers): Promise<boolean> {
     return false
   }
 
+  // SOC2 [SSO-003]: Reject any field containing '|' to prevent canonical string
+  // boundary shifting (delimiter injection / identity spoofing).
+  // Legitimate Authentik-issued values never contain pipe characters.
+  const ssoFields = [username, email, name, uid, timestamp]
+  if (ssoFields.some(f => f?.includes('|'))) {
+    return false  // pipe in field would corrupt canonical string
+  }
+  if (nonce?.includes('|')) {
+    return false  // pipe in nonce would corrupt canonical string
+  }
+
   // Reconstruct canonical string (order matters!).
   // Include nonce only when it is present — old-format proxies omit it and
   // must produce a matching signature over the shorter canonical string.
@@ -395,35 +406,42 @@ async function validateSSoHeaderHmac(headers: Headers): Promise<boolean> {
   try {
     const signatureBuf = Buffer.from(signature, 'base64')
     const expectedBuf = Buffer.from(expected, 'hex')
-    if (signatureBuf.length !== expectedBuf.length) {
-      // Try previous secret if configured (key rotation grace period)
-      if (secretPrevious) {
-        try {
-          const expectedPrev = createHmac('sha256', secretPrevious)
-            .update(canonical)
-            .digest('hex')
-          const expectedPrevBuf = Buffer.from(expectedPrev, 'hex')
-          // timingSafeEqual returns false on mismatch (does NOT throw).
-          // Capture the result — without this the return value was discarded
-          // and return true was always reached, accepting any equal-length signature.
-          if (!timingSafeEqual(signatureBuf, expectedPrevBuf)) return false
-          // Previous-secret branch: consume nonce after successful verification
-          if (noncePresent && !_checkAndConsumeNonce(nonce!, 35_000)) return false
-          return true
-        } catch {
-          return false
-        }
-      }
-      return false
+
+    // timingSafeEqual throws if buffers have different lengths; guard with a
+    // length check but do NOT gate the previous-secret branch on it — both
+    // HMAC-SHA256 outputs are 32 bytes so the lengths always match for
+    // well-formed inputs, which would make the previous-secret branch dead code.
+    const primaryMatch =
+      signatureBuf.length === expectedBuf.length &&
+      timingSafeEqual(signatureBuf, expectedBuf)
+
+    if (primaryMatch) {
+      // Primary-secret match: consume nonce and return.
+      // TTL is 35 s (timestamp window is -5 s..+30 s = 35 s span).
+      if (noncePresent && !_checkAndConsumeNonce(nonce!, 35_000)) return false
+      return true
     }
-    // timingSafeEqual returns false on mismatch (does NOT throw).
-    // The original code discarded the return value and always returned true
-    // for any equal-length signature — a complete HMAC bypass.
-    if (!timingSafeEqual(signatureBuf, expectedBuf)) return false
-    // Primary-secret branch: consume nonce after successful verification.
-    // TTL is 35 s (timestamp window is -5 s..+30 s = 35 s span).
-    if (noncePresent && !_checkAndConsumeNonce(nonce!, 35_000)) return false
-    return true
+
+    // Primary secret did not match — try previous secret for key rotation grace period.
+    if (secretPrevious) {
+      try {
+        const expectedPrev = createHmac('sha256', secretPrevious)
+          .update(canonical)
+          .digest('hex')
+        const expectedPrevBuf = Buffer.from(expectedPrev, 'hex')
+        const prevMatch =
+          signatureBuf.length === expectedPrevBuf.length &&
+          timingSafeEqual(signatureBuf, expectedPrevBuf)
+        if (!prevMatch) return false
+        // Previous-secret match: consume nonce after successful verification.
+        if (noncePresent && !_checkAndConsumeNonce(nonce!, 35_000)) return false
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    return false
   } catch {
     return false
   }
