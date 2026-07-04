@@ -16,6 +16,7 @@ function _checkAndConsumeNonce(nonce: string, windowMs: number): boolean {
   return true
 }
 
+import { cache } from 'react'
 import { getServerSession, type NextAuthOptions } from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import { compare } from 'bcryptjs'
@@ -447,7 +448,7 @@ async function validateSSoHeaderHmac(headers: Headers): Promise<boolean> {
   }
 }
 
-export async function getCurrentUser(): Promise<AppUser | null> {
+export const getCurrentUser = cache(async function getCurrentUser(): Promise<AppUser | null> {
   // Primary: NextAuth JWT session
   const session = await getServerSession(authOptions)
   if (session?.user) {
@@ -532,7 +533,7 @@ export async function getCurrentUser(): Promise<AppUser | null> {
   }
 
   return null
-}
+})
 
 /**
  * SOC2: Require a logged-in user (any role). Throws if not logged in.

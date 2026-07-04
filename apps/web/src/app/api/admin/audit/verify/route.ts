@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
-import { createHash } from 'crypto'
+import { hashAuditEntry } from '@/lib/audit'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,9 +22,11 @@ export async function GET(req: NextRequest) {
     10000,
   ) || 1000
 
-  // Fetch entries ordered by createdAt ascending (oldest first)
+  // Fetch entries ordered by id ascending (oldest first) — matches the writer's
+  // ordering (id desc for latest-first read) so same-millisecond entries are
+  // visited in the same sequence as they were chained.
   const entries = await prisma.auditLog.findMany({
-    orderBy: { createdAt: 'asc' },
+    orderBy: [{ id: 'asc' }],
     take: limit,
     select: {
       id: true,
@@ -68,21 +70,11 @@ export async function GET(req: NextRequest) {
     // Compute what the previousHash should be
     const expectedPreviousHash = prevHash
 
-    // Compute this entry's hash (for use by the next entry)
-    const entryData = {
-      id: entry.id,
-      userId: entry.userId,
-      action: entry.action,
-      target: entry.target,
-      detail: entry.detail,
-      ipAddress: entry.ipAddress,
-      userAgent: entry.userAgent,
+    // Compute this entry's hash using the same function as the writer
+    const entryHash = hashAuditEntry({
+      ...entry,
       createdAt: entry.createdAt,
-      previousHash: entry.previousHash,
-    }
-    const entryHash = createHash('sha256').update(
-      JSON.stringify(entryData),
-    ).digest('hex')
+    })
 
     const isValid = entry.previousHash === prevHash
     const note = i === 0

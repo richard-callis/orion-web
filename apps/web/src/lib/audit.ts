@@ -174,62 +174,62 @@ export async function logAudit(params: {
   let attempts = 0
   while (attempts < 3) {
     try {
-    await prisma.$transaction(async (tx) => {
-      // Read and write inside the same serializable transaction to prevent
-      // concurrent logAudit calls from both reading the same predecessor
-      // and forking the hash chain.
-      const prev = await tx.auditLog.findFirst({
-        orderBy: [{ id: 'desc' }],
-        select: {
-          id: true,
-          userId: true,
-          action: true,
-          target: true,
-          detail: true,
-          ipAddress: true,
-          userAgent: true,
-          createdAt: true,
-          previousHash: true,
-        },
-      })
-      const previousHash = prev ? hashAuditEntry(prev as Parameters<typeof hashAuditEntry>[0]) : undefined
+      await prisma.$transaction(async (tx) => {
+        // Read and write inside the same serializable transaction to prevent
+        // concurrent logAudit calls from both reading the same predecessor
+        // and forking the hash chain.
+        const prev = await tx.auditLog.findFirst({
+          orderBy: [{ id: 'desc' }],
+          select: {
+            id: true,
+            userId: true,
+            action: true,
+            target: true,
+            detail: true,
+            ipAddress: true,
+            userAgent: true,
+            createdAt: true,
+            previousHash: true,
+          },
+        })
+        const previousHash = prev ? hashAuditEntry(prev as Parameters<typeof hashAuditEntry>[0]) : undefined
 
-      await tx.auditLog.create({
-        data: {
-          userId: params.userId,
-          action: params.action,
-          target: params.target,
-          detail: (params.detail ?? {}) as any,
-          ipAddress: params.ipAddress ?? undefined,
-          userAgent: params.userAgent ?? undefined,
-          previousHash,
-        },
-      })
+        await tx.auditLog.create({
+          data: {
+            userId: params.userId,
+            action: params.action,
+            target: params.target,
+            detail: (params.detail ?? {}) as any,
+            ipAddress: params.ipAddress ?? undefined,
+            userAgent: params.userAgent ?? undefined,
+            previousHash,
+          },
+        })
 
-      // If this is the first HMAC-keyed entry, record the chain-start marker so
-      // verifiers know where the keyed chain begins.
-      if (key) {
-        const existing = await tx.systemSetting.findUnique({ where: { key: 'audit.hmac_chain_start' } })
-        if (!existing) {
-          await tx.systemSetting.create({
-            data: { key: 'audit.hmac_chain_start', value: { startedAt: new Date().toISOString() } }
-          })
+        // If this is the first HMAC-keyed entry, record the chain-start marker so
+        // verifiers know where the keyed chain begins.
+        if (key) {
+          const existing = await tx.systemSetting.findUnique({ where: { key: 'audit.hmac_chain_start' } })
+          if (!existing) {
+            await tx.systemSetting.create({
+              data: { key: 'audit.hmac_chain_start', value: { startedAt: new Date().toISOString() } }
+            })
+          }
         }
+      }, { isolationLevel: 'Serializable' })
+      break
+    } catch (e: unknown) {
+      const code = (e as { code?: string })?.code
+      if (code === 'P2034' && attempts < 2) {
+        attempts++
+        continue
       }
-    }, { isolationLevel: 'Serializable' })
-    break
-  } catch (e: unknown) {
-    const code = (e as { code?: string })?.code
-    if (code === 'P2034' && attempts < 2) {
-      attempts++
-      continue
+      // Non-blocking — audit logging failures must not impact normal operations.
+      // We do NOT write an entry with previousHash: undefined on error, as that
+      // would create a spurious chain restart that looks like tampering.
+      console.error('[audit] logAudit failed:', e)
+      break
     }
-    // Non-blocking — audit logging failures must not impact normal operations.
-    // We do NOT write an entry with previousHash: undefined on error, as that
-    // would create a spurious chain restart that looks like tampering.
-    console.error('[audit] logAudit failed:', e)
-    break
-  }
   }
 }
 
