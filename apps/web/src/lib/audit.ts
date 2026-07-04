@@ -125,7 +125,7 @@ export type AuditAction =
  * The algorithm used matches what getPreviousHash and any verifier must use —
  * both are keyed or both are unkeyed for the same environment.
  */
-function hashAuditEntry(entry: {
+export function hashAuditEntry(entry: {
   id: string
   userId: string
   action: string
@@ -171,7 +171,9 @@ export async function logAudit(params: {
   userAgent?: string | null
 }): Promise<void> {
   const key = getAuditHmacKey()
-  try {
+  let attempts = 0
+  while (attempts < 3) {
+    try {
     await prisma.$transaction(async (tx) => {
       // Read and write inside the same serializable transaction to prevent
       // concurrent logAudit calls from both reading the same predecessor
@@ -206,19 +208,28 @@ export async function logAudit(params: {
 
       // If this is the first HMAC-keyed entry, record the chain-start marker so
       // verifiers know where the keyed chain begins.
-      if (key && !prev) {
-        await tx.systemSetting.upsert({
-          where: { key: 'audit.hmac_chain_start' },
-          update: {},
-          create: { key: 'audit.hmac_chain_start', value: { startedAt: new Date().toISOString() } },
-        })
+      if (key) {
+        const existing = await tx.systemSetting.findUnique({ where: { key: 'audit.hmac_chain_start' } })
+        if (!existing) {
+          await tx.systemSetting.create({
+            data: { key: 'audit.hmac_chain_start', value: { startedAt: new Date().toISOString() } }
+          })
+        }
       }
     }, { isolationLevel: 'Serializable' })
-  } catch (e) {
+    break
+  } catch (e: unknown) {
+    const code = (e as { code?: string })?.code
+    if (code === 'P2034' && attempts < 2) {
+      attempts++
+      continue
+    }
     // Non-blocking — audit logging failures must not impact normal operations.
     // We do NOT write an entry with previousHash: undefined on error, as that
     // would create a spurious chain restart that looks like tampering.
     console.error('[audit] logAudit failed:', e)
+    break
+  }
   }
 }
 
