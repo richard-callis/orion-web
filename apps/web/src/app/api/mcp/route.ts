@@ -78,8 +78,9 @@ export async function POST(req: NextRequest) {
       select: { id: true, metadata: true, mcpToken: true },
     })
     if (!agent) {
+      console.warn(`[mcp] Unauthorized: agentId not found (${rawAgentId})`)
       return NextResponse.json(
-        { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized: agentId not found' }, id: null },
+        { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null },
         { status: 401 },
       )
     }
@@ -120,7 +121,7 @@ export async function POST(req: NextRequest) {
       // legacy path (they haven't been migrated yet and have no per-agent secret to verify).
       console.warn(`[mcp] Legacy ORION_MCP_TOKEN used to access agent ${agent.id} which has a per-agent token — rejecting. Rotate the caller to use the per-agent token.`)
       return NextResponse.json(
-        { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized: agent requires per-agent token' }, id: null },
+        { jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null },
         { status: 401 },
       )
     } else {

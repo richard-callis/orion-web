@@ -69,7 +69,15 @@ async function githubListRepos(args: unknown, ctx: ToolExecutionContext): Promis
   const res = await githubFetch(tok.token, `/user/repos?type=${type}&sort=${sort}&per_page=${per_page}`)
   if (!res.ok) return handleGithubError(res)
   const repos = await res.json() as Array<{ full_name: string; description: string | null; default_branch: string; private: boolean }>
-  return JSON.stringify(repos.map(r => ({ full_name: r.full_name, description: r.description, default_branch: r.default_branch, private: r.private })))
+
+  // Filter by allowlist (empty allowlist = show all, consistent with assertRepoAllowed semantics)
+  const user = await prisma.user.findUnique({ where: { id: tok.userId }, select: { githubAllowedRepos: true } })
+  const allowlist = (user?.githubAllowedRepos ?? []).map(r => r.toLowerCase())
+  const filtered = allowlist.length === 0
+    ? repos
+    : repos.filter(r => allowlist.includes(r.full_name.toLowerCase()))
+
+  return JSON.stringify(filtered.map(r => ({ full_name: r.full_name, description: r.description, default_branch: r.default_branch, private: r.private })))
 }
 
 // ── github_get_file ────────────────────────────────────────────────────────

@@ -155,6 +155,51 @@ export function hashAuditEntry(entry: {
 }
 
 /**
+ * Verifier-facing variant of hashAuditEntry that lets the caller explicitly
+ * decide whether HMAC or unkeyed SHA-256 should be used, rather than always
+ * deferring to whatever key is currently configured.
+ *
+ * This exists because entries written before ORION_AUDIT_HMAC_KEY was enabled
+ * (or before a key rotation) were chained with a different mode than entries
+ * written afterward. A verifier must reproduce each entry's hash using the
+ * mode that was active AT THE TIME that entry was written — not the mode
+ * currently configured — or it will report false tampering.
+ */
+export function hashAuditEntryWithMode(
+  entry: {
+    id: string
+    userId: string
+    action: string
+    target: string
+    detail: unknown
+    ipAddress: string | null
+    userAgent: string | null
+    createdAt: Date
+    previousHash: string | null
+  },
+  useHmac: boolean,
+): string {
+  const data = JSON.stringify({
+    id: entry.id,
+    userId: entry.userId,
+    action: entry.action,
+    target: entry.target,
+    detail: entry.detail,
+    ipAddress: entry.ipAddress,
+    userAgent: entry.userAgent,
+    createdAt: entry.createdAt.toISOString(),
+    previousHash: entry.previousHash,
+  })
+  if (useHmac) {
+    const key = getAuditHmacKey()
+    if (key) {
+      return createHmac('sha256', key).update(data).digest('hex')
+    }
+  }
+  return createHash('sha256').update(data).digest('hex')
+}
+
+/**
  * Log an audit event. Non-blocking — never throws.
  *
  * The hash-chain read and write are wrapped in a Serializable transaction so
@@ -209,18 +254,25 @@ export async function logAudit(params: {
         // If this is the first HMAC-keyed entry, record the chain-start marker so
         // verifiers know where the keyed chain begins.
         if (key) {
-          const existing = await tx.systemSetting.findUnique({ where: { key: 'audit.hmac_chain_start' } })
-          if (!existing) {
-            await tx.systemSetting.create({
-              data: { key: 'audit.hmac_chain_start', value: { startedAt: new Date().toISOString() } }
-            })
-          }
+          // Use upsert (with a no-op update) rather than findUnique + create so
+          // that two concurrent first-HMAC-write transactions don't race on
+          // create and cause one of them to fail with P2002 — upsert is
+          // idempotent regardless of which transaction wins.
+          await tx.systemSetting.upsert({
+            where: { key: 'audit.hmac_chain_start' },
+            update: {},
+            create: { key: 'audit.hmac_chain_start', value: { startedAt: new Date().toISOString() } },
+          })
         }
       }, { isolationLevel: 'Serializable' })
       break
     } catch (e: unknown) {
       const code = (e as { code?: string })?.code
-      if (code === 'P2034' && attempts < 2) {
+      // P2034: serialization failure from the Serializable transaction.
+      // P2002: unique constraint violation — can occur on the chain-start
+      // marker upsert under concurrent first-HMAC-write races (defense in
+      // depth; the upsert above already avoids this in the common case).
+      if ((code === 'P2034' || code === 'P2002') && attempts < 2) {
         attempts++
         continue
       }

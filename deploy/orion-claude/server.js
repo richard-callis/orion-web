@@ -98,16 +98,17 @@ function sanitizeMaxTurns(maxTurns, fallback = 20) {
  * only agentId; chat rooms supply both agentId and roomId.
  * Returns the temp dir path — caller must clean it up after execFile completes.
  */
-function writeMcpDir(agentId, roomId) {
+function writeMcpDir(agentId, roomId, mcpToken) {
   const params = new URLSearchParams({ agentId })
   if (roomId) params.set('roomId', roomId)
   const url = `${ORION_URL}/api/mcp?${params.toString()}`
+  const token = mcpToken || MCP_TOKEN
   const config = {
     mcpServers: {
       orion: {
         type: 'http',
         url,
-        ...(MCP_TOKEN ? { headers: { 'x-mcp-token': MCP_TOKEN } } : {}),
+        ...(token ? { headers: { 'x-mcp-token': token } } : {}),
       },
     },
   }
@@ -122,7 +123,7 @@ function writeMcpDir(agentId, roomId) {
  * When agentId is provided, writes a per-request .mcp.json so Claude can call
  * ORION tools natively via MCP. roomId is optional (chat rooms only).
  */
-function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 120000, agentId, roomId } = {}) {
+function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 120000, agentId, roomId, mcpToken } = {}) {
   return new Promise((resolve, reject) => {
     const safeModel       = sanitizeModel(model)
     const safeSystemPrompt = sanitizeSystemPrompt(systemPrompt)
@@ -144,7 +145,7 @@ function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 12000
     let cwd    = undefined
     if (useMcp) {
       try {
-        tmpDir = writeMcpDir(agentId, roomId)
+        tmpDir = writeMcpDir(agentId, roomId, mcpToken)
         cwd    = tmpDir
         console.log(`[orion-claude] MCP enabled — agent=${agentId}${roomId ? ` room=${roomId}` : ''} url=${ORION_URL}/api/mcp`)
       } catch (e) {
@@ -471,6 +472,7 @@ const server = http.createServer(async (req, res) => {
           timeout:      useMcp ? 300000 : 120000,
           agentId:      opts.agentId,
           roomId:       opts.roomId,
+          mcpToken:     opts.mcpToken,
         })
         let text = stdout.trim()
         try {

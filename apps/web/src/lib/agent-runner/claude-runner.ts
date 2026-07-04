@@ -43,24 +43,30 @@ export const claudeRunner: AgentRunner = {
     // the MCP transport headers when writing the per-request .mcp.json config.
     let mcpTokenForSidecar: string | undefined
     if (ctx.agentId) {
+      let agentRow: { mcpToken: string | null } | null
       try {
-        const agentRow = await prisma.agent.findUnique({
+        agentRow = await prisma.agent.findUnique({
           where:  { id: ctx.agentId },
           select: { mcpToken: true },
         })
-        if (agentRow?.mcpToken) {
-          mcpTokenForSidecar = decryptStrict(agentRow.mcpToken, 'mcpToken')
-        }
       } catch (err) {
+        console.error('[claude-runner] Failed to look up agent', ctx.agentId, 'for mcpToken:', err)
+        throw err
+      }
+      if (agentRow?.mcpToken) {
         // The MCP route rejects the legacy ORION_MCP_TOKEN for agents that have a
         // per-agent mcpToken in the DB, so falling back silently would cause every
         // tool call to 401 without any diagnostic. Fail fast instead.
-        console.error(
-          '[claude-runner] Failed to decrypt mcpToken for agent', ctx.agentId,
-          '— MCP calls will fail. Rotate the token via POST /api/agents/<id>/mcp-token.',
-          err,
-        )
-        throw err
+        try {
+          mcpTokenForSidecar = decryptStrict(agentRow.mcpToken, 'mcpToken')
+        } catch (err) {
+          console.error(
+            '[claude-runner] Failed to decrypt mcpToken for agent', ctx.agentId,
+            '— MCP calls will fail. Rotate the token via POST /api/agents/<id>/mcp-token.',
+            err,
+          )
+          throw err
+        }
       }
     }
 
