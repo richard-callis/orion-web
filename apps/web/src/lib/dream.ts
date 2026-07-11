@@ -51,7 +51,20 @@ async function getDreamModelId(): Promise<string> {
   return getDefaultModelId()
 }
 
-async function callWithModel(modelId: string, prompt: string): Promise<string> {
+interface LLMCallResult {
+  text: string
+  inputTokens: number
+  outputTokens: number
+}
+
+// Length-based fallback estimate for providers/paths that don't report usage.
+// Conservative ~4 chars/token heuristic — better than recording zero, which
+// would defeat the point of budget tracking.
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4)
+}
+
+async function callWithModel(modelId: string, prompt: string): Promise<LLMCallResult> {
   const CLAUDE_URL = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
 
   if (modelId === 'claude' || modelId.startsWith('claude:')) {
@@ -63,8 +76,19 @@ async function callWithModel(modelId: string, prompt: string): Promise<string> {
       signal: AbortSignal.timeout(90_000),
     })
     if (!res.ok) throw new Error(`orion-claude HTTP ${res.status}`)
-    const json = await res.json() as { text?: string }
-    return json.text ?? ''
+    const json = await res.json() as {
+      text?: string
+      usage?: { inputTokens?: number; outputTokens?: number }
+      inputTokens?: number
+      outputTokens?: number
+    }
+    const text = json.text ?? ''
+    // orion-claude sidecar doesn't reliably surface usage on /run/collect — use
+    // it if present, otherwise fall back to a length-based estimate. Input
+    // tokens are estimated from the prompt since the sidecar never echoes it.
+    const inputTokens  = json.usage?.inputTokens  ?? json.inputTokens  ?? estimateTokens(prompt)
+    const outputTokens = json.usage?.outputTokens ?? json.outputTokens ?? estimateTokens(text)
+    return { text, inputTokens, outputTokens }
   }
 
   // External model (OpenAI-compatible or Ollama)
@@ -79,8 +103,11 @@ async function callWithModel(modelId: string, prompt: string): Promise<string> {
       signal: AbortSignal.timeout(90_000),
     })
     if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`)
-    const data = await res.json() as { response?: string }
-    return data.response?.trim() ?? ''
+    const data = await res.json() as { response?: string; prompt_eval_count?: number; eval_count?: number }
+    const text = data.response?.trim() ?? ''
+    const inputTokens  = data.prompt_eval_count ?? estimateTokens(prompt)
+    const outputTokens = data.eval_count ?? estimateTokens(text)
+    return { text, inputTokens, outputTokens }
   }
 
   // OpenAI-compatible
@@ -97,15 +124,45 @@ async function callWithModel(modelId: string, prompt: string): Promise<string> {
     signal: AbortSignal.timeout((extModel.timeoutSecs ?? 120) * 1000),
   })
   if (!res.ok) throw new Error(`External model HTTP ${res.status}`)
-  const data = await res.json() as { choices?: Array<{ message: { content: string } }> }
-  return data.choices?.[0]?.message?.content?.trim() ?? ''
+  const data = await res.json() as {
+    choices?: Array<{ message: { content: string } }>
+    usage?: { prompt_tokens?: number; completion_tokens?: number }
+  }
+  const text = data.choices?.[0]?.message?.content?.trim() ?? ''
+  const inputTokens  = data.usage?.prompt_tokens     ?? estimateTokens(prompt)
+  const outputTokens = data.usage?.completion_tokens ?? estimateTokens(text)
+  return { text, inputTokens, outputTokens }
+}
+
+// Cache only positive hits — a miss (e.g. queried before ensureSystemAgents()
+// has committed the Dream row on a fresh install/boot) must retry on the next
+// call rather than permanently caching null for the process lifetime.
+let _dreamAgentIdCache: string | null = null
+async function getDreamAgentId(): Promise<string | null> {
+  if (_dreamAgentIdCache !== null) return _dreamAgentIdCache
+  const agent = await prisma.agent.findUnique({ where: { name: 'Dream' }, select: { id: true } })
+  _dreamAgentIdCache = agent?.id ?? null
+  return _dreamAgentIdCache
+}
+
+async function recordDreamUsage(inputTokens: number, outputTokens: number, modelId: string): Promise<void> {
+  try {
+    const dreamAgentId = await getDreamAgentId()
+    if (!dreamAgentId) return
+    const { recordTokenUsage } = await import('./token-budget')
+    await recordTokenUsage(dreamAgentId, null, inputTokens, outputTokens, modelId)
+  } catch (err) {
+    console.error('[dream] Failed to record token usage:', err)
+  }
 }
 
 async function callLLM(prompt: string): Promise<string> {
   const modelId = await getDreamModelId()
 
   try {
-    return await callWithModel(modelId, prompt)
+    const result = await callWithModel(modelId, prompt)
+    await recordDreamUsage(result.inputTokens, result.outputTokens, modelId)
+    return result.text
   } catch (primaryErr) {
     console.warn(`[dream] Model '${modelId}' failed (${primaryErr}), falling back to system default`)
 
@@ -114,7 +171,9 @@ async function callLLM(prompt: string): Promise<string> {
 
     if (defaultId === modelId) throw primaryErr  // same model, don't retry
 
-    return await callWithModel(defaultId, prompt)
+    const result = await callWithModel(defaultId, prompt)
+    await recordDreamUsage(result.inputTokens, result.outputTokens, defaultId)
+    return result.text
   }
 }
 

@@ -543,6 +543,27 @@ Cap at 5 prompt updates per cycle. When in doubt, do not update — but always s
     },
   },
 
+  // ── Dream ─────────────────────────────────────────────────────────────────────
+  {
+    nova: {
+      name:        'dream',
+      displayName: 'Dream',
+      description: 'Memory consolidation subsystem. Runs extraction, synthesis, and pruning cycles against the knowledge base on fixed schedules. Never receives chat turns — exists so its LLM/embedding spend can be attributed to a budget-tracked agent.',
+      version:     '1.0.0',
+      tags:        ['system', 'memory', 'background'],
+    },
+    agent: {
+      type:        'system',
+      role:        'Memory Consolidation',
+      description: 'Background subsystem that extracts, synthesizes, and prunes knowledge-base notes from chat/task activity. Does not participate in chat rooms — exists solely as an attribution target for token-usage tracking.',
+      systemPrompt: `Dream is a background memory-consolidation subsystem, not a conversational agent. It never receives chat turns or task assignments. This Agent record exists so LLM calls made by the dream extraction/synthesis/pruning pipeline (apps/web/src/lib/dream.ts) and its embedding pipeline (apps/web/src/lib/embeddings.ts) have a valid agentId to attribute token usage to, keeping their spend visible in budget tracking.`,
+      contextConfig: {
+        tools:      false,
+        persistent: false,
+      },
+    },
+  },
+
   // ── Warden ────────────────────────────────────────────────────────────────────
   {
     nova: {
