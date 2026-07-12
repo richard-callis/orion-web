@@ -63,9 +63,19 @@ export async function shouldFederate(taskId: string): Promise<FederationDecision
   // Load task with agent, then find agent's environments
   const task = await prisma.task.findUnique({
     where: { id: taskId },
-    select: { assignedAgent: true },
+    select: { assignedAgent: true, metadata: true },
   })
   if (!task?.assignedAgent) return { federate: false }
+
+  // Already federated — don't re-dispatch a task that was already sent to a
+  // spoke (checked via metadata flag and any existing non-terminal dispatch row).
+  const taskMeta = (task.metadata ?? {}) as Record<string, unknown>
+  if (taskMeta.federated === true) return { federate: false }
+  const existingDispatch = await prisma.federatedDispatch.findUnique({
+    where: { taskId },
+    select: { status: true },
+  })
+  if (existingDispatch && existingDispatch.status !== 'failed') return { federate: false }
 
   const agentEnvs = await prisma.agentEnvironment.findMany({
     where: { agentId: task.assignedAgent },

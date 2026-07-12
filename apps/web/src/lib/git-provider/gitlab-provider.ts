@@ -312,6 +312,7 @@ function toGitPR(mr: GLMR): GitPR {
     headBranch: mr.source_branch,
     baseBranch: mr.target_branch,
     merged: mr.state === 'merged',
+    mergedAt: mr.merged_at ?? undefined,
   }
 }
 

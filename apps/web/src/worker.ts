@@ -26,6 +26,8 @@ import {
   recordTokenUsage,
   acquireBudgetLock,
   releaseBudgetLock,
+  reserveBudgetTokens,
+  releaseBudgetReservation,
 } from './lib/token-budget'
 import { runCorrelator } from './workers/security-correlator'
 import { runK8sPollerAll } from './jobs/security-poll-k8s'
@@ -219,15 +221,32 @@ async function recoverStuckTasks() {
     where: { status: 'in_progress', updatedAt: { lt: stuckCutoff } }
   })
   for (const task of stuck) {
+    // BUG 5 fix: `Task.updatedAt` is only bumped on status transitions, not on
+    // individual tool calls — a task legitimately running for 30-60 minutes
+    // (well within TASK_TIMEOUT_MS's 60-minute allowance) would otherwise look
+    // "stuck" and get falsely requeued/failed out from under itself. If this
+    // process still has the task in its in-memory `runningTasks` set, it's
+    // actively executing here — skip it. This only guards against
+    // self-sabotage within one process; a task stuck on a crashed process
+    // (not in this process's runningTasks) is still recovered normally.
+    if (runningTasks.has(task.id)) {
+      console.log(`[recovery] Skipping task ${task.id} — still actively running in this process`)
+      continue
+    }
     // Don't fail tasks that have a pending retry scheduled in the future
     if (task.nextRetryAt && task.nextRetryAt > new Date()) {
       console.log(`[recovery] Skipping task ${task.id} — retry scheduled at ${task.nextRetryAt.toISOString()}`)
       continue
     }
-    const retries = ((task.metadata as any)?.recoveryCount ?? 0) as number
+    // BUG 6 fix: `task.metadata` is a batch snapshot from the findMany() above,
+    // taken before earlier iterations of this loop performed their own awaits
+    // — re-fetch immediately before this whole-object write to avoid clobbering
+    // a concurrent edit.
+    const currentMeta = await freshTaskMetadata(task.id, task.metadata as object ?? {})
+    const retries = ((currentMeta as any)?.recoveryCount ?? 0) as number
     const MAX_RECOVERY = 2
     const newStatus = retries < MAX_RECOVERY ? 'pending' : 'failed'
-    const newMeta = { ...(task.metadata as object ?? {}), recoveryCount: retries + 1 }
+    const newMeta = { ...(currentMeta as object ?? {}), recoveryCount: retries + 1 }
     await prisma.task.update({
       where: { id: task.id },
       data: { status: newStatus, assignedAgent: newStatus === 'pending' ? task.assignedAgent : null, metadata: newMeta as any }
@@ -251,6 +270,19 @@ async function recoverStuckTasks() {
 
 function log(msg: string) { process.stdout.write(`[orchestrator] ${msg}\n`) }
 function err(msg: string) { process.stderr.write(`[orchestrator] ERROR: ${msg}\n`) }
+
+/**
+ * BUG 6 fix helper: re-fetch a task's CURRENT metadata immediately before a
+ * whole-object metadata write. `task.metadata` snapshots taken at the start of
+ * a long-running flow (budget checks, federation dispatch, watcher runs) can be
+ * minutes stale by the time we write back — a whole-object write of that stale
+ * snapshot silently reverts any concurrent edit made in between. Falls back to
+ * `fallback` if the task has since been deleted or the read fails.
+ */
+async function freshTaskMetadata(taskId: string, fallback: object): Promise<object> {
+  const fresh = await prisma.task.findUnique({ where: { id: taskId }, select: { metadata: true } }).catch(() => null)
+  return (fresh?.metadata as object) ?? fallback
+}
 
 // ── Model resolution ──────────────────────────────────────────────────────────
 
@@ -295,10 +327,16 @@ async function resolveModelId(llm: unknown): Promise<string> {
 /**
  * Optionally spawns a lightweight reviewer agent after a task completes to
  * validate output quality. If the reviewer rejects the output, the task is
- * reopened to `pending` so it gets retried.
+ * reopened to `pending` (or `failed` once retries are exhausted) so it gets
+ * retried.
  *
  * Reviewer failures are non-fatal — any error is logged and ignored so the
  * task outcome is never affected.
+ *
+ * Returns `true` if the reviewer rejected the output and reopened/failed the
+ * task, `false` otherwise (approved, skipped, or the check itself errored —
+ * in which case we fall back to treating the task as approved, matching the
+ * pre-existing non-fatal-error behavior).
  */
 async function runReviewerCheck(
   taskId: string,
@@ -306,8 +344,8 @@ async function runReviewerCheck(
   output: string,
   agentId: string,
   modelId: string,
-): Promise<void> {
-  if (output.trim().length === 0) return
+): Promise<boolean> {
+  if (output.trim().length === 0) return false
 
   try {
     await logTaskEvent(taskId, 'reviewer_start', 'Reviewer agent checking output quality', agentId)
@@ -355,12 +393,15 @@ async function runReviewerCheck(
       // Cap retries at 3 to prevent unbounded rejection loops
       const newStatus = retryCount >= 3 ? 'failed' : 'pending'
       await prisma.task.update({ where: { id: taskId }, data: { status: newStatus, retryCount } })
+      return true
     } else {
       const reason = verdict.startsWith('APPROVED:') ? verdict.slice('APPROVED:'.length).trim() : verdict
       await logTaskEvent(taskId, 'reviewer_approved', reason || 'Output approved', agentId)
+      return false
     }
   } catch (e) {
     err(`runReviewerCheck for task ${taskId} failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+    return false
   }
 }
 
@@ -379,6 +420,18 @@ async function runTask(taskId: string): Promise<void> {
   let trace: ReturnType<typeof createTrace> | null = null
   let mainSpan: string | null = null
 
+  // BUG 4 fix: hoisted to function scope (rather than declared inside the try
+  // block) so the catch block and the plan-pause return path can see whatever
+  // tokens were actually spent before failing/pausing and record them for
+  // budget accounting instead of silently dropping them.
+  let totalInputTokens = 0
+  let totalOutputTokens = 0
+  // BUG 3 fix: tracks the in-flight budget reservation so it can always be
+  // released in the outer `finally` below, regardless of which return/throw
+  // path this task run takes.
+  let agentIdForCleanup: string | null = null
+  let budgetReservationTokens = 0
+
   try {
     // Load task with agent
     const task = await prisma.task.findUnique({
@@ -395,6 +448,7 @@ async function runTask(taskId: string): Promise<void> {
     }
 
     const agent = task.agent
+    agentIdForCleanup = agent.id
     const meta = (agent.metadata ?? {}) as Record<string, unknown>
 
     if (meta.archived === true) {
@@ -484,17 +538,28 @@ async function runTask(taskId: string): Promise<void> {
     let budgetCheck: { allowed: boolean; reason?: string }
     try {
       budgetCheck = await checkAgentBudget(agent.id)
+      // BUG 3 fix: reserve an estimated spend WHILE still holding the lock so
+      // the check-then-reserve pair is atomic w.r.t. other concurrent tasks for
+      // this agent. checkAgentBudget() folds any outstanding reservation into
+      // its sums, so subsequent concurrent checks see this reservation.
+      // Released in the outer `finally` below once real usage is recorded.
+      if (budgetCheck.allowed) {
+        budgetReservationTokens = await reserveBudgetTokens(agent.id)
+      }
     } finally {
       await releaseBudgetLock(agent.id, budgetLockToken)
     }
     if (!budgetCheck.allowed) {
       const budgetMsg = `Budget gate: ${budgetCheck.reason} — task paused until budget resets or limit is increased.`
+      // BUG 6 fix: taskMeta was snapshotted before the (potentially slow) budget
+      // lock/check above — re-fetch immediately before this whole-object write.
+      const currentMeta = await freshTaskMetadata(taskId, taskMeta)
       await Promise.all([
         prisma.task.update({
           where: { id: taskId },
           data: {
             status: 'pending_validation',
-            metadata: { ...taskMeta, budgetExceeded: true, budgetReason: budgetCheck.reason } as object,
+            metadata: { ...currentMeta, budgetExceeded: true, budgetReason: budgetCheck.reason, pendingReason: 'budget_paused' } as object,
           },
         }),
         logTaskEvent(taskId, 'budget_gate', budgetMsg, agent.id),
@@ -510,11 +575,19 @@ async function runTask(taskId: string): Promise<void> {
       if (fed.federate && fed.spokeUrl && fed.token) {
         const dispatched = await dispatchToSpoke(taskId, fed.spokeUrl, fed.token)
         if (dispatched) {
+          // BUG 1 fix: set status to 'in_progress' in the SAME update as
+          // metadata.federated so pollOnce's `status: 'pending'` query can never
+          // re-pick this task up on the next poll cycle (~15s later).
+          // BUG 6 fix: taskMeta was snapshotted before the network round-trip to
+          // the spoke in dispatchToSpoke() above — re-fetch immediately before
+          // this whole-object write.
+          const currentMeta = await freshTaskMetadata(taskId, taskMeta)
           await prisma.task.update({
             where: { id: taskId },
             data: {
+              status: 'in_progress',
               metadata: {
-                ...(taskMeta as object),
+                ...(currentMeta as object),
                 federated: true,
                 spokeUrl: fed.spokeUrl,
               } as object,
@@ -580,14 +653,19 @@ async function runTask(taskId: string): Promise<void> {
     const runner = createRunner(modelId)
     let outputText = ''
     let toolsUsed: string[] = []
-    let totalInputTokens = 0
-    let totalOutputTokens = 0
 
     // Langfuse: create a trace for this task run (no-op when keys are not set)
     trace = createTrace({ taskId, taskTitle: task.title, agentId: agent.id, modelId })
     mainSpan = trace.startSpan('task-execution', { title: task.title, description: task.description })
     // FIFO queue of open tool span IDs — tool_call pushes, tool_result shifts
     const toolSpanQueue: string[] = []
+    // BUG 7 fix: FIFO queue of idempotency keys computed at tool_call time
+    // (stepIndex BEFORE increment, real args). tool_result reuses the same key
+    // as the checkpoint's argsHash instead of recomputing with a different
+    // (post-increment, empty-args) input — the two computations could never
+    // match before, so replay matched checkpoints by ordinal position alone
+    // instead of verifying the same tool+args were called on retry.
+    const idemKeyQueue: string[] = []
 
     let pausedForApproval = false
 
@@ -635,6 +713,7 @@ async function runTask(taskId: string): Promise<void> {
             .update(`${taskId}:${stepIndex}:${event.tool}:${event.args ?? ''}`)
             .digest('hex')
             .slice(0, 16)
+          idemKeyQueue.push(idemKey)
           // Langfuse: start a span for this tool call
           toolSpanQueue.push(trace.startSpan(`tool:${event.tool}`, { args: event.args }))
           await logTaskEvent(taskId, 'tool_call', `🔧 ${event.tool}(${event.args}) [idem:${idemKey}]`, agent.id)
@@ -662,11 +741,16 @@ async function runTask(taskId: string): Promise<void> {
           if (openToolSpanId) trace.endSpan(openToolSpanId, { result: redactedResult.slice(0, 500) })
           await logTaskEvent(taskId, 'tool_result', redactedResult, agent.id)
           // Checkpoint this step so it can be detected on retry.
-          stepIndex++
-          const idemKeyForCheckpoint = createHash('sha256')
+          // BUG 7 fix: reuse the SAME idempotency key computed at tool_call time
+          // (same stepIndex, same args) instead of recomputing with the
+          // post-increment stepIndex and an always-empty args string — those two
+          // computations could never match, so retries replayed checkpoints
+          // purely by ordinal position rather than verifying tool+args.
+          const idemKeyForCheckpoint = idemKeyQueue.shift() ?? createHash('sha256')
             .update(`${taskId}:${stepIndex}:${event.tool}:`)
             .digest('hex')
             .slice(0, 16)
+          stepIndex++
           await prisma.taskCheckpoint.upsert({
             where: { taskId_stepIndex: { taskId, stepIndex } },
             update: { result: redactedResult },
@@ -728,6 +812,7 @@ async function runTask(taskId: string): Promise<void> {
               planContent: planText,
               planSteps: plan?.steps ?? [],
               planApproved: false,
+              pendingReason: 'plan_approval',
             } as object,
           },
         }),
@@ -737,6 +822,14 @@ async function runTask(taskId: string): Promise<void> {
         ...(featureRoomId ? [postToRoom(featureRoomId, agent.id, pauseMsg, taskId)] : []),
       ])
       notify({ type: 'plan_approval_needed', taskId, taskTitle: task.title, agentId: agent.id, agentName: agent.name, riskLevel: risk }).catch(() => {})
+      // BUG 4 fix: tokens may already have been spent generating the plan
+      // itself before pausing for approval — record them so budget accounting
+      // isn't silently dropped on this return path.
+      if (totalInputTokens > 0 || totalOutputTokens > 0) {
+        await recordTokenUsage(agent.id, taskId, totalInputTokens, totalOutputTokens, modelId).catch(
+          (e) => err(`[worker] recordTokenUsage (plan-pause) failed for task ${taskId}: ${e instanceof Error ? e.message : e}`)
+        )
+      }
       log(`Task "${task.title}" (${taskId}) paused for ${risk}-risk plan approval`)
       return
     }
@@ -755,7 +848,13 @@ async function runTask(taskId: string): Promise<void> {
     }
 
     await Promise.all([
-      prisma.task.update({ where: { id: taskId }, data: { status: 'pending_validation' } }),
+      prisma.task.update({
+        where: { id: taskId },
+        data: {
+          status: 'pending_validation',
+          metadata: { ...taskMeta, pendingReason: 'qa_review' } as object,
+        },
+      }),
       logTaskEvent(taskId, 'completed', summary, agent.id),
       // SOC2: always keep postToFeed for audit trail
       postToFeed(agent.id, completionMsg, taskId),
@@ -784,29 +883,39 @@ async function runTask(taskId: string): Promise<void> {
         agent.id,
       ).catch(() => {})
       // Record token spend for budget tracking
-      await recordTokenUsage(agent.id, taskId, totalInputTokens, totalOutputTokens, modelId).catch(() => {})
+      await recordTokenUsage(agent.id, taskId, totalInputTokens, totalOutputTokens, modelId).catch(
+        (e) => err(`[worker] recordTokenUsage failed for task ${taskId}: ${e instanceof Error ? e.message : e}`)
+      )
     }
 
-    // Auto-write the task outcome to the knowledge base so future agents learn
-    // from it via vector-search context injection.
-    const envName = agentGw?.environmentId
-      ? (await prisma.environment.findUnique({ where: { id: agentGw.environmentId }, select: { name: true } }).catch(() => null))?.name ?? null
-      : null
-    await writeTaskOutcome({
-      title:           task.title,
-      description:     task.description,
-      status:         'done',
-      outcomeSummary: `Completed in ${durationSec}s using ${toolsUsed.length} tool call(s)${toolsUsed.length ? ` (${[...new Set(toolsUsed)].slice(0, 8).join(', ')})` : ''}. ${summary}`.trim(),
-      environmentId:   agentGw?.environmentId ?? null,
-      environmentName: envName,
-    })
-
-    // Clean up checkpoints on successful completion — no longer needed.
-    await prisma.taskCheckpoint.deleteMany({ where: { taskId } }).catch(() => {})
-
-    // Run reviewer check for non-persistent tasks that produced output.
+    // Run reviewer check BEFORE writing the outcome note / deleting checkpoints.
+    // If the reviewer rejects, it reopens the task (status back to 'pending', or
+    // 'failed' once retries are exhausted) — in that case we must NOT publish a
+    // "done" outcome note to the knowledge base (future agents would treat it as
+    // fact) and must NOT delete checkpoints (the reopened run needs them to avoid
+    // re-executing already-completed side-effectful tool calls from scratch).
+    let reviewerRejected = false
     if ((task.metadata as any)?.persistent !== true) {
-      await runReviewerCheck(taskId, task.title, outputText, agent.id, modelId)
+      reviewerRejected = await runReviewerCheck(taskId, task.title, outputText, agent.id, modelId)
+    }
+
+    if (!reviewerRejected) {
+      // Auto-write the task outcome to the knowledge base so future agents learn
+      // from it via vector-search context injection.
+      const envName = agentGw?.environmentId
+        ? (await prisma.environment.findUnique({ where: { id: agentGw.environmentId }, select: { name: true } }).catch(() => null))?.name ?? null
+        : null
+      await writeTaskOutcome({
+        title:           task.title,
+        description:     task.description,
+        status:         'done',
+        outcomeSummary: `Completed in ${durationSec}s using ${toolsUsed.length} tool call(s)${toolsUsed.length ? ` (${[...new Set(toolsUsed)].slice(0, 8).join(', ')})` : ''}. ${summary}`.trim(),
+        environmentId:   agentGw?.environmentId ?? null,
+        environmentName: envName,
+      })
+
+      // Clean up checkpoints on successful completion — no longer needed.
+      await prisma.taskCheckpoint.deleteMany({ where: { taskId } }).catch(() => {})
     }
 
     // Langfuse: close the main span and flush the trace
@@ -830,6 +939,18 @@ async function runTask(taskId: string): Promise<void> {
       where: { id: taskId },
       select: { title: true, description: true, assignedAgent: true, retryCount: true, maxRetries: true, metadata: true },
     }).catch(() => null)
+
+    // BUG 4 fix: token spend on failed/timed-out runs was previously dropped
+    // entirely (recordTokenUsage was only called on the success path), so an
+    // agent looping on transient failures burned real tokens with zero budget
+    // accounting. Record whatever was spent before the failure, on every
+    // failure branch below (including retries — each attempt burns tokens).
+    const failureAgentId = agentIdForCleanup ?? failedTask?.assignedAgent ?? null
+    if (failureAgentId && (totalInputTokens > 0 || totalOutputTokens > 0)) {
+      await recordTokenUsage(failureAgentId, taskId, totalInputTokens, totalOutputTokens).catch(
+        (re) => err(`[worker] recordTokenUsage (failure path) failed for task ${taskId}: ${re instanceof Error ? re.message : re}`)
+      )
+    }
 
     // ── Remediation loop detection ──────────────────────────────────────────
     // Track how many times this task has hit the failure path with the same
@@ -909,6 +1030,14 @@ async function runTask(taskId: string): Promise<void> {
   } finally {
     clearTimeout(timeoutHandle)
     runningTasks.delete(taskId)
+    // BUG 3 fix: release the in-flight budget reservation on every exit path
+    // (success, federated-dispatch, plan-pause, failure) now that real usage
+    // has been (or, for early-exit paths, never will be) recorded.
+    if (agentIdForCleanup && budgetReservationTokens > 0) {
+      await releaseBudgetReservation(agentIdForCleanup, budgetReservationTokens).catch(
+        (e) => err(`[worker] releaseBudgetReservation failed for agent ${agentIdForCleanup}: ${e instanceof Error ? e.message : e}`)
+      )
+    }
   }
 }
 
@@ -1343,11 +1472,21 @@ async function runWatchers() {
     } finally {
       // Always update lastRun (even on error) so a failing watcher respects
       // its interval instead of retrying every 60s until it succeeds.
+      // BUG 6 fix: `agent.metadata` here is a snapshot from the START of this
+      // watcher run, which can take minutes. Whole-object writing that stale
+      // snapshot back would silently clobber any concurrent edit made during
+      // the run (archiving, prompt change, etc). Re-fetch immediately before
+      // the write and merge into THAT fresh copy to narrow the race window
+      // from minutes to milliseconds.
+      const freshAgent = await prisma.agent.findUnique({
+        where: { id: agent.id },
+        select: { metadata: true },
+      }).catch(() => null)
       await prisma.agent.update({
         where: { id: agent.id },
         data: {
           metadata: {
-            ...(agent.metadata as object ?? {}),
+            ...((freshAgent?.metadata ?? agent.metadata) as object ?? {}),
             watcherLastRun: Date.now()
           }
         }
@@ -1402,8 +1541,11 @@ async function syncGitOpsPRs() {
           update: {},
         })
       }
-    } catch {
-      // Non-fatal
+    } catch (e) {
+      // BUG 8 fix: this was silently swallowed with zero logging — a Gitea/GitHub
+      // auth failure would stop PR discovery for this environment indefinitely
+      // with no operator signal. Log with enough context to diagnose.
+      err(`[gitops-sync] Failed to list open PRs for ${env.gitOwner}/${env.gitRepo} (env ${env.id}): ${e instanceof Error ? e.message : e}`)
     }
   }
 
@@ -1423,17 +1565,22 @@ async function syncGitOpsPRs() {
       const closed = remotePR.state === 'closed' || remotePR.state === 'merged'
 
       if (merged || closed) {
+        // BUG 8 fix: use the provider's real merge timestamp when available
+        // instead of `new Date()` (the poll time, which can lag the actual
+        // merge by up to the 60s poll interval or longer if sync was down).
+        const mergedAt = merged ? (remotePR.mergedAt ? new Date(remotePR.mergedAt) : new Date()) : undefined
         await prisma.gitOpsPR.update({
           where: { id: pr.id },
           data: {
             status:   merged ? 'merged' : 'closed',
-            mergedAt: merged ? new Date() : undefined,
+            mergedAt,
           },
         })
         log(`GitOps sync: PR#${pr.prNumber} in ${gitOwner}/${gitRepo} → ${merged ? 'merged' : 'closed'}`)
       }
-    } catch {
-      // Non-fatal
+    } catch (e) {
+      // BUG 8 fix: log with context instead of silently swallowing.
+      err(`[gitops-sync] Failed to sync merge status for PR#${pr.prNumber} in ${gitOwner}/${gitRepo} (env ${pr.environmentId}): ${e instanceof Error ? e.message : e}`)
     }
   }
 }
@@ -1459,6 +1606,17 @@ async function escalateStalePendingValidation(): Promise<void> {
   const human = await prisma.user.findFirst({ select: { id: true } }).catch(() => null)
 
   for (const t of staleTasks) {
+    // BUG 2 fix: `pending_validation` is overloaded — plan-approval, budget-pause,
+    // and QA-review completion all use this status. Only plan-approval waits
+    // should be escalated here; the other two are not "waiting for plan approval"
+    // and must not be mislabeled as such.
+    const tMeta = (t.metadata as Record<string, unknown> | null) ?? {}
+    if (tMeta.pendingReason !== 'plan_approval') continue
+    // Already escalated once — don't re-escalate every cycle forever (the
+    // escalation write itself bumps updatedAt, which would otherwise make this
+    // task match the staleness query again on the next run).
+    if (tMeta.approvalEscalatedAt) continue
+
     const waitMins = Math.round((Date.now() - t.updatedAt.getTime()) / 60_000)
     const msg = `⏰ **Approval timeout**: Task **${t.title}** has been waiting for plan approval for ${waitMins} minutes. Escalating for human review.`
     log(`Escalating stale pending_validation task ${t.id} (${waitMins}m)`)
