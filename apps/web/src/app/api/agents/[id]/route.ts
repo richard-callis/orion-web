@@ -66,8 +66,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (validatedData.name        !== undefined) data.name        = validatedData.name
   if (validatedData.type        !== undefined) data.type        = validatedData.type
   if (validatedData.role        !== undefined) data.role        = validatedData.role
-  if (validatedData.tokenBudgetDay   !== undefined) data.tokenBudgetDay   = validatedData.tokenBudgetDay
-  if (validatedData.tokenBudgetMonth !== undefined) data.tokenBudgetMonth = validatedData.tokenBudgetMonth
+  // SOC2: Only admins may change token budgets — a non-admin creator must not be able
+  // to self-escalate past admin-set cost controls on an agent they created. Silently
+  // strip these fields for non-admin callers rather than erroring, consistent with how
+  // other partial-update routes ignore fields the caller isn't authorized to change.
+  if (validatedData.tokenBudgetDay !== undefined && caller.role === 'admin') {
+    data.tokenBudgetDay = validatedData.tokenBudgetDay
+  }
+  if (validatedData.tokenBudgetMonth !== undefined && caller.role === 'admin') {
+    data.tokenBudgetMonth = validatedData.tokenBudgetMonth
+  }
   if (validatedData.metadata !== undefined) {
     // Deep merge metadata so callers can update contextConfig without wiping systemPrompt
     const existingMeta = (existing?.metadata ?? {}) as Record<string, unknown>

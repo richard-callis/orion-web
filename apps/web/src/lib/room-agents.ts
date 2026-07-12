@@ -24,6 +24,7 @@ import { resolveAgentGateway } from './agent-gateway'
 import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, invalidateSnapshotCache, getModelContextLimit, getClaudeContextLimit } from './agent-context'
 import { compactRoom, publishCompactionWarning, publishTokenUpdate } from './compaction'
 import { recordTokenUsage } from './token-budget'
+import { rateLimitRedis } from './rate-limit-redis'
 import { auditToolCall } from './security/audit-emitter'
 import { redactSecrets } from './redact'
 import { getPrompt } from './system-prompts'
@@ -714,22 +715,24 @@ export async function triggerRoomAgentReplies(
   triggerContent: string,
   chainDepth = 0,
 ): Promise<void> {
-  // Chain depth guard — stop before agents can loop indefinitely
-  if (chainDepth > MAX_CHAIN_DEPTH) {
+  // Chain depth guard — stop before agents can loop indefinitely.
+  // MAX_CHAIN_DEPTH=4 is documented as "max 4 hops"; chainDepth starts at 0 and
+  // increments once per chained call, so depth values 0..3 are the 4 permitted
+  // hops and depth 4 must be rejected (>= not >, which previously allowed a 5th).
+  if (chainDepth >= MAX_CHAIN_DEPTH) {
     console.warn(`[room-agents] room ${roomId} hit MAX_CHAIN_DEPTH (${MAX_CHAIN_DEPTH}) — stopping chain`)
     return
   }
 
-  // Runaway loop guard — count agent messages in this room in the last minute
-  const recentAgentCount = await prisma.chatMessage.count({
-    where: {
-      roomId,
-      senderType: 'agent',
-      createdAt: { gte: new Date(Date.now() - 60_000) },
-    },
-  })
-  if (recentAgentCount >= MAX_AGENT_MESSAGES_PER_MINUTE) {
-    console.warn(`[room-agents] room ${roomId} hit rate limit (${recentAgentCount} agent msgs/min) — stopping chain`)
+  // Runaway loop guard — atomic Redis-backed sliding window counter shared across
+  // concurrent invocations of this function for the same room. A plain read-then-write
+  // count (prisma.chatMessage.count followed later by more writes) lets N concurrent
+  // trigger chains each observe "under the limit" and collectively blow past it once
+  // all their writes land. rateLimitRedis's Lua script does the check-and-increment
+  // atomically (falls back to an in-memory limiter if Redis is unavailable).
+  const roomRateLimit = await rateLimitRedis(`room-agent-replies:${roomId}`, MAX_AGENT_MESSAGES_PER_MINUTE, 60_000)
+  if (!roomRateLimit.allowed) {
+    console.warn(`[room-agents] room ${roomId} hit rate limit (${MAX_AGENT_MESSAGES_PER_MINUTE}/min) — stopping chain`)
     return
   }
   const room = await prisma.chatRoom.findUnique({
@@ -850,6 +853,11 @@ export async function triggerRoomAgentReplies(
   // Once compaction fires for this room in this turn, skip token writes for subsequent agents
   // (their prompt_tokens reflect pre-compaction context and would re-trigger the threshold)
   let compactedThisTurn = false
+
+  // Persist-default-limit is a one-time write per invocation. Tracked locally (rather than
+  // re-checking the `room` object fetched once at function entry) so it only fires once even
+  // though this flows through a loop over triggeredAgents that can run multiple iterations.
+  let tokenLimitPersisted = room?.tokenLimit !== null
 
   let lastSavedReply: string | null = null
 
@@ -1099,16 +1107,33 @@ export async function triggerRoomAgentReplies(
       }
 
       if (tokensUsed > 0 && !compactedThisTurn) {
+        // Fix: tokenCount is a denormalized field written by fire-and-forget concurrent
+        // invocations of this function (two humans posting at once). A blind `update`
+        // is last-writer-wins — a stale, smaller pre-compaction value from a slower
+        // invocation can overwrite a fresher post-compaction 0, causing spurious
+        // re-compaction. Guard the write with a conditional `updateMany` keyed on the
+        // tokenCount we last observed: it only succeeds if nobody else has written to
+        // the room since we read it. If it fails (count === 0), another invocation won
+        // the race — skip this write rather than clobbering it.
+        const previousTokenCount = currentTokenCount
         currentTokenCount = tokensUsed  // prompt_tokens is cumulative context size for this turn
-        await prisma.chatRoom.update({
-          where: { id: roomId },
+        const shouldPersistLimit = !tokenLimitPersisted && roomEffectiveLimit > 0
+        const tokenWrite = await prisma.chatRoom.updateMany({
+          where: { id: roomId, tokenCount: previousTokenCount },
           data: {
             tokenCount: currentTokenCount,
             updatedAt: new Date(),
-            // Persist effective limit on first use so the GET route can return it immediately
-            ...(room?.tokenLimit === null && roomEffectiveLimit > 0 ? { tokenLimit: roomEffectiveLimit } : {}),
+            // Persist effective limit on first use so the GET route can return it immediately.
+            // Tracked via the local `tokenLimitPersisted` flag so it fires once per invocation,
+            // not once per agent in the triggeredAgents loop.
+            ...(shouldPersistLimit ? { tokenLimit: roomEffectiveLimit } : {}),
           },
         })
+        if (tokenWrite.count === 0) {
+          console.warn(`[room-agents] room ${roomId}: tokenCount changed concurrently (expected ${previousTokenCount}) — skipping stale write`)
+        } else if (shouldPersistLimit) {
+          tokenLimitPersisted = true
+        }
         if (roomEffectiveLimit > 0) {
           const pct = currentTokenCount / roomEffectiveLimit
           console.log(`[room-agents] room ${roomId}: ${currentTokenCount}/${roomEffectiveLimit} tokens (${Math.round(pct * 100)}%)`)
@@ -1116,10 +1141,13 @@ export async function triggerRoomAgentReplies(
             console.warn(`[room-agents] room ${roomId}: context at ${Math.round(pct * 100)}% — auto-compacting`)
             try {
               await compactRoom(roomId)
+              const preCompactionTokenCount = currentTokenCount
               currentTokenCount = 0
               compactedThisTurn = true
-              await prisma.chatRoom.update({
-                where: { id: roomId },
+              // Same optimistic-concurrency guard: only reset to 0 if the row still
+              // holds the value we just wrote above.
+              await prisma.chatRoom.updateMany({
+                where: { id: roomId, tokenCount: preCompactionTokenCount },
                 data: { tokenCount: 0, updatedAt: new Date() },
               })
             } catch (err) {

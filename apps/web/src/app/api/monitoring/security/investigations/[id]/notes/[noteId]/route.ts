@@ -7,7 +7,7 @@ import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { z } from 'zod'
-import { recordAudit, updateSearchVector } from '../../../_utils'
+import { recordAudit, updateSearchVector, resolveActor } from '../../../_utils'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,7 +17,8 @@ const updateSchema = z.object({
 })
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string; noteId: string }> }) {
-  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  let actor: import('../../../_utils').ResolvedActor
+  try { actor = await resolveActor(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
   const { id, noteId } = await params
   const raw = await req.json()
@@ -32,8 +33,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
 
   // Warden cannot edit human-authored notes
-  const actor = (raw as any)._actor ?? 'admin'
-  if (actor === 'warden' && note.authorType === 'human') {
+  if (actor.isWarden && note.authorType === 'human') {
     return NextResponse.json({ error: 'Warden cannot edit human-authored notes' }, { status: 403 })
   }
 
@@ -48,7 +48,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     await updateSearchVector(noteId, body.data.content)
   }
 
-  await recordAudit(id, actor, actor === 'warden' ? 'warden' : 'human', 'note_added', before, updated)
+  await recordAudit(id, actor.id, actor.isWarden ? 'warden' : 'human', 'note_added', before, updated)
 
   return NextResponse.json(updated)
 }
