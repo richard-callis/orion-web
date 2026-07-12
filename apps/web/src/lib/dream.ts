@@ -145,14 +145,26 @@ async function getDreamAgentId(): Promise<string | null> {
   return _dreamAgentIdCache
 }
 
+// One-time-per-process warning so a fresh install (or a worker process that
+// never calls ensureSystemAgents()) doesn't silently drop Dream token
+// accounting forever without any log signal.
+let _dreamAgentMissingWarnedOnce = false
+
 async function recordDreamUsage(inputTokens: number, outputTokens: number, modelId: string): Promise<void> {
   try {
     const dreamAgentId = await getDreamAgentId()
-    if (!dreamAgentId) return
+    if (!dreamAgentId) {
+      if (!_dreamAgentMissingWarnedOnce) {
+        console.warn('[dream] Dream agent not found — token usage not recorded. Ensure ensureSystemAgents() has run.')
+        _dreamAgentMissingWarnedOnce = true
+      }
+      return
+    }
     const { recordTokenUsage } = await import('./token-budget')
     await recordTokenUsage(dreamAgentId, null, inputTokens, outputTokens, modelId)
   } catch (err) {
     console.error('[dream] Failed to record token usage:', err)
+    _dreamAgentIdCache = null  // retry lookup next time — agent may have been renamed/recreated
   }
 }
 
@@ -357,7 +369,7 @@ If nothing is worth remembering, return an empty array: []`
         })
       }
 
-      const embedded = await embedNote(note).catch(() => false)
+      const embedded = await embedNote(note, { attributeToDream: true }).catch(() => false)
       if (embedded) await computeSemanticEdges(note.id).catch(() => {})
       written++
     } catch (e) {
@@ -456,7 +468,7 @@ If no hubs are missing, return an empty array: []`
           where: { id: existing.id },
           data: { content: hub.content.trim(), updatedAt: new Date() },
         })
-        const embedded = await embedNote(note).catch(() => false)
+        const embedded = await embedNote(note, { attributeToDream: true }).catch(() => false)
         if (embedded) await computeSemanticEdges(note.id).catch(() => {})
       } else {
         const dreamTags = Array.from(new Set(['dream', 'hub', ...(hub.tags ?? [])]))
@@ -469,7 +481,7 @@ If no hubs are missing, return an empty array: []`
             tags:    dreamTags as any,
           },
         })
-        const embedded = await embedNote(note).catch(() => false)
+        const embedded = await embedNote(note, { attributeToDream: true }).catch(() => false)
         if (embedded) await computeSemanticEdges(note.id).catch(() => {})
       }
       written++
