@@ -7,7 +7,7 @@ import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { z } from 'zod'
-import { recordAudit } from '../../../_utils'
+import { recordAudit, resolveActor } from '../../../_utils'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,7 +20,8 @@ const updateSchema = z.object({
 })
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string; obsId: string }> }) {
-  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  let actor: import('../../../_utils').ResolvedActor
+  try { actor = await resolveActor(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
   const { id, obsId } = await params
   const raw = await req.json()
@@ -29,8 +30,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: body.error.errors }, { status: 400 })
   }
 
-  const actor = raw._actor ?? 'admin'
-
   const observable = await prisma.investigationObservable.findUnique({ where: { id: obsId } })
   if (!observable || observable.investigationId !== id) {
     return NextResponse.json({ error: 'Observable not found' }, { status: 404 })
@@ -38,7 +37,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   // Warden constraint: cannot set malicious with confidence < 80
   if (
-    actor === 'warden' &&
+    actor.isWarden &&
     body.data.verdict === 'malicious' &&
     (body.data.confidence ?? observable.confidence) < 80
   ) {
@@ -53,12 +52,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     where: { id: obsId },
     data: {
       ...body.data,
-      verdictBy: body.data.verdict ? actor : undefined,
+      verdictBy: body.data.verdict ? actor.id : undefined,
       verdictAt: body.data.verdict ? new Date() : undefined,
     },
   })
 
-  await recordAudit(id, actor, actor === 'warden' ? 'warden' : 'human',
+  await recordAudit(id, actor.id, actor.isWarden ? 'warden' : 'human',
     'observable_added', before, updated)
 
   if (body.data.verdict) {
@@ -67,7 +66,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         investigationId: id, eventTime: new Date(),
         eventType: 'observable_verdict_set',
         title: `Verdict: ${observable.value} → ${body.data.verdict}`,
-        source: actor === 'warden' ? 'warden' : 'manual',
+        source: actor.isWarden ? 'warden' : 'manual',
       },
     })
   }
