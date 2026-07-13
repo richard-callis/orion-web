@@ -42,8 +42,7 @@ export async function POST(req: NextRequest) {
   // Token transport: x-mcp-token header (preferred) or Authorization: Bearer <token>
   const bearer =
     req.headers.get('x-mcp-token') ??
-    (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '') ||
-    null
+    ((req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '') || null)
 
   if (!bearer) {
     return NextResponse.json(
