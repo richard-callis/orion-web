@@ -54,6 +54,64 @@ export async function releaseBudgetLock(agentId: string, token: string): Promise
   await redis.eval(lua, 1, key, token)
 }
 
+// ─── In-flight budget reservations (TOCTOU fix) ────────────────────────────────
+// SOC2: [H-TOCTOU] The budget lock only serializes the *check*, not the *write* —
+// recordTokenUsage() (the real spend write) doesn't happen until task completion,
+// up to TASK_TIMEOUT_MS later. Without a reservation, N concurrent tasks for the
+// same agent could all pass checkAgentBudget() against the same stale total
+// before any of them records spend. To close this window, checkAgentBudget()
+// passing immediately reserves an estimated token count in Redis (INCRBY with a
+// TTL matching the max task duration) and includes any outstanding reservation
+// in its sum. The reservation is released when the task completes/fails and the
+// real usage is recorded (see releaseBudgetReservation in worker.ts's finally).
+
+// Matches worker.ts TASK_TIMEOUT_MS (60 min) — a reservation should never outlive
+// the longest a task run is allowed to take, so a crashed worker's reservation
+// self-expires instead of permanently blocking the agent's budget.
+const RESERVATION_TTL_SEC = 60 * 60
+
+// Conservative estimate of tokens a single task run might consume, used only to
+// hold budget headroom between the check and the real spend write. Overridable
+// via env for deployments with very large/small typical task token usage.
+const DEFAULT_RESERVATION_TOKENS =
+  parseInt(process.env.BUDGET_RESERVATION_ESTIMATE_TOKENS ?? '', 10) || 50_000
+
+function inflightKey(agentId: string): string {
+  return `agent:${agentId}:budget:inflight`
+}
+
+/**
+ * SOC2: [H-TOCTOU] Reserve an estimated token count for an in-flight task run.
+ * Call immediately after checkAgentBudget() returns allowed:true, while still
+ * holding the per-agent budget lock. Returns the amount reserved (0 if Redis is
+ * unavailable — fail-open, consistent with acquireBudgetLock's fail-open policy).
+ */
+export async function reserveBudgetTokens(
+  agentId: string,
+  estimatedTokens: number = DEFAULT_RESERVATION_TOKENS,
+): Promise<number> {
+  const redis = await getBudgetRedis()
+  if (!redis) return 0
+  const key = inflightKey(agentId)
+  await redis.incrby(key, estimatedTokens)
+  await redis.expire(key, RESERVATION_TTL_SEC)
+  return estimatedTokens
+}
+
+/**
+ * SOC2: [H-TOCTOU] Release a previously-made reservation once the task's real
+ * usage has been (or is about to be) recorded via recordTokenUsage(). Safe to
+ * call with amount 0 (no-op).
+ */
+export async function releaseBudgetReservation(agentId: string, amount: number): Promise<void> {
+  if (!amount) return
+  const redis = await getBudgetRedis()
+  if (!redis) return
+  const key = inflightKey(agentId)
+  const remaining = await redis.decrby(key, amount)
+  if (remaining <= 0) await redis.del(key).catch(() => {})
+}
+
 /**
  * Check whether an agent is within its token budget (daily and monthly).
  *
@@ -90,6 +148,13 @@ export async function checkAgentBudget(
     return { allowed: true }
   }
 
+  const redis = await getBudgetRedis()
+  const inflightRaw = redis ? await redis.get(inflightKey(agentId)).catch(() => null) : null
+  // SOC2: [H-TOCTOU] Include any outstanding in-flight reservation (tasks that
+  // passed this check but haven't recorded real spend yet) in both sums so a
+  // burst of concurrent task starts can't all pass against the same stale total.
+  const inflight = inflightRaw ? parseInt(inflightRaw, 10) || 0 : 0
+
   const [dayAgg, monthAgg] = await Promise.all([
     agent.tokenBudgetDay != null
       ? prisma.agentTokenUsage.aggregate({
@@ -106,7 +171,7 @@ export async function checkAgentBudget(
   ])
 
   if (dayAgg && agent.tokenBudgetDay != null) {
-    const used = (dayAgg._sum.inputTokens ?? 0) + (dayAgg._sum.outputTokens ?? 0)
+    const used = (dayAgg._sum.inputTokens ?? 0) + (dayAgg._sum.outputTokens ?? 0) + inflight
     if (used >= agent.tokenBudgetDay) {
       return {
         allowed: false,
@@ -116,7 +181,7 @@ export async function checkAgentBudget(
   }
 
   if (monthAgg && agent.tokenBudgetMonth != null) {
-    const used = (monthAgg._sum.inputTokens ?? 0) + (monthAgg._sum.outputTokens ?? 0)
+    const used = (monthAgg._sum.inputTokens ?? 0) + (monthAgg._sum.outputTokens ?? 0) + inflight
     if (used >= agent.tokenBudgetMonth) {
       return {
         allowed: false,

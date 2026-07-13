@@ -33,6 +33,9 @@ export interface GitPR {
   headBranch: string
   baseBranch: string
   merged: boolean
+  // Actual merge timestamp reported by the provider, when available. May be
+  // undefined for providers/PRs that don't expose it (e.g. not yet merged).
+  mergedAt?: string
 }
 
 export interface EnsureRepoOptions {

@@ -194,7 +194,7 @@ async function handleListAgents(args: unknown, ctx: ToolExecutionContext): Promi
   const { include_archived } = parseArgs(args) as { include_archived?: boolean }
   const agents = await ctx.prisma.agent.findMany({
     orderBy: { name: 'asc' },
-    include: { tasks: { where: { status: { in: ['running', 'pending_validation'] } }, select: { id: true }, take: 1 } },
+    include: { tasks: { where: { status: { in: ['in_progress', 'pending_validation'] } }, select: { id: true }, take: 1 } },
   })
   const filtered = include_archived
     ? agents
@@ -228,7 +228,7 @@ async function handleListTasks(args: unknown, ctx: ToolExecutionContext): Promis
   }
   const statuses = status
     ? (Array.isArray(status) ? status : [status])
-    : ['pending', 'running', 'failed']
+    : ['pending', 'in_progress', 'failed']
   const sinceDate = since ? new Date(since) : undefined
   const tasks = await ctx.prisma.task.findMany({
     where: {
@@ -758,7 +758,7 @@ async function handleCreateTask(args: unknown, ctx: ToolExecutionContext): Promi
     const existing = await ctx.prisma.task.findFirst({
       where: {
         featureId,
-        status:   { in: ['pending', 'running', 'pending_validation'] },
+        status:   { in: ['pending', 'in_progress', 'pending_validation'] },
         metadata: { path: ['dedup_key'], equals: dedup_key.trim() },
       },
       select: { id: true, title: true },
@@ -1489,7 +1489,7 @@ registerTool({
   inputSchema: {
     type: 'object',
     properties: {
-      status:          { type: 'string',  description: 'Filter by status: pending, running, pending_validation, done, failed. Defaults to pending+running+failed. Use "pending_validation" to find tasks awaiting Veritas review.' },
+      status:          { type: 'string',  description: 'Filter by status: pending, in_progress, pending_validation, done, failed. Defaults to pending+in_progress+failed. Use "pending_validation" to find tasks awaiting Veritas review.' },
       unassigned_only: { type: 'boolean', description: 'Only return tasks with no agent or user assigned (default false)' },
       assigned_agent_id: { type: 'string', description: 'Filter to tasks assigned to a specific agent ID' },
       since:           { type: 'string',  description: 'ISO 8601 timestamp — only return tasks created or updated after this date. Use this to fetch only new work since your last review.' },
@@ -1760,7 +1760,7 @@ registerTool({
       },
       dedup_key: {
         type: 'string',
-        description: 'Optional deduplication key. If an open task (pending/running/pending_validation) with this exact key already exists under the same feature, creation is skipped and the existing task is returned. Use a stable identifier like "pulse:host:vault-proxy" or "pulse:node:talos-rpi2".',
+        description: 'Optional deduplication key. If an open task (pending/in_progress/pending_validation) with this exact key already exists under the same feature, creation is skipped and the existing task is returned. Use a stable identifier like "pulse:host:vault-proxy" or "pulse:node:talos-rpi2".',
       },
       depends_on: {
         type: 'array',

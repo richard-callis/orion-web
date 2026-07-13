@@ -6,10 +6,10 @@
  */
 
 import { NextResponse } from 'next/server'
-import { requireAdmin, requireAuth } from '@/lib/auth'
+import { requireAuth } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { z } from 'zod'
-import { recordAudit } from '../../_utils'
+import { recordAudit, resolveActor } from '../../_utils'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,7 +43,8 @@ const createSchema = z.object({
 })
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  let actor: import('../../_utils').ResolvedActor
+  try { actor = await resolveActor(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
   const id = (await params).id
   const body = createSchema.safeParse(await req.json())
@@ -52,10 +53,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const { value, displayValue, category, role, verdict, confidence, severity, context } = body.data
-  const actor = (body.data as any)._actor ?? 'admin'
 
   // Warden cannot set malicious verdict with confidence < 80
-  if (actor === 'warden' && verdict === 'malicious' && confidence < 80) {
+  if (actor.isWarden && verdict === 'malicious' && confidence < 80) {
     return NextResponse.json(
       { error: 'Warden requires confidence >= 80 to set malicious verdict' },
       { status: 403 },
@@ -74,7 +74,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       value,
       displayValue: displayValue ?? value,
       category, role, verdict, confidence, severity, context,
-      verdictBy: verdict !== 'unknown' ? actor : undefined,
+      verdictBy: verdict !== 'unknown' ? actor.id : undefined,
       verdictAt: verdict !== 'unknown' ? new Date() : undefined,
     },
     update: {
@@ -84,7 +84,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     },
   })
 
-  await recordAudit(id, actor, actor === 'warden' ? 'warden' : 'human', 'observable_added',
+  await recordAudit(id, actor.id, actor.isWarden ? 'warden' : 'human', 'observable_added',
     undefined, { observableId: observable.id })
 
   await prisma.investigationTimeline.create({
@@ -92,7 +92,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       investigationId: id, eventTime: new Date(),
       eventType: 'observable_added',
       title: `Observable added: ${value}`,
-      source: actor === 'warden' ? 'warden' : 'manual',
+      source: actor.isWarden ? 'warden' : 'manual',
     },
   })
 

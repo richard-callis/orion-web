@@ -348,7 +348,12 @@ export async function middleware(req: NextRequest) {
     // access; only human sessions should create tasks via the API.
     const isTasksCreate    = req.method === 'POST' && pathname === '/api/tasks'
     const isTasksDelete    = req.method === 'DELETE' && pathname.startsWith('/api/tasks')
-    if (isNotesDelete || isBugsMutate || isAdminAny || isTasksCreate || isTasksDelete) {
+    // Gateway must not create or modify agents — agent config includes token budgets,
+    // which are admin-controlled cost guardrails. A leaked gateway token must not be
+    // able to create arbitrary agents or rewrite an existing agent's config/budget.
+    // GET (read) is intentionally left allowed, matching how other resources are handled.
+    const isAgentsMutate   = ['POST','PUT','PATCH'].includes(req.method) && pathname.startsWith('/api/agents')
+    if (isNotesDelete || isBugsMutate || isAdminAny || isTasksCreate || isTasksDelete || isAgentsMutate) {
       // fall through to session auth — gateway token is not sufficient
     } else {
       return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)

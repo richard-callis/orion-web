@@ -5,10 +5,9 @@
  */
 
 import { NextResponse } from 'next/server'
-import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { z } from 'zod'
-import { recordAudit } from '../../_utils'
+import { recordAudit, resolveActor } from '../../_utils'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,7 +22,8 @@ const createSchema = z.object({
 })
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  let actor: import('../../_utils').ResolvedActor
+  try { actor = await resolveActor(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
   const id = (await params).id
   const body = createSchema.safeParse(await req.json())
@@ -45,8 +45,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     },
   })
 
-  const actor = body.data.source === 'warden' ? 'warden' : 'admin'
-  await recordAudit(id, actor, body.data.source, 'action_taken',
+  await recordAudit(id, actor.id, actor.isWarden ? 'warden' : 'human', 'action_taken',
     undefined, { timelineId: entry.id })
 
   return NextResponse.json(entry, { status: 201 })

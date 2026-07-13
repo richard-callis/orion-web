@@ -10,7 +10,7 @@ import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { z } from 'zod'
-import { recordAudit } from '../_utils'
+import { recordAudit, resolveActor } from '../_utils'
 
 export const dynamic = 'force-dynamic'
 
@@ -76,7 +76,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  try { await requireAdmin() } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  let actor: import('../_utils').ResolvedActor
+  try { actor = await resolveActor(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
 
   const id = (await params).id
   const raw = await req.json()
@@ -90,8 +91,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: 'Investigation not found' }, { status: 404 })
   }
 
-  const actor = raw._actor ?? 'admin'
-  let data = applyWardenConstraints(actor, parsed.data)
+  let data = applyWardenConstraints(actor.isWarden ? 'warden' : actor.id, parsed.data)
 
   // Set resolvedAt/closedAt on status transition
   if (data.status === 'resolved' && !existing.resolvedAt) {
@@ -107,7 +107,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     data,
   })
 
-  await recordAudit(id, actor, 'human', 'status_changed', before, updated)
+  await recordAudit(id, actor.id, actor.isWarden ? 'warden' : 'human', 'status_changed', before, updated)
 
   // Timeline entry
   if (data.status) {
@@ -116,7 +116,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         investigationId: id, eventTime: new Date(),
         eventType: 'status_changed',
         title: `Status: ${existing.status} → ${data.status}`,
-        source: actor === 'warden' ? 'warden' : 'manual',
+        source: actor.isWarden ? 'warden' : 'manual',
       },
     })
   }

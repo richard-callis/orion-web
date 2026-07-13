@@ -89,7 +89,7 @@ export async function generateEmbedding(
       usage?: { prompt_tokens?: number; total_tokens?: number }
     }
     if (attributeToDream) {
-      const inputTokens = data.usage?.prompt_tokens ?? data.usage?.total_tokens ?? Math.ceil(text.length / 4)
+      const inputTokens = data.usage?.prompt_tokens ?? data.usage?.total_tokens ?? Math.ceil(Math.min(text.length, 8191) / 4)
       await recordDreamEmbeddingUsage(inputTokens, provider.modelId)
     }
     return { vector: data.data[0].embedding, modelRef: provider.modelId }
@@ -129,15 +129,27 @@ async function getDreamAgentId(): Promise<string | null> {
   return _dreamAgentIdCache
 }
 
+// One-time-per-process warning so a fresh install (or a worker process that
+// never calls ensureSystemAgents()) doesn't silently drop Dream token
+// accounting forever without any log signal.
+let _dreamAgentMissingWarnedOnce = false
+
 async function recordDreamEmbeddingUsage(inputTokens: number, modelId: string): Promise<void> {
   try {
     const dreamAgentId = await getDreamAgentId()
-    if (!dreamAgentId) return
+    if (!dreamAgentId) {
+      if (!_dreamAgentMissingWarnedOnce) {
+        console.warn('[dream] Dream agent not found — embedding token usage not recorded. Ensure ensureSystemAgents() has run.')
+        _dreamAgentMissingWarnedOnce = true
+      }
+      return
+    }
     const { recordTokenUsage } = await import('./token-budget')
     // Embeddings have no output tokens.
     await recordTokenUsage(dreamAgentId, null, inputTokens, 0, modelId)
   } catch (err) {
     console.error('[dream] Failed to record embedding token usage:', err)
+    _dreamAgentIdCache = null  // retry lookup next time — agent may have been renamed/recreated
   }
 }
 
@@ -180,15 +192,18 @@ export async function storeEmbedding(
  * Embed a single note: build text → generate embedding → store.
  * Returns true if embedding was generated successfully.
  */
-export async function embedNote(note: {
-  id: string
-  title: string
-  content: string
-}): Promise<boolean> {
+export async function embedNote(
+  note: {
+    id: string
+    title: string
+    content: string
+  },
+  options?: { attributeToDream?: boolean },
+): Promise<boolean> {
   const text = buildEmbeddingText(note)
   if (!text.trim()) return false
 
-  const result = await generateEmbedding(text, true)
+  const result = await generateEmbedding(text, options?.attributeToDream ?? false)
   if (!result) return false
 
   await storeEmbedding(note.id, result.vector, result.modelRef)
@@ -197,6 +212,9 @@ export async function embedNote(note: {
 
 /**
  * Embed ALL notes. For initial backfill or re-embedding after a model change.
+ * This is a manual backfill triggered by a human (or a one-off migration), not
+ * part of Dream's own scheduled extraction/synthesis/pruning cycle — so it is
+ * NOT attributed to Dream's token budget.
  */
 export async function embedAllNotes(): Promise<{ embedded: number; failed: number }> {
   const notes = await prisma.note.findMany({

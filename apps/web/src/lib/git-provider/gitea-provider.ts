@@ -334,6 +334,7 @@ interface GiteaPR {
   body: string
   state: 'open' | 'closed'
   merged: boolean
+  merged_at?: string | null
   html_url: string
   head: { ref: string }
   base: { ref: string }
@@ -365,6 +366,7 @@ function toGitPR(p: GiteaPR, internalUrl?: string, publicUrl?: string): GitPR {
     headBranch: p.head.ref,
     baseBranch: p.base.ref,
     merged: p.merged,
+    mergedAt: p.merged_at ?? undefined,
   }
 }
 

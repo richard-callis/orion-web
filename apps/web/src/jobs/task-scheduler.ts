@@ -43,19 +43,24 @@ export async function runScheduler(): Promise<void> {
         try { taskData.metadata = JSON.parse(schedule.taskMeta) } catch { /* ignore */ }
       }
 
-      const task = await prisma.task.create({ data: taskData })
-
       // Compute next run time
       const computedNextRun = nextRun(schedule.cronExpr, now)
 
-      // Update the schedule record
-      await prisma.scheduledTask.update({
-        where: { id: schedule.id },
-        data: {
-          lastRunAt:  now,
-          lastTaskId: task.id,
-          nextRunAt:  computedNextRun,
-        },
+      // Create the task and advance the schedule atomically so a crash
+      // between the two writes can never cause a duplicate spawn on restart.
+      const task = await prisma.$transaction(async (tx) => {
+        const created = await tx.task.create({ data: taskData })
+
+        await tx.scheduledTask.update({
+          where: { id: schedule.id },
+          data: {
+            lastRunAt:  now,
+            lastTaskId: created.id,
+            nextRunAt:  computedNextRun,
+          },
+        })
+
+        return created
       })
 
       log(`Spawned task "${task.id}" for schedule "${schedule.name}" (agent: ${schedule.agent.name}), next run: ${computedNextRun.toISOString()}`)

@@ -291,6 +291,7 @@ interface GHPR {
   body: string
   state: 'open' | 'closed'
   merged: boolean
+  merged_at?: string | null
   html_url: string
   head: { ref: string }
   base: { ref: string }
@@ -316,6 +317,7 @@ function toGitPR(p: GHPR): GitPR {
     headBranch: p.head.ref,
     baseBranch: p.base.ref,
     merged: p.merged,
+    mergedAt: p.merged_at ?? undefined,
   }
 }
 
