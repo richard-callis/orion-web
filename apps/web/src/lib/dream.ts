@@ -55,6 +55,7 @@ interface LLMCallResult {
   text: string
   inputTokens: number
   outputTokens: number
+  reasoning?: string
 }
 
 // Length-based fallback estimate for providers/paths that don't report usage.
@@ -125,13 +126,14 @@ async function callWithModel(modelId: string, prompt: string): Promise<LLMCallRe
   })
   if (!res.ok) throw new Error(`External model HTTP ${res.status}`)
   const data = await res.json() as {
-    choices?: Array<{ message: { content: string } }>
+    choices?: Array<{ message: { content: string; reasoning_content?: string } }>
     usage?: { prompt_tokens?: number; completion_tokens?: number }
   }
   const text = data.choices?.[0]?.message?.content?.trim() ?? ''
+  const reasoning = data.choices?.[0]?.message?.reasoning_content?.trim() || undefined
   const inputTokens  = data.usage?.prompt_tokens     ?? estimateTokens(prompt)
   const outputTokens = data.usage?.completion_tokens ?? estimateTokens(text)
-  return { text, inputTokens, outputTokens }
+  return { text, inputTokens, outputTokens, reasoning }
 }
 
 // Cache only positive hits — a miss (e.g. queried before ensureSystemAgents()
@@ -168,13 +170,19 @@ async function recordDreamUsage(inputTokens: number, outputTokens: number, model
   }
 }
 
-async function callLLM(prompt: string): Promise<string> {
+interface DreamLLMResult {
+  text: string
+  reasoning?: string
+}
+
+async function callLLM(prompt: string, jobType: 'extraction' | 'synthesis' | 'pruning'): Promise<DreamLLMResult> {
   const modelId = await getDreamModelId()
 
   try {
     const result = await callWithModel(modelId, prompt)
     await recordDreamUsage(result.inputTokens, result.outputTokens, modelId)
-    return result.text
+    await recordDreamReasoning(jobType, result.reasoning)
+    return { text: result.text, reasoning: result.reasoning }
   } catch (primaryErr) {
     console.warn(`[dream] Model '${modelId}' failed (${primaryErr}), falling back to system default`)
 
@@ -185,7 +193,32 @@ async function callLLM(prompt: string): Promise<string> {
 
     const result = await callWithModel(defaultId, prompt)
     await recordDreamUsage(result.inputTokens, result.outputTokens, defaultId)
-    return result.text
+    await recordDreamReasoning(jobType, result.reasoning)
+    return { text: result.text, reasoning: result.reasoning }
+  }
+}
+
+// Persists the model's <think> trace (when the provider separates it out — see
+// --reasoning-format deepseek on the local llama-server) as AgentKnowledge so it
+// can later be used as reasoning-supervision data for LoRA training. Output-only
+// callers (extraction/synthesis/pruning results) are stored separately in Note —
+// this captures the process, not the product.
+async function recordDreamReasoning(jobType: string, reasoning: string | undefined): Promise<void> {
+  if (!reasoning) return
+  try {
+    const dreamAgentId = await getDreamAgentId()
+    if (!dreamAgentId) return
+    await prisma.agentKnowledge.create({
+      data: {
+        agentId: dreamAgentId,
+        title:   `${jobType} reasoning — ${new Date().toISOString()}`,
+        content: reasoning,
+        type:    'reasoning-trace',
+        tags:    [jobType, 'dream', 'reasoning-trace'] as any,
+      },
+    })
+  } catch (e) {
+    console.error('[dream] Failed to record reasoning trace:', e)
   }
 }
 
@@ -327,7 +360,7 @@ If nothing is worth remembering, return an empty array: []`
 
   let extracted: Array<{ title: string; content: string; folder: string; tags: string[] }> = []
   try {
-    const raw = await callLLM(extractionPrompt)
+    const raw = (await callLLM(extractionPrompt, 'extraction')).text
     const jsonMatch = raw.match(/\[[\s\S]*\]/)
     if (jsonMatch) extracted = JSON.parse(jsonMatch[0])
   } catch (e) {
@@ -442,7 +475,7 @@ If no hubs are missing, return an empty array: []`
 
   let hubs: Array<{ title: string; content: string; folder: string; tags: string[] }> = []
   try {
-    const raw = await callLLM(synthesisPrompt)
+    const raw = (await callLLM(synthesisPrompt, 'synthesis')).text
     const jsonMatch = raw.match(/\[[\s\S]*\]/)
     if (jsonMatch) hubs = JSON.parse(jsonMatch[0])
   } catch (e) {
@@ -566,7 +599,7 @@ Rules:
 - Never delete notes with folder "Success Patterns" unless the approach is now known to fail`
 
     try {
-      const raw = await callLLM(prunePrompt)
+      const raw = (await callLLM(prunePrompt, 'pruning')).text
       const jsonMatch = raw.match(/\{[\s\S]*\}/)
       if (!jsonMatch) continue
 
