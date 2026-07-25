@@ -4,6 +4,8 @@
 
 ORION is a self-hosted management platform that lives *outside* the infrastructure it controls. It bootstraps, manages, and automates Kubernetes clusters and Docker hosts through an AI-driven GitOps pipeline — and monitors them in real time through a built-in SIEM. When your cluster goes down, your management plane stays up.
 
+Part of the **Orion suite** — see [**Orion-nebula**](https://github.com/richard-callis/Orion-nebula), the suite's main repository, for the full picture and the other Orion applications.
+
 ---
 
 ## Screenshots
