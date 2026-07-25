@@ -791,7 +791,7 @@ model IngressMiddleware {
 // Each Nova is a self-contained definition that describes either:
 //   - An AI Agent (system prompt, tools, context)
 //   - A service to deploy to the cluster (Helm chart, manifests, config)
-// Novas can be bundled in source, loaded remotely from the orion-nub repo,
+// Novas can be bundled in source, loaded remotely from the Orion Nebula repo,
 // or created by users. They are "imported" to create instances.
 
 model Nova {

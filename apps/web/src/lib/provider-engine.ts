@@ -1,7 +1,7 @@
 /**
  * Dynamic provider deployment engine.
  *
- * Each nova (provider config) is loaded from bundled configs or the orion-nub repo.
+ * Each nova (provider config) is loaded from bundled configs or the Orion Nebula repo.
  * Falls back to bundled if the remote repo is unavailable.
  */
 
@@ -176,7 +176,16 @@ declare const process: { env: Record<string, string | undefined> }
 
 const REMOTE_MANIFEST_URL =
   typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_PROVIDER_MANIFEST_URL
-    || 'https://raw.githubusercontent.com/richard-callis/orion-nub/refs/heads/main/manifest.json'
+    || 'https://raw.githubusercontent.com/richard-callis/Orion-nebula/refs/heads/main/manifest.json'
+
+/**
+ * Resolve a manifest-relative path (e.g. `providers/authentik.json`) against the
+ * manifest URL, so pointing NEXT_PUBLIC_PROVIDER_MANIFEST_URL at a different
+ * catalog moves the provider configs with it.
+ */
+export function resolveFromManifest(path: string): string {
+  return new URL(path, REMOTE_MANIFEST_URL).toString()
+}
 
 let _remoteManifest: RemoteManifest | null = null
 let _remoteConfigs: Map<string, ProviderConfig> = new Map()
@@ -196,9 +205,9 @@ export async function loadRemoteManifest(): Promise<RemoteManifest | null> {
 export async function loadRemoteConfig(name: string): Promise<ProviderConfig | null> {
   if (_remoteConfigs.has(name)) return _remoteConfigs.get(name)!
   try {
-    const res = await fetch(
-      `https://raw.githubusercontent.com/richard-callis/orion-nub/refs/heads/main/providers/${name}.json`
-    )
+    const manifest = await loadRemoteManifest()
+    const entry = manifest?.providers?.find(p => p.name === name)
+    const res = await fetch(resolveFromManifest(entry?.url || `providers/${name}.json`))
     if (!res.ok) return null
     const config = await res.json()
     _remoteConfigs.set(name, config)

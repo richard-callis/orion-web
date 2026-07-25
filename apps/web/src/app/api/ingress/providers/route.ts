@@ -1,7 +1,7 @@
 /**
  * GET /api/ingress/providers
  *
- * Returns all available SSO provider nova configs — bundled + remote (orion-nub).
+ * Returns all available SSO provider nova configs — bundled + remote (Orion Nebula).
  * Used by the SSO bootstrap modal to dynamically populate the provider selector.
  */
 import { NextResponse } from 'next/server'

@@ -11,13 +11,17 @@ Ideas and architectural discussions deferred for a future session.
 ### The question
 System agents (Alpha, Validator, Planner, Environment SME, Pulse) are seeded via `seed-system-agents.ts` as Nova DB records with `source: 'bundled'`. They show up in the Nebula catalog. But there's no way to:
 1. **Sync a running agent back to its Nova's latest config** — the seed is create-only to preserve admin edits, so there's no "apply latest Nova" button.
-2. **Download them on a fresh install without shipping the code** — they're bundled in source, not published to `orion-nub`.
+2. **Download them on a fresh install without shipping the code** — they're bundled in source, not published to the remote catalog.
+
+> **Update (2026-07-25):** the remote catalog now lives in the `Orion-nebula` repo
+> (it replaced the never-published `orion-nub`, which 404'd). Anywhere this note
+> says `orion-nub`, read `Orion-nebula`.
 
 ### What was discussed
 Two approaches were considered:
 
-**Publish to `orion-nub` (remote catalog)**
-Add the system agent JSON configs to the remote `orion-nub` repo. Load them in `loadRemoteNovae()`. The Nebula UI would show a "Sync / Re-import" button that pushes the latest Nova config into the running agent (with an overwrite warning).
+**Publish to the remote catalog**
+Add the system agent JSON configs to the remote catalog repo. Load them in `loadRemoteNovae()`. The Nebula UI would show a "Sync / Re-import" button that pushes the latest Nova config into the running agent (with an overwrite warning).
 
 **"Sync from Nova" button in Nebula (bundled)**
 Keep the configs in `seed-system-agents.ts` but add a UI action in Nebula that re-applies the Nova's current `systemPrompt` / `contextConfig` to the linked agent — useful when you've updated the seed and redeployed but want to push the change to the live agent without a DB migration.

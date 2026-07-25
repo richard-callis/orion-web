@@ -7,11 +7,11 @@
  *
  * Sources (merged at runtime):
  *   1. Bundled — shipped in source (from provider-engine.ts BUNDLED_PROVIDERS)
- *   2. Remote — loaded from the orion-nub repo at build time
+ *   2. Remote — loaded from the Orion Nebula catalog at runtime
  *   3. User-created — stored in the database via /api/novas
  */
 
-import { ProviderConfig, BUNDLED_PROVIDERS, getProviderSync, getProvider } from './provider-engine'
+import { ProviderConfig, BUNDLED_PROVIDERS, getProviderSync, getProvider, resolveFromManifest } from './provider-engine'
 
 // ── Nova types ──────────────────────────────────────────────────────────────────
 
@@ -251,7 +251,7 @@ for (const [key, config] of Object.entries(BUNDLED_PROVIDERS)) {
 
 const REMOTE_MANIFEST_URL =
   typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_PROVIDER_MANIFEST_URL
-    || 'https://raw.githubusercontent.com/richard-callis/orion-nub/refs/heads/main/manifest.json'
+    || 'https://raw.githubusercontent.com/richard-callis/Orion-nebula/refs/heads/main/manifest.json'
 
 let _remoteNovae: Map<string, Nova> = new Map()
 
@@ -264,7 +264,7 @@ export async function loadRemoteNovae(): Promise<Map<string, Nova>> {
     for (const provider of manifest.providers) {
       try {
         const configRes = await fetch(
-          `https://raw.githubusercontent.com/richard-callis/orion-nub/refs/heads/main/providers/${provider.name}.json`
+          resolveFromManifest(provider.url || `providers/${provider.name}.json`)
         )
         if (!configRes.ok) continue
         const config = await configRes.json()
