@@ -13,6 +13,7 @@
 
 import { randomBytes } from 'crypto'
 import { prisma } from './db'
+import { ACCESS_ADMIN_GROUP_NAME } from './tool-registry'
 import { encrypt } from './encryption'
 
 // ── Nova + Agent definitions ──────────────────────────────────────────────────
@@ -97,9 +98,25 @@ When creating a new agent, follow these rules exactly:
 6. Always set contextConfig.llm — use the same model as existing specialist agents unless there is a specific reason not to.
 7. Always write a clear one-sentence description of what the agent does.
 
+## Tool Access Management
+
+You can see every tool group and agent group in the system, and manage which agent groups have access to which tool groups. You do this so specialists can actually get work done — you never call the underlying tools (kubectl_*, talosctl, or any other execution tool) yourself, only manage who is allowed to.
+
+- list_tool_groups — see every tool group, what tools it bundles, and which agent groups already have access
+- list_agent_groups — see every agent group, its members, and its tool group access
+- manage_tool_group_access — grant or revoke an agent group's access to a tool group
+- manage_agent_group_membership — add or remove an agent from an agent group
+
+When a specialist agent reports it cannot complete a task because it lacks a tool, don't just tell the human "someone needs to grant access" — check list_tool_groups and list_agent_groups yourself first. If the specialist's agent group already has access to the tool group that contains what it needs, the gap is elsewhere. If it does not, and the tool group already exists with the right tools, grant access directly with manage_tool_group_access — that's your job. Only escalate to a human if the tool itself doesn't exist yet (in which case the specialist should call propose_tool) or if granting access would be a genuinely consequential security decision.
+
+Grant the narrowest tool group that covers what the specialist actually needs — do not grant a broad group (e.g. one bundling an entire class of infrastructure tools) just because it happens to also contain the one tool that was asked for. If the only tool group containing what's needed is broader than the task calls for, say so and escalate to a human rather than granting it yourself.
+
+Never fabricate the name of a tool group, agent group, or environment. If you are not certain one exists, call list_tool_groups or list_agent_groups (or orion_get_environment) to check — do not guess or invent names in your response.
+
 ## Standing Rules
 - Never assign tasks to yourself
 - Never execute or write code — assign to an existing specialist agent instead
+- Never call a gateway/execution tool yourself (kubectl_*, talosctl, etc.) — only manage which agent group can call it, via manage_tool_group_access
 - Never delete agents — only archive
 - Never modify epics or features
 - Do not reassign tasks in pending_validation status — Veritas is reviewing them
@@ -997,6 +1014,30 @@ export async function ensureSystemAgents(): Promise<void> {
     }).catch(() => {})
 
     console.log(`[seed] AgentProfile: ${pd.agentName} → ${pd.domain}`)
+  }
+
+  // Seed the "Access Admins" agent group and ensure Alpha is a member — without
+  // this, requireAccessAdmin() in tool-registry.ts locks everyone (including
+  // Alpha) out of manage_tool_group_access / manage_agent_group_membership,
+  // since membership is what those tools gate on.
+  const accessAdminGroup = await prisma.agentGroup.upsert({
+    where:  { name: ACCESS_ADMIN_GROUP_NAME },
+    update: {},
+    create: {
+      name:        ACCESS_ADMIN_GROUP_NAME,
+      description: 'Agents allowed to grant/revoke tool-group access and agent-group membership. Coordinator-only — members must never call gateway execution tools themselves.',
+    },
+  }).catch(() => null)
+  if (accessAdminGroup) {
+    const alpha = await prisma.agent.findUnique({ where: { name: 'Alpha' }, select: { id: true } })
+    if (alpha) {
+      await prisma.agentGroupMember.upsert({
+        where:  { agentGroupId_agentId: { agentGroupId: accessAdminGroup.id, agentId: alpha.id } },
+        update: {},
+        create: { agentGroupId: accessAdminGroup.id, agentId: alpha.id },
+      }).catch(() => {})
+      console.log(`[seed] Access Admins: ensured Alpha is a member`)
+    }
   }
 
   // Backfill: ensure every agent in the DB has an mcpToken
