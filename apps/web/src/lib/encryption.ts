@@ -13,7 +13,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'crypto'
 const ALGORITHM = 'aes-256-gcm'
 const IV_BYTES   = 12   // 96-bit IV — GCM standard
 const TAG_BYTES  = 16
-const PREFIX     = 'enc:v1:'
+export const PREFIX = 'enc:v1:'
 
 function getKey(): Buffer {
   const raw = process.env.ORION_ENCRYPTION_KEY
