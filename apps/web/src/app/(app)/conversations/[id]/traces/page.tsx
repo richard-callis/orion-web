@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import {
   MessageSquare, Wrench, Bot, Play, RotateCcw, ChevronDown, ChevronUp,
-  Clock, Terminal, Sparkles,
+  Clock, Terminal, Sparkles, Eye, X, Copy, Check,
 } from 'lucide-react'
 
 interface TraceEntry {
@@ -21,6 +21,7 @@ interface TraceEntry {
   durationMs: number | null
   modelUsed: string | null
   systemPromptHash: string | null
+  fullContext: string | null
   tokensIn: number | null
   tokensOut: number | null
   costCents: number | null
@@ -83,6 +84,47 @@ function truncate(str: string | null, len: number = 200): string | null {
   return str.slice(0, len) + '...'
 }
 
+/** Modal that renders a trace's full assembled LLM context (system prompt + tools + history). */
+function FullContextModal({ context, onClose }: { context: string; onClose: () => void }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(context)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch { /* ignore */ }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="w-full max-w-3xl max-h-[85vh] bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+          <span className="text-sm font-semibold text-text-primary">Full Context Sent to LLM</span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleCopy}
+              className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
+              title="Copy to clipboard"
+            >
+              {copied ? <Check size={14} className="text-status-healthy" /> : <Copy size={14} />}
+            </button>
+            <button onClick={onClose} className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+        <pre className="flex-1 overflow-auto p-4 text-[11px] leading-relaxed text-text-secondary font-mono whitespace-pre-wrap">
+          {context}
+        </pre>
+      </div>
+    </div>
+  )
+}
+
 export default function TracesPage() {
   const { id } = useParams() as { id: string }
   const [traces, setTraces] = useState<TraceEntry[]>([])
@@ -91,6 +133,7 @@ export default function TracesPage() {
   const [filter, setFilter] = useState<string>('')
   const [totalCost, setTotalCost] = useState(0)
   const [totalTokens, setTotalTokens] = useState({ in: 0, out: 0 })
+  const [viewingContext, setViewingContext] = useState<string | null>(null)
 
   const load = async () => {
     try {
@@ -303,6 +346,15 @@ export default function TracesPage() {
                       {/* Collapsible Detail */}
                       {isExpanded && (
                         <div className="mt-2 space-y-2">
+                          {trace.fullContext && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setViewingContext(trace.fullContext) }}
+                              className="flex items-center gap-1.5 text-[10px] font-medium text-accent hover:text-accent/80 bg-accent/10 hover:bg-accent/15 rounded px-2 py-1 transition-colors"
+                            >
+                              <Eye size={11} />
+                              View Full Context Sent to LLM ({trace.fullContext.length.toLocaleString()} chars)
+                            </button>
+                          )}
                           {trace.content && (
                             <div className="text-xs text-text-secondary bg-bg-raised rounded p-2 border border-border-subtle max-h-40 overflow-auto">
                               {truncate(trace.content, 500)}
@@ -339,6 +391,10 @@ export default function TracesPage() {
           </div>
         )}
       </div>
+
+      {viewingContext && (
+        <FullContextModal context={viewingContext} onClose={() => setViewingContext(null)} />
+      )}
     </div>
   )
 }

@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Send, Loader2, ClipboardCheck, Check, ChevronLeft, Bot, Square, Server } from 'lucide-react'
+import { Send, Loader2, ClipboardCheck, Check, ChevronLeft, Bot, Square, Server, Eye } from 'lucide-react'
 
 const PROVIDER_CONFIG: Record<string, { label: string; activeClass: string; modelClass: string }> = {
   anthropic: { label: 'Claude',  activeClass: 'bg-blue-500/20 text-blue-400 border-blue-500/40',     modelClass: 'bg-blue-500/10 text-blue-300 border-blue-500/30' },
@@ -465,6 +465,15 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
           <span className="text-xs font-medium text-text-primary">
             {agentChat ? agentChat.name : agentTarget ? `Agent: ${agentTarget.name}` : planTarget ? `Planning: ${planTarget.type}` : 'AI Chat'}
           </span>
+          {conversationId && (
+            <button
+              onClick={() => router.push(`/conversations/${conversationId}/traces`)}
+              className="p-1 rounded text-text-muted hover:text-accent hover:bg-bg-raised transition-colors"
+              title="View full context sent to the LLM"
+            >
+              <Eye size={13} />
+            </button>
+          )}
         </div>
         {!agentChat && !agentTarget && !planTarget && availableModels.length > 0 && (
           <div className="flex flex-col items-end gap-1">
