@@ -12,7 +12,16 @@ const STALE_THRESHOLD_MS = 15 * 60 * 1000 // 15 minutes
 // indefinitely — a room that's been silently stuck longer than that needs a
 // human to look at it, not another automated nudge.
 const UNANSWERED_LOOKBACK_MS = 24 * 60 * 60 * 1000 // 24 hours
-const UNANSWERED_SWEEP_LIMIT = 100 // cap rooms processed per tick, not just per query
+
+// A room whose agent replies SILENT (allowed when there's no active goal — see
+// room-agents.ts) persists no message at all, so it stays "the latest message
+// is human, unanswered" forever. Without a cooldown separate from
+// STALE_THRESHOLD_MS, such a room gets re-nudged on every single 5-minute tick
+// indefinitely. This bounds it to once per hour instead. In-process only (same
+// tradeoff as compaction.ts's compactingRooms guard) — resets on worker
+// restart, which just means one extra nudge, not a correctness problem.
+const NUDGE_COOLDOWN_MS = 60 * 60 * 1000 // 1 hour
+const lastNudgeAttempt = new Map<string, number>()
 
 // parseMentions (room-agents.ts) is `/@([\w-]+)/g` — ASCII word chars and hyphen
 // only. An agent name outside that (spaces, dots, accents) would make the
@@ -88,14 +97,24 @@ async function runActiveGoalSweep(now: number, handledRoomIds: Set<string>): Pro
 async function runUnansweredMessageSweep(now: number, handledRoomIds: Set<string>): Promise<void> {
   // Latest non-system message per room, bounded to a lookback window so this
   // can't become a full-table scan or wake rooms that have been dormant for
-  // months. `take` is applied after `distinct` (one row per room), so it caps
-  // rooms actually processed this tick, not raw rows read.
+  // months.
+  //
+  // No `take` here deliberately: this project's Prisma client has no
+  // `previewFeatures` in its generator block, so `distinct` runs in-memory in
+  // the query engine while `take` is pushed down as a SQL LIMIT — meaning
+  // `take` applies BEFORE distinct, not after. Combined with `orderBy:
+  // [{roomId: 'asc'}, ...]`, that would deterministically select only the
+  // lowest-sorted (≈ oldest-created, since ChatRoom.id is a cuid) roomIds
+  // every single tick, forever — the newest and most active rooms would never
+  // be swept. The UNANSWERED_LOOKBACK_MS window is the actual bound on result
+  // size (only rooms active in the last 24h are read at all); capping rooms
+  // *processed* happens in the loop below instead, after distinct has
+  // resolved to genuinely one row per room.
   const lastMessagePerRoom = await prisma.chatMessage.findMany({
     where: { senderType: { not: 'system' }, createdAt: { gte: new Date(now - UNANSWERED_LOOKBACK_MS) } },
     distinct: ['roomId'],
     orderBy: [{ roomId: 'asc' }, { createdAt: 'desc' }],
     select: { roomId: true, senderType: true, createdAt: true },
-    take: UNANSWERED_SWEEP_LIMIT,
   })
 
   for (const msg of lastMessagePerRoom) {
@@ -103,10 +122,17 @@ async function runUnansweredMessageSweep(now: number, handledRoomIds: Set<string
     if (handledRoomIds.has(msg.roomId)) continue
     if (now - msg.createdAt.getTime() < STALE_THRESHOLD_MS) continue
 
+    // A SILENT-replying agent (allowed on non-goal rooms — see room-agents.ts)
+    // persists no message, so this room would otherwise re-qualify every tick
+    // forever. Cap re-attempts to once per NUDGE_COOLDOWN_MS.
+    const lastAttempt = lastNudgeAttempt.get(msg.roomId)
+    if (lastAttempt !== undefined && now - lastAttempt < NUDGE_COOLDOWN_MS) continue
+
     try {
       const primaryAgentName = await resolvePrimaryAgentName(msg.roomId)
       if (!primaryAgentName) continue
 
+      lastNudgeAttempt.set(msg.roomId, now)
       const body = 'There is an unanswered message in this room — review recent chat history and respond.'
       await triggerRoomAgentReplies(msg.roomId, buildNudge(primaryAgentName, `[Message check-in] ${body}`))
     } catch (e) {
@@ -119,10 +145,15 @@ async function runUnansweredMessageSweep(now: number, handledRoomIds: Set<string
  * @-mention `agentName` if it's guaranteed to survive triggerRoomAgentReplies'
  * mention regex round-trip; otherwise fall back to an unmentioned nudge (noisy
  * broadcast to every non-watch-prompt agent, same as before this file's fix)
- * rather than risk the mention path silently matching zero agents.
+ * rather than risk the mention path silently matching zero agents. Also
+ * excludes the literal name "everyone" — triggerRoomAgentReplies treats
+ * `@everyone` as a broadcast keyword regardless of case, so an agent actually
+ * named that would otherwise hit the same broadcast-fallback this file exists
+ * to avoid.
  */
 function buildNudge(agentName: string, body: string): string {
-  return MENTION_SAFE_NAME.test(agentName) ? `@${agentName} ${body}` : body
+  const mentionSafe = MENTION_SAFE_NAME.test(agentName) && agentName.toLowerCase() !== 'everyone'
+  return mentionSafe ? `@${agentName} ${body}` : body
 }
 
 /**
