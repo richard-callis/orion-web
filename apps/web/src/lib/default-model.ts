@@ -43,7 +43,7 @@ export async function getDefaultModelId(): Promise<string> {
 
 /**
  * Send a single prompt to the default model and return the text response.
- * Used by generate-features, generate-tasks, and any other one-shot AI calls.
+ * Used by one-shot AI calls that aren't part of an agent conversation.
  */
 export async function callDefaultModel(prompt: string): Promise<string> {
   const modelId = await getDefaultModelId()
