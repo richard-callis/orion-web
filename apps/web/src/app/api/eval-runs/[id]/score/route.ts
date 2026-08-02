@@ -51,7 +51,11 @@ Does the response satisfy the expected behavior? Respond with JSON only:
         // Claude Code SDK's OAuth credentials instead of ANTHROPIC_API_KEY,
         // this previously failed with "No ANTHROPIC_API_KEY configured" even
         // though a perfectly usable default model was configured.
-        const text = await callDefaultModel(prompt)
+        const raw = (await callDefaultModel(prompt)).trim()
+        // Strip code fences — the Claude Code SDK path runs the full coding-agent
+        // loop (not a bare Messages API turn) and routinely wraps JSON output in
+        // ```json fences despite the "Respond with JSON only" instruction.
+        const text = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
         const parsed = JSON.parse(text) as { passed?: boolean; score?: number; reason?: string }
 
         return {
