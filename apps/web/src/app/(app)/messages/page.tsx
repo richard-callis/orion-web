@@ -195,7 +195,7 @@ function MessagesContent() {
       </div>
 
       {/* Main - Chat / Room View */}
-      <div className={`${!mobileShowList || !activeId?.startsWith('r_') ? 'flex' : 'hidden'} md:flex flex-1 flex-col min-w-0 overflow-hidden`}>
+      <div className={`${!mobileShowList || !activeId?.startsWith('r_') ? 'flex' : 'hidden'} md:flex flex-1 flex-col min-w-0 min-h-0 overflow-hidden`}>
         <ChatContainer
           activeId={activeId}
           onMobileBack={() => setMobileShowList(true)}
