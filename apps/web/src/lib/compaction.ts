@@ -17,6 +17,7 @@
 
 import { prisma } from './db'
 import { publishChatMessage, publishToRoom } from './chat-redis'
+import { callDefaultModel } from './default-model'
 
 // ── Concurrency guard ─────────────────────────────────────────────────────────
 // Prevents two simultaneous compactions for the same room (e.g. two agents both
@@ -36,43 +37,6 @@ Format the summary in markdown with clear sections. Be complete — this summary
 
 Conversation transcript to summarize:
 `
-
-type OpenAICompatMessage = { role: string; content: string }
-
-/**
- * Call a model via OpenAI-compatible /v1/chat/completions for compaction.
- * Returns the model's text reply or null on failure.
- */
-async function callForSummary(
-  baseUrl: string,
-  modelId: string,
-  apiKey: string | null | undefined,
-  transcript: string,
-): Promise<string | null> {
-  const messages: OpenAICompatMessage[] = [
-    { role: 'user', content: COMPACTION_PROMPT + transcript },
-  ]
-  try {
-    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-      },
-      body: JSON.stringify({ model: modelId, stream: false, messages }),
-      signal: AbortSignal.timeout(120_000),
-    })
-    if (!res.ok) {
-      console.error(`[compaction] model ${modelId} at ${baseUrl} returned HTTP ${res.status}`)
-      return null
-    }
-    const data = await res.json() as { choices?: Array<{ message: { content: string } }> }
-    return data.choices?.[0]?.message?.content?.trim() ?? null
-  } catch (err) {
-    console.error(`[compaction] callForSummary failed: ${err instanceof Error ? err.message : String(err)}`)
-    return null
-  }
-}
 
 /**
  * Compact the conversation history for a room into a single summary message.
@@ -137,46 +101,19 @@ async function _compactRoom(roomId: string): Promise<void> {
   }
   const transcript = lines.join('\n')
 
-  // Resolve the default model setting
-  const defaultModelSetting = await prisma.systemSetting.findUnique({ where: { key: 'ai.default-model' } })
-  const rawDefault = defaultModelSetting?.value
-  const defaultModelId: string = typeof rawDefault === 'string'
-    ? rawDefault.replace(/^"|"$/g, '')
-    : (typeof rawDefault === 'object' && rawDefault !== null ? String(rawDefault) : '')
-
+  // Ask whatever model is configured as the system default (Settings → AI) to
+  // summarise — delegates to the shared resolver instead of reimplementing
+  // model routing here. The previous version only understood 'ext:'- and
+  // 'ollama:'-prefixed model ids and had no branch at all for the literal
+  // value 'claude' (Claude Code SDK) — on any install actually defaulting to
+  // Claude, which is the common case, compaction always fell through to
+  // querying for an unrelated external model instead of using the configured
+  // default, and produced no summary at all if none happened to be enabled.
   let summary: string | null = null
-
-  // Resolve which model to use
-  if (defaultModelId.startsWith('ext:')) {
-    const extId = defaultModelId.slice('ext:'.length)
-    const extModel = await prisma.externalModel.findUnique({ where: { id: extId } })
-    if (extModel) {
-      summary = await callForSummary(extModel.baseUrl, extModel.modelId, extModel.apiKey, transcript)
-    }
-  } else if (defaultModelId.startsWith('ollama:')) {
-    // Find first enabled Ollama model
-    const ollamaModel = await prisma.externalModel.findFirst({ where: { provider: 'ollama', enabled: true } })
-    if (ollamaModel) {
-      summary = await callForSummary(ollamaModel.baseUrl, ollamaModel.modelId, null, transcript)
-    }
-  }
-
-  // Fallback: use any enabled external model with OpenAI compat
-  if (!summary) {
-    const fallback = await prisma.externalModel.findFirst({
-      where: { enabled: true, provider: { not: 'ollama' } },
-    })
-    if (fallback) {
-      summary = await callForSummary(fallback.baseUrl, fallback.modelId, fallback.apiKey, transcript)
-    }
-  }
-
-  // Last resort: try any enabled model
-  if (!summary) {
-    const last = await prisma.externalModel.findFirst({ where: { enabled: true } })
-    if (last) {
-      summary = await callForSummary(last.baseUrl, last.modelId, last.apiKey, transcript)
-    }
+  try {
+    summary = await callDefaultModel(COMPACTION_PROMPT + transcript)
+  } catch (err) {
+    console.error(`[compaction] callDefaultModel failed: ${err instanceof Error ? err.message : String(err)}`)
   }
 
   if (!summary) {
