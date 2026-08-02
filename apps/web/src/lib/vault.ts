@@ -6,7 +6,7 @@
 import https from 'node:https'
 import fs from 'node:fs'
 import { prisma } from './db'
-import { decrypt } from './encryption'
+import { decrypt, PREFIX } from './encryption'
 
 export const VAULT_ADDR = process.env.VAULT_ADDR ?? 'http://vault:8200'
 
@@ -91,6 +91,59 @@ export function vaultFetch(url: string, options: RequestInit = {}): Promise<Resp
   })
 }
 
+// ── Admin token resolution ──────────────────────────────────────────────────────
+
+/**
+ * Resolve the Vault token to use for admin writes.
+ *
+ * Prefers the wizard-configured 'vault.adminToken' SystemSetting — minted with
+ * a scoped orion-admin policy as part of the in-app Vault init flow (root is
+ * generated once and immediately revoked, never persisted; note this setting
+ * is deliberately not named 'vault.rootToken').
+ *
+ * Falls back to VAULT_TOKEN from the environment, but only when
+ * VAULT_ALLOW_ENV_TOKEN=1 is explicitly set — this covers instances where
+ * Vault was bootstrapped outside the wizard (e.g. via deploy/bootstrap.sh +
+ * a vault-unsealer sidecar) and the wizard's token-minting step never ran.
+ * Deliberately opt-in rather than automatic: VAULT_TOKEN is frequently the
+ * break-glass root/admin token handed back by bootstrap.sh (see
+ * deploy/.env.example), not the scoped orion-admin policy the wizard mints.
+ * writeVaultSecret() is agent-reachable (agents can call the write_secret
+ * tool), so silently falling back would let agent-initiated writes run as
+ * root with no visible distinction from a properly scoped call, and Vault's
+ * own audit log would attribute them to root instead of the orion-admin
+ * identity. Requiring the explicit flag keeps that a deliberate operator
+ * choice instead of an invisible default.
+ */
+async function resolveVaultAdminToken(): Promise<string> {
+  const setting = await prisma.systemSetting.findUnique({ where: { key: 'vault.adminToken' } })
+  if (setting?.value) {
+    const rawValue = String(setting.value)
+    if (!rawValue.startsWith(PREFIX)) {
+      console.error('[vault] admin token is not encrypted — refusing to use plaintext token (possible substitution attack)')
+      throw new Error('Vault admin token must be encrypted')
+    }
+    return decrypt(rawValue)
+  }
+
+  if (process.env.VAULT_ALLOW_ENV_TOKEN === '1' && process.env.VAULT_TOKEN) {
+    console.warn(
+      "[vault] 'vault.adminToken' SystemSetting not configured — falling back to VAULT_TOKEN from the environment " +
+      '(VAULT_ALLOW_ENV_TOKEN=1). This is likely a root/break-glass token, not the wizard-minted scoped policy — ' +
+      "run the Vault setup wizard's admin-token step to stop relying on this fallback.",
+    )
+    return process.env.VAULT_TOKEN
+  }
+
+  throw new Error(
+    "Vault admin token not configured — has the Vault setup wizard been completed? " +
+    (process.env.VAULT_TOKEN
+      ? "A VAULT_TOKEN environment variable is present but VAULT_ALLOW_ENV_TOKEN=1 was not set, so it was not used " +
+        '(it is typically a root token and this app refuses to fall back to it silently).'
+      : "(No 'vault.adminToken' SystemSetting and no VAULT_TOKEN environment variable.)")
+  )
+}
+
 // ── Secret writer ─────────────────────────────────────────────────────────────
 
 /**
@@ -103,17 +156,7 @@ export async function writeVaultSecret(
   kvPath: string,
   data: Record<string, string>,
 ): Promise<void> {
-  // Setup wizard writes 'vault.adminToken', never 'vault.rootToken' (root is
-  // generated once and immediately revoked). Reading 'vault.rootToken' would
-  // always return null, silently breaking every secret write.
-  const setting = await prisma.systemSetting.findUnique({ where: { key: 'vault.adminToken' } })
-  if (!setting?.value) throw new Error('Vault admin token not configured — has the Vault setup wizard been completed?')
-  const rawValue = String(setting.value)
-  if (!rawValue.startsWith('enc:v1:')) {
-    console.error('[vault] admin token is not encrypted — refusing to use plaintext token (possible substitution attack)')
-    throw new Error('Vault admin token must be encrypted')
-  }
-  const token = decrypt(rawValue)
+  const token = await resolveVaultAdminToken()
 
   // Normalise: strip "secret/data/" prefix if the caller included it
   const normalised = kvPath.replace(/^secret\/data\//, '')

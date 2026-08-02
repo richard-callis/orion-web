@@ -12,7 +12,7 @@
 import http from 'http'
 import { randomBytes } from 'crypto'
 import { prisma } from './db'
-import { getGitProvider } from './git-provider'
+import { getGitProvider, getGitProviderConfig } from './git-provider'
 import { GiteaGitProvider } from './git-provider/gitea-provider'
 
 export type LocalBootstrapEvent =
@@ -277,9 +277,14 @@ export async function bootstrapLocalEnvironment(
       }
     }
 
-    // Use the webhook secret from git provider config so ORION can verify signatures
-const gitProviderSetting = await prisma.systemSetting.findUnique({ where: { key: 'git.provider.config' } })
-    const webhookSecret = (gitProviderSetting?.value as Record<string, string> | null)?.webhookSecret
+    // Use the webhook secret from git provider config so ORION can verify signatures.
+    // Read through getGitProviderConfig() (decrypts properly) rather than the raw
+    // SystemSetting row — reading it raw only ever worked by accident, on installs
+    // where the row happened to still be unencrypted plaintext; it silently
+    // regenerates a fresh random secret (breaking webhook verification with no
+    // error anywhere) the moment that row is properly encrypted.
+    const gitProviderConfig = await getGitProviderConfig()
+    const webhookSecret = gitProviderConfig?.webhookSecret
       ?? randomBytes(32).toString('hex')
     const repo = await provider.ensureRepo({
       owner: gitOwner,
