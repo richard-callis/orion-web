@@ -38,15 +38,15 @@ async function runActiveGoalSweep(now: number, handledRoomIds: Set<string>): Pro
       const lastActivity = lastMsg ? lastMsg.createdAt.getTime() : 0
       if (now - lastActivity < STALE_THRESHOLD_MS) continue
 
-      // Optimization only (not correctness): skip rooms with no agent members.
-      // triggerRoomAgentReplies returns early for empty rooms anyway.
-      const agentMember = await prisma.chatRoomMember.findFirst({
-        where: { roomId: goal.roomId, agentId: { not: null } },
-        select: { id: true },
-      })
-      if (!agentMember) continue
+      const primaryAgentName = await resolvePrimaryAgentName(goal.roomId)
+      if (!primaryAgentName) continue // no agent members — nothing to nudge
 
-      const nudge = `[Goal check-in] Still working on: "${goal.text}" — what is the current status and the next concrete step?`
+      // @-mention the single resolved agent so this routes through triggerRoomAgentReplies'
+      // hasSpecificMention path (always exactly one responder), instead of an unmentioned
+      // nudge, which falls back to "every non-watch-prompt agent" when the room has neither
+      // a ring leader nor a lead-role agent — that fallback is what caused every agent in
+      // the room to post a near-identical "still blocked" status on every heartbeat tick.
+      const nudge = `@${primaryAgentName} [Goal check-in] Still working on: "${goal.text}" — what is the current status and the next concrete step?`
       await triggerRoomAgentReplies(goal.roomId, nudge)
     } catch (e) {
       // Isolate per-room failures so one bad room never aborts the whole sweep.
@@ -86,16 +86,55 @@ async function runUnansweredMessageSweep(now: number, handledRoomIds: Set<string
     if (now - msg.createdAt.getTime() < STALE_THRESHOLD_MS) continue
 
     try {
-      const agentMember = await prisma.chatRoomMember.findFirst({
-        where: { roomId: msg.roomId, agentId: { not: null } },
-        select: { id: true },
-      })
-      if (!agentMember) continue
+      const primaryAgentName = await resolvePrimaryAgentName(msg.roomId)
+      if (!primaryAgentName) continue
 
-      const nudge = '[Message check-in] There is an unanswered message in this room — review recent chat history and respond.'
+      const nudge = `@${primaryAgentName} [Message check-in] There is an unanswered message in this room — review recent chat history and respond.`
       await triggerRoomAgentReplies(msg.roomId, nudge)
     } catch (e) {
       console.error(`[goal-heartbeat] unanswered-message sweep failed for room ${msg.roomId}:`, e)
     }
   }
+}
+
+/**
+ * Picks exactly one agent to receive heartbeat nudges for a room, so re-triggers
+ * never fan out to the whole room the way an unmentioned trigger does when no
+ * ring leader or lead-role agent is configured (see triggerRoomAgentReplies'
+ * fallback branch — it broadcasts to every non-watch-prompt agent in that case,
+ * which is correct for a live open-ended human question but wrong for a
+ * mechanical "are you still working on this" poke).
+ *
+ * Priority: room's configured ring leader → agent with role 'lead' → the
+ * earliest-joined non-watch-prompt agent (stable across ticks, so the same
+ * agent gets nudged every time rather than a different one each poll).
+ */
+async function resolvePrimaryAgentName(roomId: string): Promise<string | null> {
+  const room = await prisma.chatRoom.findUnique({
+    where: { id: roomId },
+    select: { metadata: true },
+  })
+  const ringLeaderId = (room?.metadata as Record<string, unknown> | null)?.ringLeaderAgentId as string | undefined
+
+  const members = await prisma.chatRoomMember.findMany({
+    where: { roomId, agentId: { not: null } },
+    orderBy: { joinedAt: 'asc' },
+    select: { role: true, agent: { select: { id: true, name: true, metadata: true } } },
+  })
+  const active = members.filter(m => m.agent && (m.agent.metadata as Record<string, unknown> | null)?.archived !== true)
+  if (active.length === 0) return null
+
+  if (ringLeaderId) {
+    const leader = active.find(m => m.agent!.id === ringLeaderId)
+    if (leader) return leader.agent!.name
+  }
+
+  const lead = active.find(m => m.role === 'lead')
+  if (lead) return lead.agent!.name
+
+  const nonWatchers = active.filter(m => {
+    const cc = ((m.agent!.metadata as Record<string, unknown> | null)?.contextConfig ?? {}) as Record<string, unknown>
+    return !cc.watchPrompt
+  })
+  return (nonWatchers[0] ?? active[0]).agent!.name
 }
