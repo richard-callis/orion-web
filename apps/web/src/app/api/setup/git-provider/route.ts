@@ -19,11 +19,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
 import { requireWizardSession } from '@/lib/setup-guard'
 import { createProvider, invalidateGitProviderCache, type GitProviderConfig, type GitProviderType } from '@/lib/git-provider'
 import { GiteaGitProvider } from '@/lib/git-provider/gitea-provider'
-import { encryptJson } from '@/lib/encryption'
+import { writeEncryptedSetting } from '@/lib/encrypted-settings'
 import { randomBytes } from 'crypto'
 import { seedSystemNebula } from '@/lib/seed-system-nebula'
 import { logAudit } from '@/lib/audit'
@@ -127,11 +126,7 @@ export async function POST(req: NextRequest) {
 
   // ── Persist config ────────────────────────────────────────────────────────
 
-  await prisma.systemSetting.upsert({
-    where:  { key: 'git.provider.config' },
-    update: { value: encryptJson(config) },
-    create: { key: 'git.provider.config', value: encryptJson(config) },
-  })
+  await writeEncryptedSetting('git.provider.config', config)
 
   // Invalidate the in-process provider cache so the new config is picked up immediately
   invalidateGitProviderCache()
