@@ -198,6 +198,7 @@ let runningNtopngPoller = false
 let runningVulnScan = false
 let runningDriftDetector = false
 let runningScheduler = false
+let runningGoalHeartbeat = false
 let runningFedPoller = false
 
 const TASK_TIMEOUT_MS = 60 * 60 * 1000 // 60 minutes
@@ -1955,7 +1956,9 @@ async function main() {
   // Goal heartbeat — every 5 min, re-trigger agents in rooms whose active goal
   // has gone stale (no non-system message for 15 min). See jobs/goal-heartbeat.ts.
   setInterval(() => {
-    runGoalHeartbeat().catch(e => err(`Goal heartbeat failed: ${e}`))
+    if (runningGoalHeartbeat) return
+    runningGoalHeartbeat = true
+    runGoalHeartbeat().catch(e => err(`Goal heartbeat failed: ${e}`)).finally(() => { runningGoalHeartbeat = false })
   }, 5 * 60_000)
 
   // Cron scheduler — check every 60s for scheduled tasks due to run
