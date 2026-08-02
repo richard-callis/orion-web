@@ -19,6 +19,13 @@ if [ -f "$CERTS_DIR/ca.crt" ] && [ -f "$CERTS_DIR/ca.key" ] && [ ! -f "$CERTS_DI
     -CA "$CERTS_DIR/ca.crt" -CAkey "$CERTS_DIR/ca.key" -CAserial "$CERTS_DIR/ca.srl" \
     -out "$CERTS_DIR/orion-client.crt" -days 3650 -sha256 2>/dev/null
   rm -f "$CERTS_DIR/orion-client.csr"
+  # openssl genrsa defaults to mode 600 (root-owned, since this script runs as root).
+  # This key is bind-mounted read-only into the orion container, which runs as the
+  # unprivileged "nextjs" user — without this chmod it can never be read, and
+  # anything using it (write_secret/generate_secret mTLS to vault-proxy) fails with
+  # EACCES. ca.key and tls.key don't need this: ca.key is only read by this script
+  # (root), and tls.key is only read by vault-proxy's envoy container (runs as root).
+  chmod 644 "$CERTS_DIR/orion-client.key"
   echo "ORION client cert generated."
 fi
 
