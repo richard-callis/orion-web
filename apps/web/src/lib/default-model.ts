@@ -48,12 +48,19 @@ export async function getDefaultModelId(): Promise<string> {
 export async function callDefaultModel(prompt: string): Promise<string> {
   const modelId = await getDefaultModelId()
 
-  if (modelId === 'claude') {
+  if (modelId === 'claude' || modelId.startsWith('claude:')) {
     return callClaude(prompt)
   }
 
+  // Defensive: the current Settings UI writes a bare ExternalModel id, but at
+  // least one other call site (seed-system-agents.ts) has historically stored
+  // 'ext:<id>' as an agent's llm config, and this setting has no schema
+  // enforcement preventing the same shape from ending up here. Strip it so a
+  // legacy/mistaken value degrades to "found the model" instead of throwing.
+  const externalModelId = modelId.startsWith('ext:') ? modelId.slice('ext:'.length) : modelId
+
   const model = await prisma.externalModel.findUnique({
-    where: { id: modelId },
+    where: { id: externalModelId },
   })
 
   if (!model) {
@@ -70,6 +77,14 @@ export async function callDefaultModel(prompt: string): Promise<string> {
 
 // ── Provider implementations ──────────────────────────────────────────────────
 
+// Every other provider path here (callOpenAI, callOllama) has an explicit
+// timeout via AbortSignal. The Claude Code SDK's query() has no built-in one,
+// so without this, a hung SDK call blocks its caller indefinitely — for
+// compaction specifically, that means holding compaction.ts's per-room
+// compactingRooms entry forever, wedging that room's replies since
+// triggerRoomAgentReplies awaits compactRoom() inline.
+const CLAUDE_TIMEOUT_MS = 120_000
+
 async function callClaude(prompt: string): Promise<string> {
   // Set up credentials
   if (process.env.CLAUDE_CREDENTIALS_PATH) {
@@ -81,28 +96,44 @@ async function callClaude(prompt: string): Promise<string> {
   }
 
   const { query } = await import('@anthropic-ai/claude-code')
-  let text = ''
 
-  const response = query({
-    prompt,
-    options: { allowedTools: [], maxTurns: 1 },
-  })
+  const collect = async (): Promise<string> => {
+    let text = ''
+    const response = query({
+      prompt,
+      options: { allowedTools: [], maxTurns: 1 },
+    })
 
-  for await (const msg of response) {
-    if (msg.type === 'assistant') {
-      const m = msg as { type: 'assistant'; message: { content: Array<{ type: string; text?: string }> } }
-      for (const block of m.message.content) {
-        if (block.type === 'text' && block.text) text += block.text
-      }
-    } else if (msg.type === 'result') {
-      const r = msg as { type: 'result'; subtype?: string; result?: string }
-      if (r.subtype === 'success' && r.result && !text.includes(r.result.trim())) {
-        text += r.result
+    for await (const msg of response) {
+      if (msg.type === 'assistant') {
+        const m = msg as { type: 'assistant'; message: { content: Array<{ type: string; text?: string }> } }
+        for (const block of m.message.content) {
+          if (block.type === 'text' && block.text) text += block.text
+        }
+      } else if (msg.type === 'result') {
+        const r = msg as { type: 'result'; subtype?: string; result?: string }
+        if (r.subtype === 'success' && r.result && !text.includes(r.result.trim())) {
+          text += r.result
+        }
       }
     }
+
+    return text
   }
 
-  return text
+  // Best-effort timeout: this races the collector rather than aborting the
+  // underlying SDK call (query() takes no abort signal), so the orphaned
+  // generator keeps running in the background — but the caller is unblocked,
+  // which is what actually matters for not wedging a room's compaction.
+  return Promise.race([
+    collect(),
+    new Promise<string>((_, reject) => {
+      setTimeout(
+        () => reject(new Error(`callDefaultModel: claude query timed out after ${CLAUDE_TIMEOUT_MS}ms`)),
+        CLAUDE_TIMEOUT_MS,
+      )
+    }),
+  ])
 }
 
 async function callOpenAI(

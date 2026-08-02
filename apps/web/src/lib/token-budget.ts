@@ -1,5 +1,15 @@
 import { prisma } from './db'
 
+// Length-based fallback estimate for providers/paths that don't report real
+// usage (e.g. the orion-claude sidecar's /run/collect doesn't reliably surface
+// it). Conservative ~4 chars/token heuristic — better than recording zero,
+// which would defeat the point of budget tracking and, for callers gating
+// behavior on token count (e.g. compaction), would mean that behavior never
+// triggers at all.
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4)
+}
+
 // ─── Redis budget lock helpers ────────────────────────────────────────────────
 // SOC2: [H-TOCTOU] Per-agent mutex prevents concurrent tasks from all reading
 // the same "current usage" before any of them records spend.
