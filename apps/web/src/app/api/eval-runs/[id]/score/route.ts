@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireServiceAuth } from '@/lib/auth'
+import { callDefaultModel } from '@/lib/default-model'
 
 type AssertionDef = {
   type: 'contains_text' | 'not_contains_text' | 'regex_match' | 'llm_judge'
@@ -36,11 +37,6 @@ async function scoreAssertion(
       return { ...assertion, passed, score: passed ? 1 : 0 }
     }
     case 'llm_judge': {
-      const apiKey = process.env.ANTHROPIC_API_KEY
-      if (!apiKey) {
-        return { ...assertion, passed: false, score: 0, reason: 'No ANTHROPIC_API_KEY configured' }
-      }
-
       try {
         const prompt = `You are evaluating an AI agent's response.
 Expected behavior: ${expectedOutput ?? assertion.value}
@@ -49,22 +45,17 @@ Actual output: ${out}
 Does the response satisfy the expected behavior? Respond with JSON only:
 {"passed": boolean, "score": number (0-100), "reason": string}`
 
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'claude-haiku-4-5',
-            max_tokens: 256,
-            messages: [{ role: 'user', content: prompt }],
-          }),
-        })
-
-        const data = await res.json() as { content?: Array<{ text?: string }> }
-        const text = data.content?.[0]?.text ?? '{}'
+        // Route through the system default model (Settings → AI) rather than a
+        // hardcoded Anthropic API call — on an install whose default is an
+        // Ollama/OpenAI-compatible model, or that authenticates via the
+        // Claude Code SDK's OAuth credentials instead of ANTHROPIC_API_KEY,
+        // this previously failed with "No ANTHROPIC_API_KEY configured" even
+        // though a perfectly usable default model was configured.
+        const raw = (await callDefaultModel(prompt)).trim()
+        // Strip code fences — the Claude Code SDK path runs the full coding-agent
+        // loop (not a bare Messages API turn) and routinely wraps JSON output in
+        // ```json fences despite the "Respond with JSON only" instruction.
+        const text = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
         const parsed = JSON.parse(text) as { passed?: boolean; score?: number; reason?: string }
 
         return {
