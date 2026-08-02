@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Trash2, Sparkles, Loader2, MessageSquare, CheckCircle2, Lock, Rocket } from 'lucide-react'
+import { Trash2, Loader2, MessageSquare, CheckCircle2, Lock, Rocket } from 'lucide-react'
 import type { Feature } from '@/types/tasks'
 import { PlanWithAIButton } from './PlanWithAIButton'
 import { DetailPanelShell } from '../ui/DetailPanelShell'
@@ -12,18 +12,15 @@ interface Props {
   onUpdate: (patch: Partial<Feature>) => Promise<void>
   onDelete: () => Promise<void>
   onPlanWithClaude: (modelId?: string) => void
-  onGenerateTasks: () => Promise<void>
   onClose: () => void
 }
 
-export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onPlanWithClaude, onGenerateTasks, onClose }: Props) {
+export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onPlanWithClaude, onClose }: Props) {
   const router = useRouter()
   const [title, setTitle]           = useState(feature.title)
   const [desc, setDesc]             = useState(feature.description ?? '')
   const [plan, setPlan]             = useState(feature.plan ?? '')
   const [status, setStatus]         = useState(feature.status)
-  const [generating, setGenerating] = useState(false)
-  const [genError, setGenError]     = useState<string | null>(null)
   const [creatingRoom, setCreatingRoom] = useState(false)
 
   const [taskCount, setTaskCount]       = useState(feature._count?.tasks ?? 0)
@@ -38,7 +35,6 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
     setDesc(feature.description ?? '')
     setPlan(feature.plan ?? '')
     setStatus(feature.status)
-    setGenError(null)
     setApprovedAt(feature.planApprovedAt ?? null)
     setApprovedBy(feature.planApprovedBy ?? null)
     setJustApproved(false)
@@ -107,18 +103,6 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
 
   const save = () => onUpdate({ title, description: desc || null, plan: plan || null, status })
 
-  const handleGenerate = async () => {
-    setGenerating(true)
-    setGenError(null)
-    try {
-      await onGenerateTasks()
-    } catch (err) {
-      setGenError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setGenerating(false)
-    }
-  }
-
   return (
     <DetailPanelShell
       onClose={onClose}
@@ -139,17 +123,6 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
             {creatingRoom ? <Loader2 size={14} className="animate-spin" /> : <MessageSquare size={14} />}
             Plan Feature
           </button>
-          {plan && (
-            <button
-              onClick={handleGenerate}
-              disabled={generating}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-accent/40 text-accent text-sm hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-              {generating ? 'Generating tasks...' : 'Generate Tasks from Plan'}
-            </button>
-          )}
-          {genError && <p className="text-[10px] text-status-error text-center">{genError}</p>}
           <button
             onClick={onDelete}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-border-subtle text-text-muted text-sm hover:border-status-error hover:text-status-error transition-colors"

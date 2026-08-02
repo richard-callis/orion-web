@@ -750,18 +750,6 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
                 onUpdate={patch => updateEpic(panel.epic.id, patch as Partial<Epic>)}
                 onDelete={() => deleteEpic(panel.epic.id)}
                 onPlanWithClaude={(modelId) => planWithClaude({ type: 'epic', id: panel.epic.id, title: panel.epic.title, description: panel.epic.description }, modelId)}
-                onGenerateFeatures={async () => {
-                  const r = await fetch(`/api/epics/${panel.epic.id}/generate-features`, { method: 'POST' })
-                  if (!r.ok) {
-                    const body = await r.json().catch(() => ({}))
-                    throw new Error(body.error ?? `HTTP ${r.status}`)
-                  }
-                  const { features } = await r.json()
-                  setEpics(prev => prev.map(e =>
-                    e.id === panel.epic.id ? { ...e, features: [...e.features, ...features] } : e
-                  ))
-                  setPanel(null)
-                }}
                 onNewFeature={() => {
                   setFeatureForm({ title: '', description: '', epicId: panel.epic.id, epicTitle: panel.epic.title })
                   setFeatureModal({ epicId: panel.epic.id, epicTitle: panel.epic.title })
@@ -778,25 +766,6 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
                 onUpdate={patch => updateFeature(panel.feature.id, panel.epic.id, patch as Partial<Feature>)}
                 onDelete={() => deleteFeature(panel.feature.id, panel.epic.id)}
                 onPlanWithClaude={(modelId) => planWithClaude({ type: 'feature', id: panel.feature.id, title: panel.feature.title, description: panel.feature.description, parentContext: { epicTitle: panel.epic.title, epicDescription: panel.epic.description, epicPlan: panel.epic.plan } }, modelId)}
-                onGenerateTasks={async () => {
-                  const r = await fetch(`/api/features/${panel.feature.id}/generate-tasks`, { method: 'POST' })
-                  if (!r.ok) {
-                    const body = await r.json().catch(() => ({}))
-                    throw new Error(body.error ?? `HTTP ${r.status}`)
-                  }
-                  const { tasks: newTasks } = await r.json()
-                  setTasks(prev => [...newTasks, ...prev])
-                  setEpics(prev => prev.map(e =>
-                    e.id === panel.epic.id
-                      ? { ...e, features: e.features.map(f =>
-                          f.id === panel.feature.id
-                            ? { ...f, _count: { tasks: (f._count?.tasks ?? 0) + newTasks.length } }
-                            : f
-                        )}
-                      : e
-                  ))
-                  setPanel(null)
-                }}
                 onClose={() => setPanel(null)}
               />
             )}
