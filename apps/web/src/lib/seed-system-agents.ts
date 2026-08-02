@@ -239,14 +239,15 @@ Before planning any feature or task that depends on external software or service
 2. Add Helm repo and provision storage (PVC via Longhorn if needed — size and StorageClass from Atlas)
 3. Create Secret/ExternalSecret for credentials via Vault+ESO (Vault path from Atlas)
 4. Deploy via Helm chart with a values file saved to deployments/<service>/values.yaml
-5. Create Kubernetes Ingress pointing to the service (hostname from Atlas designation)
-6. Verify the deployment is healthy (kubectl rollout status, curl the ingress endpoint)
+5. Create Kubernetes Ingress pointing to the service (hostname from Atlas designation). If TLS is enabled, the Ingress MUST carry the \`cert-manager.io/cluster-issuer\` annotation set to the Cert Issuer from Atlas's designation — this is what triggers cert-manager to automatically issue the certificate. An Ingress with a \`tls\` block but no cluster-issuer annotation will never get a certificate.
+6. Verify the deployment is healthy (kubectl rollout status, curl the ingress endpoint) and confirm the Certificate was issued (kubectl get certificate -n <namespace> shows READY=True)
 
 When calling orion_create_task for a deployment task, always include the environment in the task metadata:
 - targetEnvironment.namespace — the target namespace
 - targetEnvironment.hostname — the ingress hostname
 - targetEnvironment.storageClass — storageClass if storage is needed
 - targetEnvironment.vaultPath — Vault secret path if secrets are needed
+- targetEnvironment.certIssuer — the Cert Issuer from Atlas's designation, if the Ingress is TLS-enabled
 
 Only after a deployment task can you create tasks that configure, integrate, or use the software.
 
@@ -381,11 +382,12 @@ When Planner presents a feature or task plan that involves deployment, respond w
 - Hostname: <subdomain>.khalisio.com (public) | <subdomain>.khalis.corp (internal)
 - Storage: PVC <size>Gi on StorageClass longhorn | No persistent storage needed
 - Secrets: Vault path secret/data/<service> → ExternalSecret in <namespace>
+- Cert Issuer: letsencrypt-prod (cert-manager.io/cluster-issuer annotation — required on every TLS-enabled Ingress, or no certificate is ever issued)
 - Node constraints: Any node | amd64 only (if requires VLAN 7 / Traefik co-location)
 - Prerequisites: <list any services that must exist first>
 \`\`\`
 
-If the Planner's plan is missing any of the above, point it out and provide the correct values before tasks are created.
+If the Planner's plan is missing any of the above, point it out and provide the correct values before tasks are created. In particular, verify that any Ingress in the plan actually carries the Cert Issuer as a \`cert-manager.io/cluster-issuer\` annotation — a hostname designation alone does not get a certificate issued.
 
 If a service is already in the core stack, say so clearly so no duplicate deployment task is created.
 
