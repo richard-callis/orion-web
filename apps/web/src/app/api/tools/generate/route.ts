@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
+import { callDefaultModel } from '@/lib/default-model'
 
 // Allowed shell commands per environment type (allowlist)
 const ALLOWED_COMMAND_PREFIXES = {
@@ -97,8 +97,8 @@ function sanitizePackages(packages: string[]): string[] {
 
 /**
  * POST /api/tools/generate
- * Use the configured Ollama/LLM to generate a tool definition from a plain-language description.
- * Returns { name, description, command, inputSchema, execType }
+ * Use the system default model (Settings → AI) to generate a tool definition from a
+ * plain-language description. Returns { name, description, command, inputSchema, execType }
  */
 export async function POST(req: NextRequest) {
   // SOC2: CR-005 — require authentication (LLM calls cost money, tools execute on gateway)
@@ -118,15 +118,6 @@ export async function POST(req: NextRequest) {
   // Note: We rely on the command sanitization in sanitizeCommand() for the real defense
   if (/\b(exfil|reverse\s+shell|bind\s+shell|payload|backdoor)\b/i.test(description.trim())) {
     return NextResponse.json({ error: 'Description contains suspicious keywords' }, { status: 400 })
-  }
-
-  // Find an Ollama model to use
-  const extModel = await prisma.externalModel.findFirst({
-    where: { provider: 'ollama', enabled: true },
-    orderBy: { createdAt: 'asc' },
-  })
-  if (!extModel?.baseUrl) {
-    return NextResponse.json({ error: 'No Ollama model configured' }, { status: 503 })
   }
 
   const envContext = environmentType === 'docker'
@@ -170,23 +161,9 @@ Rules:
 - IMPORTANT: Only generate safe, read-only commands. No file system traversal, no outbound connections.`
 
   try {
-    const res = await fetch(`${extModel.baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: extModel.modelId,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user',   content: userPrompt },
-        ],
-        stream: false,
-      }),
-      signal: AbortSignal.timeout((extModel.timeoutSecs ?? 60) * 1000),
-    })
-    if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`)
-
-    const data = await res.json() as { message: { content: string } }
-    let raw = data.message.content.trim()
+    // callDefaultModel takes a single prompt, no separate system/user roles —
+    // same concatenation pattern compaction.ts uses for the same reason.
+    let raw = (await callDefaultModel(`${systemPrompt}\n\n${userPrompt}`)).trim()
 
     // Strip code fences if the model added them anyway
     raw = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
