@@ -28,6 +28,7 @@
 
 import { prisma } from './db'
 import { embedNote, computeSemanticEdges } from './embeddings'
+import { estimateTokens } from './token-budget'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -56,13 +57,6 @@ interface LLMCallResult {
   inputTokens: number
   outputTokens: number
   reasoning?: string
-}
-
-// Length-based fallback estimate for providers/paths that don't report usage.
-// Conservative ~4 chars/token heuristic — better than recording zero, which
-// would defeat the point of budget tracking.
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4)
 }
 
 async function callWithModel(modelId: string, prompt: string): Promise<LLMCallResult> {

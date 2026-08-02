@@ -23,7 +23,7 @@ import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
 import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, invalidateSnapshotCache, getModelContextLimit, getClaudeContextLimit } from './agent-context'
 import { compactRoom, publishCompactionWarning, publishTokenUpdate } from './compaction'
-import { recordTokenUsage } from './token-budget'
+import { recordTokenUsage, estimateTokens } from './token-budget'
 import { rateLimitRedis } from './rate-limit-redis'
 import { auditToolCall } from './security/audit-emitter'
 import { redactSecrets } from './redact'
@@ -214,7 +214,7 @@ async function callClaude(
   agentId?: string,
   roomId?: string,
   activeGoal?: string,
-): Promise<{ text: string | null; error?: string }> {
+): Promise<{ text: string | null; error?: string; inputTokens: number; outputTokens: number }> {
   // Always enable MCP when in a room context — Claude should have the same tool access
   // as OpenAI-compatible agents. maxTurns controls depth; hasTools controls prompt framing.
   const useMcp = !!agentId && !!roomId
@@ -239,20 +239,33 @@ async function callClaude(
     // MCP tool calls can take longer — allow 5 min for tool-using sessions
     signal: AbortSignal.timeout(useMcp ? 300_000 : 120_000),
   }).catch((e: Error) => { console.error(`[room-agents] orion-claude fetch failed: ${e.message}`); return null })
-  if (!res) return { text: null, error: 'service unreachable' }
+  if (!res) return { text: null, error: 'service unreachable', inputTokens: 0, outputTokens: 0 }
   if (!res.ok) {
     const errBody = await res.text().catch(() => '')
     console.error(`[room-agents] orion-claude /run/collect HTTP ${res.status}: ${errBody?.slice(0, 400)}`)
-    return { text: null, error: mapClaudeError(errBody || `HTTP ${res.status}`) }
+    return { text: null, error: mapClaudeError(errBody || `HTTP ${res.status}`), inputTokens: 0, outputTokens: 0 }
   }
-  const data = await res.json() as { text?: string; error?: string }
+  const data = await res.json() as {
+    text?: string
+    error?: string
+    usage?: { inputTokens?: number; outputTokens?: number }
+    inputTokens?: number
+    outputTokens?: number
+  }
   if (data.error) {
     console.error(`[room-agents] orion-claude error: ${data.error.slice(0, 400)}`)
-    return { text: null, error: mapClaudeError(data.error) }
+    return { text: null, error: mapClaudeError(data.error), inputTokens: 0, outputTokens: 0 }
   }
   const text = data.text?.trim() || null
   if (!text) console.warn('[room-agents] orion-claude returned empty text')
-  return { text }
+  // orion-claude's /run/collect doesn't reliably surface usage — use it if present,
+  // otherwise fall back to a length-based estimate (same approach as dream.ts's
+  // callWithModel). Without this, tokensUsed stays 0 for every native-Claude agent
+  // call — the vast majority of agents in this system — and compaction, gated on
+  // tokensUsed > 0, never fires for them regardless of how large the room gets.
+  const inputTokens  = data.usage?.inputTokens  ?? data.inputTokens  ?? estimateTokens(sys + prompt)
+  const outputTokens = data.usage?.outputTokens ?? data.outputTokens ?? (text ? estimateTokens(text) : 0)
+  return { text, inputTokens, outputTokens }
 }
 
 /** Ollama native /api/chat endpoint */
@@ -1026,6 +1039,10 @@ export async function triggerRoomAgentReplies(
           const claudeModel = llm.startsWith('claude:') ? llm.slice('claude:'.length) : undefined
           const claudeResult = await callClaude(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, claudeModel, !!toolContext, agent.id, roomId, activeGoal)
           reply = claudeResult.text
+          // tokensUsed mirrors the OpenAI-compat branches' use of prompt_tokens as the
+          // cumulative-context-size proxy that drives the compaction threshold check below.
+          tokensUsed = claudeResult.inputTokens
+          callInputTokens = claudeResult.inputTokens; callOutputTokens = claudeResult.outputTokens
           if (reply === null) {
             // Claude is unavailable — post a notice on the agent's behalf
             console.warn(`[room-agents] ${agent.name}: Claude unavailable, posting unavailability notice`)
