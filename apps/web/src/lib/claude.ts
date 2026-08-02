@@ -20,8 +20,29 @@ async function recordTrace(data: {
   hookName?: string | null
   durationMs?: number | null
   modelUsed?: string | null
+  fullContext?: string | null
 }): Promise<void> {
   await prisma.agentTrace.create({ data }).catch(() => { /* non-fatal — tracing must not break chat */ })
+}
+
+/**
+ * Serialize the full context sent to the LLM (system prompt + tool list +
+ * conversation history) into one readable text block, for the agent-context
+ * viewer. Only called on the first trace step of a run.
+ */
+function buildFullContextSnapshot(
+  systemPrompt: string,
+  history: Array<{ role: string; content: string }>,
+  tools?: Array<{ name: string; description?: string }>,
+): string {
+  const parts: string[] = [`=== SYSTEM PROMPT ===\n${systemPrompt}`]
+  if (tools && tools.length) {
+    parts.push(`=== TOOLS AVAILABLE (${tools.length}) ===\n` + tools.map(t => `- ${t.name}: ${t.description ?? '(no description)'}`).join('\n'))
+  }
+  if (history.length) {
+    parts.push(`=== CONVERSATION HISTORY (${history.length} messages) ===\n` + history.map(m => `[${m.role}] ${m.content}`).join('\n\n'))
+  }
+  return parts.join('\n\n')
 }
 
 // ── Skill Injection: match user query against installed skill trigger patterns ─
@@ -353,7 +374,10 @@ async function* streamOllamaToolLoop(
 
   let _step = 0
   const inc = () => ++_step
-  await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: model })
+  await recordTrace({
+    conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: model,
+    fullContext: buildFullContextSnapshot(systemPrompt, history, tools),
+  })
 
   let ollamaUrl = baseUrl
   let timeoutSecs = 120
@@ -796,7 +820,10 @@ async function* streamOllamaAgentChat(
   const start = Date.now()
   let _step = 0
   const inc = () => ++_step
-  await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: model })
+  await recordTrace({
+    conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: model,
+    fullContext: buildFullContextSnapshot(systemPrompt, history),
+  })
   let totalText = ''
 
   const messages = [
@@ -1223,7 +1250,10 @@ async function* streamOpenAIChatCore(
   const start = Date.now()
   let _step = 0
   const inc = () => ++_step
-  await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: model })
+  await recordTrace({
+    conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: model,
+    fullContext: buildFullContextSnapshot(systemPrompt, history, tools),
+  })
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
@@ -1608,7 +1638,10 @@ async function* streamGeminiAgentChat(
   let _step = 0
   const inc = () => ++_step
   let totalText = ''
-  await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: model })
+  await recordTrace({
+    conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: model,
+    fullContext: buildFullContextSnapshot(systemPrompt, history),
+  })
 
   const contents = [
     ...history.map(m => ({
@@ -1832,7 +1865,6 @@ export async function* streamClaudeResponse(
   let totalText = ''
   const toolCallLog: Array<{ tool: string; input: string; output?: string }> = []
   const claudeModel = overrides?.model ?? 'claude-sonnet-4-6'
-  await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: claudeModel })
 
   const claudeUrl = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
 
@@ -1852,6 +1884,15 @@ export async function* streamClaudeResponse(
         effectiveSystemPrompt = `## INJECTED SKILL: ${skillName}\n${injected}\n---\n\n` + systemPrompt
       }
     }
+
+    await recordTrace({
+      conversationId, step: inc(), type: 'text_generation', content: prompt, modelUsed: claudeModel,
+      fullContext: buildFullContextSnapshot(
+        effectiveSystemPrompt,
+        previousMessages,
+        (overrides?.allowedTools ?? ALLOWED_TOOLS).map(name => ({ name })),
+      ),
+    })
 
     const fullPrompt = previousMessages.length > 0
       ? previousMessages.map(m => `${m.role}: ${m.content}`).join('\n\n') + `\n\nuser: ${prompt}`

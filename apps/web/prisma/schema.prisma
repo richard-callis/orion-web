@@ -1481,6 +1481,11 @@ model AgentTrace {
   durationMs       Int?
   modelUsed        String?
   systemPromptHash String?
+  // Full context actually sent to the LLM for this step (system prompt +
+  // knowledge-base context + conversation history + tool defs, assembled
+  // per-provider). Only populated on the first step of a run (where the
+  // full prompt is composed) — later steps only add incremental turns.
+  fullContext      String?  @db.Text
   tokensIn         Int?
   tokensOut        Int?
   costCents        Decimal? @db.Decimal(10, 6)
