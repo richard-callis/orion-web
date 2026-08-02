@@ -205,7 +205,7 @@ spec:
   {
     name:     'ingress',
     category: 'networking',
-    description: 'Standard Kubernetes Ingress for HTTP/S routing. Fill in the ingress class for your controller (nginx, traefik, istio, etc.) and add any controller-specific annotations.',
+    description: 'Standard Kubernetes Ingress for HTTP/S routing. Fill in the ingress class for your controller (nginx, traefik, istio, etc.) and add any controller-specific annotations. If the cluster runs cert-manager, the cluster-issuer annotation is REQUIRED, not optional — cert-manager\'s ingress-shim watches for it and issues the TLS cert automatically; omitting it means no cert is ever requested.',
     yaml: `\
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -216,10 +216,10 @@ metadata:
     # Add controller-specific annotations here, for example:
     # nginx.ingress.kubernetes.io/rewrite-target: /
     # traefik.ingress.kubernetes.io/router.middlewares: {{ MIDDLEWARE? }}
-    # cert-manager.io/cluster-issuer: {{ CERT_ISSUER? }}
+    cert-manager.io/cluster-issuer: {{ CERT_ISSUER }}   # required if TLS is enabled below and cert-manager is present — triggers automatic cert issuance
 spec:
   ingressClassName: {{ INGRESS_CLASS }}   # e.g. "nginx", "traefik", "istio"
-  # TLS — remove this section if not using HTTPS:
+  # TLS — remove this section AND the cert-manager annotation above if not using HTTPS:
   tls:
     - hosts: [{{ HOSTNAME }}]
       secretName: {{ APP_NAME }}-tls
