@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Trash2, GitBranch, Plus, Sparkles, Loader2, MessageSquare, Rocket, CheckCircle2 } from 'lucide-react'
+import { Trash2, GitBranch, Plus, Loader2, MessageSquare, Rocket, CheckCircle2 } from 'lucide-react'
 import type { Epic, Feature } from '@/types/tasks'
 import { PlanWithAIButton } from './PlanWithAIButton'
 import { DetailPanelShell } from '../ui/DetailPanelShell'
@@ -11,20 +11,17 @@ interface Props {
   onUpdate: (patch: Partial<Epic>) => Promise<void>
   onDelete: () => Promise<void>
   onPlanWithClaude: (modelId?: string) => void
-  onGenerateFeatures: () => Promise<void>
   onNewFeature: () => void
   onSelectFeature: (f: Feature) => void
   onClose: () => void
 }
 
-export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, onGenerateFeatures, onNewFeature, onSelectFeature, onClose }: Props) {
+export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, onNewFeature, onSelectFeature, onClose }: Props) {
   const router = useRouter()
   const [title, setTitle]         = useState(epic.title)
   const [desc, setDesc]           = useState(epic.description ?? '')
   const [plan, setPlan]           = useState(epic.plan ?? '')
   const [status, setStatus]       = useState(epic.status)
-  const [generating, setGenerating] = useState(false)
-  const [genError, setGenError]   = useState<string | null>(null)
   const [epicPlanningRoom, setEpicPlanningRoom] = useState<{ id: string } | null>(null)
   const [approving, setApproving]   = useState(false)
   const [justApproved, setJustApproved] = useState(false)
@@ -52,7 +49,6 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
     setDesc(epic.description ?? '')
     setPlan(epic.plan ?? '')
     setStatus(epic.status)
-    setGenError(null)
     setEpicPlanningRoom(null)
 
     // Fetch fresh data — plan may have been saved from the chat screen
@@ -80,18 +76,6 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
 
   const save = () => onUpdate({ title, description: desc || null, plan: plan || null, status })
 
-  const handleGenerate = async () => {
-    setGenerating(true)
-    setGenError(null)
-    try {
-      await onGenerateFeatures()
-    } catch (err) {
-      setGenError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setGenerating(false)
-    }
-  }
-
   return (
     <DetailPanelShell
       onClose={onClose}
@@ -107,17 +91,6 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
               <MessageSquare size={14} /> Continue Planning
             </button>
           )}
-          {plan && (
-            <button
-              onClick={handleGenerate}
-              disabled={generating}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-accent/40 text-accent text-sm hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-              {generating ? 'Generating features...' : 'Generate Features from Plan'}
-            </button>
-          )}
-          {genError && <p className="text-[10px] text-status-error text-center">{genError}</p>}
           {unapprovedFeatures.length > 0 && !justApproved && (
             <button
               onClick={handleApproveAll}
