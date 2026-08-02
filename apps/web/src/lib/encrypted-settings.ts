@@ -20,9 +20,7 @@
  */
 
 import { prisma } from '@/lib/db'
-import { encrypt, encryptJson, decrypt } from '@/lib/encryption'
-
-const PREFIX = 'enc:v1:'
+import { encrypt, encryptJson, decrypt, PREFIX } from '@/lib/encryption'
 
 /**
  * Every SystemSetting key that must always hold an enc:v1:-prefixed value,
@@ -47,7 +45,13 @@ export type EncryptedSettingKey = keyof typeof ENCRYPTED_SETTING_KEYS
 /** Encrypt and upsert a SystemSetting value, using the encoding registered for `key`. */
 export async function writeEncryptedSetting(key: EncryptedSettingKey, value: unknown): Promise<void> {
   const encoding = ENCRYPTED_SETTING_KEYS[key]
-  const encrypted = encoding === 'string' ? encrypt(String(value)) : encryptJson(value)
+  if (encoding === 'string' && typeof value !== 'string') {
+    // String(someObject) silently produces "[object Object]" — a plausible-looking
+    // but garbage encrypted value with no error anywhere. Only bare strings are
+    // valid for a 'string'-encoded key.
+    throw new Error(`writeEncryptedSetting('${key}', …): expected a string value, got ${typeof value}`)
+  }
+  const encrypted = encoding === 'string' ? encrypt(value as string) : encryptJson(value)
   await prisma.systemSetting.upsert({
     where: { key },
     update: { value: encrypted },
@@ -77,12 +81,26 @@ export async function healUnencryptedSettings(): Promise<void> {
         `this key is bypassing writeEncryptedSetting().`,
       )
 
-      // The stored value is whatever the corrupted write left behind — either
-      // the raw parsed JSON object/string (a jsonb column holding it directly),
-      // or a plain non-prefixed string. decrypt() itself is a no-op passthrough
-      // for non-prefixed strings, so re-wrap whatever we have as-is; writeEncryptedSetting
-      // re-applies the correct encoding (json vs raw string) for this specific key.
-      const rawValue = typeof setting.value === 'string' ? decrypt(setting.value) : setting.value
+      // The stored value is whatever the corrupted write left behind. Two shapes
+      // are possible for a 'json'-encoded key: the raw parsed object (jsonb column
+      // holding it directly — decrypt() no-op passthrough leaves it untouched
+      // since it's not even a string), or a JSON string that was never parsed back
+      // out (e.g. '{"type":"gitea"}' sitting in the column as a string). Re-running
+      // that through encryptJson as-is would double-encode it — decryptJsonStrict
+      // would later hand back a string instead of the config object. Try to parse
+      // it back to the real object first; if it's not valid JSON, it's presumably
+      // already the intended value (a 'string'-encoded key, or genuinely a plain
+      // string) and passes through unchanged.
+      const encoding = ENCRYPTED_SETTING_KEYS[key]
+      let rawValue: unknown = typeof setting.value === 'string' ? decrypt(setting.value) : setting.value
+      if (encoding === 'json' && typeof rawValue === 'string') {
+        try {
+          rawValue = JSON.parse(rawValue)
+        } catch {
+          // Not JSON — leave as the raw string and let writeEncryptedSetting's
+          // encryptJson wrap it, same as before this check existed.
+        }
+      }
       await writeEncryptedSetting(key, rawValue)
 
       console.error(`[encrypted-settings] '${key}' re-encrypted successfully.`)
