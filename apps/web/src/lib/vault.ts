@@ -91,6 +91,51 @@ export function vaultFetch(url: string, options: RequestInit = {}): Promise<Resp
   })
 }
 
+// ── Admin token resolution ──────────────────────────────────────────────────────
+
+/**
+ * Resolve the Vault token to use for admin writes.
+ *
+ * Prefers the wizard-configured 'vault.adminToken' SystemSetting — minted with
+ * a scoped orion-admin policy as part of the in-app Vault init flow (root is
+ * generated once and immediately revoked, never persisted; note this setting
+ * is deliberately not named 'vault.rootToken').
+ *
+ * Falls back to VAULT_TOKEN from the environment when that setting isn't
+ * configured. This covers instances where Vault was bootstrapped outside the
+ * wizard (e.g. via deploy/bootstrap.sh + a vault-unsealer sidecar) — Vault is
+ * fully initialised and the container already has a working, write-capable
+ * token wired in via env, but the wizard's token-minting step never ran
+ * because Vault didn't need this app to initialise it. Without this fallback,
+ * every Vault write fails with no indication that a perfectly good token was
+ * sitting in the environment the whole time.
+ */
+async function resolveVaultAdminToken(): Promise<string> {
+  const setting = await prisma.systemSetting.findUnique({ where: { key: 'vault.adminToken' } })
+  if (setting?.value) {
+    const rawValue = String(setting.value)
+    if (!rawValue.startsWith('enc:v1:')) {
+      console.error('[vault] admin token is not encrypted — refusing to use plaintext token (possible substitution attack)')
+      throw new Error('Vault admin token must be encrypted')
+    }
+    return decrypt(rawValue)
+  }
+
+  if (process.env.VAULT_TOKEN) {
+    console.warn(
+      "[vault] 'vault.adminToken' SystemSetting not configured — falling back to VAULT_TOKEN from the environment. " +
+      'Expected when Vault was bootstrapped outside the setup wizard. Run the wizard\'s Vault step to mint a ' +
+      'properly scoped admin token instead of relying on this fallback long-term.',
+    )
+    return process.env.VAULT_TOKEN
+  }
+
+  throw new Error(
+    "Vault admin token not configured — has the Vault setup wizard been completed? " +
+    "(No 'vault.adminToken' SystemSetting and no VAULT_TOKEN environment variable.)"
+  )
+}
+
 // ── Secret writer ─────────────────────────────────────────────────────────────
 
 /**
@@ -103,17 +148,7 @@ export async function writeVaultSecret(
   kvPath: string,
   data: Record<string, string>,
 ): Promise<void> {
-  // Setup wizard writes 'vault.adminToken', never 'vault.rootToken' (root is
-  // generated once and immediately revoked). Reading 'vault.rootToken' would
-  // always return null, silently breaking every secret write.
-  const setting = await prisma.systemSetting.findUnique({ where: { key: 'vault.adminToken' } })
-  if (!setting?.value) throw new Error('Vault admin token not configured — has the Vault setup wizard been completed?')
-  const rawValue = String(setting.value)
-  if (!rawValue.startsWith('enc:v1:')) {
-    console.error('[vault] admin token is not encrypted — refusing to use plaintext token (possible substitution attack)')
-    throw new Error('Vault admin token must be encrypted')
-  }
-  const token = decrypt(rawValue)
+  const token = await resolveVaultAdminToken()
 
   // Normalise: strip "secret/data/" prefix if the caller included it
   const normalised = kvPath.replace(/^secret\/data\//, '')

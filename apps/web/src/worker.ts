@@ -35,6 +35,7 @@ import { runElkPollerAll } from './jobs/security-poll-elk'
 import { runNtopngPollerAll } from './jobs/security-poll-ntopng'
 import { runDailyScan, runEventTriggeredScan } from './jobs/security-scan-vulns'
 import { runGoalHeartbeat } from './jobs/goal-heartbeat'
+import { healUnencryptedSettings } from './lib/encrypted-settings'
 import { redactSecrets } from './lib/redact'
 import { detectGitOpsDrift } from './jobs/gitops-drift'
 import { runScheduler } from './jobs/task-scheduler'
@@ -1790,6 +1791,11 @@ async function main() {
   }
 
   log(`Polling every ${POLL_INTERVAL_MS / 1000}s, max ${MAX_CONCURRENT} concurrent tasks`)
+
+  // Self-heal any SystemSetting rows that should be encrypted but aren't —
+  // catches legacy/manually-edited plaintext before some unrelated feature
+  // fails deep in a tool call, far removed from the actual bad write.
+  await healUnencryptedSettings().catch(e => err(`Encrypted-settings heal failed: ${e}`))
 
   // Recover any tasks that were in_progress when the worker last crashed
   await recoverStuckTasks().catch(e => err(`Startup recovery failed: ${e}`))
