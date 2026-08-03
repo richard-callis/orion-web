@@ -4,6 +4,7 @@ import { getPrompt, interpolate } from './system-prompts'
 import { generateEmbedding, vectorSearch } from './embeddings'
 import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './management-tools'
 import { validateToolArgs } from './tool-registry'
+import type { SkillSpec } from './skill-tools'
 
 // ── Agent Tracing: record AgentTrace records for observability ──────────────────
 
@@ -46,9 +47,6 @@ function buildFullContextSnapshot(
 }
 
 // ── Skill Injection: match user query against installed skill trigger patterns ─
-
-/** Parse a NebulaInstance.spec into a typed trigger config. */
-type SkillSpec = { triggerPatterns?: string[]; systemPrompt?: string }
 
 async function matchAndInjectSkills(
   environmentId: string,

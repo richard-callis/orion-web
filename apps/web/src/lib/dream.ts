@@ -1,7 +1,7 @@
 /**
  * Dream — memory consolidation for ORION.
  *
- * Three phases, run on separate schedules:
+ * Four phases, run on separate schedules:
  *
  * 1. EXTRACTION (every 2 hours)
  *    Scans recent chat messages and task events since the last run.
@@ -20,23 +20,35 @@
  *    Sends each note to an LLM with recent system context.
  *    Deletes notes the LLM marks as stale or superseded.
  *
+ * 4. SKILL CRAFTING (every 12 hours)
+ *    Reviews recently completed tasks since the last run. Asks an LLM which of
+ *    them represent a repeatable procedure (not a one-off) worth generalizing
+ *    into a reusable skill, and to produce step-by-step instructions + trigger
+ *    phrases for those. Writes them as NebulaInstance(category:'skill',
+ *    source:'dream') — the same model agents write to via the save_skill tool
+ *    and the Nebula UI writes to for human-authored skills.
+ *
  * Last-run timestamps are stored in SystemSetting:
- *   dream.extractionLastRun  — unix ms
- *   dream.synthesisLastRun   — unix ms
- *   dream.pruningLastRun     — unix ms
+ *   dream.extractionLastRun     — unix ms
+ *   dream.synthesisLastRun      — unix ms
+ *   dream.pruningLastRun        — unix ms
+ *   dream.skillCraftingLastRun  — unix ms
  */
 
 import { prisma } from './db'
 import { embedNote, computeSemanticEdges } from './embeddings'
 import { estimateTokens } from './token-budget'
+import type { SkillSpec } from './skill-tools'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const EXTRACTION_INTERVAL_MS = 2  * 60 * 60 * 1000  // 2 hours
-const SYNTHESIS_INTERVAL_MS  = 12 * 60 * 60 * 1000  // 12 hours
-const PRUNING_INTERVAL_MS    = 24 * 60 * 60 * 1000  // 24 hours
+const EXTRACTION_INTERVAL_MS      = 2  * 60 * 60 * 1000  // 2 hours
+const SYNTHESIS_INTERVAL_MS       = 12 * 60 * 60 * 1000  // 12 hours
+const PRUNING_INTERVAL_MS         = 24 * 60 * 60 * 1000  // 24 hours
+const SKILL_CRAFTING_INTERVAL_MS  = 12 * 60 * 60 * 1000  // 12 hours
 const EXTRACTION_BATCH       = 80   // messages per LLM call
 const PRUNING_BATCH          = 20   // notes per pruning LLM call
+const SKILL_CRAFTING_BATCH   = 15   // completed tasks reviewed per LLM call
 const MAX_NOTE_AGE_DAYS      = 90   // never auto-delete notes newer than this
 
 // ── LLM routing ───────────────────────────────────────────────────────────────
@@ -169,7 +181,7 @@ interface DreamLLMResult {
   reasoning?: string
 }
 
-async function callLLM(prompt: string, jobType: 'extraction' | 'synthesis' | 'pruning'): Promise<DreamLLMResult> {
+async function callLLM(prompt: string, jobType: 'extraction' | 'synthesis' | 'pruning' | 'skill_crafting'): Promise<DreamLLMResult> {
   const modelId = await getDreamModelId()
 
   try {
@@ -632,11 +644,150 @@ Rules:
   console.log(`[dream] Pruning complete — deleted ${deleted} stale notes`)
 }
 
+// ── Skill Crafting ────────────────────────────────────────────────────────────
+
+/**
+ * Review recently completed tasks and generalize repeatable ones into
+ * reusable skills (NebulaInstance category:'skill', source:'dream').
+ * Called every SKILL_CRAFTING_INTERVAL_MS.
+ */
+export async function runSkillCrafting(): Promise<void> {
+  const lastRunStr = await getSetting('dream.skillCraftingLastRun')
+  const lastRun    = lastRunStr ? new Date(parseInt(lastRunStr, 10)) : new Date(0)
+  const now        = new Date()
+
+  console.log(`[dream] Skill crafting — scanning completed tasks since ${lastRun.toISOString()}`)
+
+  const tasks = await prisma.task.findMany({
+    where: {
+      status:    'done',
+      updatedAt: { gt: lastRun },
+    },
+    orderBy: { updatedAt: 'asc' },
+    take: SKILL_CRAFTING_BATCH,
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      assignedAgent: true,
+      updatedAt: true,
+      events: {
+        where: { eventType: { in: ['tool_call', 'tool_result', 'agent_output'] } },
+        orderBy: { createdAt: 'asc' },
+        take: 40,
+        select: { eventType: true, content: true },
+      },
+    },
+  })
+
+  if (tasks.length === 0) {
+    console.log('[dream] Skill crafting — no newly completed tasks, skipping')
+    await setSetting('dream.skillCraftingLastRun', String(now.getTime()))
+    return
+  }
+
+  // Existing skill names, so the LLM doesn't propose near-duplicates
+  const existingSkills = await prisma.nebulaInstance.findMany({
+    where: { category: 'skill' },
+    select: { name: true },
+  })
+  const existingNames = existingSkills.map(s => `  - ${s.name}`).join('\n')
+
+  const taskBlocks = tasks.map((t, i) => {
+    const steps = t.events
+      .map(e => `  [${e.eventType}] ${(e.content ?? '').slice(0, 300)}`)
+      .join('\n')
+    return `### Task ${i + 1}: ${t.title}\n${t.description ? `Description: ${t.description}\n` : ''}Steps taken:\n${steps || '  (no recorded steps)'}`
+  }).join('\n\n')
+
+  const craftingPrompt = `You are reviewing recently completed tasks for an AI agent team managing a Kubernetes homelab cluster, looking for ones worth generalizing into a reusable "skill" — a saved step-by-step procedure that any agent can look up and reuse next time a similar situation comes up.
+
+EXISTING SKILLS (do not duplicate these):
+${existingNames || '  (none yet)'}
+
+COMPLETED TASKS:
+${taskBlocks}
+
+Instructions:
+- Only propose a skill for a task whose steps represent a REPEATABLE procedure — something likely to recur (e.g. "restart a stuck pod after a storage remount", "rotate an expiring cert-manager secret"). Skip one-off, task-specific, or trivial work.
+- Do not propose a skill that duplicates or near-duplicates an existing skill above.
+- Steps must be generalized (no task-specific IDs, names, or timestamps) so they apply to future similar situations.
+- trigger_patterns should be short phrases a human or agent might type that should surface this skill.
+
+Respond with a JSON array (and nothing else) of skill definitions:
+{
+  "task_index": <1-based index of the task this came from>,
+  "name": "short kebab-case identifier",
+  "description": "one-sentence summary",
+  "trigger_patterns": ["phrase one", "phrase two"],
+  "steps": ["step 1", "step 2", "..."]
+}
+
+If none of the tasks are worth generalizing into a skill, return an empty array: []`
+
+  let proposed: Array<{ task_index: number; name: string; description: string; trigger_patterns: string[]; steps: string[] }> = []
+  try {
+    const raw = (await callLLM(craftingPrompt, 'skill_crafting')).text
+    const jsonMatch = raw.match(/\[[\s\S]*\]/)
+    if (jsonMatch) proposed = JSON.parse(jsonMatch[0])
+  } catch (e) {
+    console.error('[dream] Skill crafting LLM/parse error:', e)
+  }
+
+  console.log(`[dream] Skill crafting — proposing ${proposed.length} skill(s) from ${tasks.length} task(s)`)
+
+  const dreamAgentId = await getDreamAgentId()
+  let written = 0
+  for (const item of proposed) {
+    if (!item.name?.trim() || !item.steps?.length) continue
+    const task = tasks[item.task_index - 1]
+    if (!task?.assignedAgent) continue
+
+    try {
+      // Resolve the environment via the task's assigned agent's link — skills
+      // are scoped per-environment, same as human-authored Nebula skills.
+      const link = await prisma.agentEnvironment.findFirst({ where: { agentId: task.assignedAgent } })
+      if (!link) continue
+
+      const existing = await prisma.nebulaInstance.findUnique({
+        where: { environmentId_name: { environmentId: link.environmentId, name: item.name.trim() } },
+      })
+      if (existing) continue // don't clobber — the crafting prompt already tries to avoid this
+
+      const spec: SkillSpec = {
+        description: item.description,
+        triggerPatterns: item.trigger_patterns ?? [],
+        steps: item.steps,
+        systemPrompt: item.steps.map((s, i) => `${i + 1}. ${s}`).join('\n'),
+      }
+
+      await prisma.nebulaInstance.create({
+        data: {
+          environmentId: link.environmentId,
+          name: item.name.trim(),
+          category: 'skill',
+          spec: JSON.stringify(spec),
+          isInstalled: true,
+          source: 'dream',
+          createdByAgentId: dreamAgentId,
+        },
+      })
+      written++
+    } catch (e) {
+      console.error('[dream] Failed to write skill:', item.name, e)
+    }
+  }
+
+  await setSetting('dream.skillCraftingLastRun', String(now.getTime()))
+  console.log(`[dream] Skill crafting complete — wrote ${written}/${proposed.length} skills`)
+}
+
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
-let extractionTimer: ReturnType<typeof setTimeout> | null = null
-let synthesisTimer:  ReturnType<typeof setTimeout> | null = null
-let pruningTimer:    ReturnType<typeof setTimeout> | null = null
+let extractionTimer:    ReturnType<typeof setTimeout> | null = null
+let synthesisTimer:     ReturnType<typeof setTimeout> | null = null
+let pruningTimer:       ReturnType<typeof setTimeout> | null = null
+let skillCraftingTimer: ReturnType<typeof setTimeout> | null = null
 
 export function startDream(): void {
   console.log('[dream] Starting memory consolidation scheduler')
@@ -680,13 +831,28 @@ export function startDream(): void {
     }, delay)
   }
 
+  async function scheduleSkillCrafting() {
+    const lastRunStr = await getSetting('dream.skillCraftingLastRun').catch(() => null)
+    const lastRun    = lastRunStr ? parseInt(lastRunStr, 10) : 0
+    const nextRun    = lastRun + SKILL_CRAFTING_INTERVAL_MS
+    const delay      = Math.max(0, nextRun - Date.now())
+
+    console.log(`[dream] Next skill crafting in ${Math.round(delay / 60000)} min`)
+    skillCraftingTimer = setTimeout(async () => {
+      await runSkillCrafting().catch(e => console.error('[dream] Skill crafting failed:', e))
+      scheduleSkillCrafting()
+    }, delay)
+  }
+
   scheduleExtraction()
   scheduleSynthesis()
   schedulePruning()
+  scheduleSkillCrafting()
 }
 
 export function stopDream(): void {
-  if (extractionTimer) clearTimeout(extractionTimer)
-  if (synthesisTimer)  clearTimeout(synthesisTimer)
-  if (pruningTimer)    clearTimeout(pruningTimer)
+  if (extractionTimer)    clearTimeout(extractionTimer)
+  if (synthesisTimer)     clearTimeout(synthesisTimer)
+  if (pruningTimer)       clearTimeout(pruningTimer)
+  if (skillCraftingTimer) clearTimeout(skillCraftingTimer)
 }
