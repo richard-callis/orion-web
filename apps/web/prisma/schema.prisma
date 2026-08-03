@@ -1466,7 +1466,7 @@ model SkillExecutionLog {
   id             String         @id @default(cuid())
   nebulaId       String
   nebula         NebulaInstance @relation(fields: [nebulaId], references: [id], onDelete: Cascade)
-  source         String // "chat_match" | "hook_trigger" | "manual"
+  source         String // "chat_match" | "task_match" | "room_match" | "hook_trigger" | "manual"
   contextId      String?
   matchedPattern String?
   createdAt      DateTime       @default(now())

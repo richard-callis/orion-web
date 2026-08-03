@@ -41,6 +41,7 @@ import { estimateTokens } from './token-budget'
 import {
   type SkillSpec,
   validateSkillContent,
+  resolveAgentPrimaryEnvironmentId,
   MIN_TRIGGER_PATTERN_LEN,
   MAX_TRIGGER_PATTERNS,
   MAX_STEPS,
@@ -700,11 +701,8 @@ export async function runSkillCrafting(): Promise<void> {
   const taskEnvIds = new Map<string, string>() // taskId -> environmentId
   for (const t of tasks) {
     if (!t.assignedAgent) continue
-    const link = await prisma.agentEnvironment.findFirst({
-      where: { agentId: t.assignedAgent },
-      orderBy: { createdAt: 'asc' }, // deterministic pick for multi-env agents
-    })
-    if (link) taskEnvIds.set(t.id, link.environmentId)
+    const envId = await resolveAgentPrimaryEnvironmentId(t.assignedAgent)
+    if (envId) taskEnvIds.set(t.id, envId)
   }
 
   // Existing skill names in those environments, so the LLM doesn't propose

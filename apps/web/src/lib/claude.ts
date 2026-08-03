@@ -46,12 +46,16 @@ function buildFullContextSnapshot(
   return parts.join('\n\n')
 }
 
-// ── Skill Injection: match user query against installed skill trigger patterns ─
+// ── Skill Injection: match a query against installed skill trigger patterns ────
+// Shared across every path that surfaces skills automatically (rather than an
+// agent explicitly calling use_skill): direct/agent-target AI chat here, task
+// execution (worker.ts), and chat-room replies (room-agents.ts).
 
-async function matchAndInjectSkills(
+export async function matchAndInjectSkills(
   environmentId: string,
   message: string,
-  conversationId?: string,
+  logSource: 'chat_match' | 'task_match' | 'room_match' = 'chat_match',
+  contextId?: string,
 ): Promise<{ injected: string; skillName: string | null }> {
   const skills = await prisma.nebulaInstance.findMany({
     where: { environmentId, category: 'skill', isInstalled: true },
@@ -63,9 +67,9 @@ async function matchAndInjectSkills(
     if (!spec?.triggerPatterns?.length) continue
     const matched = spec.triggerPatterns.find(p => msgLower.includes(p.toLowerCase()))
     if (matched) {
-      // Non-blocking log — failures must not break the chat flow
+      // Non-blocking log — failures must not break the calling flow
       prisma.skillExecutionLog.create({
-        data: { nebulaId: skill.id, source: 'chat_match', matchedPattern: matched },
+        data: { nebulaId: skill.id, source: logSource, matchedPattern: matched, contextId: contextId ?? null },
       }).catch(() => {})
       return { injected: spec.systemPrompt ?? '', skillName: skill.name }
     }
@@ -1877,7 +1881,7 @@ export async function* streamClaudeResponse(
     // Inject matched skill(s) into the system prompt
     let effectiveSystemPrompt = systemPrompt
     if (environmentId) {
-      const { injected, skillName } = await matchAndInjectSkills(environmentId, prompt, conversationId)
+      const { injected, skillName } = await matchAndInjectSkills(environmentId, prompt, 'chat_match', conversationId)
       if (injected) {
         effectiveSystemPrompt = `## INJECTED SKILL: ${skillName}\n${injected}\n---\n\n` + systemPrompt
       }

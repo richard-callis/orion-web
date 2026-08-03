@@ -1,8 +1,12 @@
 /**
  * Skill tools — let agents save, list, and use reusable step-by-step
  * procedures ("skills") on top of the existing NebulaInstance(category:'skill')
- * model that already powers automatic chat-trigger skill injection
- * (see matchAndInjectSkills in claude.ts).
+ * model that already powers automatic trigger-pattern skill injection
+ * (see matchAndInjectSkills in claude.ts, called from all three places an
+ * agent gets a system prompt built for it: direct/agent-target AI chat in
+ * claude.ts itself, task execution in worker.ts, and chat-room replies in
+ * room-agents.ts — so a saved skill surfaces automatically wherever its
+ * trigger phrase appears, not just in one chat path).
  *
  * Skills are scoped per-environment, same as the Nebula UI's human-authored
  * skills. Agent-saved skills are auto-installed for retrieval (list_skills /
@@ -10,11 +14,10 @@
  * no different in risk from any other read tool. But their trigger_patterns
  * are capped in count/specificity (see MIN_TRIGGER_PATTERN_LEN etc. below)
  * because that's a PUSH path: matchAndInjectSkills auto-injects the first
- * matching skill's systemPrompt into every future chat turn whose message
- * contains the pattern, for every user in that environment — an overly broad
- * or adversarial pattern would hijack unrelated conversations. Dream's
- * skill-crafting phase (dream.ts) writes here too, tagged source:'dream',
- * and is held to the same caps.
+ * matching skill's systemPrompt into every future chat turn / task / room
+ * reply whose message contains the pattern — an overly broad or adversarial
+ * pattern would hijack unrelated work. Dream's skill-crafting phase
+ * (dream.ts) writes here too, tagged source:'dream', held to the same caps.
  */
 
 import { registerTool, type ToolExecutionContext } from '@/lib/tool-registry'
@@ -76,6 +79,21 @@ export function validateSkillContent(
 }
 
 /**
+ * Resolve an agent's primary environment — its earliest-linked one, for
+ * determinism (findFirst with no orderBy is non-deterministic in Postgres).
+ * Deliberately does NOT go through gateway resolution (resolveAgentGateway),
+ * which additionally requires a configured gatewayUrl/gatewayToken — skill
+ * lookup shouldn't depend on whether the environment has a gateway wired up.
+ */
+export async function resolveAgentPrimaryEnvironmentId(agentId: string): Promise<string | null> {
+  const link = await prisma.agentEnvironment.findFirst({
+    where: { agentId },
+    orderBy: { createdAt: 'asc' },
+  })
+  return link?.environmentId ?? null
+}
+
+/**
  * Resolve which environment a skill call should target, and verify the
  * calling agent is actually linked to it. An explicitly-passed environment_id
  * is agent-controlled input — trusting it without this check would let any
@@ -93,14 +111,9 @@ async function resolveEnvironmentId(ctx: ToolExecutionContext, explicit?: string
 
   if (ctx.environmentId) return ctx.environmentId
 
-  // Deterministic fallback (not just "first" — findFirst with no orderBy is
-  // non-deterministic in Postgres) when no explicit/context environment is given.
-  const link = await prisma.agentEnvironment.findFirst({
-    where: { agentId: ctx.agentId },
-    orderBy: { createdAt: 'asc' },
-  })
-  if (!link) return { error: 'No environment context — pass environment_id explicitly, or link this agent to an environment first.' }
-  return link.environmentId
+  const envId = await resolveAgentPrimaryEnvironmentId(ctx.agentId)
+  if (!envId) return { error: 'No environment context — pass environment_id explicitly, or link this agent to an environment first.' }
+  return envId
 }
 
 export function registerSkillTools(): void {

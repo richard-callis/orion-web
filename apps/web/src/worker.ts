@@ -20,6 +20,8 @@ import { getPrompt } from './lib/system-prompts'
 import { resolveAgentGateway } from './lib/agent-gateway'
 import { getAgentsMd } from './lib/agents-md'
 import { startDream } from './lib/dream'
+import { matchAndInjectSkills } from './lib/claude'
+import { resolveAgentPrimaryEnvironmentId } from './lib/skill-tools'
 import { createTrace } from './lib/langfuse'
 import {
   checkAgentBudget,
@@ -495,9 +497,22 @@ async function runTask(taskId: string): Promise<void> {
       ? `\n\n## Environment-Specific Instructions (from AGENTS.md)\n${agentsMd}`
       : ''
 
+    // Auto-surface a matching saved skill (see skill-tools.ts) — this is the
+    // same trigger-pattern match claude.ts uses for direct AI chat, so a task
+    // whose title/description matches a skill's trigger phrase gets its
+    // instructions injected automatically, not just when a human happens to
+    // type the phrase in a chat conversation.
+    const skillEnvId = await resolveAgentPrimaryEnvironmentId(agent.id)
+    const skillMatch = skillEnvId
+      ? await matchAndInjectSkills(skillEnvId, taskQuery, 'task_match', taskId).catch(() => ({ injected: '', skillName: null }))
+      : { injected: '', skillName: null }
+    const skillSection = skillMatch.injected
+      ? `\n\n---\n## Matched Skill: ${skillMatch.skillName}\n${skillMatch.injected}\n---\n`
+      : ''
+
     // Note: ORION snapshot + vector RAG are injected automatically by withContext()
     // inside createRunner() — no need to fetch them here.
-    let systemPrompt = injectedPreamble + '\n\n' + agentSystemPrompt + agentsMdSection + wikiContext
+    let systemPrompt = injectedPreamble + '\n\n' + agentSystemPrompt + agentsMdSection + skillSection + wikiContext
 
     // Plan-before-execute gating. If a previously-paused plan has been approved
     // (metadata.planApproved === true, set by /api/tasks/:id/resume-plan), skip
