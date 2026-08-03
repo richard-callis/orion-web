@@ -38,7 +38,14 @@
 import { prisma } from './db'
 import { embedNote, computeSemanticEdges } from './embeddings'
 import { estimateTokens } from './token-budget'
-import type { SkillSpec } from './skill-tools'
+import {
+  type SkillSpec,
+  validateSkillContent,
+  MIN_TRIGGER_PATTERN_LEN,
+  MAX_TRIGGER_PATTERNS,
+  MAX_STEPS,
+  MAX_STEP_LEN,
+} from './skill-tools'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -686,11 +693,30 @@ export async function runSkillCrafting(): Promise<void> {
     return
   }
 
-  // Existing skill names, so the LLM doesn't propose near-duplicates
-  const existingSkills = await prisma.nebulaInstance.findMany({
-    where: { category: 'skill' },
-    select: { name: true },
-  })
+  // Only tasks whose completing agent resolves to an environment can become
+  // skills (skills are environment-scoped). Resolve up front so the existing-
+  // skills dedupe list below is scoped to the environments actually in play,
+  // not every environment in the system.
+  const taskEnvIds = new Map<string, string>() // taskId -> environmentId
+  for (const t of tasks) {
+    if (!t.assignedAgent) continue
+    const link = await prisma.agentEnvironment.findFirst({
+      where: { agentId: t.assignedAgent },
+      orderBy: { createdAt: 'asc' }, // deterministic pick for multi-env agents
+    })
+    if (link) taskEnvIds.set(t.id, link.environmentId)
+  }
+
+  // Existing skill names in those environments, so the LLM doesn't propose
+  // near-duplicates (and so a same-named skill in an unrelated environment
+  // doesn't needlessly suppress a real proposal here).
+  const relevantEnvIds = Array.from(new Set(taskEnvIds.values()))
+  const existingSkills = relevantEnvIds.length
+    ? await prisma.nebulaInstance.findMany({
+        where: { category: 'skill', environmentId: { in: relevantEnvIds } },
+        select: { name: true },
+      })
+    : []
   const existingNames = existingSkills.map(s => `  - ${s.name}`).join('\n')
 
   const taskBlocks = tasks.map((t, i) => {
@@ -711,8 +737,8 @@ ${taskBlocks}
 Instructions:
 - Only propose a skill for a task whose steps represent a REPEATABLE procedure — something likely to recur (e.g. "restart a stuck pod after a storage remount", "rotate an expiring cert-manager secret"). Skip one-off, task-specific, or trivial work.
 - Do not propose a skill that duplicates or near-duplicates an existing skill above.
-- Steps must be generalized (no task-specific IDs, names, or timestamps) so they apply to future similar situations.
-- trigger_patterns should be short phrases a human or agent might type that should surface this skill.
+- Steps must be generalized (no task-specific IDs, names, or timestamps) so they apply to future similar situations. Max ${MAX_STEPS} steps, each under ${MAX_STEP_LEN} characters.
+- trigger_patterns should be short, SPECIFIC phrases (at least ${MIN_TRIGGER_PATTERN_LEN} characters, max ${MAX_TRIGGER_PATTERNS} patterns) a human or agent might type that should surface this skill — never a broad/generic word, since a match auto-injects this skill's instructions into that chat turn.
 
 Respond with a JSON array (and nothing else) of skill definitions:
 {
@@ -741,16 +767,21 @@ If none of the tasks are worth generalizing into a skill, return an empty array:
   for (const item of proposed) {
     if (!item.name?.trim() || !item.steps?.length) continue
     const task = tasks[item.task_index - 1]
-    if (!task?.assignedAgent) continue
+    if (!task) continue
+
+    const environmentId = taskEnvIds.get(task.id)
+    if (!environmentId) continue // no environment link for the completing agent — can't scope a skill
+
+    const prompt = item.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')
+    const contentError = validateSkillContent(item.trigger_patterns, prompt, item.steps)
+    if (contentError) {
+      console.warn(`[dream] Skipping proposed skill "${item.name}" — ${contentError}`)
+      continue
+    }
 
     try {
-      // Resolve the environment via the task's assigned agent's link — skills
-      // are scoped per-environment, same as human-authored Nebula skills.
-      const link = await prisma.agentEnvironment.findFirst({ where: { agentId: task.assignedAgent } })
-      if (!link) continue
-
       const existing = await prisma.nebulaInstance.findUnique({
-        where: { environmentId_name: { environmentId: link.environmentId, name: item.name.trim() } },
+        where: { environmentId_name: { environmentId, name: item.name.trim() } },
       })
       if (existing) continue // don't clobber — the crafting prompt already tries to avoid this
 
@@ -758,12 +789,12 @@ If none of the tasks are worth generalizing into a skill, return an empty array:
         description: item.description,
         triggerPatterns: item.trigger_patterns ?? [],
         steps: item.steps,
-        systemPrompt: item.steps.map((s, i) => `${i + 1}. ${s}`).join('\n'),
+        systemPrompt: prompt,
       }
 
       await prisma.nebulaInstance.create({
         data: {
-          environmentId: link.environmentId,
+          environmentId,
           name: item.name.trim(),
           category: 'skill',
           spec: JSON.stringify(spec),
@@ -773,13 +804,21 @@ If none of the tasks are worth generalizing into a skill, return an empty array:
         },
       })
       written++
-    } catch (e) {
+    } catch (e: unknown) {
+      if ((e as { code?: string })?.code === 'P2002') continue // concurrent duplicate — not an error
       console.error('[dream] Failed to write skill:', item.name, e)
     }
   }
 
-  await setSetting('dream.skillCraftingLastRun', String(now.getTime()))
-  console.log(`[dream] Skill crafting complete — wrote ${written}/${proposed.length} skills`)
+  // BLOCKER fix (mirrors the same fix in runExtraction): only advance the
+  // watermark to now() when the batch wasn't full — otherwise tasks beyond
+  // SKILL_CRAFTING_BATCH would be permanently skipped, since the next run's
+  // `updatedAt: { gt: lastRun }` filter would never see them again.
+  const watermark = tasks.length === SKILL_CRAFTING_BATCH
+    ? tasks[tasks.length - 1].updatedAt
+    : now
+  await setSetting('dream.skillCraftingLastRun', String(watermark.getTime()))
+  console.log(`[dream] Skill crafting complete — wrote ${written}/${proposed.length} skills (processed through ${watermark.toISOString()})`)
 }
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
