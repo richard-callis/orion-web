@@ -73,10 +73,10 @@ export const BUNDLED_PROVIDERS: Record<string, ProviderConfig> = {
     description: 'Open-source identity provider with SSO, MFA, and passwordless auth',
     helm: {
       release: 'authentik',
-      chart: 'goauthentik/authentik',
+      chart: 'authentik',
       repo: 'https://charts.goauthentik.io',
       values: {
-        authentik: { secretKey: '{{ genSecret 64 }}' },
+        authentik: { secret_key: '{{ genSecret 64 }}' },
         server: {
           replicaCount: 1,
           ingress: {
@@ -95,8 +95,8 @@ export const BUNDLED_PROVIDERS: Record<string, ProviderConfig> = {
     overlaySecret: {
       name: 'authentik-secret-fix',
       entries: [
-        { key: 'AUTHENTIK_SECRET_KEY', value: '{{ .helm.values.authentik.secretKey }}' },
-        { key: 'AUTHENTIK_ROOT_PASSWORD', value: '{{ adminPassword }}' },
+        { key: 'AUTHENTIK_SECRET_KEY', value: '{{ .helm.values.authentik.secret_key }}' },
+        { key: 'AUTHENTIK_BOOTSTRAP_PASSWORD', value: '{{ adminPassword }}' },
         { key: 'AUTHENTIK_POSTGRESQL__HOST', value: '{{ .helm.release }}-postgresql' },
         { key: 'AUTHENTIK_POSTGRESQL__NAME', value: 'authentik' },
         { key: 'AUTHENTIK_POSTGRESQL__USER', value: 'authentik' },
