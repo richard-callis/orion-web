@@ -22,6 +22,7 @@
 
 import { registerTool, type ToolExecutionContext } from '@/lib/tool-registry'
 import { prisma } from '@/lib/db'
+import { embedSkill } from '@/lib/embeddings'
 
 export interface SkillSpec {
   triggerPatterns?: string[]
@@ -191,9 +192,13 @@ export function registerSkillTools(): void {
         throw e
       }
 
+      // Embed for semantic trigger matching (complements the exact substring
+      // match) — non-fatal, the skill is still fully usable without it.
+      embedSkill({ id: created.id, name, description, triggerPatterns: trigger_patterns }).catch(() => {})
+
       const triggerNote = trigger_patterns?.length
-        ? `It will auto-trigger in chat when a message contains one of its ${trigger_patterns.length} trigger phrase(s).`
-        : 'It has no trigger phrases, so it will only be used when an agent explicitly calls use_skill.'
+        ? `It will auto-trigger in chat when a message contains one of its ${trigger_patterns.length} trigger phrase(s), or a semantically similar message.`
+        : 'It has no exact trigger phrases, so it will surface via semantic similarity or when an agent explicitly calls use_skill.'
       return `Skill "${name}" saved (id: ${created.id}) and active immediately. ${triggerNote} Any agent linked to this environment can look it up with list_skills / use_skill.`
     },
   })

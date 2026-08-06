@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { prisma } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { parseBodyOrError } from '@/lib/validate'
+import { embedSkill } from '@/lib/embeddings'
+import type { SkillSpec } from '@/lib/skill-tools'
 
 export const dynamic = 'force-dynamic'
 
@@ -59,5 +61,15 @@ export async function POST(
   const entry = await prisma.nebulaInstance.create({
     data: { ...body, environmentId: (await params).id, isForked: true },
   })
+
+  // Embed for semantic trigger matching, same as agent-saved and Dream-crafted
+  // skills — non-fatal, the skill is fully usable without it.
+  if (entry.category === 'skill') {
+    try {
+      const spec = JSON.parse(entry.spec) as SkillSpec
+      embedSkill({ id: entry.id, name: entry.name, description: spec.description, triggerPatterns: spec.triggerPatterns }).catch(() => {})
+    } catch { /* malformed spec — skip embedding, entry is still created */ }
+  }
+
   return NextResponse.json(entry)
 }

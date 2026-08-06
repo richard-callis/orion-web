@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
+import { embedSkill } from '@/lib/embeddings'
+import type { SkillSpec } from '@/lib/skill-tools'
 
 export const dynamic = 'force-dynamic'
 
@@ -62,6 +64,16 @@ export async function PUT(
     where: { id: existing.id },
     data: updateData,
   })
+
+  // Re-embed on spec change so semantic matching reflects the updated
+  // trigger patterns/description — non-fatal.
+  if (entry.category === 'skill' && body.spec !== undefined) {
+    try {
+      const spec = JSON.parse(entry.spec) as SkillSpec
+      embedSkill({ id: entry.id, name: entry.name, description: spec.description, triggerPatterns: spec.triggerPatterns }).catch(() => {})
+    } catch { /* malformed spec — skip re-embedding */ }
+  }
+
   return NextResponse.json(entry)
 }
 

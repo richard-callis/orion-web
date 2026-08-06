@@ -292,6 +292,89 @@ export async function vectorSearch(
   }))
 }
 
+// ── Skill Embeddings ──────────────────────────────────────────────────────────
+// Semantic trigger matching for skills, as a complement to the existing exact
+// substring match on triggerPatterns (see matchAndInjectSkills in claude.ts).
+
+/** Upsert an embedding for a skill (replaces previous version). */
+export async function storeSkillEmbedding(
+  nebulaId: string,
+  vector: number[],
+  modelRef: string,
+): Promise<void> {
+  await prisma.nebulaEmbedding.upsert({
+    where: { nebulaId },
+    update: {
+      embedding: JSON.stringify(vector),
+      dimension: vector.length,
+      modelRef,
+      version: { increment: 1 },
+      updatedAt: new Date(),
+    },
+    create: {
+      nebulaId,
+      embedding: JSON.stringify(vector),
+      dimension: vector.length,
+      modelRef,
+    },
+  })
+}
+
+/**
+ * Embed a skill's "meaning" (name + description + trigger patterns — NOT the
+ * full step-by-step instructions, which are longer and less semantically
+ * distinctive) so a message describing the same situation in different words
+ * can still surface it. Returns true if embedding was generated successfully.
+ */
+export async function embedSkill(
+  skill: { id: string; name: string; description?: string; triggerPatterns?: string[] },
+  options?: { attributeToDream?: boolean },
+): Promise<boolean> {
+  const text = [skill.name, skill.description, ...(skill.triggerPatterns ?? [])]
+    .filter(Boolean)
+    .join('. ')
+  if (!text.trim()) return false
+
+  const result = await generateEmbedding(text, options?.attributeToDream ?? false)
+  if (!result) return false
+
+  await storeSkillEmbedding(skill.id, result.vector, result.modelRef)
+  return true
+}
+
+/**
+ * Semantic similarity search over installed skills in an environment.
+ * Complements the exact substring match: a message that doesn't literally
+ * contain a trigger phrase can still surface a skill if it's a close enough
+ * semantic match (see minScore in matchAndInjectSkills for the threshold).
+ */
+export async function skillVectorSearch(
+  queryVector: number[],
+  environmentId: string,
+  limit: number = 3,
+): Promise<Array<{ nebulaId: string; score: number }>> {
+  const vecStr = `[${queryVector.join(',')}]`
+
+  const results = await prisma.$queryRaw<unknown[]>`
+    SELECT
+      ne."nebulaId",
+      (1 - (ne.embedding <-> ${vecStr}::vector))::float AS score
+    FROM "nebula_embeddings" ne
+    JOIN "NebulaInstance" n ON n.id = ne."nebulaId"
+    WHERE ne.embedding IS NOT NULL
+      AND n."environmentId" = ${environmentId}
+      AND n.category = 'skill'
+      AND n."isInstalled" = true
+    ORDER BY score DESC
+    LIMIT ${limit}
+  `
+
+  return (results as any[]).map(r => ({
+    nebulaId: r.nebulaId as string,
+    score: parseFloat(r.score as string),
+  }))
+}
+
 // ── Semantic Connections ─────────────────────────────────────────────────────
 
 /**

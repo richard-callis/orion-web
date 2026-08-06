@@ -36,7 +36,7 @@
  */
 
 import { prisma } from './db'
-import { embedNote, computeSemanticEdges } from './embeddings'
+import { embedNote, computeSemanticEdges, embedSkill } from './embeddings'
 import { estimateTokens } from './token-budget'
 import {
   type SkillSpec,
@@ -790,7 +790,7 @@ If none of the tasks are worth generalizing into a skill, return an empty array:
         systemPrompt: prompt,
       }
 
-      await prisma.nebulaInstance.create({
+      const createdSkill = await prisma.nebulaInstance.create({
         data: {
           environmentId,
           name: item.name.trim(),
@@ -801,6 +801,14 @@ If none of the tasks are worth generalizing into a skill, return an empty array:
           createdByAgentId: dreamAgentId,
         },
       })
+      // Embed for semantic trigger matching — non-fatal. Attributed to Dream's
+      // own budget, same as its note embeddings.
+      await embedSkill({
+        id: createdSkill.id,
+        name: createdSkill.name,
+        description: item.description,
+        triggerPatterns: item.trigger_patterns,
+      }, { attributeToDream: true }).catch(() => {})
       written++
     } catch (e: unknown) {
       if ((e as { code?: string })?.code === 'P2002') continue // concurrent duplicate — not an error

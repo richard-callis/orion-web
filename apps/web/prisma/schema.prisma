@@ -1439,10 +1439,31 @@ model NebulaInstance {
   updatedAt       DateTime            @updatedAt
   hookLogs        HookExecutionLog[]
   skillLogs       SkillExecutionLog[]
+  embedding       NebulaEmbedding?
 
   @@unique([environmentId, name])
   @@index([environmentId, category, isInstalled])
   @@index([createdByAgentId])
+}
+
+// Vector embedding of a skill's "meaning" (name + description + trigger
+// patterns) for semantic trigger matching — a complement to the existing
+// exact substring match on triggerPatterns, so a message that describes the
+// same situation in different words still surfaces the skill.
+// Mirrors NoteEmbedding's pattern: declared as text here, the migration
+// converts the column to a native pgvector `vector(768)` type with an HNSW
+// index for cosine similarity search (see vectorSearch/skillVectorSearch).
+model NebulaEmbedding {
+  nebulaId  String         @id
+  nebula    NebulaInstance @relation(fields: [nebulaId], references: [id], onDelete: Cascade)
+  embedding String         @db.Text // JSON-encoded vector array: [0.1, -0.3, ...]
+  dimension Int // 1536 (OpenAI) or 768 (Ollama nomic)
+  modelRef  String? // which model generated this embedding (ext:xxx ID)
+  version   Int            @default(1) // bump when re-embedding
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@map("nebula_embeddings")
 }
 
 model HookExecutionLog {
