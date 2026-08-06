@@ -70,7 +70,7 @@ export interface NovaConfig {
   contentTarget?: {
     namespace: string
     deployment: string
-    /** Mount path inside the target container, relative to its workdir */
+    /** Absolute mount path inside the target container (e.g. "/app/src/content") */
     mountPath: string
     pvcSizeGi: number
   }

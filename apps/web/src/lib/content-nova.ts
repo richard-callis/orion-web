@@ -54,26 +54,37 @@ function validateContentSource(source: NonNullable<Nova['config']['contentSource
   if (!/^https:\/\/[a-zA-Z0-9._-]+\/[\w.-]+\/[\w.-]+(\.git)?$/.test(source.gitUrl)) {
     throw new Error(`Invalid contentSource.gitUrl "${source.gitUrl}": must be an https:// URL like https://github.com/<owner>/<repo>.git`)
   }
-  if (!SAFE_GIT_REF.test(source.branch)) {
+  if (!SAFE_GIT_REF.test(source.branch) || source.branch.startsWith('-')) {
     throw new Error(`Invalid contentSource.branch "${source.branch}": unsafe characters`)
   }
-  if (!SAFE_GIT_REF.test(source.path) || source.path.includes('..')) {
-    throw new Error(`Invalid contentSource.path "${source.path}": unsafe characters or path traversal`)
+  // Must be a relative path within the cloned repo — a leading '/' would
+  // make the CronJob's `cp -r "$GIT_PATH"/. /content/` step read from the
+  // sync pod's own filesystem instead of the checkout (e.g.
+  // /var/run/secrets/kubernetes.io/serviceaccount), landing that pod's
+  // ServiceAccount token in the PVC the target app serves as static
+  // content. A leading '-' is rejected too, so the value can't be
+  // misread as a flag by `cp`/`git sparse-checkout`.
+  if (!SAFE_GIT_REF.test(source.path) || source.path.includes('..') || source.path.startsWith('/') || source.path.startsWith('-')) {
+    throw new Error(`Invalid contentSource.path "${source.path}": must be a relative path within the repo, no leading "/" or "-", no ".."`)
   }
 }
 
 function validateContentTarget(target: NonNullable<Nova['config']['contentTarget']>): void {
-  if (!DNS_LABEL.test(target.deployment)) {
-    throw new Error(`Invalid contentTarget.deployment "${target.deployment}": must be a valid DNS label`)
+  if (!DNS_LABEL.test(target.deployment) || target.deployment.length > 63) {
+    throw new Error(`Invalid contentTarget.deployment "${target.deployment}": must be a valid DNS label (max 63 chars)`)
   }
-  if (!DNS_LABEL.test(target.namespace)) {
-    throw new Error(`Invalid contentTarget.namespace "${target.namespace}": must be a valid DNS label`)
+  if (!DNS_LABEL.test(target.namespace) || target.namespace.length > 63) {
+    throw new Error(`Invalid contentTarget.namespace "${target.namespace}": must be a valid DNS label (max 63 chars)`)
   }
-  if (typeof target.mountPath !== 'string' || target.mountPath.length === 0 || target.mountPath.startsWith('/') || target.mountPath.includes('..')) {
-    throw new Error(`Invalid contentTarget.mountPath "${target.mountPath}": must be a non-empty relative path with no ".."`)
+  // A Kubernetes volumeMount.mountPath is an absolute path inside the
+  // container's rootfs (it has nothing to do with the container's WORKDIR)
+  // — a relative value here is either rejected by the CRI or silently
+  // mounted somewhere the app never reads from.
+  if (typeof target.mountPath !== 'string' || !target.mountPath.startsWith('/') || target.mountPath.includes('..') || target.mountPath.includes(':')) {
+    throw new Error(`Invalid contentTarget.mountPath "${target.mountPath}": must be an absolute path (e.g. "/app/src/content"), no ".." or ":"`)
   }
-  if (!Number.isFinite(target.pvcSizeGi) || target.pvcSizeGi <= 0) {
-    throw new Error(`Invalid contentTarget.pvcSizeGi "${target.pvcSizeGi}": must be a positive number`)
+  if (!Number.isInteger(target.pvcSizeGi) || target.pvcSizeGi <= 0 || target.pvcSizeGi > 1024) {
+    throw new Error(`Invalid contentTarget.pvcSizeGi "${target.pvcSizeGi}": must be a positive integer (max 1024)`)
   }
 }
 
@@ -182,7 +193,9 @@ function cronJobManifest(
  * unrelated comments, anchors, and formatting elsewhere in the file survive.
  */
 function patchDeploymentYaml(currentYaml: string, volumeName: string, pvcName: string, mountPath: string, deploymentName: string): string {
-  const docs = parseAllDocuments(currentYaml)
+  // A trailing `---` (common in hand-written manifests) parses as a second,
+  // empty document — don't let that trip the single-document check.
+  const docs = parseAllDocuments(currentYaml).filter((d) => d.toJS() !== null)
   if (docs.length !== 1) {
     throw new Error(`Expected deployment.yaml to contain exactly one YAML document, found ${docs.length}`)
   }
@@ -198,10 +211,23 @@ function patchDeploymentYaml(currentYaml: string, volumeName: string, pvcName: s
   if (!isSeq(containersNode)) {
     throw new Error('deployment.yaml has no spec.template.spec.containers list')
   }
-  let containerIndex = containersNode.items.findIndex((c) => isMap(c) && c.get('name') === deploymentName)
-  if (containerIndex === -1) containerIndex = 0
+  // Matching by container name === Deployment name is a real convention in
+  // this cluster (every app under deployments/apps/ names its one container
+  // after the app), but it's not a Kubernetes rule — silently falling back
+  // to containers[0] on a miss could mount into an unrelated sidecar (e.g.
+  // istio-proxy) with no error. Fail loudly instead: for a single-container
+  // pod the name doesn't matter (there's only one place to mount), but for
+  // multiple containers we need an unambiguous match.
+  const containerIndex = containersNode.items.findIndex((c) => isMap(c) && c.get('name') === deploymentName)
+  const targetIndex = containerIndex !== -1 ? containerIndex : containersNode.items.length === 1 ? 0 : -1
+  if (targetIndex === -1) {
+    throw new Error(
+      `deployment.yaml has ${containersNode.items.length} containers and none is named "${deploymentName}" — ` +
+        `can't tell which one should get the content mount. Name the target container "${deploymentName}" or update contentTarget.deployment to match.`,
+    )
+  }
 
-  const volumeMountsPath = ['spec', 'template', 'spec', 'containers', containerIndex, 'volumeMounts']
+  const volumeMountsPath = ['spec', 'template', 'spec', 'containers', targetIndex, 'volumeMounts']
   const existingMounts = doc.getIn(volumeMountsPath)
   const existingMountsJs: Array<{ name?: string }> = isSeq(existingMounts) ? (existingMounts.toJSON() as Array<{ name?: string }>) : []
   const newMounts = [
