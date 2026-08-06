@@ -105,6 +105,15 @@ export async function POST(
     if (!env) {
       return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
     }
+    if (env.type !== 'cluster') {
+      // Content Novas produce Kubernetes manifests (PVC/CronJob/Deployment
+      // patch) — a docker-type environment uses docker-compose.yml instead
+      // and has no Kubernetes to apply them to.
+      return NextResponse.json(
+        { error: `Content Novas can only be installed into "cluster" environments, "${env.name}" is type "${env.type}"` },
+        { status: 422 },
+      )
+    }
     if (!env.gitOwner || !env.gitRepo) {
       return NextResponse.json(
         { error: 'Environment has no git repo configured. Run bootstrap first.' },
@@ -112,21 +121,37 @@ export async function POST(
       )
     }
 
-    const changes = await buildContentManifests(
-      { id: nova.id, name: nova.name, config } as Nova,
-      { gitOwner: env.gitOwner, gitRepo: env.gitRepo, repoPath: env.repoPath ?? undefined },
-    )
+    let changes
+    try {
+      changes = await buildContentManifests(
+        { id: nova.id, name: nova.name, config } as Nova,
+        { gitOwner: env.gitOwner, gitRepo: env.gitRepo, repoPath: env.repoPath ?? undefined },
+      )
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        { status: 400 },
+      )
+    }
 
     const policy = (env.policyConfig ?? {}) as PolicyConfig
-    const result = await proposeChange({
-      owner: env.gitOwner,
-      repo: env.gitRepo,
-      title: `Install content Nova "${nova.name}"`,
-      reasoning: `Provisions a PVC + sync CronJob for content Nova "${nova.name}" (source: ${config.contentSource?.gitUrl}#${config.contentSource?.path}) and mounts it into the ${config.contentTarget?.deployment} Deployment at ${config.contentTarget?.mountPath}.`,
-      operationDescription: `Add a PVC, a CronJob, and a volume mount for content sync — no destructive changes to existing resources`,
-      changes,
-      policy,
-    })
+    let result
+    try {
+      result = await proposeChange({
+        owner: env.gitOwner,
+        repo: env.gitRepo,
+        title: `Install content Nova "${nova.name}"`,
+        reasoning: `Provisions a PVC + sync CronJob for content Nova "${nova.name}" (source: ${config.contentSource?.gitUrl}#${config.contentSource?.path}) and mounts it into the ${config.contentTarget?.deployment} Deployment at ${config.contentTarget?.mountPath}.`,
+        operationDescription: `Add a PVC, a CronJob, and a volume mount for content sync — no destructive changes to existing resources`,
+        changes,
+        policy,
+      })
+    } catch (err) {
+      return NextResponse.json(
+        { error: `Failed to propose GitOps change: ${err instanceof Error ? err.message : String(err)}` },
+        { status: 502 },
+      )
+    }
 
     await prisma.gitOpsPR.create({
       data: {
