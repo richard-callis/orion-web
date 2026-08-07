@@ -51,10 +51,10 @@ const DANGEROUS_PATTERNS = [
   /mkfifo/,    // named pipe creation
   /socat/,     // network utility (common in reverse shells)
   /nc\s+(-[elp]|-[lv]|-[c])/, // netcat patterns
-  /python.*-c/, // python -c code execution
-  /perl.*-e/,  // perl -e code execution
-  /ruby.*-e/,  // ruby -e code execution
-  /node.*-e/,  // node -e code execution
+  /python.{0,200}-c/, // python -c code execution — bounded quantifier: an unbounded `.*` here is
+  /perl.{0,200}-e/,   // O(n) per failed match attempt at every scan position, which is effectively
+  /ruby.{0,200}-e/,   // quadratic against a long enough command (measured multi-second stalls on a
+  /node.{0,200}-e/,   // few hundred KB of input); 200 chars is far more than any real invocation needs
   /base64\s+-d/, // base64 decode
   /\bxargs\b/, // xargs (often used in chains)
 ]
@@ -83,8 +83,17 @@ function isAllowedFirstWord(segment: string, allowed: readonly string[]): boolea
  * must be a safe read-only stream filter (STREAM_FILTER_COMMANDS), regardless of environment type.
  * Checking only the first segment would let a disallowed/dangerous command hide behind a pipe.
  */
+const MAX_COMMAND_LENGTH = 2000
+
 export function sanitizeCommand(command: string, envType: string): string {
   const trimmed = command.trim()
+
+  // Belt-and-suspenders alongside the bounded quantifiers above: no legitimate generated tool
+  // command is anywhere near this long, and capping it bounds the worst case for every pattern
+  // below regardless of how it's written.
+  if (trimmed.length > MAX_COMMAND_LENGTH) {
+    throw new Error(`Generated command exceeds maximum length of ${MAX_COMMAND_LENGTH} characters`)
+  }
 
   for (const pattern of DANGEROUS_PATTERNS) {
     if (pattern.test(trimmed)) {
