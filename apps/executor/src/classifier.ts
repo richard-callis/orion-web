@@ -31,7 +31,10 @@ class Classifier {
       console.log('Risk rules loaded')
     } catch (error) {
       console.error('Failed to load risk rules:', error)
-      this.config = { rules: [{ tier: 'notify', tool: '', patterns: [] }] }
+      // Fail closed: if the risk rules can't be parsed (e.g. a bad hot-reloaded edit),
+      // require the strictest human approval tier for everything rather than silently
+      // downgrading every command to a low-friction tier.
+      this.config = { rules: [{ tier: 'escalate', tool: '', patterns: [] }] }
     }
   }
 
@@ -45,28 +48,48 @@ class Classifier {
   classify(tool: string, args: Record<string, unknown>): 'auto' | 'notify' | 'approve' | 'escalate' {
     const matchStr = tool === 'shell_exec' ? String(args.command ?? '') : JSON.stringify(args)
 
+    let tier: 'auto' | 'notify' | 'approve' | 'escalate' = 'notify'
+
     for (const rule of this.config.rules) {
       if (rule.tool !== tool && rule.tool !== '') {
         continue
       }
 
       if (!rule.patterns || rule.patterns.length === 0) {
-        return rule.tier
+        tier = rule.tier
+        break
       }
 
+      let matched = false
       for (const pattern of rule.patterns) {
         try {
-          const regex = new RegExp(pattern)
+          // case-insensitive: the denylist patterns (curl, wget, sudo, ...) shouldn't be
+          // trivially evaded by case (`Curl`, `SUDO`, ...)
+          const regex = new RegExp(pattern, 'i')
           if (regex.test(matchStr)) {
-            return rule.tier
+            matched = true
+            break
           }
         } catch (e) {
           console.error(`Invalid regex pattern: ${pattern}`, e)
         }
       }
+      if (matched) {
+        tier = rule.tier
+        break
+      }
     }
 
-    return 'notify'
+    // The "auto" tier's patterns anchor on the command's first word only (e.g. `^cat\b`) and say
+    // nothing about what follows. A pipe or output redirect combines that safe-looking first
+    // command with an arbitrary second one (e.g. `cat file | base64` or `id > /tmp/x`), which the
+    // per-word allowlist was never designed to reason about. Never let such a command through on
+    // the no-human-approval "auto" path — require the strictest tier instead.
+    if (tool === 'shell_exec' && tier === 'auto' && /[|>]/.test(matchStr)) {
+      tier = 'escalate'
+    }
+
+    return tier
   }
 }
 

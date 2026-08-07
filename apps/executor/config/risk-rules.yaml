@@ -1,5 +1,10 @@
 # Risk classification rules evaluated top-to-bottom. First match wins.
 # tier: auto | notify | approve | escalate
+#
+# Patterns are matched case-insensitively (classifier.ts). Additionally, classifier.ts
+# unconditionally escalates any shell_exec command containing a pipe (|) or output
+# redirect (>) that would otherwise land on "auto" — the auto patterns below only
+# anchor on the first word and can't reason about what a pipe chains it to.
 
 rules:
   # Escalate — data destruction / code injection
@@ -33,6 +38,9 @@ rules:
       - '\bwget\b'
       - '\bnc\b'
       - '\bncat\b'
+      - '\bbusybox\b'
+      - '\bpython[0-9.]*\b'
+      - '\bperl\b'
       - '>\s*/'  # redirect to absolute path
 
   # Auto — known-safe read operations
