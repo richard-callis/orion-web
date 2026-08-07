@@ -26,9 +26,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   // SOC2: CR-001 — require authenticated user
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // SOC2 HIGH-6: verify the caller is admin — environments/tools are admin-scoped resources
+  if (user.role !== 'admin') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
   // Verify env exists
-  const env = await prisma.environment.findUnique({ where: { id: (await params).id }, select: { id: true } })
+  const { id, toolId } = await params
+  const env = await prisma.environment.findUnique({ where: { id }, select: { id: true } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  // Verify the tool actually belongs to this environment before mutating it
+  const existing = await prisma.mcpTool.findFirst({ where: { id: toolId, environmentId: id }, select: { id: true } })
+  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const body = await req.json()
   const data: Record<string, unknown> = {}
@@ -41,7 +49,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (body.enabled     !== undefined) data.enabled     = body.enabled
 
   const tool = await prisma.mcpTool.update({
-    where: { id: (await params).toolId },
+    where: { id: toolId },
     data,
   })
   return NextResponse.json(tool)
@@ -51,6 +59,13 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   // SOC2: CR-001 — require authenticated user
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  await prisma.mcpTool.delete({ where: { id: (await params).toolId } })
+  // SOC2 HIGH-6: verify the caller is admin — environments/tools are admin-scoped resources
+  if (user.role !== 'admin') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+  const { id, toolId } = await params
+  const existing = await prisma.mcpTool.findFirst({ where: { id: toolId, environmentId: id }, select: { id: true } })
+  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await prisma.mcpTool.delete({ where: { id: toolId } })
   return new NextResponse(null, { status: 204 })
 }
