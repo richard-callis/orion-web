@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getCurrentUser, requireGatewayAuthForEnvironment } from '@/lib/auth'
+import { sanitizeCommand } from '@/lib/sanitize-command'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // Support gateway Bearer auth OR admin session auth
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   // Verify env exists
-  const env = await prisma.environment.findUnique({ where: { id: (await params).id }, select: { id: true } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id }, select: { id: true, type: true } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const body = await req.json()
@@ -61,6 +62,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const execType = body.execType ?? 'shell'
   if (!VALID_EXEC_TYPES.includes(execType)) {
     return NextResponse.json({ error: `execType must be one of: ${VALID_EXEC_TYPES.join(', ')}` }, { status: 400 })
+  }
+
+  // SOC2: this route activates the tool immediately (status defaults to "active") — sanitize
+  // any shell command the same way the AI-generation and approval paths do.
+  if (execType === 'shell' && body.execConfig?.command) {
+    try {
+      body.execConfig = { ...body.execConfig, command: sanitizeCommand(String(body.execConfig.command), env.type) }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return NextResponse.json({ error: `Invalid execConfig.command: ${msg}` }, { status: 400 })
+    }
   }
 
   const tool = await prisma.mcpTool.create({
