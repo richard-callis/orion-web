@@ -95,8 +95,25 @@ class Classifier {
     // and `-delete`/`-fprintf`/`-fprint0`/`-fprint` write/delete without a shell either. None of
     // those are caught by the shell-operator check above, so they need their own guard.
     // (`-printf` is deliberately excluded — it only writes to stdout, same as normal `find` output.)
-    const chainsAnotherCommand = /[|&;<>\n\r`]|\$\(/.test(matchStr)
-      || /\s-(execdir|exec|okdir|ok|delete|fprintf|fprint0|fprint)\b/i.test(matchStr)
+    //
+    // `journalctl --vacuum-*`/`--rotate`/`--flush` and `dmesg -C`/`--clear`/`--read-clear` are on
+    // the same allowlist and destroy the audit trail with no shell metacharacters either.
+    //
+    // All of the above match against the RAW string, but classify() sees the string BEFORE
+    // `/bin/sh -c` rewrites it — so '-exec', "-e""xec", -exe'c', or \-exec all classify as `auto`
+    // here even though the shell hands `find` a plain `-exec` after quote/escape removal. This is
+    // a normalization stopgap, not full shell parsing (it can't handle $IFS/parameter-expansion
+    // tricks — see the PR discussion for why a real fix needs argv-based execution instead of a
+    // shell string): strip quote/backslash characters and test the normalized form too, so quoting
+    // can only make detection MORE conservative, never less.
+    const normalized = matchStr.replace(/['"\\]/g, '')
+    const dangerPatterns = [
+      /[|&;<>\n\r`]|\$\(/, // shell operators
+      /\s-(execdir|exec|okdir|ok|delete|fprintf|fprint0|fprint)\b/i, // find exec/write/delete flags
+      /\bjournalctl\b[^|;]*--(vacuum-size|vacuum-time|vacuum-files|rotate|flush)\b/i, // journalctl audit-log wipe
+      /\bdmesg\b[^|;]*(-c\b|--clear\b|--read-clear\b)/i, // dmesg buffer clear
+    ]
+    const chainsAnotherCommand = dangerPatterns.some(p => p.test(matchStr) || p.test(normalized))
     if (tool === 'shell_exec' && tier === 'auto' && chainsAnotherCommand) {
       tier = 'escalate'
     }
