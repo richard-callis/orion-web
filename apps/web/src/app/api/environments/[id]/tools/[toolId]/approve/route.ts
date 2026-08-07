@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
+import { sanitizeCommand } from '@/lib/sanitize-command'
 
 // POST /api/environments/[id]/tools/[toolId]/approve
 // Approves a pending tool proposal — activates it so the gateway picks it up on next heartbeat.
@@ -10,7 +11,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const user = await requireAdmin()
 
   // Verify env exists
-  const env = await prisma.environment.findUnique({ where: { id: (await params).id }, select: { id: true } })
+  const env = await prisma.environment.findUnique({ where: { id: (await params).id }, select: { id: true, type: true } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const tool = await prisma.mcpTool.findFirst({ where: { id: (await params).toolId, environmentId: (await params).id } })
@@ -31,6 +32,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // If the approver passes toolGroupId, wire the tool into that group here so
   // access is governed by the normal AgentGroup -> ToolGroup grant mechanism
   // from the moment it goes live. Callers are strongly encouraged to pass this.
+  // SOC2: the approving admin can override execConfig before it goes live — validate any
+  // shell command the same way the AI-generation path does, so hardening there can't be
+  // bypassed by editing the command in the approval request instead.
+  if (body.execConfig !== undefined && body.execConfig?.command) {
+    try {
+      body.execConfig = { ...body.execConfig, command: sanitizeCommand(String(body.execConfig.command), env.type) }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return NextResponse.json({ error: `Invalid execConfig.command: ${msg}` }, { status: 400 })
+    }
+  }
+
   const toolGroupId = typeof body.toolGroupId === 'string' && body.toolGroupId.trim() ? body.toolGroupId.trim() : undefined
   if (toolGroupId) {
     const toolGroup = await prisma.toolGroup.findUnique({ where: { id: toolGroupId }, select: { id: true, environmentId: true } })

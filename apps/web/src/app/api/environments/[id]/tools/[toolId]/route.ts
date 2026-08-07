@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
+import { sanitizeCommand } from '@/lib/sanitize-command'
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string; toolId: string }> }) {
   // Support gateway Bearer token OR user session
@@ -32,7 +33,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
   // Verify env exists
   const { id, toolId } = await params
-  const env = await prisma.environment.findUnique({ where: { id }, select: { id: true } })
+  const env = await prisma.environment.findUnique({ where: { id }, select: { id: true, type: true } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   // Verify the tool actually belongs to this environment before mutating it
   const existing = await prisma.mcpTool.findFirst({ where: { id: toolId, environmentId: id }, select: { id: true } })
@@ -47,6 +48,18 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (body.execType    !== undefined) data.execType    = body.execType
   if (body.execConfig  !== undefined) data.execConfig  = body.execConfig || null
   if (body.enabled     !== undefined) data.enabled     = body.enabled
+
+  // SOC2: this route mutates an already-active tool's execConfig directly — sanitize any shell
+  // command the same way generate/approve/create do, so a rewritten command can't skip validation.
+  if (data.execConfig && typeof data.execConfig === 'object' && 'command' in (data.execConfig as Record<string, unknown>)) {
+    try {
+      const cfg = data.execConfig as Record<string, unknown>
+      data.execConfig = { ...cfg, command: sanitizeCommand(String(cfg.command), env.type) }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return NextResponse.json({ error: `Invalid execConfig.command: ${msg}` }, { status: 400 })
+    }
+  }
 
   const tool = await prisma.mcpTool.update({
     where: { id: toolId },
