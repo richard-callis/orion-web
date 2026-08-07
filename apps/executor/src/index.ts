@@ -33,7 +33,10 @@ fastify.register(fastifyCors)
 const requireExecutorToken = async (request: FastifyRequest, reply: FastifyReply) => {
   const token = request.headers['x-executor-token'] as string
   if (!validateExecutorToken(token)) {
-    reply.status(401).send({ error: 'Unauthorized' })
+    // Explicitly return the reply so Fastify halts the lifecycle here regardless of
+    // version-specific behavior around reply.sent — an async hook that sends without
+    // returning is a documented footgun for accidentally continuing to the handler.
+    return reply.status(401).send({ error: 'Unauthorized' })
   }
 }
 
