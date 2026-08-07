@@ -89,7 +89,15 @@ class Classifier {
     // `$(...)`/backticks, redirects, and newlines (sh treats a literal newline as a statement
     // separator same as `;`). Never let such a command through on the no-human-approval "auto"
     // path — require the strictest tier instead.
-    if (tool === 'shell_exec' && tier === 'auto' && /[|&;<>\n\r`]|\$\(/.test(matchStr)) {
+    //
+    // `find` is itself on the auto allowlist and is its own exec primitive — `-exec`/`-execdir`/
+    // `-ok`/`-okdir` run an arbitrary command per match with zero shell metacharacters involved,
+    // and `-delete`/`-fprintf`/`-fprint0`/`-fprint` write/delete without a shell either. None of
+    // those are caught by the shell-operator check above, so they need their own guard.
+    // (`-printf` is deliberately excluded — it only writes to stdout, same as normal `find` output.)
+    const chainsAnotherCommand = /[|&;<>\n\r`]|\$\(/.test(matchStr)
+      || /\s-(execdir|exec|okdir|ok|delete|fprintf|fprint0|fprint)\b/i.test(matchStr)
+    if (tool === 'shell_exec' && tier === 'auto' && chainsAnotherCommand) {
       tier = 'escalate'
     }
 
