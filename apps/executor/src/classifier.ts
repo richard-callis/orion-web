@@ -48,7 +48,9 @@ class Classifier {
   classify(tool: string, args: Record<string, unknown>): 'auto' | 'notify' | 'approve' | 'escalate' {
     const matchStr = tool === 'shell_exec' ? String(args.command ?? '') : JSON.stringify(args)
 
-    let tier: 'auto' | 'notify' | 'approve' | 'escalate' = 'notify'
+    // Fail closed if the loaded config's rules array is empty/malformed (e.g. `rules: []` parses
+    // successfully but matches nothing) — don't fall through to a low-friction default.
+    let tier: 'auto' | 'notify' | 'approve' | 'escalate' = this.config.rules.length ? 'notify' : 'escalate'
 
     for (const rule of this.config.rules) {
       if (rule.tool !== tool && rule.tool !== '') {
@@ -81,11 +83,13 @@ class Classifier {
     }
 
     // The "auto" tier's patterns anchor on the command's first word only (e.g. `^cat\b`) and say
-    // nothing about what follows. A pipe or output redirect combines that safe-looking first
-    // command with an arbitrary second one (e.g. `cat file | base64` or `id > /tmp/x`), which the
-    // per-word allowlist was never designed to reason about. Never let such a command through on
-    // the no-human-approval "auto" path — require the strictest tier instead.
-    if (tool === 'shell_exec' && tier === 'auto' && /[|>]/.test(matchStr)) {
+    // nothing about what follows. sandbox.ts runs shell_exec via `exec()` — full `/bin/sh -c`
+    // interpretation — so ANY shell operator that chains a second command onto a safe-looking
+    // first one defeats the per-word allowlist: pipe, `&&`/`&`, `;`, command substitution
+    // `$(...)`/backticks, redirects, and newlines (sh treats a literal newline as a statement
+    // separator same as `;`). Never let such a command through on the no-human-approval "auto"
+    // path — require the strictest tier instead.
+    if (tool === 'shell_exec' && tier === 'auto' && /[|&;<>\n\r`]|\$\(/.test(matchStr)) {
       tier = 'escalate'
     }
 
