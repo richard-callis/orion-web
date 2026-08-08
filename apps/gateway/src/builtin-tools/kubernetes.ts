@@ -518,7 +518,7 @@ export const kubernetesTools = ([
         const { writeFileSync, unlinkSync } = await import('fs')
         const valuesFile = String(args.valuesFile)
         const tmpFile = `/tmp/helm-values-${randomUUID()}.yaml`
-        writeFileSync(tmpFile, valuesFile, 'utf8')
+        writeFileSync(tmpFile, valuesFile, { mode: 0o600 })
         cmdArgs.push('--values', tmpFile)
         try {
           return await helm(cmdArgs)
