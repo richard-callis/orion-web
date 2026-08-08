@@ -32,6 +32,17 @@ engine:
     # a lightly-loaded homelab host.
     cpus_for_each_syscall_buffer: 2
 
+# json_output: without this, Falco's default is plain-text for ALL outputs,
+# including http_output. Falcosidekick's inputs endpoint only accepts a
+# structured JSON body — a plain-text POST is rejected with 400 "Please send
+# a valid request body" (confirmed via packet capture + falcosidekick_inputs_total
+# metrics on prod: 100% of alerts rejected, 0 accepted). This flag is load-bearing
+# for the entire detection pipeline (Falco → Falcosidekick → Orion webhook →
+# correlator → Warden wakeup), not a cosmetic formatting choice. It also makes
+# stdout_output emit JSON instead of the human-readable one-line string — if
+# ops is tailing container logs expecting the plain-text format, that changes.
+json_output: true
+
 # ── Output channels ─────────────────────────────────────────────────────────
 # http_output: Falco POSTs each alert to Falcosidekick which handles retries,
 # CUSTOMFIELDS injection, and forwarding to the Orion webhook.
