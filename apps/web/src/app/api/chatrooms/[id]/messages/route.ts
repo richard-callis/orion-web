@@ -6,7 +6,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { authOptions, requireServiceAuth, type AppUser } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { triggerRoomAgentReplies } from '@/lib/room-agents'
 
@@ -72,12 +72,29 @@ export async function POST(
 ) {
   const { id } = await params
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
-  const session = await getServerSession(authOptions)
-  const userId = session?.user?.id
 
-  const { userId: memberUserId, agentId } = await getRoomMembership(id, userId)
-  if (!memberUserId && !agentId) {
-    return NextResponse.json({ error: 'Not a member of this room' }, { status: 403 })
+  // requireServiceAuth returns the session user, or null for a gateway-token-authenticated
+  // service caller (e.g. the executor posting execution/approval notices via notifyRoom —
+  // OrionClient.notifyRoom authenticates with Authorization: Bearer <ORION_GATEWAY_TOKEN>,
+  // the same mechanism already trusted for other API routes), or throws if neither is present.
+  let user: AppUser | null
+  try {
+    user = await requireServiceAuth(req)
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const isService = user === null
+  const userId = user?.id
+
+  let memberUserId: string | undefined
+  let agentId: string | null = null
+  if (!isService) {
+    const membership = await getRoomMembership(id, userId)
+    memberUserId = membership.userId
+    agentId = membership.agentId
+    if (!memberUserId && !agentId) {
+      return NextResponse.json({ error: 'Not a member of this room' }, { status: 403 })
+    }
   }
 
   const content = String(body.content ?? '')
@@ -92,8 +109,11 @@ export async function POST(
       agentId,
       // M3 fix: senderType was attacker-controlled — callers could post with
       // senderType:'compaction' to forge a context boundary, or 'system' to
-      // spoof system banners. Only 'human' and 'agent' are allowed from the POST path.
-      senderType: agentId ? 'agent' : 'human',
+      // spoof system banners. 'human'/'agent' are derived from session/agent membership
+      // only, never from client-supplied input. 'system' is allowed ONLY when isService is
+      // true — i.e. the caller authenticated with the gateway token, not a client-supplied
+      // body field — same trust boundary as every other gateway-authenticated write in this API.
+      senderType: isService ? 'system' : (agentId ? 'agent' : 'human'),
       content: content.trim(),
       attachments: (body.attachments as any) ?? undefined,
       taskId: taskId ?? null,

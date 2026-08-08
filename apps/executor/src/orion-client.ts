@@ -20,14 +20,16 @@ interface ToolExecution {
 
 export class OrionClient {
   private client: AxiosInstance
+  private gatewayToken: string
 
-  constructor(baseURL: string, token: string) {
+  constructor(baseURL: string, executorToken: string, gatewayToken: string) {
     this.client = axios.create({
       baseURL,
       headers: {
-        'x-executor-token': token,
+        'x-executor-token': executorToken,
       },
     })
+    this.gatewayToken = gatewayToken
   }
 
   async createExecution(data: {
@@ -65,15 +67,27 @@ export class OrionClient {
   }
 
   async notifyRoom(roomId: string, message: string): Promise<void> {
-    await this.client.post(`/api/chat-rooms/${encodeURIComponent(roomId)}/messages`, {
+    // /api/chatrooms/[id]/messages (note: no hyphen — was previously "/api/chat-rooms/...",
+    // a 404) is a session-or-gateway-authenticated route, not one of the x-executor-token
+    // paths (only /api/executions accepts that header). Authenticate this call with the
+    // gateway Bearer token instead — the route only allows senderType:"system" for
+    // gateway-authenticated callers.
+    await this.client.post(`/api/chatrooms/${encodeURIComponent(roomId)}/messages`, {
       content: message,
       senderType: 'system',
+    }, {
+      headers: { Authorization: `Bearer ${this.gatewayToken}` },
     })
   }
 
   async getSystemSetting(key: string): Promise<string | null> {
+    // Same auth gap as notifyRoom: non-public keys require requireServiceAuth (session-or-
+    // gateway), which x-executor-token does not satisfy — /api/system-settings isn't in the
+    // x-executor-token-scoped path list. Send the gateway Bearer token, same as notifyRoom.
     try {
-      const response = await this.client.get(`/api/system-settings/${encodeURIComponent(key)}`)
+      const response = await this.client.get(`/api/system-settings/${encodeURIComponent(key)}`, {
+        headers: { Authorization: `Bearer ${this.gatewayToken}` },
+      })
       return response.data?.value
     } catch (error) {
       console.error(`Failed to get system setting ${key}:`, error)

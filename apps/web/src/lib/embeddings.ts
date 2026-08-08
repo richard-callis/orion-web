@@ -569,13 +569,31 @@ export async function computeSemanticEdges(
 // RRF `score` — RRF scores live on a totally different, non-interpretable
 // scale (`sum of 1/(k+rank)`, max ~0.03 for two legs at k=60), so comparing
 // them against a similarity threshold like 0.2 would silently filter out
-// everything. A hit with `vectorScore === null` matched via keyword search
-// only (either it fell outside the vector leg's candidate pool, or no
-// embedding provider is configured) — keyword hits are already relevance-
-// filtered by the full-text `@@` match itself, so they're kept regardless of
-// minScore. This is also the whole point of hybrid search: an exact-token
-// match (pod name, CRD kind, error string) should surface even when its
-// cosine similarity is mediocre.
+// everything.
+//
+// The filter keeps a hit if it has ANY keyword match (`keywordScore !== null`),
+// regardless of vectorScore — including a mixed hit that appeared in BOTH legs
+// with a low vectorScore. Filtering those out was the original bug here:
+// `vectorScore === null` does NOT mean "matched via keyword search only" — it
+// means "this note fell outside the vector leg's HYBRID_CANDIDATE_POOL", which
+// is unrelated to whether it also has a keyword match. A note that ranks #1 on
+// exact-token relevance but has ANY embedding (even a mediocre-similarity one,
+// putting it inside the vector pool with vectorScore !== null) was being
+// wrongly dropped by the old `h.vectorScore === null` check, while the exact
+// same note with no embedding at all (vectorScore stays null) was kept —
+// i.e. embedding a note could make it start failing this filter. Keyword hits
+// are already relevance-filtered by the full-text `@@` match itself, so any
+// hit with a non-null keywordScore is trusted regardless of minScore — this is
+// also the whole point of hybrid search: an exact-token match (pod name, CRD
+// kind, error string) should surface even when its cosine similarity is
+// mediocre or it has no embedding in the pool at all.
+//
+// hybridSearch's SQL applies `LIMIT` (== topK here) BEFORE this filter runs,
+// fusing on RRF score — so without over-fetching, a keyword-strong-but-
+// vector-weak hit could already be squeezed out of the top-`topK` fused
+// results before this function ever sees it, even though it should survive
+// the filter. Over-fetch (bounded by HYBRID_CANDIDATE_POOL, the widest either
+// leg's own candidate pool goes) and slice to topK after filtering.
 export async function retrieveKnowledgeContext(
   query: string,
   topK = 3,
@@ -584,8 +602,11 @@ export async function retrieveKnowledgeContext(
   try {
     // llm-context notes are intentionally unscoped (no createdBy filter) —
     // they are system-wide context for agent prompts and must remain globally visible.
-    const { hits } = await hybridSearch(query, topK)
-    const relevant = hits.filter(h => h.vectorScore === null || h.vectorScore >= minScore)
+    const fetchLimit = Math.min(topK * 4, HYBRID_CANDIDATE_POOL)
+    const { hits } = await hybridSearch(query, fetchLimit)
+    const relevant = hits
+      .filter(h => h.keywordScore !== null || (h.vectorScore != null && h.vectorScore >= minScore))
+      .slice(0, topK)
     if (relevant.length === 0) return ''
 
     // Sanitize all retrieved notes before injecting into agent system prompts.

@@ -548,13 +548,28 @@ export async function requireAdmin(): Promise<AppUser> {
 }
 
 /**
- * Require either a logged-in user OR the gateway service token.
+ * Require either a logged-in user OR a trusted service token — gateway (Bearer) or
+ * executor (x-executor-token).
  *
  * Returns the session user if authenticated via session, or null if
- * accessed via gateway service token (middleware already validated the token).
+ * accessed via a service token (middleware already validated the request reached this
+ * route at all — see below — this is the route-handler-side re-check).
  *
- * Callers should handle the null case as "service/gateway auth".
- * Throws if neither session nor service token auth is present.
+ * Callers should handle the null case as "service auth".
+ * Throws if neither session nor a valid service token is present.
+ *
+ * SOC2 [prod incident, 2026-08-08]: middleware.ts's x-executor-token fast path (scoped to
+ * /api/executions) only controls whether a request reaches a route handler at all — it
+ * does NOT mean every handler on that path recognizes the credential. This function used
+ * to check ONLY the gateway Bearer token, so every /api/executions handler that called it
+ * (create/list/update executions) rejected a validly-authenticated executor with 401,
+ * even after the executor was sending the correct x-executor-token (see #714/#715) —
+ * the token was right, but this function had never heard of that header at all. Confirmed
+ * live in production: matching x-executor-token values on both sides, still 401, traced to
+ * this function's missing branch. Executor auth is scoped the same way gateway auth is
+ * (both are "callers should handle the null case as service auth") since middleware is
+ * the actual gate on which paths x-executor-token is even accepted for — widening this
+ * function doesn't widen which routes trust it.
  */
 export async function requireServiceAuth(
   req: { headers: Headers }
@@ -574,6 +589,19 @@ export async function requireServiceAuth(
       timingSafeEqual(Buffer.from(auth), Buffer.from(expected))
     ) {
       return null // service/gateway auth — caller should handle
+    }
+  }
+
+  // Or an executor service call — same credential middleware.ts's x-executor-token
+  // fast path already validates for /api/executions.
+  const executorHeader = req.headers.get('x-executor-token')
+  const executorToken = process.env.ORION_EXECUTOR_TOKEN
+  if (executorToken && executorHeader) {
+    if (
+      executorHeader.length === executorToken.length &&
+      timingSafeEqual(Buffer.from(executorHeader), Buffer.from(executorToken))
+    ) {
+      return null // service/executor auth — caller should handle
     }
   }
 
