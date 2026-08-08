@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Validate type
-  const validTypes = ['agent', 'service']
+  const validTypes = ['agent', 'service', 'content']
   if (!validTypes.includes(body.config.type)) {
     return NextResponse.json(
       { error: `type must be one of: ${validTypes.join(', ')}` },

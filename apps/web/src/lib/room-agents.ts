@@ -21,6 +21,8 @@ import { getToolsForContext, executeRegisteredTool } from './tool-registry'
 import { checkToolPermission } from './tool-permissions'
 import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
+import { matchAndInjectSkills } from './claude'
+import { resolveAgentPrimaryEnvironmentId } from './skill-tools'
 import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, invalidateSnapshotCache, getModelContextLimit, getClaudeContextLimit } from './agent-context'
 import { compactRoom, publishCompactionWarning, publishTokenUpdate } from './compaction'
 import { recordTokenUsage, estimateTokens } from './token-budget'
@@ -938,12 +940,23 @@ export async function triggerRoomAgentReplies(
 
       // Inject pre-fetched context (ORION snapshot + vector search) so agents arrive
       // pre-oriented and don't need to call orion_get_snapshot on every message.
-      const [agentContext, agentLocalContext, roomLocalContext] = await Promise.all([
+      const [agentContext, agentLocalContext, roomLocalContext, skillEnvId] = await Promise.all([
         buildAgentContext(latestTurn),
         buildAgentLocalContext(agent.id),
         buildRoomLocalContext(roomId),
+        resolveAgentPrimaryEnvironmentId(agent.id),
       ])
-      const contextParts = [personaPrompt]
+      // Auto-surface a matching saved skill (see skill-tools.ts) — same
+      // trigger-pattern match claude.ts uses for direct AI chat, so a room
+      // message matching a skill's trigger phrase gets its instructions
+      // injected here too, not just in the /conversations chat path.
+      const skillMatch = skillEnvId
+        ? await matchAndInjectSkills(skillEnvId, latestTurn, 'room_match', roomId).catch(() => ({ injected: '', skillName: null }))
+        : { injected: '', skillName: null }
+      const skillSection = skillMatch.injected
+        ? `\n\n---\n## Matched Skill: ${skillMatch.skillName}\n${skillMatch.injected}\n---`
+        : ''
+      const contextParts = [personaPrompt + skillSection]
       if (agentContext)      contextParts.push(agentContext)
       if (agentLocalContext) contextParts.push(agentLocalContext)
       if (roomLocalContext)  contextParts.push(roomLocalContext)

@@ -4,7 +4,7 @@ import {
   Search, Bot, Server, Plus, Trash2, X, Edit2, Copy, RefreshCw,
   ChevronDown, Tag, Calendar, Sparkles,
 } from 'lucide-react'
-import type { Nova, NovaCategory, NovaConfig } from '@/lib/nebula'
+import type { Nova, NovaCategory, NovaConfig, NovaType } from '@/lib/nebula'
 
 const CATEGORY_COLORS: Record<NovaCategory, string> = {
   Identity: 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
@@ -261,7 +261,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
   const [displayName, setDisplayName] = useState(initial?.displayName || '')
   const [description, setDescription] = useState(initial?.description || '')
   const [category, setCategory] = useState<NovaCategory>(initial?.category || 'Other')
-  const [type, setType] = useState<'agent' | 'service'>(
+  const [type, setType] = useState<NovaType>(
     initial?.config?.type || 'service'
   )
   const [configStr, setConfigStr] = useState(
@@ -393,11 +393,12 @@ function NovaFormModal({ initial, onClose, onSave }: {
               <label className="block text-[10px] font-medium text-text-muted mb-1">Type</label>
               <select
                 value={type}
-                onChange={e => setType(e.target.value as 'agent' | 'service')}
+                onChange={e => setType(e.target.value as NovaType)}
                 className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
               >
                 <option value="service">Service</option>
                 <option value="agent">Agent</option>
+                <option value="content">Content</option>
               </select>
             </div>
           </div>

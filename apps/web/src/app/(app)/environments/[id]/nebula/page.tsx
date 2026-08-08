@@ -8,7 +8,6 @@ interface NebulaInstance {
   name: string
   category: string // "skill" | "hook"
   isInstalled: boolean
-  isEnabled: boolean
   isForked: boolean
   spec: string
   sourceNovaId: string | null
@@ -97,16 +96,22 @@ export default function NebulaPage() {
     }
   }
 
-  const handleToggle = async (instanceId: string, enabled: boolean) => {
+  // Installed/active toggle — reuses the existing PUT /nebula/[name] route
+  // (operator+/admin gated), which already whitelists `isInstalled` as an
+  // updatable field. This is the review/approval surface for Dream-crafted
+  // skills, which now land with isInstalled:false pending human approval
+  // (see runSkillCrafting in dream.ts) — without this, a pending skill could
+  // only be activated via a direct API call, not from the UI.
+  const handleToggle = async (name: string, installed: boolean) => {
     try {
-      const res = await fetch(`/api/environments/${id}/nebula/${instanceId}/toggle`, {
-        method: 'POST',
+      const res = await fetch(`/api/environments/${id}/nebula/${encodeURIComponent(name)}`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
+        body: JSON.stringify({ isInstalled: installed }),
       })
       if (!res.ok) throw new Error(await res.text())
       setInstances(prev =>
-        prev.map(i => i.id === instanceId ? { ...i, isEnabled: !i.isEnabled } : i)
+        prev.map(i => i.name === name ? { ...i, isInstalled: installed } : i)
       )
     } catch (err) {
       console.error('Toggle failed:', err)
@@ -375,7 +380,7 @@ function SettingsTab({
   onToggle,
 }: {
   instances: NebulaInstance[]
-  onToggle: (id: string, enabled: boolean) => void
+  onToggle: (name: string, installed: boolean) => void
 }) {
   if (instances.length === 0) {
     return (
@@ -411,16 +416,18 @@ function SettingsTab({
             </div>
           </div>
 
-          {/* Toggle */}
+          {/* Installed/active toggle — approves a pending (e.g. Dream-crafted,
+              isInstalled:false) skill or deactivates an installed one. */}
           <button
-            onClick={() => onToggle(inst.id, !inst.isEnabled)}
+            onClick={() => onToggle(inst.name, !inst.isInstalled)}
+            title={inst.isInstalled ? 'Installed — click to deactivate' : 'Pending review — click to install'}
             className={`relative w-10 h-5 rounded-full transition-colors ${
-              inst.isEnabled ? 'bg-green-500/30' : 'bg-bg-raised border border-border-visible'
+              inst.isInstalled ? 'bg-green-500/30' : 'bg-bg-raised border border-border-visible'
             }`}
           >
             <span
               className={`absolute top-0.5 w-4 h-4 rounded-full transition-transform ${
-                inst.isEnabled
+                inst.isInstalled
                   ? 'translate-x-5 bg-green-400'
                   : 'translate-x-0.5 bg-text-muted'
               }`}

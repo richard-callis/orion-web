@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
+import { buildContentManifests } from '@/lib/content-nova'
+import { proposeChange } from '@/lib/gitops'
+import type { PolicyConfig } from '@/lib/gitops-policy'
+import type { Nova } from '@/lib/nebula'
 
 /**
  * POST /api/novas/[id]/import — Import a Nova
  *
  * For agent-type Novas: Creates a new Agent record in the database.
  * For service-type Novas: Would create a HelmRelease or manifests (future).
+ * For content-type Novas: opens a GitOps PR provisioning a PVC + sync
+ *   CronJob and mounting them into the target environment's Deployment.
  *
  * Body: { environmentId?, agentName?, agentRole?, systemPrompt? }
  */
@@ -87,6 +93,104 @@ export async function POST(
       message: `Service Nova "${nova.name}" ready for deployment (GitOps integration pending)`,
       novaName: nova.name,
       version: nova.version,
+    })
+  }
+
+  if (novaType === 'content') {
+    if (!body.environmentId) {
+      return NextResponse.json({ error: 'environmentId is required for content Novas' }, { status: 400 })
+    }
+
+    const env = await prisma.environment.findUnique({ where: { id: body.environmentId } })
+    if (!env) {
+      return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
+    }
+    if (env.type !== 'cluster') {
+      // Content Novas produce Kubernetes manifests (PVC/CronJob/Deployment
+      // patch) — a docker-type environment uses docker-compose.yml instead
+      // and has no Kubernetes to apply them to.
+      return NextResponse.json(
+        { error: `Content Novas can only be installed into "cluster" environments, "${env.name}" is type "${env.type}"` },
+        { status: 422 },
+      )
+    }
+    if (!env.gitOwner || !env.gitRepo) {
+      return NextResponse.json(
+        { error: 'Environment has no git repo configured. Run bootstrap first.' },
+        { status: 422 },
+      )
+    }
+
+    let changes
+    try {
+      changes = await buildContentManifests(
+        { id: nova.id, name: nova.name, config } as Nova,
+        { gitOwner: env.gitOwner, gitRepo: env.gitRepo, repoPath: env.repoPath ?? undefined },
+      )
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        { status: 400 },
+      )
+    }
+
+    const policy = (env.policyConfig ?? {}) as PolicyConfig
+    let result
+    try {
+      result = await proposeChange({
+        owner: env.gitOwner,
+        repo: env.gitRepo,
+        title: `Install content Nova "${nova.name}"`,
+        reasoning: `Provisions a PVC + sync CronJob for content Nova "${nova.name}" (source: ${config.contentSource?.gitUrl}#${config.contentSource?.path}) and mounts it into the ${config.contentTarget?.deployment} Deployment at ${config.contentTarget?.mountPath}.`,
+        operationDescription: `Add a PVC, a CronJob, and a volume mount for content sync — no destructive changes to existing resources`,
+        changes,
+        policy,
+      })
+    } catch (err) {
+      return NextResponse.json(
+        { error: `Failed to propose GitOps change: ${err instanceof Error ? err.message : String(err)}` },
+        { status: 502 },
+      )
+    }
+
+    await prisma.gitOpsPR.create({
+      data: {
+        environmentId: body.environmentId,
+        prNumber: result.prNumber,
+        title: `Install content Nova "${nova.name}"`,
+        operation: result.classification.operation,
+        decision: result.classification.decision,
+        status: result.merged ? 'merged' : 'open',
+        prUrl: result.prUrl,
+        reasoning: `Content Nova import: ${nova.name}`,
+        branch: result.branch,
+        mergedAt: result.merged ? new Date() : null,
+      },
+    })
+
+    await prisma.novaDeployment.upsert({
+      where: { novaId_environmentId: { novaId: nova.id, environmentId: body.environmentId } },
+      create: {
+        novaId: nova.id,
+        environmentId: body.environmentId,
+        status: result.merged ? 'deployed' : 'pending-review',
+        version: nova.version,
+        metadata: { prUrl: result.prUrl, importedAt: new Date().toISOString() },
+      },
+      update: {
+        status: result.merged ? 'deployed' : 'pending-review',
+        version: nova.version,
+        metadata: { prUrl: result.prUrl, importedAt: new Date().toISOString() },
+      },
+    })
+
+    return NextResponse.json({
+      prNumber: result.prNumber,
+      prUrl: result.prUrl,
+      merged: result.merged,
+      message: result.merged
+        ? `Content Nova "${nova.name}" installed — PR #${result.prNumber} auto-merged.`
+        : `Content Nova "${nova.name}" proposed as PR #${result.prNumber}, awaiting review.`,
     })
   }
 

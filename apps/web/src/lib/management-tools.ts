@@ -30,6 +30,9 @@ registerWardenManagementTools()
 import { registerGithubTools } from '@/lib/github-tools'
 registerGithubTools()
 
+import { registerSkillTools } from '@/lib/skill-tools'
+registerSkillTools()
+
 // SOC2 [INPUT-001]: mirrors the reserved-name check in POST /api/agents
 export { RESERVED_AGENT_NAMES }
 

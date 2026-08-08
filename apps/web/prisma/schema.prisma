@@ -93,6 +93,7 @@ model Agent {
   webhookTriggers  WebhookTrigger[]       @relation("WebhookTriggerAgent")
   scheduledTasks   ScheduledTask[]        @relation("ScheduledTaskAgent")
   mcpToken         String? // AES-GCM encrypted per-agent MCP token (no @unique — random IV means ciphertext differs each time)
+  savedSkills      NebulaInstance[]
 
   @@index([createdBy])
 }
@@ -1428,24 +1429,52 @@ model NovaDefinition {
 }
 
 model NebulaInstance {
-  id             String              @id @default(cuid())
-  environmentId  String
-  environment    Environment         @relation(fields: [environmentId], references: [id], onDelete: Cascade)
-  sourceNovaId   String?
-  novaDefinition NovaDefinition?     @relation(fields: [sourceNovaId], references: [id])
-  name           String
-  category       String // "skill" | "hook"
-  spec           String              @db.Text
-  isForked       Boolean             @default(false)
-  isInstalled    Boolean             @default(true)
-  minimumTier    String?
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
-  hookLogs       HookExecutionLog[]
-  skillLogs      SkillExecutionLog[]
+  id              String              @id @default(cuid())
+  environmentId   String
+  environment     Environment         @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  sourceNovaId    String?
+  novaDefinition  NovaDefinition?     @relation(fields: [sourceNovaId], references: [id])
+  name            String
+  category        String // "skill" | "hook"
+  spec            String              @db.Text
+  isForked        Boolean             @default(false)
+  isInstalled     Boolean             @default(true)
+  minimumTier     String?
+  // Who/what authored this entry — "human" (default, via the Nebula UI),
+  // "agent" (self-saved by an agent via the save_skill tool), or "dream"
+  // (auto-crafted by Dream's skill-crafting phase from successful task runs).
+  source          String              @default("human")
+  createdByAgentId String?
+  createdByAgent  Agent?              @relation(fields: [createdByAgentId], references: [id], onDelete: SetNull)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  hookLogs        HookExecutionLog[]
+  skillLogs       SkillExecutionLog[]
+  embedding       NebulaEmbedding?
 
   @@unique([environmentId, name])
   @@index([environmentId, category, isInstalled])
+  @@index([createdByAgentId])
+}
+
+// Vector embedding of a skill's "meaning" (name + description + trigger
+// patterns) for semantic trigger matching — a complement to the existing
+// exact substring match on triggerPatterns, so a message that describes the
+// same situation in different words still surfaces the skill.
+// Mirrors NoteEmbedding's pattern: declared as text here, the migration
+// converts the column to a native pgvector `vector(768)` type with an HNSW
+// index for cosine similarity search (see vectorSearch/skillVectorSearch).
+model NebulaEmbedding {
+  nebulaId  String         @id
+  nebula    NebulaInstance @relation(fields: [nebulaId], references: [id], onDelete: Cascade)
+  embedding String         @db.Text // JSON-encoded vector array: [0.1, -0.3, ...]
+  dimension Int // 1536 (OpenAI) or 768 (Ollama nomic)
+  modelRef  String? // which model generated this embedding (ext:xxx ID)
+  version   Int            @default(1) // bump when re-embedding
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@map("nebula_embeddings")
 }
 
 model HookExecutionLog {
@@ -1469,7 +1498,7 @@ model SkillExecutionLog {
   id             String         @id @default(cuid())
   nebulaId       String
   nebula         NebulaInstance @relation(fields: [nebulaId], references: [id], onDelete: Cascade)
-  source         String // "chat_match" | "hook_trigger" | "manual"
+  source         String // "chat_match" | "task_match" | "room_match" | "hook_trigger" | "manual"
   contextId      String?
   matchedPattern String?
   createdAt      DateTime       @default(now())
