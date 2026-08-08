@@ -27,9 +27,12 @@ const RUNNER_IMAGE     = 'gitea/act_runner:latest'
 const ORION_CALLBACK_URL = (
   process.env.ORION_CALLBACK_URL ??
   (process.env.MANAGEMENT_IP ? `http://${process.env.MANAGEMENT_IP}:3000` : null) ??
-  process.env.NEXTAUTH_URL ??
   'http://localhost:3000'
 ).replace(/\/$/, '')
+
+if (!process.env.ORION_CALLBACK_URL && !process.env.MANAGEMENT_IP) {
+  console.warn('[orion] WARNING: Neither ORION_CALLBACK_URL nor MANAGEMENT_IP is set. Gateway/webhook URLs will use localhost — this will break in container environments.')
+}
 
 // ── Docker socket helpers ─────────────────────────────────────────────────────
 
