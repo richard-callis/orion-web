@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Vector search
-    const notes = await vectorSearch(result.vector, limit)
+    const notes = await vectorSearch(result.vector, result.modelRef, limit)
 
     // Trim content if includeContent is false
     const results = includeContent
