@@ -1,10 +1,10 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { X, Plus, Trash2, Bot, User, Cpu, MessageSquarePlus, MessageSquare, Rocket, Loader2, Check, Send, Square, Archive, Coins } from 'lucide-react'
 import type { Agent } from '@/types/tasks'
-import { NovaBrowser } from '@/components/nova/NovaBrowser'
+import { NovaBrowser, Toast, type NovaImportResult, type ToastState } from '@/components/nova/NovaBrowser'
 
 const ROLE_COLORS = [
   'bg-blue-500', 'bg-purple-500', 'bg-emerald-500', 'bg-orange-500',
@@ -163,6 +163,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
   const [editForm, setEditForm]         = useState<AgentForm>(emptyForm)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [showNovaBrowser, setShowNovaBrowser] = useState(false)
+  const [importToast, setImportToast] = useState<ToastState | null>(null)
   const [saving, setSaving]             = useState(false)
   const [availableModels, setAvailableModels] = useState<Array<{id: string; name: string; provider: string; builtIn: boolean}>>([])
   const [showArchived, setShowArchived] = useState(false)
@@ -359,11 +360,16 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
     }
   }
 
-  const handleNovaImport = (novaName: string) => {
+  const handleNovaImport = (result: NovaImportResult) => {
     setShowNovaBrowser(false)
+    // Own the success toast here — NovaBrowser (and any toast it rendered)
+    // unmounts as soon as the panel closes above, so it can't display this.
+    setImportToast({ message: result.message, type: 'success', prUrl: result.prUrl })
     // Refresh the agents list after import
     fetch('/api/agents').then(r => r.json()).then(setLocalAgents).catch((e) => console.error("[fetch]", e))
   }
+
+  const dismissImportToast = useCallback(() => setImportToast(null), [])
 
   const openCreate = () => { setForm(emptyForm); setCreateModal(true) }
   const closeCreate = () => { setCreateModal(false); setForm(emptyForm) }
@@ -459,6 +465,14 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
 
   return (
     <>
+      {importToast && (
+        <Toast
+          message={importToast.message}
+          type={importToast.type}
+          prUrl={importToast.prUrl}
+          onDismiss={dismissImportToast}
+        />
+      )}
       <aside className="h-44 flex-shrink-0 md:flex-none md:h-full md:w-80 flex flex-col border-r border-b md:border-b-0 border-border-subtle bg-bg-sidebar overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
           <span className="text-xs font-semibold text-text-secondary">

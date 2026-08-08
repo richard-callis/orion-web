@@ -1,11 +1,18 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { Search, Bot, Server, ArrowRight, CheckCircle, XCircle, X } from 'lucide-react'
 import type { Nova, NovaCategory } from '@/lib/nebula'
 
+export interface NovaImportResult {
+  novaName: string
+  message: string
+  prUrl?: string
+  prNumber?: number
+}
+
 interface Props {
-  onImport?: (novaName: string) => void
+  onImport?: (result: NovaImportResult) => void
   onClose?: () => void
 }
 
@@ -22,7 +29,7 @@ const CATEGORY_COLORS: Record<NovaCategory, string> = {
 
 // ── Toast notification ─────────────────────────────────────────────────────────
 
-interface ToastState {
+export interface ToastState {
   message: string
   type: 'success' | 'error'
   prUrl?: string
@@ -32,7 +39,7 @@ interface ToastProps extends ToastState {
   onDismiss: () => void
 }
 
-function Toast({ message, type, prUrl, onDismiss }: ToastProps) {
+export function Toast({ message, type, prUrl, onDismiss }: ToastProps) {
   useEffect(() => {
     if (type !== 'error') {
       const t = setTimeout(onDismiss, 8_000)
@@ -44,7 +51,9 @@ function Toast({ message, type, prUrl, onDismiss }: ToastProps) {
 
   return createPortal(
     <div
-      className={`fixed bottom-6 right-6 z-[60] w-80 rounded-xl border shadow-2xl p-4 flex gap-3 animate-in slide-in-from-bottom-4 fade-in duration-200
+      role="status"
+      aria-live="polite"
+      className={`fixed bottom-6 right-6 z-[60] w-80 rounded-xl border shadow-2xl p-4 flex gap-3
         ${type === 'error' ? 'bg-bg-card border-status-error/40' : 'bg-bg-card border-accent/40'}`}
     >
       {type === 'error'
@@ -67,7 +76,7 @@ function Toast({ message, type, prUrl, onDismiss }: ToastProps) {
           </a>
         )}
       </div>
-      <button onClick={onDismiss} className="text-text-muted hover:text-text-primary shrink-0 p-0.5">
+      <button onClick={onDismiss} aria-label="Dismiss notification" className="text-text-muted hover:text-text-primary shrink-0 p-0.5">
         <X size={13} />
       </button>
     </div>,
@@ -85,6 +94,17 @@ export function NovaBrowser({ onImport, onClose }: Props) {
   const [environments, setEnvironments] = useState<Env[]>([])
   const [envByNova, setEnvByNova] = useState<Record<string, string>>({})
   const [toast, setToast] = useState<ToastState | null>(null)
+  const importTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const dismissToast = useCallback(() => setToast(null), [])
+
+  // Clear any pending "import complete" timeout if this component unmounts
+  // (e.g. the user manually closes the panel) before it fires.
+  useEffect(() => {
+    return () => {
+      if (importTimeoutRef.current) clearTimeout(importTimeoutRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     fetch('/api/novas')
@@ -127,17 +147,21 @@ export function NovaBrowser({ onImport, onClose }: Props) {
         throw new Error(data.error || `HTTP ${res.status}`)
       }
       setImported(nova.id)
-      setToast({
+      const result: NovaImportResult = {
+        novaName: nova.name,
         message: data.message || `Nova "${nova.displayName}" imported successfully.`,
-        type: 'success',
         prUrl: data.prUrl,
-      })
-      // Give the user a moment to see the success toast before the panel
-      // (which owns this component and closes it via onImport) unmounts.
-      setTimeout(() => {
-        onImport?.(nova.name)
+        prNumber: data.prNumber,
+      }
+      // Briefly show the "Imported!" state on the button, then hand the
+      // result up to the parent, which owns displaying the success toast
+      // (this component — and any toast it rendered — unmounts once the
+      // parent closes the panel in response to onImport).
+      importTimeoutRef.current = setTimeout(() => {
+        onImport?.(result)
         setImported(null)
-      }, 1500)
+        importTimeoutRef.current = null
+      }, 700)
     } catch (err) {
       console.error('Import failed:', err)
       const message = err instanceof Error ? err.message : String(err)
@@ -170,7 +194,7 @@ export function NovaBrowser({ onImport, onClose }: Props) {
           message={toast.message}
           type={toast.type}
           prUrl={toast.prUrl}
-          onDismiss={() => setToast(null)}
+          onDismiss={dismissToast}
         />
       )}
       {/* Header */}
