@@ -46,7 +46,7 @@ vi.mock('./sanitize-context', () => ({
   sanitizeContextNote: (title: string, content: string) => content,
 }))
 
-import { generateEmbedding, storeEmbedding, vectorSearch } from './embeddings'
+import { generateEmbedding, storeEmbedding, vectorSearch, hybridSearch } from './embeddings'
 
 beforeEach(() => {
   queryRawCalls.length = 0
@@ -130,5 +130,50 @@ describe('vectorSearch — query shape', () => {
     // Bug #3: must filter by modelRef.
     expect(sql).toContain('"modelRef"')
     expect(queryRawCalls[0].values).toContain('nomic-embed-text')
+  })
+})
+
+describe('hybridSearch — RRF fusion of vector + full-text legs', () => {
+  it('runs both legs and fuses via RRF when an embedding provider is configured', async () => {
+    externalModelFindMany = async () => [
+      { provider: 'ollama', modelId: 'nomic-embed-text', baseUrl: 'http://ollama:11434', enabled: true },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ embeddings: [[0.1, 0.2, 0.3]] }),
+    })))
+
+    const { modelRef, hits } = await hybridSearch('crashloopbackoff pod-7f9', 10)
+
+    expect(modelRef).toBe('nomic-embed-text')
+    expect(hits).toEqual([])
+    expect(queryRawCalls.length).toBe(1)
+    const sql = queryRawCalls[0].strings.join('?')
+
+    // Both legs present.
+    expect(sql).toContain('<=>')
+    expect(sql).toContain('websearch_to_tsquery')
+    expect(sql).toContain('ts_rank_cd')
+    // RRF fusion, not a naive union/intersection.
+    expect(sql).toMatch(/1\.0\s*\/\s*\(\?\s*\+\s*vec\.rnk\)/)
+    expect(sql).toContain('FULL OUTER JOIN')
+    // Vector leg still respects the modelRef isolation fix.
+    expect(sql).toContain('"modelRef"')
+    expect(queryRawCalls[0].values).toContain('nomic-embed-text')
+    // websearch_to_tsquery (not plainto_tsquery) so callers can use quoted phrases.
+    expect(sql).not.toContain('plainto_tsquery')
+  })
+
+  it('falls back to keyword-only search when no embedding provider is configured', async () => {
+    externalModelFindMany = async () => []
+
+    const { modelRef, hits } = await hybridSearch('crashloopbackoff pod-7f9', 10)
+
+    expect(modelRef).toBeNull()
+    expect(hits).toEqual([])
+    expect(queryRawCalls.length).toBe(1)
+    const sql = queryRawCalls[0].strings.join('?')
+    expect(sql).toContain('websearch_to_tsquery')
+    expect(sql).not.toContain('<=>')
   })
 })
