@@ -19,6 +19,13 @@ const EXECUTION_ESCALATE_TTL_SECONDS = parseInt(process.env.EXECUTION_ESCALATE_T
 if (!ORION_EXECUTOR_TOKEN) {
   throw new Error('ORION_EXECUTOR_TOKEN environment variable not set')
 }
+if (!ORION_GATEWAY_TOKEN) {
+  // Required for OrionClient.notifyRoom/getSystemSetting (gateway-token auth — see
+  // orion-client.ts). Failing loudly here matches ORION_EXECUTOR_TOKEN above: an unset
+  // token used to fail silently per-call (swallowed by getSystemSetting's try/catch),
+  // reproducing the exact "executor can't talk to Orion" failure class this fix exists for.
+  throw new Error('ORION_GATEWAY_TOKEN environment variable not set')
+}
 
 const fastify = Fastify({ logger: true })
 const orionClient = new OrionClient(ORION_URL, ORION_EXECUTOR_TOKEN, ORION_GATEWAY_TOKEN)
