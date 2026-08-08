@@ -344,6 +344,159 @@ export async function vectorSearch(
   }))
 }
 
+// ── Hybrid Search (dense + keyword, fused with RRF) ─────────────────────────
+
+export interface HybridSearchHit {
+  noteId: string
+  title: string
+  content: string
+  type: string
+  folder: string
+  pinned: boolean
+  /** Fused Reciprocal Rank Fusion score — this is the ranking key. */
+  score: number
+  /** Cosine similarity [0,1], or null if this note wasn't in the vector candidate set. */
+  vectorScore: number | null
+  /** ts_rank_cd keyword relevance, or null if this note wasn't in the keyword candidate set. */
+  keywordScore: number | null
+}
+
+// k in the RRF formula `1 / (k + rank)`. Larger k flattens the influence of
+// rank differences near the top; 60 is the commonly-cited default from the
+// original RRF paper (Cormack et al.) and typical hybrid-search references.
+const RRF_K = 60
+// How many top candidates each leg (vector / keyword) contributes before
+// fusion. Wide enough that a note ranked outside the top-N of one leg can
+// still surface on the strength of the other; narrow enough to keep both
+// subqueries cheap.
+const HYBRID_CANDIDATE_POOL = 40
+
+function mapHybridRows(rows: unknown[]): HybridSearchHit[] {
+  return (rows as any[]).map(r => ({
+    noteId: r.noteId as string,
+    title: r.title as string,
+    content: r.content as string,
+    type: r.type as string,
+    folder: r.folder as string,
+    pinned: Boolean(r.pinned),
+    score: parseFloat(r.score as string),
+    vectorScore: r.vectorScore != null ? parseFloat(r.vectorScore as string) : null,
+    keywordScore: r.keywordScore != null ? parseFloat(r.keywordScore as string) : null,
+  }))
+}
+
+/**
+ * Hybrid search over notes: dense pgvector cosine search + Postgres native
+ * full-text search (on `Note.searchVector`, a generated tsvector column —
+ * migration 20260808_note_search_vector), fused via Reciprocal Rank Fusion.
+ *
+ * Mirrors the InvestigationNote full-text pattern (searchNotes() in
+ * app/api/monitoring/security/investigations/_utils.ts) but combines it with
+ * the vector leg rather than using either alone — dense embeddings are weak
+ * on exact tokens (pod names, CRD kinds, CLI flags, error strings) that
+ * `websearch_to_tsquery` handles well, and keyword search is weak on
+ * conceptual/paraphrased queries that embeddings handle well.
+ *
+ * Each leg independently ranks its own top `HYBRID_CANDIDATE_POOL` notes;
+ * RRF (`score = sum(1 / (RRF_K + rank))` across legs a note appears in) fuses
+ * the two rankings into one, and the top `limit` by fused score are returned.
+ * `websearch_to_tsquery` (not `plainto_tsquery`) is used so callers can pass
+ * quoted phrases and `-exclude` terms directly in free text.
+ *
+ * If no embedding provider is configured, falls back to keyword-only search
+ * (vectorScore is null on every hit) rather than returning nothing.
+ *
+ * @returns modelRef of the embedding used (null if the vector leg was
+ *   skipped), plus fused hits with both per-leg scores exposed for
+ *   debugging/tuning (surfaced in the admin knowledge-search UI).
+ */
+export async function hybridSearch(
+  query: string,
+  limit: number = 10,
+): Promise<{ modelRef: string | null; hits: HybridSearchHit[] }> {
+  const q = query.slice(0, 2000)
+  const embedding = await generateEmbedding(q)
+
+  if (!embedding) {
+    const rows = await prisma.$queryRaw<unknown[]>`
+      WITH kw_top AS (
+        SELECT n.id AS note_id,
+               ts_rank_cd(n."searchVector", websearch_to_tsquery('english', ${q})) AS keyword_score
+        FROM "Note" n
+        WHERE n."searchVector" @@ websearch_to_tsquery('english', ${q})
+        ORDER BY ts_rank_cd(n."searchVector", websearch_to_tsquery('english', ${q})) DESC
+        LIMIT ${HYBRID_CANDIDATE_POOL}
+      ),
+      kw AS (
+        SELECT note_id, keyword_score,
+               ROW_NUMBER() OVER (ORDER BY keyword_score DESC) AS rnk
+        FROM kw_top
+      )
+      SELECT
+        n.id AS "noteId", n.title, n.content, n."type", n.folder, n.pinned,
+        (1.0 / (${RRF_K} + kw.rnk))::float AS score,
+        NULL::float AS "vectorScore",
+        kw.keyword_score::float AS "keywordScore"
+      FROM kw
+      JOIN "Note" n ON n.id = kw.note_id
+      ORDER BY score DESC
+      LIMIT ${limit}
+    `
+    return { modelRef: null, hits: mapHybridRows(rows) }
+  }
+
+  const vecStr = `[${embedding.vector.join(',')}]`
+
+  const rows = await prisma.$queryRaw<unknown[]>`
+    WITH vec_top AS (
+      SELECT ne."noteId" AS note_id,
+             (1 - (ne.embedding <=> ${vecStr}::vector)) AS vector_score
+      FROM "note_embeddings" ne
+      WHERE ne.embedding IS NOT NULL
+        AND ne."modelRef" = ${embedding.modelRef}
+      ORDER BY ne.embedding <=> ${vecStr}::vector
+      LIMIT ${HYBRID_CANDIDATE_POOL}
+    ),
+    vec AS (
+      SELECT note_id, vector_score,
+             ROW_NUMBER() OVER (ORDER BY vector_score DESC) AS rnk
+      FROM vec_top
+    ),
+    kw_top AS (
+      SELECT n.id AS note_id,
+             ts_rank_cd(n."searchVector", websearch_to_tsquery('english', ${q})) AS keyword_score
+      FROM "Note" n
+      WHERE n."searchVector" @@ websearch_to_tsquery('english', ${q})
+      ORDER BY ts_rank_cd(n."searchVector", websearch_to_tsquery('english', ${q})) DESC
+      LIMIT ${HYBRID_CANDIDATE_POOL}
+    ),
+    kw AS (
+      SELECT note_id, keyword_score,
+             ROW_NUMBER() OVER (ORDER BY keyword_score DESC) AS rnk
+      FROM kw_top
+    ),
+    fused AS (
+      SELECT
+        COALESCE(vec.note_id, kw.note_id) AS note_id,
+        vec.vector_score,
+        kw.keyword_score,
+        (COALESCE(1.0 / (${RRF_K} + vec.rnk), 0) + COALESCE(1.0 / (${RRF_K} + kw.rnk), 0))::float AS score
+      FROM vec
+      FULL OUTER JOIN kw ON vec.note_id = kw.note_id
+    )
+    SELECT
+      n.id AS "noteId", n.title, n.content, n."type", n.folder, n.pinned,
+      fused.score,
+      fused.vector_score::float AS "vectorScore",
+      fused.keyword_score::float AS "keywordScore"
+    FROM fused
+    JOIN "Note" n ON n.id = fused.note_id
+    ORDER BY fused.score DESC
+    LIMIT ${limit}
+  `
+  return { modelRef: embedding.modelRef, hits: mapHybridRows(rows) }
+}
+
 // ── Semantic Connections ─────────────────────────────────────────────────────
 
 /**
@@ -399,30 +552,40 @@ export async function computeSemanticEdges(
  * Returns empty string silently on any error (no embedding provider, pgvector
  * not installed, no notes embedded, etc.) so it never blocks an LLM call.
  */
-// minScore thresholds below (here and at every other vectorSearch call site:
-// agent-context.ts, worker.ts, tool-registry.ts) were originally calibrated
-// against a broken metric — vectorSearch used to sort by L2 distance (`<->`)
-// while filtering a "score" computed as `1 - <-> distance`, which is not a
-// bounded similarity value at all. Now that vectorSearch uses `<=>` (cosine
-// distance) with `score = 1 - cosine_distance = cosine_similarity` (bounded
-// [0,1]), these thresholds are unverified against real data — no live/dev
-// database with embedded Notes was reachable from this change to sanity-check
-// the resulting score distribution. Left as-is intentionally rather than
-// guessing new numbers; recalibrate using the admin knowledge-search page
-// (added in a follow-up PR) once real query/score pairs are available.
+// minScore thresholds below (here and at every other call site that filters
+// on it: agent-context.ts, worker.ts, tool-registry.ts) were originally
+// calibrated against a broken metric — vectorSearch used to sort by L2
+// distance (`<->`) while filtering a "score" computed as `1 - <-> distance`,
+// which is not a bounded similarity value at all. Now that the vector leg
+// uses `<=>` (cosine distance) with `score = 1 - cosine_distance =
+// cosine_similarity` (bounded [0,1]), these thresholds are unverified
+// against real data — no live/dev database with embedded Notes was reachable
+// from this change to sanity-check the resulting score distribution. Left
+// as-is intentionally rather than guessing new numbers; recalibrate using
+// the admin knowledge-search page (added in a follow-up PR) once real
+// query/score pairs are available.
+//
+// minScore is applied to `vectorScore` (cosine similarity), NOT the fused
+// RRF `score` — RRF scores live on a totally different, non-interpretable
+// scale (`sum of 1/(k+rank)`, max ~0.03 for two legs at k=60), so comparing
+// them against a similarity threshold like 0.2 would silently filter out
+// everything. A hit with `vectorScore === null` matched via keyword search
+// only (either it fell outside the vector leg's candidate pool, or no
+// embedding provider is configured) — keyword hits are already relevance-
+// filtered by the full-text `@@` match itself, so they're kept regardless of
+// minScore. This is also the whole point of hybrid search: an exact-token
+// match (pod name, CRD kind, error string) should surface even when its
+// cosine similarity is mediocre.
 export async function retrieveKnowledgeContext(
   query: string,
   topK = 3,
   minScore = 0.2,
 ): Promise<string> {
   try {
-    const result = await generateEmbedding(query.slice(0, 2000))
-    if (!result) return ''
-
     // llm-context notes are intentionally unscoped (no createdBy filter) —
     // they are system-wide context for agent prompts and must remain globally visible.
-    const hits = await vectorSearch(result.vector, result.modelRef, topK)
-    const relevant = hits.filter(h => h.score >= minScore)
+    const { hits } = await hybridSearch(query, topK)
+    const relevant = hits.filter(h => h.vectorScore === null || h.vectorScore >= minScore)
     if (relevant.length === 0) return ''
 
     // Sanitize all retrieved notes before injecting into agent system prompts.

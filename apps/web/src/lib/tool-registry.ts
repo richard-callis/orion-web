@@ -11,7 +11,7 @@
 
 import { prisma } from '@/lib/db'
 import { getDefaultModelId } from '@/lib/default-model'
-import { generateEmbedding, vectorSearch } from '@/lib/embeddings'
+import { hybridSearch } from '@/lib/embeddings'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { writeFileSync, unlinkSync, mkdtempSync, rmdirSync } from 'fs'
@@ -2676,18 +2676,17 @@ registerTool({
       args as { query?: string; limit?: number; includeContent?: boolean }
     if (!query) return 'Error: query is required'
 
-    const embedding = await generateEmbedding(query.slice(0, 2000))
-    if (!embedding) return 'No embedding provider configured. Add an embedding model in Admin → Models to enable semantic search.'
-
-    const results = await vectorSearch(embedding.vector, embedding.modelRef, Math.min(limit, 20))
-    if (!results.length) return 'No relevant notes found for this query.'
+    const { hits } = await hybridSearch(query, Math.min(limit, 20))
+    if (!hits.length) return 'No relevant notes found for this query.'
 
     return JSON.stringify(
-      results.map((r: any) => ({
-        title:  r.title,
-        type:   r.type,
-        folder: r.folder,
-        score:  parseFloat(r.score.toFixed(3)),
+      hits.map((r: any) => ({
+        title:        r.title,
+        type:         r.type,
+        folder:       r.folder,
+        score:        parseFloat(r.score.toFixed(5)),
+        vectorScore:  r.vectorScore != null ? parseFloat(r.vectorScore.toFixed(3)) : null,
+        keywordScore: r.keywordScore != null ? parseFloat(r.keywordScore.toFixed(3)) : null,
         ...(includeContent && { content: r.content.slice(0, 2000) }),
       })),
       null, 2
