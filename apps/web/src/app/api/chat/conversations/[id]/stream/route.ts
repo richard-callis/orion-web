@@ -131,7 +131,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // RAG: embed the user's query and retrieve the top-3 most relevant notes.
   // Runs in parallel with other setup — fails silently if no provider configured.
-  const knowledgeContext = await retrieveKnowledgeContext(prompt)
+  // Pass the real authenticated user id so results are scoped to that user's
+  // own notes plus shared/llm-context notes (createdBy IS NULL) — otherwise
+  // any user's private notes could be injected into another user's prompt.
+  const knowledgeContext = await retrieveKnowledgeContext(prompt, undefined, undefined, undefined, userId)
 
   const abortCtrl = new AbortController()
 

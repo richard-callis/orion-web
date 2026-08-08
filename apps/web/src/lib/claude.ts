@@ -1,7 +1,7 @@
 import fs from 'fs'
 import { prisma } from './db'
 import { getPrompt, interpolate } from './system-prompts'
-import { generateEmbedding, vectorSearch, skillVectorSearch } from './embeddings'
+import { hybridSearch, generateEmbedding, skillVectorSearch } from './embeddings'
 import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './management-tools'
 import { validateToolArgs } from './tool-registry'
 import type { SkillSpec } from './skill-tools'
@@ -596,7 +596,7 @@ async function* streamOllamaToolLoop(
             await recordTrace({ conversationId, step: inc(), type: 'tool_call', toolName: 'knowledge_search', toolArgs: argsStr, modelUsed: model })
             yield { type: 'tool_call', tool: fn.name, input: argsStr }
             const toolStart = Date.now()
-            const result = await handleKnowledgeSearch(argsStr)
+            const result = await handleKnowledgeSearch(argsStr, userId)
             await recordTrace({ conversationId, step: inc(), type: 'tool_result', toolName: 'knowledge_search', toolResult: result, durationMs: Date.now() - toolStart, modelUsed: model })
             yield { type: 'tool_result', tool: fn.name, output: result }
             messages.push({ role: 'tool', content: result })
@@ -1199,25 +1199,27 @@ async function handleGitopsPropose(argsRaw: string, conversationId: string): Pro
 
 // ── Knowledge graph management tool handlers ─────────────────────────────────
 
-async function handleKnowledgeSearch(argsRaw: string): Promise<string> {
+async function handleKnowledgeSearch(argsRaw: string, userId?: string): Promise<string> {
   try {
     const { query, limit = 5, includeContent = true } = JSON.parse(argsRaw || '{}') as {
       query?: string; limit?: number; includeContent?: boolean
     }
     if (!query) return 'Error: query is required'
 
-    const embedding = await generateEmbedding(query.slice(0, 2000))
-    if (!embedding) return 'No embedding provider configured. Add an embedding model in Admin → Models to enable semantic search.'
-
-    const results = await vectorSearch(embedding.vector, embedding.modelRef, Math.min(limit, 20))
-    if (!results.length) return 'No relevant notes found for this query.'
+    // SOC2: mirror the notes API's ownership scoping — restrict to the
+    // calling user's own notes plus unowned/shared notes when this tool call
+    // is on behalf of a specific logged-in user.
+    const { hits } = await hybridSearch(query, Math.min(limit, 20), userId)
+    if (!hits.length) return 'No relevant notes found for this query.'
 
     return JSON.stringify(
-      results.map(r => ({
-        title:  r.title,
-        type:   r.type,
-        folder: r.folder,
-        score:  parseFloat(r.score.toFixed(3)),
+      hits.map(r => ({
+        title:        r.title,
+        type:         r.type,
+        folder:       r.folder,
+        score:        parseFloat(r.score.toFixed(5)),
+        vectorScore:  r.vectorScore != null ? parseFloat(r.vectorScore.toFixed(3)) : null,
+        keywordScore: r.keywordScore != null ? parseFloat(r.keywordScore.toFixed(3)) : null,
         ...(includeContent && { content: r.content.slice(0, 2000) }),
       })),
       null, 2
@@ -1603,12 +1605,21 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
           result = await handleOrionBootstrapEnvironment(tc.argsRaw)
         } else if (tc.name === 'gitops_propose') {
           result = await handleGitopsPropose(tc.argsRaw, conversationId)
-        } else if (MANAGEMENT_TOOL_DEFS.some(d => d.name === tc.name)) {
-          result = await executeManagedTool(tc.name, tc.argsRaw, userId)
         } else if (tc.name === 'knowledge_search') {
-          result = await handleKnowledgeSearch(tc.argsRaw)
+          // Must be checked before the MANAGEMENT_TOOL_DEFS catch-all below —
+          // MANAGEMENT_TOOL_DEFS is getAllTools() over the full registry, which
+          // includes 'knowledge_search', so the catch-all would otherwise shadow
+          // this dedicated (correctly per-user-scoped) handler entirely.
+          result = await handleKnowledgeSearch(tc.argsRaw, userId)
         } else if (tc.name === 'knowledge_graph') {
           result = await handleKnowledgeGraph(tc.argsRaw)
+        } else if (MANAGEMENT_TOOL_DEFS.some(d => d.name === tc.name)) {
+          // This is an ordinary per-user chat conversation (no autonomous Agent
+          // acting), so pass the real user id via the dedicated `userId` param —
+          // NOT `actorId`, which is a distinct `Agent.id` foreign key space used
+          // by worker.ts/room-agents for background/room agents. See
+          // executeManagedTool's doc comment.
+          result = await executeManagedTool(tc.name, tc.argsRaw, undefined, userId)
         } else if (gateway && environmentId) {
           // ── Gateway tools ─────────────────────────────────────────────────
           try {

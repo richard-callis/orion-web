@@ -11,7 +11,7 @@
 
 import { prisma } from '@/lib/db'
 import { getDefaultModelId } from '@/lib/default-model'
-import { generateEmbedding, vectorSearch } from '@/lib/embeddings'
+import { hybridSearch } from '@/lib/embeddings'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { writeFileSync, unlinkSync, mkdtempSync, rmdirSync } from 'fs'
@@ -2672,23 +2672,27 @@ registerTool({
   parallelSafe: true,
   availableIn: 'both',
   category: 'knowledge',
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const { query, limit = 5, includeContent = true } =
       args as { query?: string; limit?: number; includeContent?: boolean }
     if (!query) return 'Error: query is required'
 
-    const embedding = await generateEmbedding(query.slice(0, 2000))
-    if (!embedding) return 'No embedding provider configured. Add an embedding model in Admin → Models to enable semantic search.'
-
-    const results = await vectorSearch(embedding.vector, embedding.modelRef, Math.min(limit, 20))
-    if (!results.length) return 'No relevant notes found for this query.'
+    // SOC2: mirror the notes API's ownership scoping. A tool call made on
+    // behalf of a specific logged-in user (ctx.userId set) is restricted to
+    // that user's own notes plus unowned/shared notes; an autonomous
+    // agent-driven call (no specific human owner, ctx.userId unset) is
+    // trusted/unscoped like the service/gateway path.
+    const { hits } = await hybridSearch(query, Math.min(limit, 20), ctx.userId)
+    if (!hits.length) return 'No relevant notes found for this query.'
 
     return JSON.stringify(
-      results.map((r: any) => ({
-        title:  r.title,
-        type:   r.type,
-        folder: r.folder,
-        score:  parseFloat(r.score.toFixed(3)),
+      hits.map((r: any) => ({
+        title:        r.title,
+        type:         r.type,
+        folder:       r.folder,
+        score:        parseFloat(r.score.toFixed(5)),
+        vectorScore:  r.vectorScore != null ? parseFloat(r.vectorScore.toFixed(3)) : null,
+        keywordScore: r.keywordScore != null ? parseFloat(r.keywordScore.toFixed(3)) : null,
         ...(includeContent && { content: r.content.slice(0, 2000) }),
       })),
       null, 2
@@ -2713,11 +2717,15 @@ registerTool({
   parallelSafe: true,
   availableIn: 'both',
   category: 'knowledge',
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const { query, limit = 5 } = args as { query?: string; limit?: number }
     if (!query) return 'Error: query is required'
     const { retrieveKnowledgeContext } = await import('@/lib/embeddings')
-    const block = await retrieveKnowledgeContext(query, Math.min(Math.max(limit, 1), 10), 0.2)
+    // SOC2: same per-user note scoping as knowledge_search — see ownerFilterSql
+    // in lib/embeddings.ts. ctx.userId is only set for calls made on behalf of
+    // a specific logged-in user; agent-driven calls (MCP, room-agents) leave it
+    // unset and stay trusted/unscoped by design.
+    const block = await retrieveKnowledgeContext(query, Math.min(Math.max(limit, 1), 10), 0.2, undefined, ctx.userId)
     return block || 'No additional relevant notes found for this query.'
   },
 })

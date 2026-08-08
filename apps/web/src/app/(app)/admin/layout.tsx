@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Settings, Cpu, Users, ShieldCheck, ScrollText, Layers, ShieldAlert, UsersRound, MessageSquare, KeyRound, Shield, Activity } from 'lucide-react'
+import { LayoutDashboard, Settings, Cpu, Users, ShieldCheck, ScrollText, Layers, ShieldAlert, UsersRound, MessageSquare, KeyRound, Shield, Activity, Search } from 'lucide-react'
 import { usePendingTools } from '@/hooks/usePendingTools'
 
 const adminNav = [
@@ -17,6 +17,7 @@ const adminNav = [
   { href: '/admin/claude',         icon: KeyRound,        label: 'Claude OAuth'  },
   { href: '/admin/tool-permissions', icon: Shield,        label: 'Tool ACLs'     },
   { href: '/admin/health',        icon: Activity,        label: 'Health'        },
+  { href: '/admin/knowledge-search', icon: Search,       label: 'Knowledge Search' },
   { href: '/admin/audit',         icon: ScrollText,      label: 'Audit Log'     },
 ]
 

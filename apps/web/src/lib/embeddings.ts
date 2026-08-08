@@ -9,6 +9,7 @@
  *   CREATE EXTENSION IF NOT EXISTS vector;
  */
 
+import { Prisma } from '@prisma/client'
 import { prisma } from './db'
 import { sanitizeContextNote } from './sanitize-context'
 
@@ -266,6 +267,28 @@ export async function embedAllNotes(): Promise<{ embedded: number; failed: numbe
   return { embedded, failed }
 }
 
+// ── Access control ───────────────────────────────────────────────────────────
+
+/**
+ * Ownership predicate mirroring the rest of the notes API's convention (see
+ * `scopeByCreatedBy` in `app/api/notes/route.ts` and `assertCanModify` in
+ * `lib/auth.ts`): a note with `createdBy = NULL` is a shared/system record
+ * visible to everyone; any other note is only visible to its creator.
+ *
+ * @param callerId - `undefined` signals a trusted/unscoped caller (service,
+ *   admin, or an internal agent-driven context with no single human owner,
+ *   e.g. worker.ts's background task runs or `agent-context.ts`'s room-agent
+ *   pre-flight) — no filtering is applied. A string restricts results to
+ *   notes owned by that user, plus unowned/shared notes — this includes
+ *   `retrieveKnowledgeContext` when it's called on behalf of a specific user
+ *   (e.g. the chat stream route), which still surfaces shared `llm-context`
+ *   notes since those are always created with `createdBy: null`.
+ */
+function ownerFilterSql(callerId: string | undefined, noteAlias: string): Prisma.Sql {
+  if (callerId === undefined) return Prisma.empty
+  return Prisma.sql`AND (${Prisma.raw(noteAlias)}."createdBy" IS NULL OR ${Prisma.raw(noteAlias)}."createdBy" = ${callerId})`
+}
+
 // ── Vector Search ────────────────────────────────────────────────────────────
 
 /**
@@ -297,12 +320,15 @@ export async function embedAllNotes(): Promise<{ embedded: number; failed: numbe
  * @param modelRef - The embedding model that produced queryVector; only
  *   note_embeddings rows from the same model are searched
  * @param limit - Maximum results to return
+ * @param callerId - See `ownerFilterSql`: `undefined` (default) means
+ *   trusted/unscoped; pass a user id to restrict to that user's + shared notes.
  * @returns Notes ranked by cosine similarity score (descending)
  */
 export async function vectorSearch(
   queryVector: number[],
   modelRef: string,
   limit: number = 10,
+  callerId?: string,
 ): Promise<
   Array<{
     noteId: string
@@ -315,6 +341,7 @@ export async function vectorSearch(
   }>
 > {
   const vecStr = `[${queryVector.join(',')}]`
+  const ownerFilter = ownerFilterSql(callerId, 'n')
 
   const results = await prisma.$queryRaw<unknown[]>`
     SELECT
@@ -329,6 +356,7 @@ export async function vectorSearch(
     JOIN "Note" n ON n.id = ne."noteId"
     WHERE ne.embedding IS NOT NULL
       AND ne."modelRef" = ${modelRef}
+      ${ownerFilter}
     ORDER BY ne.embedding <=> ${vecStr}::vector
     LIMIT ${limit}
   `
@@ -342,6 +370,171 @@ export async function vectorSearch(
     pinned: Boolean(r.pinned),
     score: parseFloat(r.score as string),
   }))
+}
+
+// ── Hybrid Search (dense + keyword, fused with RRF) ─────────────────────────
+
+export interface HybridSearchHit {
+  noteId: string
+  title: string
+  content: string
+  type: string
+  folder: string
+  pinned: boolean
+  /** Fused Reciprocal Rank Fusion score — this is the ranking key. */
+  score: number
+  /** Cosine similarity [0,1], or null if this note wasn't in the vector candidate set. */
+  vectorScore: number | null
+  /** ts_rank_cd keyword relevance, or null if this note wasn't in the keyword candidate set. */
+  keywordScore: number | null
+}
+
+// k in the RRF formula `1 / (k + rank)`. Larger k flattens the influence of
+// rank differences near the top; 60 is the commonly-cited default from the
+// original RRF paper (Cormack et al.) and typical hybrid-search references.
+const RRF_K = 60
+// How many top candidates each leg (vector / keyword) contributes before
+// fusion. Wide enough that a note ranked outside the top-N of one leg can
+// still surface on the strength of the other; narrow enough to keep both
+// subqueries cheap.
+const HYBRID_CANDIDATE_POOL = 40
+
+export function mapHybridRows(rows: unknown[]): HybridSearchHit[] {
+  return (rows as any[]).map(r => ({
+    noteId: r.noteId as string,
+    title: r.title as string,
+    content: r.content as string,
+    type: r.type as string,
+    folder: r.folder as string,
+    pinned: Boolean(r.pinned),
+    score: parseFloat(r.score as string),
+    vectorScore: r.vectorScore != null ? parseFloat(r.vectorScore as string) : null,
+    keywordScore: r.keywordScore != null ? parseFloat(r.keywordScore as string) : null,
+  }))
+}
+
+/**
+ * Hybrid search over notes: dense pgvector cosine search + Postgres native
+ * full-text search (on `Note.searchVector`, a generated tsvector column —
+ * migration 20260808_note_search_vector), fused via Reciprocal Rank Fusion.
+ *
+ * Mirrors the InvestigationNote full-text pattern (searchNotes() in
+ * app/api/monitoring/security/investigations/_utils.ts) but combines it with
+ * the vector leg rather than using either alone — dense embeddings are weak
+ * on exact tokens (pod names, CRD kinds, CLI flags, error strings) that
+ * `websearch_to_tsquery` handles well, and keyword search is weak on
+ * conceptual/paraphrased queries that embeddings handle well.
+ *
+ * Each leg independently ranks its own top `HYBRID_CANDIDATE_POOL` notes;
+ * RRF (`score = sum(1 / (RRF_K + rank))` across legs a note appears in) fuses
+ * the two rankings into one, and the top `limit` by fused score are returned.
+ * `websearch_to_tsquery` (not `plainto_tsquery`) is used so callers can pass
+ * quoted phrases and `-exclude` terms directly in free text.
+ *
+ * If no embedding provider is configured, falls back to keyword-only search
+ * (vectorScore is null on every hit) rather than returning nothing.
+ *
+ * @param callerId - See `ownerFilterSql`: `undefined` (default) means
+ *   trusted/unscoped (used by internal callers like the llm-context leg of
+ *   `retrieveKnowledgeContext`); pass a user id to restrict both the
+ *   keyword and vector legs to that user's own notes plus shared
+ *   (createdBy IS NULL) notes — required for any user-facing entry point
+ *   (the /api/notes/search route, the knowledge_search tool).
+ * @returns modelRef of the embedding used (null if the vector leg was
+ *   skipped), plus fused hits with both per-leg scores exposed for
+ *   debugging/tuning (surfaced in the admin knowledge-search UI).
+ */
+export async function hybridSearch(
+  query: string,
+  limit: number = 10,
+  callerId?: string,
+): Promise<{ modelRef: string | null; hits: HybridSearchHit[] }> {
+  const q = query.slice(0, 2000)
+  const embedding = await generateEmbedding(q)
+  const ownerFilter = ownerFilterSql(callerId, 'n')
+
+  if (!embedding) {
+    const rows = await prisma.$queryRaw<unknown[]>`
+      WITH kw_top AS (
+        SELECT n.id AS note_id,
+               ts_rank_cd(n."searchVector", websearch_to_tsquery('english', ${q})) AS keyword_score
+        FROM "Note" n
+        WHERE n."searchVector" @@ websearch_to_tsquery('english', ${q})
+          ${ownerFilter}
+        ORDER BY ts_rank_cd(n."searchVector", websearch_to_tsquery('english', ${q})) DESC
+        LIMIT ${HYBRID_CANDIDATE_POOL}
+      ),
+      kw AS (
+        SELECT note_id, keyword_score,
+               ROW_NUMBER() OVER (ORDER BY keyword_score DESC) AS rnk
+        FROM kw_top
+      )
+      SELECT
+        n.id AS "noteId", n.title, n.content, n."type", n.folder, n.pinned,
+        (1.0 / (${RRF_K} + kw.rnk))::float AS score,
+        NULL::float AS "vectorScore",
+        kw.keyword_score::float AS "keywordScore"
+      FROM kw
+      JOIN "Note" n ON n.id = kw.note_id
+      ORDER BY score DESC, n.id
+      LIMIT ${limit}
+    `
+    return { modelRef: null, hits: mapHybridRows(rows) }
+  }
+
+  const vecStr = `[${embedding.vector.join(',')}]`
+
+  const rows = await prisma.$queryRaw<unknown[]>`
+    WITH vec_top AS (
+      SELECT ne."noteId" AS note_id,
+             (1 - (ne.embedding <=> ${vecStr}::vector)) AS vector_score
+      FROM "note_embeddings" ne
+      JOIN "Note" n ON n.id = ne."noteId"
+      WHERE ne.embedding IS NOT NULL
+        AND ne."modelRef" = ${embedding.modelRef}
+        ${ownerFilter}
+      ORDER BY ne.embedding <=> ${vecStr}::vector
+      LIMIT ${HYBRID_CANDIDATE_POOL}
+    ),
+    vec AS (
+      SELECT note_id, vector_score,
+             ROW_NUMBER() OVER (ORDER BY vector_score DESC) AS rnk
+      FROM vec_top
+    ),
+    kw_top AS (
+      SELECT n.id AS note_id,
+             ts_rank_cd(n."searchVector", websearch_to_tsquery('english', ${q})) AS keyword_score
+      FROM "Note" n
+      WHERE n."searchVector" @@ websearch_to_tsquery('english', ${q})
+        ${ownerFilter}
+      ORDER BY ts_rank_cd(n."searchVector", websearch_to_tsquery('english', ${q})) DESC
+      LIMIT ${HYBRID_CANDIDATE_POOL}
+    ),
+    kw AS (
+      SELECT note_id, keyword_score,
+             ROW_NUMBER() OVER (ORDER BY keyword_score DESC) AS rnk
+      FROM kw_top
+    ),
+    fused AS (
+      SELECT
+        COALESCE(vec.note_id, kw.note_id) AS note_id,
+        vec.vector_score,
+        kw.keyword_score,
+        (COALESCE(1.0 / (${RRF_K} + vec.rnk), 0) + COALESCE(1.0 / (${RRF_K} + kw.rnk), 0))::float AS score
+      FROM vec
+      FULL OUTER JOIN kw ON vec.note_id = kw.note_id
+    )
+    SELECT
+      n.id AS "noteId", n.title, n.content, n."type", n.folder, n.pinned,
+      fused.score,
+      fused.vector_score::float AS "vectorScore",
+      fused.keyword_score::float AS "keywordScore"
+    FROM fused
+    JOIN "Note" n ON n.id = fused.note_id
+    ORDER BY fused.score DESC, n.id
+    LIMIT ${limit}
+  `
+  return { modelRef: embedding.modelRef, hits: mapHybridRows(rows) }
 }
 
 // ── Skill Embeddings ──────────────────────────────────────────────────────────
@@ -497,30 +690,103 @@ export async function computeSemanticEdges(
  * Returns empty string silently on any error (no embedding provider, pgvector
  * not installed, no notes embedded, etc.) so it never blocks an LLM call.
  */
-// minScore thresholds below (here and at every other vectorSearch call site:
-// agent-context.ts, worker.ts, tool-registry.ts) were originally calibrated
-// against a broken metric — vectorSearch used to sort by L2 distance (`<->`)
-// while filtering a "score" computed as `1 - <-> distance`, which is not a
-// bounded similarity value at all. Now that vectorSearch uses `<=>` (cosine
-// distance) with `score = 1 - cosine_distance = cosine_similarity` (bounded
-// [0,1]), these thresholds are unverified against real data — no live/dev
-// database with embedded Notes was reachable from this change to sanity-check
-// the resulting score distribution. Left as-is intentionally rather than
-// guessing new numbers; recalibrate using the admin knowledge-search page
-// (added in a follow-up PR) once real query/score pairs are available.
+// minScore thresholds below (here and at every other call site that filters
+// on it: agent-context.ts, worker.ts, tool-registry.ts) were originally
+// calibrated against a broken metric — vectorSearch used to sort by L2
+// distance (`<->`) while filtering a "score" computed as `1 - <-> distance`,
+// which is not a bounded similarity value at all. Now that the vector leg
+// uses `<=>` (cosine distance) with `score = 1 - cosine_distance =
+// cosine_similarity` (bounded [0,1]), these thresholds are unverified
+// against real data — no live/dev database with embedded Notes was reachable
+// from this change to sanity-check the resulting score distribution. Left
+// as-is intentionally rather than guessing new numbers; recalibrate using
+// the admin knowledge-search page (added in a follow-up PR) once real
+// query/score pairs are available.
+//
+// minScore is applied to `vectorScore` (cosine similarity), NOT the fused
+// RRF `score` — RRF scores live on a totally different, non-interpretable
+// scale (`sum of 1/(k+rank)`, max ~0.03 for two legs at k=60), so comparing
+// them against a similarity threshold like 0.2 would silently filter out
+// everything.
+//
+// The filter keeps a hit if it has ANY keyword match (`keywordScore !== null`),
+// regardless of vectorScore — including a mixed hit that appeared in BOTH legs
+// with a low vectorScore. Filtering those out was the original bug here:
+// `vectorScore === null` does NOT mean "matched via keyword search only" — it
+// means "this note fell outside the vector leg's HYBRID_CANDIDATE_POOL", which
+// is unrelated to whether it also has a keyword match. A note that ranks #1 on
+// exact-token relevance but has ANY embedding (even a mediocre-similarity one,
+// putting it inside the vector pool with vectorScore !== null) was being
+// wrongly dropped by the old `h.vectorScore === null` check, while the exact
+// same note with no embedding at all (vectorScore stays null) was kept —
+// i.e. embedding a note could make it start failing this filter. Keyword hits
+// are already relevance-filtered by the full-text `@@` match itself, so any
+// hit with a non-null keywordScore is trusted regardless of minScore — this is
+// also the whole point of hybrid search: an exact-token match (pod name, CRD
+// kind, error string) should surface even when its cosine similarity is
+// mediocre or it has no embedding in the pool at all.
+//
+// hybridSearch's SQL applies `LIMIT` (== topK here) BEFORE this filter runs,
+// fusing on RRF score — so without over-fetching, a keyword-strong-but-
+// vector-weak hit could already be squeezed out of the top-`topK` fused
+// results before this function ever sees it, even though it should survive
+// the filter. Over-fetch (bounded by HYBRID_CANDIDATE_POOL, the widest either
+// leg's own candidate pool goes) and slice to topK after filtering.
+//
+// minKeywordScore: trusting "any non-null keywordScore" outright (see above)
+// means a marginal `ts_rank_cd` hit — one that barely cleared the `@@`
+// match threshold, e.g. a single low-weight token appearing once in a long
+// note — can unconditionally outrank/displace a strong semantic match and
+// makes `minScore` a no-op whenever the keyword leg returns anything at
+// all (regression class of #717). `ts_rank_cd` values aren't bounded to
+// [0,1] the way cosine similarity is, so this can't share `minScore`'s
+// scale; like `minScore` itself, it's uncalibrated against real data (no
+// live/dev DB reachable from this change) — 0.01 is a conservative floor
+// that only screens out near-zero noise, not a tuned relevance cutoff.
+const DEFAULT_MIN_KEYWORD_SCORE = 0.01
+
+/**
+ * Filter fused hybrid-search hits down to ones that clear a relevance
+ * threshold on whichever leg(s) matched them. Exported standalone (rather
+ * than left inline in retrieveKnowledgeContext) so it can be exercised
+ * directly in tests against synthetic rows.
+ */
+export function filterRelevantHits(
+  hits: HybridSearchHit[],
+  minScore: number,
+  minKeywordScore: number = DEFAULT_MIN_KEYWORD_SCORE,
+): HybridSearchHit[] {
+  return hits.filter(
+    h =>
+      (h.keywordScore !== null && h.keywordScore >= minKeywordScore) ||
+      (h.vectorScore != null && h.vectorScore >= minScore),
+  )
+}
+
 export async function retrieveKnowledgeContext(
   query: string,
   topK = 3,
   minScore = 0.2,
+  minKeywordScore = DEFAULT_MIN_KEYWORD_SCORE,
+  callerId?: string,
 ): Promise<string> {
   try {
-    const result = await generateEmbedding(query.slice(0, 2000))
-    if (!result) return ''
-
-    // llm-context notes are intentionally unscoped (no createdBy filter) —
-    // they are system-wide context for agent prompts and must remain globally visible.
-    const hits = await vectorSearch(result.vector, result.modelRef, topK)
-    const relevant = hits.filter(h => h.score >= minScore)
+    // This function applies no `type` filter, so — unlike its name/original
+    // intent might suggest — it doesn't only surface `llm-context` notes; it
+    // hybrid-searches the entire Note table. `llm-context` notes (written by
+    // worker.ts's writeTaskOutcome) are created with no `createdBy`, i.e.
+    // `createdBy: null`, so they're "shared" under ownerFilterSql's semantics
+    // and always visible regardless of `callerId`. Passing the real caller's
+    // id (when one exists — an ordinary per-user chat request) is therefore
+    // both safe (shared/llm-context notes still surface) and required (it's
+    // the only thing that prevents another user's private notes from being
+    // injected into this user's prompt). `callerId` stays `undefined` for
+    // internal/agent-driven callers (worker.ts, agent-context.ts's room-agent
+    // pre-flight) that have no single human caller to scope to — see
+    // ownerFilterSql's doc comment.
+    const fetchLimit = Math.min(topK * 4, HYBRID_CANDIDATE_POOL)
+    const { hits } = await hybridSearch(query, fetchLimit, callerId)
+    const relevant = filterRelevantHits(hits, minScore, minKeywordScore).slice(0, topK)
     if (relevant.length === 0) return ''
 
     // Sanitize all retrieved notes before injecting into agent system prompts.

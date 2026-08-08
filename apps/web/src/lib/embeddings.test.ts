@@ -46,7 +46,15 @@ vi.mock('./sanitize-context', () => ({
   sanitizeContextNote: (title: string, content: string) => content,
 }))
 
-import { generateEmbedding, storeEmbedding, vectorSearch } from './embeddings'
+import {
+  generateEmbedding,
+  storeEmbedding,
+  vectorSearch,
+  hybridSearch,
+  mapHybridRows,
+  filterRelevantHits,
+  type HybridSearchHit,
+} from './embeddings'
 
 beforeEach(() => {
   queryRawCalls.length = 0
@@ -130,5 +138,182 @@ describe('vectorSearch — query shape', () => {
     // Bug #3: must filter by modelRef.
     expect(sql).toContain('"modelRef"')
     expect(queryRawCalls[0].values).toContain('nomic-embed-text')
+  })
+})
+
+describe('hybridSearch — RRF fusion of vector + full-text legs', () => {
+  it('runs both legs and fuses via RRF when an embedding provider is configured', async () => {
+    externalModelFindMany = async () => [
+      { provider: 'ollama', modelId: 'nomic-embed-text', baseUrl: 'http://ollama:11434', enabled: true },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ embeddings: [[0.1, 0.2, 0.3]] }),
+    })))
+
+    const { modelRef, hits } = await hybridSearch('crashloopbackoff pod-7f9', 10)
+
+    expect(modelRef).toBe('nomic-embed-text')
+    expect(hits).toEqual([])
+    expect(queryRawCalls.length).toBe(1)
+    const sql = queryRawCalls[0].strings.join('?')
+
+    // Both legs present.
+    expect(sql).toContain('<=>')
+    expect(sql).toContain('websearch_to_tsquery')
+    expect(sql).toContain('ts_rank_cd')
+    // RRF fusion, not a naive union/intersection.
+    expect(sql).toMatch(/1\.0\s*\/\s*\(\?\s*\+\s*vec\.rnk\)/)
+    expect(sql).toContain('FULL OUTER JOIN')
+    // Vector leg still respects the modelRef isolation fix.
+    expect(sql).toContain('"modelRef"')
+    expect(queryRawCalls[0].values).toContain('nomic-embed-text')
+    // websearch_to_tsquery (not plainto_tsquery) so callers can use quoted phrases.
+    expect(sql).not.toContain('plainto_tsquery')
+  })
+
+  it('falls back to keyword-only search when no embedding provider is configured', async () => {
+    externalModelFindMany = async () => []
+
+    const { modelRef, hits } = await hybridSearch('crashloopbackoff pod-7f9', 10)
+
+    expect(modelRef).toBeNull()
+    expect(hits).toEqual([])
+    expect(queryRawCalls.length).toBe(1)
+    const sql = queryRawCalls[0].strings.join('?')
+    expect(sql).toContain('websearch_to_tsquery')
+    expect(sql).not.toContain('<=>')
+  })
+
+  it('adds a secondary `n.id` sort tiebreak so RRF ties order deterministically (keyword-only fallback)', async () => {
+    externalModelFindMany = async () => []
+    await hybridSearch('crashloopbackoff pod-7f9', 10)
+    const sql = queryRawCalls[0].strings.join('?')
+    expect(sql).toMatch(/ORDER BY score DESC,\s*n\.id/)
+  })
+
+  it('adds a secondary `n.id` sort tiebreak so RRF ties order deterministically (primary hybrid query)', async () => {
+    externalModelFindMany = async () => [
+      { provider: 'ollama', modelId: 'nomic-embed-text', baseUrl: 'http://ollama:11434', enabled: true },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ embeddings: [[0.1, 0.2, 0.3]] }),
+    })))
+
+    await hybridSearch('crashloopbackoff pod-7f9', 10)
+    const sql = queryRawCalls[0].strings.join('?')
+    expect(sql).toMatch(/ORDER BY fused\.score DESC,\s*n\.id/)
+  })
+
+  it('omits the ownership predicate for a trusted/unscoped caller (no callerId)', async () => {
+    externalModelFindMany = async () => []
+    await hybridSearch('crashloopbackoff pod-7f9', 10)
+    const sql = queryRawCalls[0].strings.join('?')
+    expect(sql).not.toContain('"createdBy"')
+  })
+
+  it('adds a createdBy ownership predicate to both legs when a callerId is passed (access-control fix)', async () => {
+    externalModelFindMany = async () => [
+      { provider: 'ollama', modelId: 'nomic-embed-text', baseUrl: 'http://ollama:11434', enabled: true },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ embeddings: [[0.1, 0.2, 0.3]] }),
+    })))
+
+    await hybridSearch('crashloopbackoff pod-7f9', 10, 'user-123')
+
+    expect(queryRawCalls.length).toBe(1)
+    const sql = queryRawCalls[0].strings.join('?')
+    const values = queryRawCalls[0].values
+
+    // $queryRaw composes nested `Prisma.sql` fragments (the ownerFilter) as
+    // opaque Sql objects in `values`, not inlined text — so pull the
+    // fragment's own text/values back out to assert on it.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ownerFragment = values.find((v: any) => v && typeof v === 'object' && 'strings' in v) as any
+    expect(ownerFragment).toBeDefined()
+    expect(ownerFragment.text).toContain('n."createdBy" IS NULL OR')
+    expect(ownerFragment.text).toContain('n."createdBy" =')
+    expect(ownerFragment.values).toContain('user-123')
+
+    // Both the keyword (kw_top) and vector (vec_top) CTEs must reference the
+    // owner-filter placeholder — not just one leg. A regular logged-in user
+    // must never be able to reach every row in Note via either leg.
+    const ownerFilterUses = values.filter((v: any) => v === ownerFragment).length
+    expect(ownerFilterUses).toBe(2)
+
+    // vec_top must join Note to apply the predicate at all.
+    expect(sql).toMatch(/FROM "note_embeddings" ne\s+JOIN "Note" n ON n\.id = ne\."noteId"/)
+  })
+})
+
+describe('mapHybridRows — raw SQL row → HybridSearchHit mapping', () => {
+  it('parses numeric-string scores and nulls from $queryRaw rows', () => {
+    const hits = mapHybridRows([
+      {
+        noteId: 'n1', title: 'Title', content: 'Body', type: 'note', folder: 'root', pinned: false,
+        score: '0.0163934', vectorScore: null, keywordScore: '0.5',
+      },
+      {
+        noteId: 'n2', title: 'Title 2', content: 'Body 2', type: 'note', folder: 'root', pinned: true,
+        score: '0.032', vectorScore: '0.81', keywordScore: null,
+      },
+    ])
+
+    expect(hits).toEqual([
+      { noteId: 'n1', title: 'Title', content: 'Body', type: 'note', folder: 'root', pinned: false, score: 0.0163934, vectorScore: null, keywordScore: 0.5 },
+      { noteId: 'n2', title: 'Title 2', content: 'Body 2', type: 'note', folder: 'root', pinned: true, score: 0.032, vectorScore: 0.81, keywordScore: null },
+    ])
+  })
+})
+
+// Regression tests for #717-class bugs: minScore must actually gate results,
+// and a non-null keywordScore must not unconditionally bypass relevance
+// filtering (the "minScore is effectively inoperative" finding).
+describe('filterRelevantHits — retrieveKnowledgeContext relevance filter', () => {
+  const hit = (overrides: Partial<HybridSearchHit>): HybridSearchHit => ({
+    noteId: 'n', title: 't', content: 'c', type: 'note', folder: 'root', pinned: false,
+    score: 0.01, vectorScore: null, keywordScore: null,
+    ...overrides,
+  })
+
+  it('keeps a hit with only a strong keywordScore, regardless of minScore', () => {
+    const h = hit({ keywordScore: 0.5, vectorScore: null })
+    expect(filterRelevantHits([h], 0.9)).toEqual([h])
+  })
+
+  it('drops a hit with only a keywordScore below minKeywordScore (the #717-class regression)', () => {
+    const h = hit({ keywordScore: 0.001, vectorScore: null })
+    // Even with minScore set permissively low, a marginal keyword hit must
+    // not sail through unconditionally — this is exactly the bug: any
+    // non-null keywordScore used to bypass minScore entirely.
+    expect(filterRelevantHits([h], 0, 0.01)).toEqual([])
+  })
+
+  it('keeps a hit with only vectorScore set when it is above minScore', () => {
+    const h = hit({ keywordScore: null, vectorScore: 0.5 })
+    expect(filterRelevantHits([h], 0.4)).toEqual([h])
+  })
+
+  it('drops a hit with only vectorScore set when it is below minScore', () => {
+    const h = hit({ keywordScore: null, vectorScore: 0.3 })
+    expect(filterRelevantHits([h], 0.4)).toEqual([])
+  })
+
+  it('keeps a mixed hit (both scores set, COALESCE case) on a strong keywordScore even with a weak vectorScore', () => {
+    const h = hit({ keywordScore: 0.4, vectorScore: 0.05 })
+    expect(filterRelevantHits([h], 0.4)).toEqual([h])
+  })
+
+  it('keeps a mixed hit on a strong vectorScore even with a keywordScore below the floor', () => {
+    const h = hit({ keywordScore: 0.001, vectorScore: 0.9 })
+    expect(filterRelevantHits([h], 0.4, 0.01)).toEqual([h])
+  })
+
+  it('drops a mixed hit when neither leg clears its threshold', () => {
+    const h = hit({ keywordScore: 0.001, vectorScore: 0.1 })
+    expect(filterRelevantHits([h], 0.4, 0.01)).toEqual([])
   })
 })

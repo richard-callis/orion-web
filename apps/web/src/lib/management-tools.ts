@@ -54,14 +54,25 @@ export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = getAllTools().map(t => 
  *
  * @param name     - Tool name (must match a registered tool)
  * @param argsRaw  - JSON-encoded arguments string
- * @param actorId  - Optional agent ID for SOC2 audit attribution
+ * @param actorId  - Optional Agent ID for SOC2 audit attribution (background/room
+ *   agents — worker.ts). This is a real `Agent.id` foreign key: several registry
+ *   handlers use `ctx.agentId` to look up an `Agent` row or a `ToolAgentRestriction`
+ *   (see e.g. tool-registry.ts's agent-group handlers), so it must never be a
+ *   `User.id` — see `userId` below for that case.
+ * @param userId   - Optional human User ID, for tool calls made in an ordinary
+ *   per-user chat conversation (claude.ts's OpenAI-compatible tool loop) where
+ *   there is no `Agent` acting autonomously. Previously such calls were passed
+ *   through `actorId`, which silently mismapped a `User.id` onto `ctx.agentId`
+ *   (wrong FK space, and left `ctx.userId` — and therefore any per-user note
+ *   scoping like `knowledge_search`'s — unset).
  */
-export async function executeManagedTool(name: string, argsRaw: string, actorId?: string): Promise<string> {
+export async function executeManagedTool(name: string, argsRaw: string, actorId?: string, userId?: string): Promise<string> {
   let args: unknown
   try { args = JSON.parse(argsRaw || '{}') } catch { args = {} }
 
   const ctx: ToolExecutionContext = {
     agentId: actorId,
+    userId,
     prisma,
   }
 

@@ -406,6 +406,11 @@ model Note {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Generated column (migration 20260808_note_search_vector): title 'A' +
+  // content 'B' weighted tsvector, kept in sync by Postgres on every write.
+  // GIN-indexed for hybridSearch()'s keyword leg — see embeddings.ts.
+  searchVector Unsupported("tsvector")?
+
   embeddings NoteEmbedding[]
 
   @@index([createdBy])
