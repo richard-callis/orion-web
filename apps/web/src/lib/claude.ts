@@ -1,7 +1,7 @@
 import fs from 'fs'
 import { prisma } from './db'
 import { getPrompt, interpolate } from './system-prompts'
-import { hybridSearch, generateEmbedding, skillVectorSearch } from './embeddings'
+import { hybridSearch, generateEmbedding, skillVectorSearch, ownerFilterWhere } from './embeddings'
 import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './management-tools'
 import { validateToolArgs } from './tool-registry'
 import type { SkillSpec } from './skill-tools'
@@ -607,7 +607,7 @@ async function* streamOllamaToolLoop(
             await recordTrace({ conversationId, step: inc(), type: 'tool_call', toolName: 'knowledge_graph', toolArgs: argsStr, modelUsed: model })
             yield { type: 'tool_call', tool: fn.name, input: argsStr }
             const toolStart = Date.now()
-            const result = await handleKnowledgeGraph(argsStr)
+            const result = await handleKnowledgeGraph(argsStr, userId)
             await recordTrace({ conversationId, step: inc(), type: 'tool_result', toolName: 'knowledge_graph', toolResult: result, durationMs: Date.now() - toolStart, modelUsed: model })
             yield { type: 'tool_result', tool: fn.name, output: result }
             messages.push({ role: 'tool', content: result })
@@ -1229,24 +1229,34 @@ async function handleKnowledgeSearch(argsRaw: string, userId?: string): Promise<
   }
 }
 
-async function handleKnowledgeGraph(argsRaw: string): Promise<string> {
+async function handleKnowledgeGraph(argsRaw: string, userId?: string): Promise<string> {
   try {
     const { threshold = 0.5, includeContent = false } = JSON.parse(argsRaw || '{}') as {
       threshold?: number; includeContent?: boolean
     }
 
-    const [notes, semanticEdges] = await Promise.all([
-      prisma.note.findMany({
-        select: { id: true, title: true, type: true, folder: true, content: true },
-        orderBy: { title: 'asc' },
-      }),
-      prisma.semanticConnection.findMany({
-        where: { score: { gte: threshold } },
-        select: { sourceNoteId: true, targetNoteId: true, score: true },
-        orderBy: { score: 'desc' },
-        take: 200,
-      }),
-    ])
+    // SOC2: mirror the notes API's ownership scoping — restrict to the
+    // calling user's own notes plus unowned/shared notes when this tool call
+    // is on behalf of a specific logged-in user. See ownerFilterWhere in
+    // lib/embeddings.ts.
+    const notes = await prisma.note.findMany({
+      where: ownerFilterWhere(userId),
+      select: { id: true, title: true, type: true, folder: true, content: true },
+      orderBy: { title: 'asc' },
+    })
+    const noteIds = notes.map(n => n.id)
+    // Scope semantic edges to notes the caller can actually see on both
+    // ends — otherwise an edge to/from an out-of-scope note would either
+    // leak that note's id or waste the `take: 200` budget on edges the
+    // caller can't use.
+    const semanticEdges = noteIds.length
+      ? await prisma.semanticConnection.findMany({
+          where: { score: { gte: threshold }, sourceNoteId: { in: noteIds }, targetNoteId: { in: noteIds } },
+          select: { sourceNoteId: true, targetNoteId: true, score: true },
+          orderBy: { score: 'desc' },
+          take: 200,
+        })
+      : []
 
     const noteById = new Map(notes.map((n: any) => [n.id, n]))
 
@@ -1612,7 +1622,7 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
           // this dedicated (correctly per-user-scoped) handler entirely.
           result = await handleKnowledgeSearch(tc.argsRaw, userId)
         } else if (tc.name === 'knowledge_graph') {
-          result = await handleKnowledgeGraph(tc.argsRaw)
+          result = await handleKnowledgeGraph(tc.argsRaw, userId)
         } else if (MANAGEMENT_TOOL_DEFS.some(d => d.name === tc.name)) {
           // This is an ordinary per-user chat conversation (no autonomous Agent
           // acting), so pass the real user id via the dedicated `userId` param —
