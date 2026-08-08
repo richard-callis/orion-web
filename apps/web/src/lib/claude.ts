@@ -540,7 +540,7 @@ async function* streamOllamaToolLoop(
             await recordTrace({ conversationId, step: inc(), type: 'tool_call', toolName: 'knowledge_search', toolArgs: argsStr, modelUsed: model })
             yield { type: 'tool_call', tool: fn.name, input: argsStr }
             const toolStart = Date.now()
-            const result = await handleKnowledgeSearch(argsStr)
+            const result = await handleKnowledgeSearch(argsStr, userId)
             await recordTrace({ conversationId, step: inc(), type: 'tool_result', toolName: 'knowledge_search', toolResult: result, durationMs: Date.now() - toolStart, modelUsed: model })
             yield { type: 'tool_result', tool: fn.name, output: result }
             messages.push({ role: 'tool', content: result })
@@ -1143,14 +1143,17 @@ async function handleGitopsPropose(argsRaw: string, conversationId: string): Pro
 
 // ── Knowledge graph management tool handlers ─────────────────────────────────
 
-async function handleKnowledgeSearch(argsRaw: string): Promise<string> {
+async function handleKnowledgeSearch(argsRaw: string, userId?: string): Promise<string> {
   try {
     const { query, limit = 5, includeContent = true } = JSON.parse(argsRaw || '{}') as {
       query?: string; limit?: number; includeContent?: boolean
     }
     if (!query) return 'Error: query is required'
 
-    const { hits } = await hybridSearch(query, Math.min(limit, 20))
+    // SOC2: mirror the notes API's ownership scoping — restrict to the
+    // calling user's own notes plus unowned/shared notes when this tool call
+    // is on behalf of a specific logged-in user.
+    const { hits } = await hybridSearch(query, Math.min(limit, 20), userId)
     if (!hits.length) return 'No relevant notes found for this query.'
 
     return JSON.stringify(
@@ -1549,7 +1552,7 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
         } else if (MANAGEMENT_TOOL_DEFS.some(d => d.name === tc.name)) {
           result = await executeManagedTool(tc.name, tc.argsRaw, userId)
         } else if (tc.name === 'knowledge_search') {
-          result = await handleKnowledgeSearch(tc.argsRaw)
+          result = await handleKnowledgeSearch(tc.argsRaw, userId)
         } else if (tc.name === 'knowledge_graph') {
           result = await handleKnowledgeGraph(tc.argsRaw)
         } else if (gateway && environmentId) {

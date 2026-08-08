@@ -13,7 +13,8 @@ import { requireServiceAuth } from '@/lib/auth'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
-  await requireServiceAuth(req)
+  const caller = await requireServiceAuth(req)
+  const isService = caller === null
   const body = await req.json()
   const query = typeof body.query === 'string' ? body.query.trim() : ''
   const limit = Math.min(Math.max(parseInt(body.limit ?? '10', 10) || 10, 1), 50)
@@ -23,11 +24,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Query is required' }, { status: 400 })
   }
 
+  // SOC2: mirror the rest of the notes API's ownership scoping
+  // (scopeByCreatedBy in /api/notes, guardAccess in /api/notes/[id]) — the
+  // service/gateway and admins search everything, any other logged-in user
+  // is restricted to their own notes plus unowned/shared ones.
+  const callerId = isService || caller.role === 'admin' ? undefined : caller.id
+
   try {
     // Hybrid search: dense pgvector cosine search + Postgres full-text
     // search, fused via RRF. Falls back to keyword-only if no embedding
     // provider is configured (model is then null in the response below).
-    const { modelRef, hits } = await hybridSearch(query, limit)
+    const { modelRef, hits } = await hybridSearch(query, limit, callerId)
 
     // Trim content if includeContent is false
     const results = includeContent

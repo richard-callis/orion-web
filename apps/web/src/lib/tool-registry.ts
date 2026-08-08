@@ -2671,12 +2671,17 @@ registerTool({
   parallelSafe: true,
   availableIn: 'both',
   category: 'knowledge',
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const { query, limit = 5, includeContent = true } =
       args as { query?: string; limit?: number; includeContent?: boolean }
     if (!query) return 'Error: query is required'
 
-    const { hits } = await hybridSearch(query, Math.min(limit, 20))
+    // SOC2: mirror the notes API's ownership scoping. A tool call made on
+    // behalf of a specific logged-in user (ctx.userId set) is restricted to
+    // that user's own notes plus unowned/shared notes; an autonomous
+    // agent-driven call (no specific human owner, ctx.userId unset) is
+    // trusted/unscoped like the service/gateway path.
+    const { hits } = await hybridSearch(query, Math.min(limit, 20), ctx.userId)
     if (!hits.length) return 'No relevant notes found for this query.'
 
     return JSON.stringify(

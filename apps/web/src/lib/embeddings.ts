@@ -9,6 +9,7 @@
  *   CREATE EXTENSION IF NOT EXISTS vector;
  */
 
+import { Prisma } from '@prisma/client'
 import { prisma } from './db'
 import { sanitizeContextNote } from './sanitize-context'
 
@@ -266,6 +267,24 @@ export async function embedAllNotes(): Promise<{ embedded: number; failed: numbe
   return { embedded, failed }
 }
 
+// ── Access control ───────────────────────────────────────────────────────────
+
+/**
+ * Ownership predicate mirroring the rest of the notes API's convention (see
+ * `scopeByCreatedBy` in `app/api/notes/route.ts` and `assertCanModify` in
+ * `lib/auth.ts`): a note with `createdBy = NULL` is a shared/system record
+ * visible to everyone; any other note is only visible to its creator.
+ *
+ * @param callerId - `undefined` signals a trusted/unscoped caller (service,
+ *   admin, or an internal system context like `retrieveKnowledgeContext`'s
+ *   llm-context injection) — no filtering is applied. A string restricts
+ *   results to notes owned by that user, plus unowned/shared notes.
+ */
+function ownerFilterSql(callerId: string | undefined, noteAlias: string): Prisma.Sql {
+  if (callerId === undefined) return Prisma.empty
+  return Prisma.sql`AND (${Prisma.raw(noteAlias)}."createdBy" IS NULL OR ${Prisma.raw(noteAlias)}."createdBy" = ${callerId})`
+}
+
 // ── Vector Search ────────────────────────────────────────────────────────────
 
 /**
@@ -297,12 +316,15 @@ export async function embedAllNotes(): Promise<{ embedded: number; failed: numbe
  * @param modelRef - The embedding model that produced queryVector; only
  *   note_embeddings rows from the same model are searched
  * @param limit - Maximum results to return
+ * @param callerId - See `ownerFilterSql`: `undefined` (default) means
+ *   trusted/unscoped; pass a user id to restrict to that user's + shared notes.
  * @returns Notes ranked by cosine similarity score (descending)
  */
 export async function vectorSearch(
   queryVector: number[],
   modelRef: string,
   limit: number = 10,
+  callerId?: string,
 ): Promise<
   Array<{
     noteId: string
@@ -315,6 +337,7 @@ export async function vectorSearch(
   }>
 > {
   const vecStr = `[${queryVector.join(',')}]`
+  const ownerFilter = ownerFilterSql(callerId, 'n')
 
   const results = await prisma.$queryRaw<unknown[]>`
     SELECT
@@ -329,6 +352,7 @@ export async function vectorSearch(
     JOIN "Note" n ON n.id = ne."noteId"
     WHERE ne.embedding IS NOT NULL
       AND ne."modelRef" = ${modelRef}
+      ${ownerFilter}
     ORDER BY ne.embedding <=> ${vecStr}::vector
     LIMIT ${limit}
   `
@@ -371,7 +395,7 @@ const RRF_K = 60
 // subqueries cheap.
 const HYBRID_CANDIDATE_POOL = 40
 
-function mapHybridRows(rows: unknown[]): HybridSearchHit[] {
+export function mapHybridRows(rows: unknown[]): HybridSearchHit[] {
   return (rows as any[]).map(r => ({
     noteId: r.noteId as string,
     title: r.title as string,
@@ -406,6 +430,12 @@ function mapHybridRows(rows: unknown[]): HybridSearchHit[] {
  * If no embedding provider is configured, falls back to keyword-only search
  * (vectorScore is null on every hit) rather than returning nothing.
  *
+ * @param callerId - See `ownerFilterSql`: `undefined` (default) means
+ *   trusted/unscoped (used by internal callers like the llm-context leg of
+ *   `retrieveKnowledgeContext`); pass a user id to restrict both the
+ *   keyword and vector legs to that user's own notes plus shared
+ *   (createdBy IS NULL) notes — required for any user-facing entry point
+ *   (the /api/notes/search route, the knowledge_search tool).
  * @returns modelRef of the embedding used (null if the vector leg was
  *   skipped), plus fused hits with both per-leg scores exposed for
  *   debugging/tuning (surfaced in the admin knowledge-search UI).
@@ -413,9 +443,11 @@ function mapHybridRows(rows: unknown[]): HybridSearchHit[] {
 export async function hybridSearch(
   query: string,
   limit: number = 10,
+  callerId?: string,
 ): Promise<{ modelRef: string | null; hits: HybridSearchHit[] }> {
   const q = query.slice(0, 2000)
   const embedding = await generateEmbedding(q)
+  const ownerFilter = ownerFilterSql(callerId, 'n')
 
   if (!embedding) {
     const rows = await prisma.$queryRaw<unknown[]>`
@@ -424,6 +456,7 @@ export async function hybridSearch(
                ts_rank_cd(n."searchVector", websearch_to_tsquery('english', ${q})) AS keyword_score
         FROM "Note" n
         WHERE n."searchVector" @@ websearch_to_tsquery('english', ${q})
+          ${ownerFilter}
         ORDER BY ts_rank_cd(n."searchVector", websearch_to_tsquery('english', ${q})) DESC
         LIMIT ${HYBRID_CANDIDATE_POOL}
       ),
@@ -439,7 +472,7 @@ export async function hybridSearch(
         kw.keyword_score::float AS "keywordScore"
       FROM kw
       JOIN "Note" n ON n.id = kw.note_id
-      ORDER BY score DESC
+      ORDER BY score DESC, n.id
       LIMIT ${limit}
     `
     return { modelRef: null, hits: mapHybridRows(rows) }
@@ -452,8 +485,10 @@ export async function hybridSearch(
       SELECT ne."noteId" AS note_id,
              (1 - (ne.embedding <=> ${vecStr}::vector)) AS vector_score
       FROM "note_embeddings" ne
+      JOIN "Note" n ON n.id = ne."noteId"
       WHERE ne.embedding IS NOT NULL
         AND ne."modelRef" = ${embedding.modelRef}
+        ${ownerFilter}
       ORDER BY ne.embedding <=> ${vecStr}::vector
       LIMIT ${HYBRID_CANDIDATE_POOL}
     ),
@@ -467,6 +502,7 @@ export async function hybridSearch(
              ts_rank_cd(n."searchVector", websearch_to_tsquery('english', ${q})) AS keyword_score
       FROM "Note" n
       WHERE n."searchVector" @@ websearch_to_tsquery('english', ${q})
+        ${ownerFilter}
       ORDER BY ts_rank_cd(n."searchVector", websearch_to_tsquery('english', ${q})) DESC
       LIMIT ${HYBRID_CANDIDATE_POOL}
     ),
@@ -491,7 +527,7 @@ export async function hybridSearch(
       fused.keyword_score::float AS "keywordScore"
     FROM fused
     JOIN "Note" n ON n.id = fused.note_id
-    ORDER BY fused.score DESC
+    ORDER BY fused.score DESC, n.id
     LIMIT ${limit}
   `
   return { modelRef: embedding.modelRef, hits: mapHybridRows(rows) }
@@ -594,19 +630,49 @@ export async function computeSemanticEdges(
 // results before this function ever sees it, even though it should survive
 // the filter. Over-fetch (bounded by HYBRID_CANDIDATE_POOL, the widest either
 // leg's own candidate pool goes) and slice to topK after filtering.
+//
+// minKeywordScore: trusting "any non-null keywordScore" outright (see above)
+// means a marginal `ts_rank_cd` hit — one that barely cleared the `@@`
+// match threshold, e.g. a single low-weight token appearing once in a long
+// note — can unconditionally outrank/displace a strong semantic match and
+// makes `minScore` a no-op whenever the keyword leg returns anything at
+// all (regression class of #717). `ts_rank_cd` values aren't bounded to
+// [0,1] the way cosine similarity is, so this can't share `minScore`'s
+// scale; like `minScore` itself, it's uncalibrated against real data (no
+// live/dev DB reachable from this change) — 0.01 is a conservative floor
+// that only screens out near-zero noise, not a tuned relevance cutoff.
+const DEFAULT_MIN_KEYWORD_SCORE = 0.01
+
+/**
+ * Filter fused hybrid-search hits down to ones that clear a relevance
+ * threshold on whichever leg(s) matched them. Exported standalone (rather
+ * than left inline in retrieveKnowledgeContext) so it can be exercised
+ * directly in tests against synthetic rows.
+ */
+export function filterRelevantHits(
+  hits: HybridSearchHit[],
+  minScore: number,
+  minKeywordScore: number = DEFAULT_MIN_KEYWORD_SCORE,
+): HybridSearchHit[] {
+  return hits.filter(
+    h =>
+      (h.keywordScore !== null && h.keywordScore >= minKeywordScore) ||
+      (h.vectorScore != null && h.vectorScore >= minScore),
+  )
+}
+
 export async function retrieveKnowledgeContext(
   query: string,
   topK = 3,
   minScore = 0.2,
+  minKeywordScore = DEFAULT_MIN_KEYWORD_SCORE,
 ): Promise<string> {
   try {
     // llm-context notes are intentionally unscoped (no createdBy filter) —
     // they are system-wide context for agent prompts and must remain globally visible.
     const fetchLimit = Math.min(topK * 4, HYBRID_CANDIDATE_POOL)
     const { hits } = await hybridSearch(query, fetchLimit)
-    const relevant = hits
-      .filter(h => h.keywordScore !== null || (h.vectorScore != null && h.vectorScore >= minScore))
-      .slice(0, topK)
+    const relevant = filterRelevantHits(hits, minScore, minKeywordScore).slice(0, topK)
     if (relevant.length === 0) return ''
 
     // Sanitize all retrieved notes before injecting into agent system prompts.
