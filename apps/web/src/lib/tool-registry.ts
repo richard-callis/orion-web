@@ -43,6 +43,7 @@ export type ToolCategory =
   | 'execution'    // tool execution approval gating
   | 'tools'        // meta: tool discovery, tool requests, nova lookup
   | 'github'       // GitHub: repos, files, branches, pull requests
+  | 'skills'       // save/list/use reusable step-by-step procedures
 
 export interface ToolDefinition {
   name: string

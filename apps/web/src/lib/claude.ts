@@ -1,9 +1,10 @@
 import fs from 'fs'
 import { prisma } from './db'
 import { getPrompt, interpolate } from './system-prompts'
-import { generateEmbedding, vectorSearch } from './embeddings'
+import { generateEmbedding, vectorSearch, skillVectorSearch } from './embeddings'
 import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './management-tools'
 import { validateToolArgs } from './tool-registry'
+import type { SkillSpec } from './skill-tools'
 
 // ── Agent Tracing: record AgentTrace records for observability ──────────────────
 
@@ -45,33 +46,88 @@ function buildFullContextSnapshot(
   return parts.join('\n\n')
 }
 
-// ── Skill Injection: match user query against installed skill trigger patterns ─
+// ── Skill Injection: match a query against installed skills ────────────────────
+// Shared across every path that surfaces skills automatically (rather than an
+// agent explicitly calling use_skill): direct/agent-target AI chat here, task
+// execution (worker.ts), and chat-room replies (room-agents.ts).
+//
+// Two-stage match: exact substring against triggerPatterns first (cheap,
+// deterministic, no embedding call), then — only if that misses — semantic
+// similarity against the skill's embedded meaning (name + description +
+// trigger patterns, see embedSkill in embeddings.ts), so a message that
+// describes the same situation in different words still surfaces the skill.
+// The semantic threshold is intentionally strict: a wrong skill's
+// instructions actively mislead the agent, which is worse than no match.
+//
+// 0.55 was chosen back when skillVectorSearch used pgvector's `<->` (L2)
+// operator, so `1 - distance` was NOT a true cosine similarity and this
+// value was uncalibrated against any bounded metric. Now that
+// skillVectorSearch uses `<=>` (cosine distance) like vectorSearch, `score`
+// is a real cosine similarity in [0, 1]. For short "name + description +
+// trigger patterns" embeddings, on-topic pairs typically land ~0.6-0.85 and
+// unrelated pairs ~0.1-0.35, so 0.55 still sits on the strict side of that
+// gap and remains a reasonable threshold post-fix.
+const SEMANTIC_SKILL_MATCH_MIN_SCORE = 0.55
 
-/** Parse a NebulaInstance.spec into a typed trigger config. */
-type SkillSpec = { triggerPatterns?: string[]; systemPrompt?: string }
-
-async function matchAndInjectSkills(
+export async function matchAndInjectSkills(
   environmentId: string,
   message: string,
-  conversationId?: string,
+  logSource: 'chat_match' | 'task_match' | 'room_match' = 'chat_match',
+  contextId?: string,
 ): Promise<{ injected: string; skillName: string | null }> {
   const skills = await prisma.nebulaInstance.findMany({
     where: { environmentId, category: 'skill', isInstalled: true },
   })
   const msgLower = message.toLowerCase()
+
+  // Stage 1: exact substring match
   for (const skill of skills) {
     let spec: SkillSpec
     try { spec = JSON.parse(skill.spec) as SkillSpec } catch { continue }
     if (!spec?.triggerPatterns?.length) continue
     const matched = spec.triggerPatterns.find(p => msgLower.includes(p.toLowerCase()))
     if (matched) {
-      // Non-blocking log — failures must not break the chat flow
+      // Non-blocking log — failures must not break the calling flow
       prisma.skillExecutionLog.create({
-        data: { nebulaId: skill.id, source: 'chat_match', matchedPattern: matched },
+        data: { nebulaId: skill.id, source: logSource, matchedPattern: matched, contextId: contextId ?? null },
       }).catch(() => {})
       return { injected: spec.systemPrompt ?? '', skillName: skill.name }
     }
   }
+
+  // Stage 2: semantic fallback — only against skills with an embedding
+  // (embedSkill is called at write time by save_skill, Dream, and the Nebula
+  // UI's skill-create route; older skills without one are simply excluded).
+  // Skip entirely if this environment has no skills at all — no point paying
+  // for an embedding-provider call on every turn when there's nothing to match.
+  if (skills.length === 0) return { injected: '', skillName: null }
+  try {
+    const embedResult = await generateEmbedding(message.slice(0, 2000))
+    if (embedResult) {
+      const [best] = await skillVectorSearch(embedResult.vector, embedResult.modelRef, environmentId, 1)
+      if (best && best.score >= SEMANTIC_SKILL_MATCH_MIN_SCORE) {
+        const skill = await prisma.nebulaInstance.findUnique({ where: { id: best.nebulaId } })
+        if (skill) {
+          let spec: SkillSpec = {}
+          try { spec = JSON.parse(skill.spec) as SkillSpec } catch { /* corrupted spec — skip */ }
+          if (spec.systemPrompt) {
+            prisma.skillExecutionLog.create({
+              data: {
+                nebulaId: skill.id,
+                source: logSource,
+                matchedPattern: `semantic:${best.score.toFixed(2)}`,
+                contextId: contextId ?? null,
+              },
+            }).catch(() => {})
+            return { injected: spec.systemPrompt, skillName: skill.name }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[skills] Semantic match failed (non-fatal):', e)
+  }
+
   return { injected: '', skillName: null }
 }
 
@@ -1879,7 +1935,7 @@ export async function* streamClaudeResponse(
     // Inject matched skill(s) into the system prompt
     let effectiveSystemPrompt = systemPrompt
     if (environmentId) {
-      const { injected, skillName } = await matchAndInjectSkills(environmentId, prompt, conversationId)
+      const { injected, skillName } = await matchAndInjectSkills(environmentId, prompt, 'chat_match', conversationId)
       if (injected) {
         effectiveSystemPrompt = `## INJECTED SKILL: ${skillName}\n${injected}\n---\n\n` + systemPrompt
       }
