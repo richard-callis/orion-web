@@ -58,7 +58,15 @@ function buildFullContextSnapshot(
 // describes the same situation in different words still surfaces the skill.
 // The semantic threshold is intentionally strict: a wrong skill's
 // instructions actively mislead the agent, which is worse than no match.
-
+//
+// 0.55 was chosen back when skillVectorSearch used pgvector's `<->` (L2)
+// operator, so `1 - distance` was NOT a true cosine similarity and this
+// value was uncalibrated against any bounded metric. Now that
+// skillVectorSearch uses `<=>` (cosine distance) like vectorSearch, `score`
+// is a real cosine similarity in [0, 1]. For short "name + description +
+// trigger patterns" embeddings, on-topic pairs typically land ~0.6-0.85 and
+// unrelated pairs ~0.1-0.35, so 0.55 still sits on the strict side of that
+// gap and remains a reasonable threshold post-fix.
 const SEMANTIC_SKILL_MATCH_MIN_SCORE = 0.55
 
 export async function matchAndInjectSkills(
@@ -96,7 +104,7 @@ export async function matchAndInjectSkills(
   try {
     const embedResult = await generateEmbedding(message.slice(0, 2000))
     if (embedResult) {
-      const [best] = await skillVectorSearch(embedResult.vector, environmentId, 1)
+      const [best] = await skillVectorSearch(embedResult.vector, embedResult.modelRef, environmentId, 1)
       if (best && best.score >= SEMANTIC_SKILL_MATCH_MIN_SCORE) {
         const skill = await prisma.nebulaInstance.findUnique({ where: { id: best.nebulaId } })
         if (skill) {

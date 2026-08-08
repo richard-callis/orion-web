@@ -42,6 +42,37 @@ export const MAX_STEPS               = 20
 export const MAX_STEP_LEN            = 500
 export const MAX_SYSTEM_PROMPT_LEN   = 4000
 
+// Same shape as the Nebula UI's human-authored skill-name validation
+// (z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9\-_]*$/) in
+// api/environments/[id]/nebula/route.ts). Skill names are interpolated
+// directly into OTHER agents' system prompts — `## INJECTED SKILL: ${name}`
+// in claude.ts, `## Matched Skill: ${name}` in worker.ts/room-agents.ts —
+// so an unvalidated name (e.g. containing a newline followed by "---")
+// could close the injected skill block early and forge fake system-level
+// instructions into another agent's prompt. Enforced here on both the
+// agent self-save path (save_skill below) and Dream's crafting path
+// (runSkillCrafting in dream.ts) so neither can bypass it.
+export const SKILL_NAME_REGEX  = /^[a-z0-9][a-z0-9\-_]*$/
+export const MAX_SKILL_NAME_LEN = 64
+export const MAX_DESCRIPTION_LEN = 300
+
+/** Validate a skill name. Returns an error string if invalid, or null if OK. */
+export function validateSkillName(name: string | undefined): string | null {
+  if (!name || name.length < 1 || name.length > MAX_SKILL_NAME_LEN || !SKILL_NAME_REGEX.test(name)) {
+    return `Invalid skill name "${name ?? ''}" — must be 1-${MAX_SKILL_NAME_LEN} characters, lowercase letters/digits/hyphens/underscores only, starting with a letter or digit (e.g. "restart-stuck-pod").`
+  }
+  return null
+}
+
+/** Validate a skill description. Returns an error string if invalid, or null if OK. */
+export function validateSkillDescription(description: string | undefined): string | null {
+  if (!description || !description.trim()) return 'Description is required.'
+  if (description.length > MAX_DESCRIPTION_LEN) {
+    return `Description is too long (${description.length} chars) — max ${MAX_DESCRIPTION_LEN}.`
+  }
+  return null
+}
+
 /** Build the systemPrompt injected/returned for a skill from either explicit
  * instructions or an ordered step list. */
 function buildSkillPrompt(systemPrompt: string | undefined, steps: string[] | undefined): string {
@@ -147,6 +178,11 @@ export function registerSkillTools(): void {
         environment_id?: string
       }
       if (!name || !description) return 'Error: save_skill requires name and description'
+
+      const nameError = validateSkillName(name)
+      if (nameError) return `Error: ${nameError}`
+      const descriptionError = validateSkillDescription(description)
+      if (descriptionError) return `Error: ${descriptionError}`
 
       const prompt = buildSkillPrompt(system_prompt, steps)
       if (!prompt) return 'Error: save_skill requires either steps[] or system_prompt'

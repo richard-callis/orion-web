@@ -354,6 +354,14 @@ export async function storeSkillEmbedding(
   vector: number[],
   modelRef: string,
 ): Promise<void> {
+  if (!Array.isArray(vector) || vector.length === 0 || vector.some(v => typeof v !== 'number' || !Number.isFinite(v))) {
+    // Mirror the storeEmbedding guard: a malformed vector must never be
+    // silently stringified and stored, corrupting the skill's embedding.
+    throw new Error(
+      `[embeddings] storeSkillEmbedding(${nebulaId}) received an invalid vector (modelRef=${modelRef}): ` +
+      `${Array.isArray(vector) ? `length=${vector.length}` : typeof vector}`,
+    )
+  }
   await prisma.nebulaEmbedding.upsert({
     where: { nebulaId },
     update: {
@@ -402,22 +410,29 @@ export async function embedSkill(
  */
 export async function skillVectorSearch(
   queryVector: number[],
+  modelRef: string,
   environmentId: string,
   limit: number = 3,
 ): Promise<Array<{ nebulaId: string; score: number }>> {
   const vecStr = `[${queryVector.join(',')}]`
 
+  // Mirrors vectorSearch: `<=>` (cosine distance) to match the
+  // vector_cosine_ops HNSW index, ORDER BY on the indexed distance
+  // expression (not the derived `score` column) so pgvector can use the
+  // ANN index, and a modelRef filter so vectors from different embedding
+  // model spaces are never compared against each other.
   const results = await prisma.$queryRaw<unknown[]>`
     SELECT
       ne."nebulaId",
-      (1 - (ne.embedding <-> ${vecStr}::vector))::float AS score
+      (1 - (ne.embedding <=> ${vecStr}::vector))::float AS score
     FROM "nebula_embeddings" ne
     JOIN "NebulaInstance" n ON n.id = ne."nebulaId"
     WHERE ne.embedding IS NOT NULL
+      AND ne."modelRef" = ${modelRef}
       AND n."environmentId" = ${environmentId}
       AND n.category = 'skill'
       AND n."isInstalled" = true
-    ORDER BY score DESC
+    ORDER BY ne.embedding <=> ${vecStr}::vector
     LIMIT ${limit}
   `
 

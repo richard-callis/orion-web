@@ -41,6 +41,8 @@ import { estimateTokens } from './token-budget'
 import {
   type SkillSpec,
   validateSkillContent,
+  validateSkillName,
+  validateSkillDescription,
   resolveAgentPrimaryEnvironmentId,
   MIN_TRIGGER_PATTERN_LEN,
   MAX_TRIGGER_PATTERNS,
@@ -770,6 +772,23 @@ If none of the tasks are worth generalizing into a skill, return an empty array:
     const environmentId = taskEnvIds.get(task.id)
     if (!environmentId) continue // no environment link for the completing agent — can't scope a skill
 
+    const skillName = item.name.trim()
+    // The LLM proposal is synthesized from task events, which can embed
+    // externally-controlled text (issue bodies, webhook payloads, cluster
+    // logs) — same interpolation risk as the agent self-save path, so it's
+    // held to the exact same name/description validation before it's ever
+    // stored or later interpolated into another agent's system prompt.
+    const nameError = validateSkillName(skillName)
+    if (nameError) {
+      console.warn(`[dream] Skipping proposed skill "${item.name}" — ${nameError}`)
+      continue
+    }
+    const descriptionError = validateSkillDescription(item.description)
+    if (descriptionError) {
+      console.warn(`[dream] Skipping proposed skill "${skillName}" — ${descriptionError}`)
+      continue
+    }
+
     const prompt = item.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')
     const contentError = validateSkillContent(item.trigger_patterns, prompt, item.steps)
     if (contentError) {
@@ -779,7 +798,7 @@ If none of the tasks are worth generalizing into a skill, return an empty array:
 
     try {
       const existing = await prisma.nebulaInstance.findUnique({
-        where: { environmentId_name: { environmentId, name: item.name.trim() } },
+        where: { environmentId_name: { environmentId, name: skillName } },
       })
       if (existing) continue // don't clobber — the crafting prompt already tries to avoid this
 
@@ -793,10 +812,23 @@ If none of the tasks are worth generalizing into a skill, return an empty array:
       const createdSkill = await prisma.nebulaInstance.create({
         data: {
           environmentId,
-          name: item.name.trim(),
+          name: skillName,
           category: 'skill',
           spec: JSON.stringify(spec),
-          isInstalled: true,
+          // Dream synthesizes this from task event content, which can
+          // include externally-controlled text (GitHub issue bodies,
+          // webhook payloads, cluster logs fed through tool_call/
+          // tool_result/agent_output events). Auto-installing (isInstalled:
+          // true) would mean untrusted content gets immediately and
+          // automatically injected into every future matching turn for
+          // every agent in the environment — a prompt-injection persistence
+          // path. Dream-crafted skills therefore land pending human review;
+          // an operator/admin must explicitly install them (PUT
+          // /api/environments/[id]/nebula/[name] with { isInstalled: true },
+          // also wired up as a toggle in the Nebula UI's Settings tab)
+          // before they can auto-inject or be looked up via
+          // list_skills/use_skill.
+          isInstalled: false,
           source: 'dream',
           createdByAgentId: dreamAgentId,
         },
