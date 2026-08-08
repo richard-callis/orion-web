@@ -276,9 +276,13 @@ export async function embedAllNotes(): Promise<{ embedded: number; failed: numbe
  * visible to everyone; any other note is only visible to its creator.
  *
  * @param callerId - `undefined` signals a trusted/unscoped caller (service,
- *   admin, or an internal system context like `retrieveKnowledgeContext`'s
- *   llm-context injection) — no filtering is applied. A string restricts
- *   results to notes owned by that user, plus unowned/shared notes.
+ *   admin, or an internal agent-driven context with no single human owner,
+ *   e.g. worker.ts's background task runs or `agent-context.ts`'s room-agent
+ *   pre-flight) — no filtering is applied. A string restricts results to
+ *   notes owned by that user, plus unowned/shared notes — this includes
+ *   `retrieveKnowledgeContext` when it's called on behalf of a specific user
+ *   (e.g. the chat stream route), which still surfaces shared `llm-context`
+ *   notes since those are always created with `createdBy: null`.
  */
 function ownerFilterSql(callerId: string | undefined, noteAlias: string): Prisma.Sql {
   if (callerId === undefined) return Prisma.empty
@@ -666,12 +670,24 @@ export async function retrieveKnowledgeContext(
   topK = 3,
   minScore = 0.2,
   minKeywordScore = DEFAULT_MIN_KEYWORD_SCORE,
+  callerId?: string,
 ): Promise<string> {
   try {
-    // llm-context notes are intentionally unscoped (no createdBy filter) —
-    // they are system-wide context for agent prompts and must remain globally visible.
+    // This function applies no `type` filter, so — unlike its name/original
+    // intent might suggest — it doesn't only surface `llm-context` notes; it
+    // hybrid-searches the entire Note table. `llm-context` notes (written by
+    // worker.ts's writeTaskOutcome) are created with no `createdBy`, i.e.
+    // `createdBy: null`, so they're "shared" under ownerFilterSql's semantics
+    // and always visible regardless of `callerId`. Passing the real caller's
+    // id (when one exists — an ordinary per-user chat request) is therefore
+    // both safe (shared/llm-context notes still surface) and required (it's
+    // the only thing that prevents another user's private notes from being
+    // injected into this user's prompt). `callerId` stays `undefined` for
+    // internal/agent-driven callers (worker.ts, agent-context.ts's room-agent
+    // pre-flight) that have no single human caller to scope to — see
+    // ownerFilterSql's doc comment.
     const fetchLimit = Math.min(topK * 4, HYBRID_CANDIDATE_POOL)
-    const { hits } = await hybridSearch(query, fetchLimit)
+    const { hits } = await hybridSearch(query, fetchLimit, callerId)
     const relevant = filterRelevantHits(hits, minScore, minKeywordScore).slice(0, topK)
     if (relevant.length === 0) return ''
 

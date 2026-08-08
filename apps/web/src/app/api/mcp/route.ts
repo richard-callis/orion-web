@@ -203,6 +203,13 @@ export async function POST(req: NextRequest) {
       }
 
       try {
+        // ctx.userId is intentionally left unset: this transport authenticates
+        // per-agent (mcpToken) or via the legacy shared ORION_MCP_TOKEN — there
+        // is no human browser/session identity anywhere in this request (no
+        // cookie, no NextAuth token). Tools like knowledge_search that read
+        // ctx.userId to scope results to a specific user's notes therefore run
+        // trusted/unscoped here, same as the service/gateway path — see
+        // ownerFilterSql's doc comment in lib/embeddings.ts.
         const result = await executeRegisteredTool(toolName, toolArgs, {
           agentId,
           roomId,

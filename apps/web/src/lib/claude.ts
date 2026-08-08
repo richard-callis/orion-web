@@ -1549,12 +1549,21 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
           result = await handleOrionBootstrapEnvironment(tc.argsRaw)
         } else if (tc.name === 'gitops_propose') {
           result = await handleGitopsPropose(tc.argsRaw, conversationId)
-        } else if (MANAGEMENT_TOOL_DEFS.some(d => d.name === tc.name)) {
-          result = await executeManagedTool(tc.name, tc.argsRaw, userId)
         } else if (tc.name === 'knowledge_search') {
+          // Must be checked before the MANAGEMENT_TOOL_DEFS catch-all below —
+          // MANAGEMENT_TOOL_DEFS is getAllTools() over the full registry, which
+          // includes 'knowledge_search', so the catch-all would otherwise shadow
+          // this dedicated (correctly per-user-scoped) handler entirely.
           result = await handleKnowledgeSearch(tc.argsRaw, userId)
         } else if (tc.name === 'knowledge_graph') {
           result = await handleKnowledgeGraph(tc.argsRaw)
+        } else if (MANAGEMENT_TOOL_DEFS.some(d => d.name === tc.name)) {
+          // This is an ordinary per-user chat conversation (no autonomous Agent
+          // acting), so pass the real user id via the dedicated `userId` param —
+          // NOT `actorId`, which is a distinct `Agent.id` foreign key space used
+          // by worker.ts/room-agents for background/room agents. See
+          // executeManagedTool's doc comment.
+          result = await executeManagedTool(tc.name, tc.argsRaw, undefined, userId)
         } else if (gateway && environmentId) {
           // ── Gateway tools ─────────────────────────────────────────────────
           try {

@@ -185,11 +185,25 @@ describe('hybridSearch — RRF fusion of vector + full-text legs', () => {
     expect(sql).not.toContain('<=>')
   })
 
-  it('adds a secondary `n.id` sort tiebreak so RRF ties order deterministically', async () => {
+  it('adds a secondary `n.id` sort tiebreak so RRF ties order deterministically (keyword-only fallback)', async () => {
     externalModelFindMany = async () => []
     await hybridSearch('crashloopbackoff pod-7f9', 10)
     const sql = queryRawCalls[0].strings.join('?')
     expect(sql).toMatch(/ORDER BY score DESC,\s*n\.id/)
+  })
+
+  it('adds a secondary `n.id` sort tiebreak so RRF ties order deterministically (primary hybrid query)', async () => {
+    externalModelFindMany = async () => [
+      { provider: 'ollama', modelId: 'nomic-embed-text', baseUrl: 'http://ollama:11434', enabled: true },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ embeddings: [[0.1, 0.2, 0.3]] }),
+    })))
+
+    await hybridSearch('crashloopbackoff pod-7f9', 10)
+    const sql = queryRawCalls[0].strings.join('?')
+    expect(sql).toMatch(/ORDER BY fused\.score DESC,\s*n\.id/)
   })
 
   it('omits the ownership predicate for a trusted/unscoped caller (no callerId)', async () => {

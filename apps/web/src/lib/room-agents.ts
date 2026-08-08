@@ -370,6 +370,12 @@ async function callOpenAIChat(
   model: string,
   baseUrl: string,
   apiKey?: string | null,
+  // NOTE: no userId field here by design — a room-agent turn is an autonomous
+  // agent participating in a (possibly multi-human) chat room, not a single
+  // human's request. Every executeRegisteredTool call below therefore omits
+  // ctx.userId, matching hybridSearch/ownerFilterSql's documented "agent-driven
+  // call = trusted/unscoped" semantics. Do not thread a human userId through
+  // here — there isn't a single correct one to pick.
   toolContext?: { roomId: string; agentId: string; llm: string; allowedTools?: Set<string> },
   gateway?: AgentGateway | null,
   gatewayTools?: GatewayTool[],

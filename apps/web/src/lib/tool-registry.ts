@@ -2716,11 +2716,15 @@ registerTool({
   parallelSafe: true,
   availableIn: 'both',
   category: 'knowledge',
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const { query, limit = 5 } = args as { query?: string; limit?: number }
     if (!query) return 'Error: query is required'
     const { retrieveKnowledgeContext } = await import('@/lib/embeddings')
-    const block = await retrieveKnowledgeContext(query, Math.min(Math.max(limit, 1), 10), 0.2)
+    // SOC2: same per-user note scoping as knowledge_search — see ownerFilterSql
+    // in lib/embeddings.ts. ctx.userId is only set for calls made on behalf of
+    // a specific logged-in user; agent-driven calls (MCP, room-agents) leave it
+    // unset and stay trusted/unscoped by design.
+    const block = await retrieveKnowledgeContext(query, Math.min(Math.max(limit, 1), 10), 0.2, undefined, ctx.userId)
     return block || 'No additional relevant notes found for this query.'
   },
 })
