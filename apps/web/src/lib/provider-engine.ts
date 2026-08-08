@@ -73,10 +73,10 @@ export const BUNDLED_PROVIDERS: Record<string, ProviderConfig> = {
     description: 'Open-source identity provider with SSO, MFA, and passwordless auth',
     helm: {
       release: 'authentik',
-      chart: 'goauthentik/authentik',
+      chart: 'authentik',
       repo: 'https://charts.goauthentik.io',
       values: {
-        authentik: { secretKey: '{{ genSecret 64 }}' },
+        authentik: { secret_key: '{{ genSecret 64 }}' },
         server: {
           replicaCount: 1,
           ingress: {
@@ -95,8 +95,8 @@ export const BUNDLED_PROVIDERS: Record<string, ProviderConfig> = {
     overlaySecret: {
       name: 'authentik-secret-fix',
       entries: [
-        { key: 'AUTHENTIK_SECRET_KEY', value: '{{ .helm.values.authentik.secretKey }}' },
-        { key: 'AUTHENTIK_ROOT_PASSWORD', value: '{{ adminPassword }}' },
+        { key: 'AUTHENTIK_SECRET_KEY', value: '{{ .helm.values.authentik.secret_key }}' },
+        { key: 'AUTHENTIK_BOOTSTRAP_PASSWORD', value: '{{ adminPassword }}' },
         { key: 'AUTHENTIK_POSTGRESQL__HOST', value: '{{ .helm.release }}-postgresql' },
         { key: 'AUTHENTIK_POSTGRESQL__NAME', value: 'authentik' },
         { key: 'AUTHENTIK_POSTGRESQL__USER', value: 'authentik' },
@@ -117,7 +117,7 @@ export const BUNDLED_PROVIDERS: Record<string, ProviderConfig> = {
       helmReleaseTimeout: '120s',
       statefulsets: ['authentik-postgresql', 'authentik-redis'],
       deployments: ['authentik-redis'],
-      secrets: ['authentik', 'authentik-secrets', 'authentik-secret-key', 'authentik-root-password', 'authentik-postgresql'],
+      secrets: ['authentik', 'authentik-secrets', 'authentik-secret-key', 'authentik-bootstrap-password', 'authentik-postgresql'],
       services: ['authentik-server', 'authentik-postgresql', 'authentik-redis', 'authentik-worker', 'authentik-goauthentikio'],
       ingresses: ['authentik'],
       certificates: ['authentik-tls'],
@@ -132,7 +132,7 @@ export const BUNDLED_PROVIDERS: Record<string, ProviderConfig> = {
     description: 'Open-source authentication and authorization web application',
     helm: {
       release: 'authelia',
-      chart: 'bitnami/authelia',
+      chart: 'authelia',
       repo: 'https://charts.bitnami.com/bitnami',
       values: {
         ingress: {
@@ -250,6 +250,13 @@ export async function reloadRemoteConfigs(): Promise<string[]> {
 
 // ── Template rendering ────────────────────────────────────────────────────────
 
+/** Generate a random hex string of exactly `n` characters. */
+function randomHex(n: number): string {
+  const bytes = new Uint8Array(Math.ceil(n / 2))
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('').slice(0, n)
+}
+
 export interface RenderContext {
   hostname: string
   namespace: string
@@ -280,9 +287,12 @@ export function renderProviderConfig(
   const helmRelease = ctx.helmRelease ?? config.name
 
   // First pass: generate secrets and collect .helm.values paths
-  // We render values recursively, tracking which paths we hit for .helm.values.* resolution
+  // We render values recursively, tracking which paths we hit for .helm.values.* resolution.
+  // renderValues() both returns the real nested rendered object (used as the final
+  // helm.values payload) and populates valuesMap as a side effect (flat dot-path →
+  // value, used for .helm.values.<path> template lookups via .get() below).
   const valuesMap = new Map<string, unknown>()
-  renderValues(config.helm?.values, secrets, ctx, valuesMap)
+  const renderedValues = renderValues(config.helm?.values, secrets, ctx, valuesMap)
 
   function resolveTemplate(input: string): string {
     let result = input
@@ -305,9 +315,9 @@ export function renderProviderConfig(
     result = result.replace(/\{\{\s*\.helm\.release\s*\}\}/g, helmRelease)
 
     // Replace {{ .helm.values.<path> }} — e.g. authentik.secretKey
-    result = result.replace(/\{\{\s*\.helm\.values\.(.+)\s*\}\}/g, (_: string, path: string) => {
+    result = result.replace(/\{\{\s*\.helm\.values\.(.+?)\s*\}\}/g, (_: string, path: string) => {
       // path like "authentik.secretKey"
-      const parts = path.split('.')
+      const parts = path.trim().split('.')
       // Look up in the rendered values map
       const rendered = valuesMap.get(parts.join('.'))
       if (typeof rendered === 'string') return rendered
@@ -351,7 +361,7 @@ export function renderProviderConfig(
     ...config,
     helm: config.helm ? {
       ...config.helm,
-      values: valuesMap as unknown as Record<string, unknown>,
+      values: (renderedValues ?? {}) as Record<string, unknown>,
     } : undefined,
     overlaySecret: config.overlaySecret ? {
       ...config.overlaySecret,
@@ -377,7 +387,11 @@ export function renderProviderConfig(
 
 /**
  * Render Helm values — resolve {{ genSecret }} and track paths for .helm.values.* resolution.
- * Returns the rendered map (JSON path → final value).
+ * Returns the actual rendered value (string/number/boolean/array/object, mirroring the
+ * shape of `input`) so callers get a real nested structure back — not a Map, which
+ * JSON.stringify()'s to "{}" and would silently drop every Helm value.
+ * As a side effect, also populates `pathMap` with a flat dot/bracket-path → value index,
+ * used elsewhere for {{ .helm.values.<path> }} lookups via pathMap.get().
  */
 function renderValues(
   input: unknown,
@@ -385,16 +399,15 @@ function renderValues(
   ctx: RenderContext,
   pathMap: Map<string, unknown>,
   currentPath = '',
-): Map<string, unknown> {
+): unknown {
   if (typeof input === 'string') {
     let result = input
 
     // genSecret
-    result = result.replace(/\{\{\s*genSecret\s+(\d+)\s*\}\}/g, () => {
+    result = result.replace(/\{\{\s*genSecret\s+(\d+)\s*\}\}/g, (_: string, nStr: string) => {
       const key = `gen_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
-      secrets[key] = crypto.randomUUID().replace(/-/g, '')
-      // Self-reference: resolve immediately
-      secrets[key] = crypto.randomUUID().replace(/-/g, '')
+      const n = parseInt(nStr, 10)
+      secrets[key] = randomHex(n)
       return secrets[key]
     })
 
@@ -403,7 +416,7 @@ function renderValues(
     result = result.replace(/\{\{\s*clusterIssuer\s*\}\}/g, ctx.clusterIssuer)
 
     if (currentPath) pathMap.set(currentPath, result)
-    return pathMap
+    return result
   }
 
   if (Array.isArray(input)) {
@@ -412,7 +425,7 @@ function renderValues(
       arr.push(renderValues(input[i], secrets, ctx, pathMap, `${currentPath}[${i}]`))
     }
     if (currentPath) pathMap.set(currentPath, arr)
-    return pathMap
+    return arr
   }
 
   if (input && typeof input === 'object') {
@@ -422,9 +435,9 @@ function renderValues(
       obj[k] = renderValues(v, secrets, ctx, pathMap, path)
     }
     if (currentPath) pathMap.set(currentPath, obj)
-    return pathMap
+    return obj
   }
 
   if (currentPath) pathMap.set(currentPath, input)
-  return pathMap
+  return input
 }
