@@ -295,16 +295,20 @@ async function runProviderDeploy(
 
 /**
  * Sync the overlay secret: create or update it with resolved values.
- * Handles {{ resolveSecret <secret> <key> }} placeholders.
+ * Handles __RS_<secret>_<key>__ placeholders left behind by renderProviderConfig()
+ * after it rewrites {{ resolveSecret <secret> <key> }} templates.
  */
-async function syncOverlaySecret(
+export async function syncOverlaySecret(
   gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
   log: JobLogger,
   overlay: NonNullable<ProviderConfig['overlaySecret']>,
   pc: ProviderConfig,
   ctx: { hostname: string; namespace: string; clusterIssuer: string; adminPassword: string; provider: string },
 ): Promise<void> {
-  const placeholderRe = /\{\{\s*resolveSecret\s+(\S+)\s+(\S+)\s*\}\}/g
+  // By the time overlay.entries reach here, renderProviderConfig() has already
+  // rewritten `{{ resolveSecret <name> <key> }}` into the bare intermediate token
+  // `__RS_<name>_<key>__` (no surrounding `{{ }}`). Match that intermediate form.
+  const placeholderRe = /__RS_(.+?)_(.+?)__/g
 
   // Step 1: Collect regular entries (with placeholders) and resolve targets
   const stringData: Record<string, string> = {}
@@ -320,12 +324,12 @@ async function syncOverlaySecret(
     value = value.replace(/\{\{\s*provider\s*\}\}/g, ctx.provider)
     value = value.replace(/\{\{\s*namespace\s*\}\}/g, ctx.namespace)
 
-    // Replace resolveSecret with unique placeholders, collecting targets
-    value = value.replace(placeholderRe, (_: string, secretName: string, secretKey: string) => {
-      const ph = `__RS_${secretName}_${secretKey}__`
+    // Collect __RS_<name>_<key>__ resolve targets (already placeholders at this point,
+    // nothing to replace here — just record what needs resolving from the cluster)
+    for (const match of value.matchAll(placeholderRe)) {
+      const [ph, secretName, secretKey] = match
       resolveTargets.push({ placeholder: ph, secretName, secretKey })
-      return ph
-    })
+    }
 
     stringData[entry.key] = value
   }
@@ -339,9 +343,10 @@ async function syncOverlaySecret(
       const data = JSON.parse(result).data?.[target.secretKey]
       if (data) {
         const resolvedValue = Buffer.from(data, 'base64').toString('utf8')
-        // Replace placeholder in all stringData values
+        // Replace placeholder in all stringData values (exact literal match — the
+        // placeholder has no surrounding {{ }} and needs no regex escaping beyond this).
         for (const [key, val] of Object.entries(stringData)) {
-          stringData[key] = val.replace(new RegExp(`\\{\\{\\s*${target.placeholder}\\s*\\}\\}`, 'g'), resolvedValue)
+          stringData[key] = val.split(target.placeholder).join(resolvedValue)
         }
       }
     } catch {
