@@ -69,11 +69,31 @@ function buildFullContextSnapshot(
 // gap and remains a reasonable threshold post-fix.
 const SEMANTIC_SKILL_MATCH_MIN_SCORE = 0.55
 
+// Request-scoped cache of in-flight/completed embedding calls, keyed by the
+// exact (already-truncated) text passed to generateEmbedding. Callers that
+// process the same message text multiple times within one logical
+// request/turn (e.g. room-agents.ts replying with several agents to the same
+// triggering message) can share a cache instance across their
+// matchAndInjectSkills calls so the text is embedded at most once — never a
+// cross-request or cross-message cache, just de-duplication within a turn.
+export type SkillEmbedCache = Map<string, ReturnType<typeof generateEmbedding>>
+
+function getCachedEmbedding(text: string, cache?: SkillEmbedCache): ReturnType<typeof generateEmbedding> {
+  if (!cache) return generateEmbedding(text)
+  let pending = cache.get(text)
+  if (!pending) {
+    pending = generateEmbedding(text)
+    cache.set(text, pending)
+  }
+  return pending
+}
+
 export async function matchAndInjectSkills(
   environmentId: string,
   message: string,
   logSource: 'chat_match' | 'task_match' | 'room_match' = 'chat_match',
   contextId?: string,
+  embedCache?: SkillEmbedCache,
 ): Promise<{ injected: string; skillName: string | null }> {
   const skills = await prisma.nebulaInstance.findMany({
     where: { environmentId, category: 'skill', isInstalled: true },
@@ -101,8 +121,19 @@ export async function matchAndInjectSkills(
   // Skip entirely if this environment has no skills at all — no point paying
   // for an embedding-provider call on every turn when there's nothing to match.
   if (skills.length === 0) return { injected: '', skillName: null }
+  // Cheap pre-check: skip the embedding-provider call (real latency/cost, up
+  // to a 30s timeout) entirely when none of this environment's installed
+  // skills actually have a stored embedding to match against — a single
+  // indexed existence query beats paying for an API call with no chance of
+  // a hit. Net result is unchanged: previously an unmatched embedding call
+  // would just fall through to skillVectorSearch returning no rows.
+  const hasEmbeddedSkill = await prisma.nebulaEmbedding.findFirst({
+    where: { nebulaId: { in: skills.map(s => s.id) } },
+    select: { nebulaId: true },
+  })
+  if (!hasEmbeddedSkill) return { injected: '', skillName: null }
   try {
-    const embedResult = await generateEmbedding(message.slice(0, 2000))
+    const embedResult = await getCachedEmbedding(message.slice(0, 2000), embedCache)
     if (embedResult) {
       const [best] = await skillVectorSearch(embedResult.vector, embedResult.modelRef, environmentId, 1)
       if (best && best.score >= SEMANTIC_SKILL_MATCH_MIN_SCORE) {

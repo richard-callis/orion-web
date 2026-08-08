@@ -21,7 +21,7 @@ import { getToolsForContext, executeRegisteredTool } from './tool-registry'
 import { checkToolPermission } from './tool-permissions'
 import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
-import { matchAndInjectSkills } from './claude'
+import { matchAndInjectSkills, type SkillEmbedCache } from './claude'
 import { resolveAgentPrimaryEnvironmentId } from './skill-tools'
 import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, invalidateSnapshotCache, getModelContextLimit, getClaudeContextLimit } from './agent-context'
 import { compactRoom, publishCompactionWarning, publishTokenUpdate } from './compaction'
@@ -882,6 +882,13 @@ export async function triggerRoomAgentReplies(
 
   let lastSavedReply: string | null = null
 
+  // Shared across every agent replying in this room turn so that if two or
+  // more agents end up matching skills against the exact same message text
+  // (e.g. several agents processed before anyone actually replies, so
+  // `latestTurn` hasn't changed yet), the embedding-provider call for that
+  // text fires at most once instead of once per agent.
+  const skillEmbedCache: SkillEmbedCache = new Map()
+
   for (const agent of triggeredAgents) {
     try {
       // Re-fetch history each iteration so each agent sees the previous agent's reply.
@@ -951,7 +958,7 @@ export async function triggerRoomAgentReplies(
       // message matching a skill's trigger phrase gets its instructions
       // injected here too, not just in the /conversations chat path.
       const skillMatch = skillEnvId
-        ? await matchAndInjectSkills(skillEnvId, latestTurn, 'room_match', roomId).catch(() => ({ injected: '', skillName: null }))
+        ? await matchAndInjectSkills(skillEnvId, latestTurn, 'room_match', roomId, skillEmbedCache).catch(() => ({ injected: '', skillName: null }))
         : { injected: '', skillName: null }
       const skillSection = skillMatch.injected
         ? `\n\n---\n## Matched Skill: ${skillMatch.skillName}\n${skillMatch.injected}\n---`
