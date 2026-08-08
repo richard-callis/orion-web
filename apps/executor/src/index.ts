@@ -19,9 +19,16 @@ const EXECUTION_ESCALATE_TTL_SECONDS = parseInt(process.env.EXECUTION_ESCALATE_T
 if (!ORION_EXECUTOR_TOKEN) {
   throw new Error('ORION_EXECUTOR_TOKEN environment variable not set')
 }
+if (!ORION_GATEWAY_TOKEN) {
+  // Required for OrionClient.notifyRoom/getSystemSetting (gateway-token auth — see
+  // orion-client.ts). Failing loudly here matches ORION_EXECUTOR_TOKEN above: an unset
+  // token used to fail silently per-call (swallowed by getSystemSetting's try/catch),
+  // reproducing the exact "executor can't talk to Orion" failure class this fix exists for.
+  throw new Error('ORION_GATEWAY_TOKEN environment variable not set')
+}
 
 const fastify = Fastify({ logger: true })
-const orionClient = new OrionClient(ORION_URL, ORION_GATEWAY_TOKEN)
+const orionClient = new OrionClient(ORION_URL, ORION_EXECUTOR_TOKEN, ORION_GATEWAY_TOKEN)
 const vectorClient = new VectorClient(VECTOR_WEBHOOK_URL, HOST_AGENT_WEBHOOK_SECRET)
 
 // Track active polling tasks — key: executionId, value: AbortController
@@ -33,7 +40,10 @@ fastify.register(fastifyCors)
 const requireExecutorToken = async (request: FastifyRequest, reply: FastifyReply) => {
   const token = request.headers['x-executor-token'] as string
   if (!validateExecutorToken(token)) {
-    reply.status(401).send({ error: 'Unauthorized' })
+    // Explicitly return the reply so Fastify halts the lifecycle here regardless of
+    // version-specific behavior around reply.sent — an async hook that sends without
+    // returning is a documented footgun for accidentally continuing to the handler.
+    return reply.status(401).send({ error: 'Unauthorized' })
   }
 }
 

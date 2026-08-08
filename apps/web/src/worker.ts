@@ -1177,7 +1177,7 @@ async function writeTaskOutcome(opts: {
 
     // Embed immediately so the outcome is retrievable via knowledge_search / RAG.
     const { embedNote } = await import('./lib/embeddings')
-    await embedNote(note).catch(() => false)
+    await embedNote(note).catch(e => { console.error(`[embed] failed for task outcome note "${note.title}":`, e); return false })
   } catch (e) {
     err(`writeTaskOutcome failed for "${opts.title}": ${e}`)
   }

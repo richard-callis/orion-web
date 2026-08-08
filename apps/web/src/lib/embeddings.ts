@@ -102,13 +102,30 @@ export async function generateEmbedding(
     body: JSON.stringify({ model: provider.modelId, input: text }),
     signal: AbortSignal.timeout(30_000),
   })
-  if (!res.ok) return null
-  const data = await res.json() as { embedding: number[] }
+  if (!res.ok) {
+    console.error(`[embeddings] Ollama /api/embed returned ${res.status} for model ${provider.modelId}`)
+    return null
+  }
+  // NOTE: /api/embed (current) returns `embeddings` — a plural array-of-arrays,
+  // one vector per input. This is NOT the same shape as the deprecated
+  // /api/embeddings endpoint, which returns a singular `embedding` array.
+  // Reading the wrong field silently returns `undefined`, which previously
+  // got passed straight through to storeEmbedding() and corrupted the vector
+  // column with no error anywhere in the pipeline.
+  const data = await res.json() as { embeddings?: number[][] }
+  const vector = data.embeddings?.[0]
+  if (!Array.isArray(vector) || vector.length === 0) {
+    console.error(
+      `[embeddings] Ollama /api/embed response missing 'embeddings[0]' for model ${provider.modelId}. ` +
+      `Response keys: ${Object.keys(data ?? {}).join(', ') || '(empty)'}`,
+    )
+    return null
+  }
   // Ollama's /api/embed does not report token usage — estimate from input length.
   if (attributeToDream) {
     await recordDreamEmbeddingUsage(Math.ceil(text.length / 4), provider.modelId)
   }
-  return { vector: data.embedding, modelRef: provider.modelId }
+  return { vector, modelRef: provider.modelId }
 }
 
 // ── Dream usage attribution ─────────────────────────────────────────────────
@@ -170,6 +187,15 @@ export async function storeEmbedding(
   vector: number[],
   modelRef: string,
 ): Promise<void> {
+  if (!Array.isArray(vector) || vector.length === 0 || vector.some(v => typeof v !== 'number' || !Number.isFinite(v))) {
+    // Previously an undefined/malformed vector (e.g. from the Ollama field-name
+    // bug above) would be JSON.stringify()'d as "null" or "[]" and stored
+    // silently, corrupting the note's embedding with no error anywhere.
+    throw new Error(
+      `[embeddings] storeEmbedding(${noteId}) received an invalid vector (modelRef=${modelRef}): ` +
+      `${Array.isArray(vector) ? `length=${vector.length}` : typeof vector}`,
+    )
+  }
   await prisma.noteEmbedding.upsert({
     where: { noteId },
     update: {
@@ -231,7 +257,8 @@ export async function embedAllNotes(): Promise<{ embedded: number; failed: numbe
       else failed++
       // Rate-limit: small delay between API calls
       await new Promise(r => setTimeout(r, 100))
-    } catch {
+    } catch (err) {
+      console.error(`[embeddings] embedNote(${note.id}) failed:`, err instanceof Error ? err.message : err)
       failed++
     }
   }
@@ -243,14 +270,38 @@ export async function embedAllNotes(): Promise<{ embedded: number; failed: numbe
 
 /**
  * Vector similarity search over note embeddings.
- * Uses pgvector's <-> operator (cosine distance) on the raw SQL level.
+ *
+ * Uses pgvector's `<=>` cosine-distance operator, matching the HNSW index
+ * (`vector_cosine_ops`, migration 7_note_embeddings_hnsw_index) and the
+ * `note_embeddings` schema comment. `<->` (L2/Euclidean distance) is a
+ * *different* metric — an HNSW index built with `vector_cosine_ops` cannot
+ * be used to accelerate an `<->` query, and even if it could, L2 distance
+ * on these vectors has no defined relationship to the 0..1 similarity
+ * thresholds (`minScore`) used by every caller.
+ *
+ * `ORDER BY` and `LIMIT` are applied directly to the indexed distance
+ * expression (`embedding <=> $vector`) so pgvector can use the ANN index.
+ * Sorting on a derived column (e.g. `1 - distance`) defeats index usage
+ * because the planner can no longer recognize the order-by target as the
+ * indexed expression. `score` is a projected column computed from that same
+ * distance, not the sort key — pgvector's cosine distance is
+ * `1 - cosine_similarity`, so `1 - distance` here is a true cosine
+ * similarity in [0, 1] (assuming reasonably-normalized text embeddings).
+ *
+ * Filters by `modelRef` so that if the configured embedding provider
+ * changes, vectors from different model spaces are never compared against
+ * each other (which would produce meaningless similarity scores even when
+ * dimensions happen to coincide).
  *
  * @param queryVector - The embedding vector for the query
+ * @param modelRef - The embedding model that produced queryVector; only
+ *   note_embeddings rows from the same model are searched
  * @param limit - Maximum results to return
- * @returns Notes ranked by similarity score (descending)
+ * @returns Notes ranked by cosine similarity score (descending)
  */
 export async function vectorSearch(
   queryVector: number[],
+  modelRef: string,
   limit: number = 10,
 ): Promise<
   Array<{
@@ -273,11 +324,12 @@ export async function vectorSearch(
       n."type",
       n.folder,
       n.pinned,
-      (1 - (ne.embedding <-> ${vecStr}::vector))::float AS score
+      (1 - (ne.embedding <=> ${vecStr}::vector))::float AS score
     FROM "note_embeddings" ne
     JOIN "Note" n ON n.id = ne."noteId"
     WHERE ne.embedding IS NOT NULL
-    ORDER BY score DESC
+      AND ne."modelRef" = ${modelRef}
+    ORDER BY ne.embedding <=> ${vecStr}::vector
     LIMIT ${limit}
   `
 
@@ -395,11 +447,12 @@ export async function computeSemanticEdges(
   >`
     SELECT
       other."noteId" AS "targetNoteId",
-      (1 - (other.embedding <-> ${vecStr}::vector))::float AS score
+      (1 - (other.embedding <=> ${vecStr}::vector))::float AS score
     FROM "note_embeddings" other
     WHERE other."noteId" != ${noteId}
       AND other.embedding IS NOT NULL
-    ORDER BY score DESC
+      AND other."modelRef" IS NOT DISTINCT FROM ${target.modelRef}
+    ORDER BY other.embedding <=> ${vecStr}::vector
     LIMIT ${topN}
   `
 
@@ -429,6 +482,17 @@ export async function computeSemanticEdges(
  * Returns empty string silently on any error (no embedding provider, pgvector
  * not installed, no notes embedded, etc.) so it never blocks an LLM call.
  */
+// minScore thresholds below (here and at every other vectorSearch call site:
+// agent-context.ts, worker.ts, tool-registry.ts) were originally calibrated
+// against a broken metric — vectorSearch used to sort by L2 distance (`<->`)
+// while filtering a "score" computed as `1 - <-> distance`, which is not a
+// bounded similarity value at all. Now that vectorSearch uses `<=>` (cosine
+// distance) with `score = 1 - cosine_distance = cosine_similarity` (bounded
+// [0,1]), these thresholds are unverified against real data — no live/dev
+// database with embedded Notes was reachable from this change to sanity-check
+// the resulting score distribution. Left as-is intentionally rather than
+// guessing new numbers; recalibrate using the admin knowledge-search page
+// (added in a follow-up PR) once real query/score pairs are available.
 export async function retrieveKnowledgeContext(
   query: string,
   topK = 3,
@@ -440,7 +504,7 @@ export async function retrieveKnowledgeContext(
 
     // llm-context notes are intentionally unscoped (no createdBy filter) —
     // they are system-wide context for agent prompts and must remain globally visible.
-    const hits = await vectorSearch(result.vector, topK)
+    const hits = await vectorSearch(result.vector, result.modelRef, topK)
     const relevant = hits.filter(h => h.score >= minScore)
     if (relevant.length === 0) return ''
 

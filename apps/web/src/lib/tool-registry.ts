@@ -2680,7 +2680,7 @@ registerTool({
     const embedding = await generateEmbedding(query.slice(0, 2000))
     if (!embedding) return 'No embedding provider configured. Add an embedding model in Admin → Models to enable semantic search.'
 
-    const results = await vectorSearch(embedding.vector, Math.min(limit, 20))
+    const results = await vectorSearch(embedding.vector, embedding.modelRef, Math.min(limit, 20))
     if (!results.length) return 'No relevant notes found for this query.'
 
     return JSON.stringify(
@@ -2863,7 +2863,7 @@ Use this after completing or investigating any task. Structure content for maxim
     }
 
     // Embed immediately so the note is searchable via knowledge_search right away
-    const embedded = await embedNote(note).catch(() => false)
+    const embedded = await embedNote(note).catch(e => { console.error(`[tool-registry] embedNote failed for "${note.title}":`, e); return false })
 
     const action = existing ? 'updated' : 'written'
     return `Knowledge ${action}: "${note.title}" (id: ${note.id}, folder: ${folder}, embedded: ${embedded})`
