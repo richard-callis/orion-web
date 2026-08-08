@@ -396,7 +396,7 @@ If nothing is worth remembering, return an empty array: []`
         })
       }
 
-      const embedded = await embedNote(note, { attributeToDream: true }).catch(() => false)
+      const embedded = await embedNote(note, { attributeToDream: true }).catch(e => { console.error(`[dream] embedNote failed for "${note.title}":`, e); return false })
       if (embedded) await computeSemanticEdges(note.id).catch(() => {})
       written++
     } catch (e) {
@@ -495,7 +495,7 @@ If no hubs are missing, return an empty array: []`
           where: { id: existing.id },
           data: { content: hub.content.trim(), updatedAt: new Date() },
         })
-        const embedded = await embedNote(note, { attributeToDream: true }).catch(() => false)
+        const embedded = await embedNote(note, { attributeToDream: true }).catch(e => { console.error(`[dream] embedNote failed for "${note.title}":`, e); return false })
         if (embedded) await computeSemanticEdges(note.id).catch(() => {})
       } else {
         const dreamTags = Array.from(new Set(['dream', 'hub', ...(hub.tags ?? [])]))
@@ -508,7 +508,7 @@ If no hubs are missing, return an empty array: []`
             tags:    dreamTags as any,
           },
         })
-        const embedded = await embedNote(note, { attributeToDream: true }).catch(() => false)
+        const embedded = await embedNote(note, { attributeToDream: true }).catch(e => { console.error(`[dream] embedNote failed for "${note.title}":`, e); return false })
         if (embedded) await computeSemanticEdges(note.id).catch(() => {})
       }
       written++
