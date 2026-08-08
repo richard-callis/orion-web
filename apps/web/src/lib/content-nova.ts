@@ -51,11 +51,20 @@ const DNS_LABEL = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 const SAFE_GIT_REF = /^[\w./-]+$/
 
 function validateContentSource(source: NonNullable<Nova['config']['contentSource']>): void {
+  if (typeof source.gitUrl !== 'string') {
+    throw new Error(`Invalid contentSource.gitUrl "${source.gitUrl}": must be a string`)
+  }
   if (!/^https:\/\/[a-zA-Z0-9._-]+\/[\w.-]+\/[\w.-]+(\.git)?$/.test(source.gitUrl)) {
     throw new Error(`Invalid contentSource.gitUrl "${source.gitUrl}": must be an https:// URL like https://github.com/<owner>/<repo>.git`)
   }
+  if (typeof source.branch !== 'string') {
+    throw new Error(`Invalid contentSource.branch "${source.branch}": must be a string`)
+  }
   if (!SAFE_GIT_REF.test(source.branch) || source.branch.startsWith('-')) {
     throw new Error(`Invalid contentSource.branch "${source.branch}": unsafe characters`)
+  }
+  if (typeof source.path !== 'string') {
+    throw new Error(`Invalid contentSource.path "${source.path}": must be a string`)
   }
   // Must be a relative path within the cloned repo — a leading '/' would
   // make the CronJob's `cp -r "$GIT_PATH"/. /content/` step read from the
@@ -70,8 +79,14 @@ function validateContentSource(source: NonNullable<Nova['config']['contentSource
 }
 
 function validateContentTarget(target: NonNullable<Nova['config']['contentTarget']>): void {
+  if (typeof target.deployment !== 'string') {
+    throw new Error(`Invalid contentTarget.deployment "${target.deployment}": must be a string`)
+  }
   if (!DNS_LABEL.test(target.deployment) || target.deployment.length > 63) {
     throw new Error(`Invalid contentTarget.deployment "${target.deployment}": must be a valid DNS label (max 63 chars)`)
+  }
+  if (typeof target.namespace !== 'string') {
+    throw new Error(`Invalid contentTarget.namespace "${target.namespace}": must be a string`)
   }
   if (!DNS_LABEL.test(target.namespace) || target.namespace.length > 63) {
     throw new Error(`Invalid contentTarget.namespace "${target.namespace}": must be a valid DNS label (max 63 chars)`)
@@ -93,18 +108,22 @@ function appDir(env: ContentNovaTargetEnv, deployment: string): string {
 }
 
 function pvcManifest(pvcName: string, namespace: string, pvcSizeGi: number): string {
-  // ReadWriteOnce, matching the hand-built reference implementation. Correct
-  // for a single-replica app (technical-training's actual deployment): the
-  // app pod and the CronJob's sync pod never hold the volume concurrently on
-  // different nodes in that case. A multi-replica target would need RWX (or
-  // the sync moved into a sidecar of the app pod itself) — not needed yet.
+  // ReadWriteMany: the app pod and the CronJob's sync pod can land on
+  // different nodes, and both need to mount this volume concurrently (the
+  // sync pod during its run, the app pod continuously). Longhorn provisions
+  // RWX volumes via its NFS share-manager, so this doesn't need node
+  // affinity pinning or a `strategy: Recreate` rollout workaround to stay
+  // safe — RWO here would risk a Multi-Attach failure whenever the CronJob
+  // schedules on a different node than the app pod (or during a
+  // RollingUpdate), and the CronJob's backoffLimit: 2 means that failure
+  // mode fails quietly instead of loudly.
   return stringifyYaml(
     {
       apiVersion: 'v1',
       kind: 'PersistentVolumeClaim',
       metadata: { name: pvcName, namespace },
       spec: {
-        accessModes: ['ReadWriteOnce'],
+        accessModes: ['ReadWriteMany'],
         storageClassName: 'longhorn',
         resources: { requests: { storage: `${pvcSizeGi}Gi` } },
       },
@@ -192,7 +211,7 @@ function cronJobManifest(
  * container's volumeMounts, the pod spec's volumes) are replaced, so
  * unrelated comments, anchors, and formatting elsewhere in the file survive.
  */
-function patchDeploymentYaml(currentYaml: string, volumeName: string, pvcName: string, mountPath: string, deploymentName: string): string {
+function patchDeploymentYaml(currentYaml: string, volumeName: string, pvcName: string, mountPath: string, deploymentName: string, namespace: string): string {
   // A trailing `---` (common in hand-written manifests) parses as a second,
   // empty document — don't let that trip the single-document check.
   const docs = parseAllDocuments(currentYaml).filter((d) => d.toJS() !== null)
@@ -205,6 +224,12 @@ function patchDeploymentYaml(currentYaml: string, volumeName: string, pvcName: s
   }
   if (doc.get('kind') !== 'Deployment') {
     throw new Error(`Expected deployment.yaml's kind to be "Deployment", found "${String(doc.get('kind'))}"`)
+  }
+  const deploymentNamespace = doc.getIn(['metadata', 'namespace'])
+  if (deploymentNamespace !== namespace) {
+    throw new Error(
+      `Namespace mismatch: contentTarget.namespace is "${namespace}" but the target Deployment's metadata.namespace is "${String(deploymentNamespace)}"`,
+    )
   }
 
   const containersNode = doc.getIn(['spec', 'template', 'spec', 'containers'])
@@ -279,6 +304,6 @@ export async function buildContentManifests(nova: Nova, env: ContentNovaTargetEn
   return [
     { path: `${dir}/content-pvc.yaml`, content: pvcManifest(pvcName, namespace, pvcSizeGi) },
     { path: `${dir}/content-sync-cronjob.yaml`, content: cronJobManifest(cronJobName, namespace, pvcName, config.contentSource) },
-    { path: `${dir}/deployment.yaml`, content: patchDeploymentYaml(currentDeploymentYaml, volumeName, pvcName, mountPath, deployment) },
+    { path: `${dir}/deployment.yaml`, content: patchDeploymentYaml(currentDeploymentYaml, volumeName, pvcName, mountPath, deployment, namespace) },
   ]
 }
