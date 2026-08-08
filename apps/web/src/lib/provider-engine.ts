@@ -18,6 +18,15 @@ export interface ProviderConfig {
   manifests?: string[]
   /** Custom helm values as inline string */
   rawValues?: string
+  /**
+   * Side-channel map populated by renderProviderConfig(): opaque `__RS_<n>__`
+   * token → the {name, key} it was resolved from. Only present on the object
+   * returned by renderProviderConfig() — never set on raw/bundled configs.
+   * Consumers (e.g. syncOverlaySecret) look up tokens here instead of parsing
+   * name/key back out of the token string, which is ambiguous if a secret key
+   * itself contains "__" (e.g. AUTHENTIK_POSTGRESQL__PASSWORD).
+   */
+  resolveSecretRefs?: Record<string, { name: string; key: string }>
 }
 
 export interface HelmConfig {
@@ -276,8 +285,9 @@ export interface RenderContext {
  *   - {{ genSecret N }} → random string, stored in context.genSecrets
  *   - {{ .helm.release }} → resolved from context.helmRelease or config name
  *   - {{ .helm.values.<path> }} → resolved from rendered helm values
- *   - {{ resolveSecret <name> <key> }} → returns a __RS_<name>_<key>__ placeholder
- *     (actual resolution happens at runtime in syncOverlaySecret)
+ *   - {{ resolveSecret <name> <key> }} → returns an opaque __RS_<index>__ token;
+ *     the {name, key} it refers to is recorded in the returned config's
+ *     resolveSecretRefs map (actual resolution happens at runtime in syncOverlaySecret)
  */
 export function renderProviderConfig(
   config: ProviderConfig,
@@ -285,6 +295,8 @@ export function renderProviderConfig(
 ): ProviderConfig {
   const secrets = ctx.genSecrets
   const helmRelease = ctx.helmRelease ?? config.name
+  const resolveSecretRefs: Record<string, { name: string; key: string }> = {}
+  let resolveSecretCounter = 0
 
   // First pass: generate secrets and collect .helm.values paths
   // We render values recursively, tracking which paths we hit for .helm.values.* resolution.
@@ -331,10 +343,17 @@ export function renderProviderConfig(
     result = result.replace(/\{\{\s*provider\s*\}\}/g, ctx.provider)
     result = result.replace(/\{\{\s*namespace\s*\}\}/g, ctx.namespace)
 
-    // Replace {{ resolveSecret <name> <key> }} with placeholder
+    // Replace {{ resolveSecret <name> <key> }} with an opaque, index-based token.
+    // The name/key are recorded in resolveSecretRefs (keyed by the token) rather
+    // than encoded into the token string itself, so resolution is unambiguous
+    // regardless of what characters (including "__") appear in name or key.
     result = result.replace(
       /\{\{\s*resolveSecret\s+(\S+)\s+(\S+)\s*\}\}/g,
-      (_: string, secretName: string, secretKey: string) => `__RS_${secretName}_${secretKey}__`
+      (_: string, secretName: string, secretKey: string) => {
+        const token = `__RS_${resolveSecretCounter++}__`
+        resolveSecretRefs[token] = { name: secretName, key: secretKey }
+        return token
+      }
     )
 
     return result
@@ -359,6 +378,7 @@ export function renderProviderConfig(
 
   return {
     ...config,
+    resolveSecretRefs,
     helm: config.helm ? {
       ...config.helm,
       values: (renderedValues ?? {}) as Record<string, unknown>,
