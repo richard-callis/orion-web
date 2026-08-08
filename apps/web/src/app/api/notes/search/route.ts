@@ -7,7 +7,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { generateEmbedding, vectorSearch } from '@/lib/embeddings'
+import { hybridSearch } from '@/lib/embeddings'
 import { requireServiceAuth } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
@@ -24,26 +24,19 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Generate embedding for the query
-    const result = await generateEmbedding(query)
-    if (!result) {
-      return NextResponse.json(
-        { error: 'No embedding provider configured. Add an OpenAI or Ollama model in ExternalModels.' },
-        { status: 503 },
-      )
-    }
-
-    // Vector search
-    const notes = await vectorSearch(result.vector, result.modelRef, limit)
+    // Hybrid search: dense pgvector cosine search + Postgres full-text
+    // search, fused via RRF. Falls back to keyword-only if no embedding
+    // provider is configured (model is then null in the response below).
+    const { modelRef, hits } = await hybridSearch(query, limit)
 
     // Trim content if includeContent is false
     const results = includeContent
-      ? notes
-      : notes.map(n => ({ ...n, content: n.content.slice(0, 500) }))
+      ? hits
+      : hits.map(n => ({ ...n, content: n.content.slice(0, 500) }))
 
     return NextResponse.json({
       query,
-      model: result.modelRef,
+      model: modelRef,
       results,
     })
   } catch (err) {
