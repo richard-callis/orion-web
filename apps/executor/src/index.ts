@@ -21,7 +21,7 @@ if (!ORION_EXECUTOR_TOKEN) {
 }
 
 const fastify = Fastify({ logger: true })
-const orionClient = new OrionClient(ORION_URL, ORION_GATEWAY_TOKEN)
+const orionClient = new OrionClient(ORION_URL, ORION_EXECUTOR_TOKEN)
 const vectorClient = new VectorClient(VECTOR_WEBHOOK_URL, HOST_AGENT_WEBHOOK_SECRET)
 
 // Track active polling tasks — key: executionId, value: AbortController
