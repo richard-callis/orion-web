@@ -4,7 +4,7 @@
 #   1. journald — SSH, sudo, PAM authentication failures
 #   2. Docker Events API — container lifecycle (OOM, die, kill, restart, start)
 #   3. Vault audit — unseal, token creation, policy changes
-#   4. Docker logs — Traefik access logs, Authentik auth events
+#   4. Docker logs — Traefik access logs
 #
 # Batches events over 5s / 100 events using reduce, builds a
 # { batch_id, hostname, events: [...] } envelope, signs with HMAC-SHA256,
@@ -57,12 +57,20 @@ include = ["/vault/audit/audit.log"]
 read_from = "end"
 data_dir = "/var/lib/vector"
 
-# ── Source 4: Docker logs (edge containers: traefik + authentik) ─────────────
+# ── Source 4: Docker logs (edge containers: traefik) ──────────────────────────
 # Collects stdout/stderr from the edge-proxy containers.
+#
+# authentik / authentik-worker were removed from include_containers: confirmed
+# via `docker ps -a` on prod that no such containers exist on this host.
+# Authentik is deployable as a k8s "provider" (see deploy/providers/authentik.json)
+# onto the Talos cluster, not as a docker-compose service on the Orion host —
+# it was never actually running here for docker_logs to pick up. Orion's own
+# app auth is Auth.js/NextAuth (apps/web), not a reverse-proxy-level service,
+# so there is currently nothing to replace these entries with.
 
 [sources.docker_edge_logs]
 type = "docker_logs"
-include_containers = ["traefik", "authentik", "authentik-worker"]
+include_containers = ["traefik"]
 
 # ── Source 5: UDM Pro syslog ─────────────────────────────────────────────────
 # Receives syslog from the UniFi Dream Machine Pro (UDP, port 5514).
@@ -177,7 +185,11 @@ source = """
 """
 
 # ── Transform 4: Edge Docker logs → structured event ────────────────────────
-# Parses Authentik and Traefik log lines.
+# Parses Traefik log lines. The "authentik" branch below is currently dead
+# code — docker_edge_logs no longer includes authentik/authentik-worker
+# containers (they don't exist on this host, see Source 4 above) — but is
+# left in place as harmless/inert in case an edge-level auth proxy is
+# reintroduced under that container name.
 
 [transforms.edge_to_event]
 type = "remap"
