@@ -8,6 +8,8 @@ interface Props {
   onClose?: () => void
 }
 
+interface Env { id: string; name: string; type: string }
+
 const CATEGORY_COLORS: Record<NovaCategory, string> = {
   Identity: 'bg-blue-500/20 text-blue-400',
   Storage: 'bg-purple-500/20 text-purple-400',
@@ -24,6 +26,8 @@ export function NovaBrowser({ onImport, onClose }: Props) {
   const [category, setCategory] = useState<string>('')
   const [importing, setImporting] = useState<string | null>(null)
   const [imported, setImported] = useState<string | null>(null)
+  const [environments, setEnvironments] = useState<Env[]>([])
+  const [envByNova, setEnvByNova] = useState<Record<string, string>>({})
 
   useEffect(() => {
     fetch('/api/novas')
@@ -33,10 +37,17 @@ export function NovaBrowser({ onImport, onClose }: Props) {
         setLoading(false)
       })
       .catch(() => setLoading(false))
+    fetch('/api/environments')
+      .then(r => r.json())
+      .then(data => setEnvironments(Array.isArray(data) ? data : []))
+      .catch(() => setEnvironments([]))
   }, [])
 
   const handleImport = async (nova: Nova) => {
     if (importing || imported) return
+    const isContent = nova.config?.type === 'content'
+    const environmentId = envByNova[nova.id]
+    if (isContent && !environmentId) return
     setImporting(nova.id)
     try {
       const res = await fetch(`/api/novas/${nova.id}/import`, {
@@ -45,6 +56,7 @@ export function NovaBrowser({ onImport, onClose }: Props) {
         body: JSON.stringify({
           agentName: nova.displayName,
           agentRole: nova.config?.type === 'agent' ? nova.description : undefined,
+          ...(isContent ? { environmentId } : {}),
         }),
       })
       if (!res.ok) throw new Error(await res.text())
@@ -161,10 +173,22 @@ export function NovaBrowser({ onImport, onClose }: Props) {
                   </div>
                 </div>
               </div>
+              {nova.config?.type === 'content' && (
+                <div className="mt-2">
+                  <select
+                    value={envByNova[nova.id] || ''}
+                    onChange={e => setEnvByNova(prev => ({ ...prev, [nova.id]: e.target.value }))}
+                    className="w-full px-2 py-1 text-[10px] rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+                  >
+                    <option value="">Select environment…</option>
+                    {environments.map(e => <option key={e.id} value={e.id}>{e.name} ({e.type})</option>)}
+                  </select>
+                </div>
+              )}
               <div className="mt-2">
                 <button
                   onClick={() => handleImport(nova)}
-                  disabled={importing === nova.id || imported === nova.id}
+                  disabled={importing === nova.id || imported === nova.id || (nova.config?.type === 'content' && !envByNova[nova.id])}
                   className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded text-xs transition-colors ${
                     imported === nova.id
                       ? 'bg-green-500/20 text-green-400'

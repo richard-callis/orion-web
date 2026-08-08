@@ -18,7 +18,7 @@ export interface NovaYaml {
   description?: string
   tags?: string[]
   category?: string
-  type?: 'service' | 'agent'
+  type?: 'service' | 'agent' | 'content'
   icon?: string
   helm?: {
     chart: string
@@ -30,6 +30,18 @@ export interface NovaYaml {
   namespaceLabels?: Record<string, Record<string, string>>
   postInstall?: Array<{ manifest: string }>
   setupNote?: string
+  /** content-type Novas only — see NovaConfig in ./nebula.ts */
+  contentSource?: {
+    gitUrl: string
+    branch: string
+    path: string
+  }
+  contentTarget?: {
+    namespace: string
+    deployment: string
+    mountPath: string
+    pvcSizeGi: number
+  }
 }
 
 // ── Public functions ──────────────────────────────────────────────────────────
@@ -150,5 +162,7 @@ function buildNovaConfig(yaml: NovaYaml): Record<string, any> {
     ...(yaml.icon ? { icon: yaml.icon } : {}),
     ...(yaml.namespaceLabels ? { namespaceLabels: yaml.namespaceLabels } : {}),
     ...(yaml.setupNote ? { setupNote: yaml.setupNote } : {}),
+    ...(yaml.contentSource ? { contentSource: yaml.contentSource } : {}),
+    ...(yaml.contentTarget ? { contentTarget: yaml.contentTarget } : {}),
   }
 }

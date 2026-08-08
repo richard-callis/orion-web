@@ -1,21 +1,25 @@
 /**
  * Nebula — Central service catalog (Nova registry).
  *
- * A Nova is a self-contained definition for either:
+ * A Nova is a self-contained definition for one of:
  *   - An AI Agent (system prompt, tools, context config)
  *   - A service to deploy to the cluster (Helm chart, manifests, config)
+ *   - Content to sync into a running deployment (a PVC + sync CronJob,
+ *     mounted at a path — e.g. course content for technical-training, kept
+ *     out of that app's Docker image on purpose)
  *
  * Sources (merged at runtime):
  *   1. Bundled — shipped in source (from provider-engine.ts BUNDLED_PROVIDERS)
  *   2. Remote — loaded from the orion-nub repo at build time
  *   3. User-created — stored in the database via /api/novas
+ *   4. Nebula — synced from a git-backed catalog (see nebula-loader.ts)
  */
 
 import { ProviderConfig, BUNDLED_PROVIDERS, getProviderSync, getProvider } from './provider-engine'
 
 // ── Nova types ──────────────────────────────────────────────────────────────────
 
-export type NovaType = 'agent' | 'service'
+export type NovaType = 'agent' | 'service' | 'content'
 
 export type NovaCategory =
   | 'Identity'
@@ -55,6 +59,21 @@ export interface NovaConfig {
   systemPrompt?: string
   /** Agent context config (for agent-type Novas) */
   contextConfig?: Record<string, unknown>
+  /** Where the real files live (for content-type Novas) */
+  contentSource?: {
+    gitUrl: string
+    branch: string
+    /** Path within contentSource.gitUrl holding the files to sync */
+    path: string
+  }
+  /** Where the synced files should land (for content-type Novas) */
+  contentTarget?: {
+    namespace: string
+    deployment: string
+    /** Absolute mount path inside the target container (e.g. "/app/src/content") */
+    mountPath: string
+    pvcSizeGi: number
+  }
 }
 
 export interface Nova {
