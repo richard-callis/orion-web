@@ -43,6 +43,17 @@ services:
       EMBED_TRIGGER_TOKEN: ${EMBED_TRIGGER_TOKEN:-}
       # Service token for gateway↔ORION authentication (SOC2: [AC-001])
       ORION_GATEWAY_TOKEN: ${ORION_GATEWAY_TOKEN:-}
+      # Service token for executor↔ORION authentication (middleware.ts checks this
+      # against the executor's x-executor-token header on /api/executions). Missing
+      # here means process.env.ORION_EXECUTOR_TOKEN is undefined in this container,
+      # so middleware's `executorToken && timingSafeCompare(...)` guard is always
+      # false — the executor-token auth path can never succeed regardless of what
+      # token the executor sends. It was wired to `gateway` and `orion-executor`
+      # but never to `orion` itself. Confirmed live: this container has no
+      # ORION_EXECUTOR_TOKEN in its environment at all (checked via docker exec
+      # printenv), which is why every executor→Orion /api/executions call still
+      # fails auth even after the token-mixup fix in apps/executor (#714).
+      ORION_EXECUTOR_TOKEN: ${ORION_EXECUTOR_TOKEN}
       # Shared secret for gateway-to-web security audit channel (PR4)
       GATEWAY_AUDIT_SECRET: ${GATEWAY_AUDIT_SECRET:-}
       # Shared HMAC secret for Falco webhook ingest (Phase 2 PR6/PR7).
