@@ -81,8 +81,13 @@ export class OrionClient {
   }
 
   async getSystemSetting(key: string): Promise<string | null> {
+    // Same auth gap as notifyRoom: non-public keys require requireServiceAuth (session-or-
+    // gateway), which x-executor-token does not satisfy — /api/system-settings isn't in the
+    // x-executor-token-scoped path list. Send the gateway Bearer token, same as notifyRoom.
     try {
-      const response = await this.client.get(`/api/system-settings/${encodeURIComponent(key)}`)
+      const response = await this.client.get(`/api/system-settings/${encodeURIComponent(key)}`, {
+        headers: { Authorization: `Bearer ${this.gatewayToken}` },
+      })
       return response.data?.value
     } catch (error) {
       console.error(`Failed to get system setting ${key}:`, error)
