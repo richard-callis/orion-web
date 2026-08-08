@@ -25,6 +25,7 @@ import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, inval
 import { compactRoom, publishCompactionWarning, publishTokenUpdate } from './compaction'
 import { recordTokenUsage } from './token-budget'
 import { auditToolCall } from './security/audit-emitter'
+import { resolveRoomEnvironment, buildRoomEnvironmentBlock } from './room-environment'
 import { redactSecrets } from './redact'
 import { getPrompt } from './system-prompts'
 import type { AgentGateway } from './agent-gateway'
@@ -753,6 +754,12 @@ export async function triggerRoomAgentReplies(
   // delegate to specialists or answer directly.
   const roomMeta = (room?.metadata ?? {}) as Record<string, unknown>
   const ringLeaderId = roomMeta?.ringLeaderAgentId as string | undefined
+  // Room ↔ environment binding — auto-selects when exactly one environment exists.
+  // The resulting block either pins env-scoped tool calls to the room's environment
+  // or directs the agent to ask the user for one on its first reply. Built once and
+  // shared by every agent triggered in this turn.
+  const roomEnvironment = await resolveRoomEnvironment(roomId, room?.environmentId ?? null)
+  const environmentBlock = await buildRoomEnvironmentBlock(roomEnvironment)
   const activeGoalRecord = await prisma.roomGoal.findFirst({
     where: { roomId, status: 'active' },
     orderBy: { createdAt: 'desc' },
@@ -916,7 +923,7 @@ export async function triggerRoomAgentReplies(
         buildAgentLocalContext(agent.id),
         buildRoomLocalContext(roomId),
       ])
-      const contextParts = [personaPrompt]
+      const contextParts = [personaPrompt, environmentBlock]
       if (agentContext)      contextParts.push(agentContext)
       if (agentLocalContext) contextParts.push(agentLocalContext)
       if (roomLocalContext)  contextParts.push(roomLocalContext)

@@ -157,6 +157,7 @@ model Environment {
   securityEvents           SecurityEvent[]
   securityConfigs          SecurityConfig[]
   nebulaInstances          NebulaInstance[]
+  chatRooms                ChatRoom[]                @relation("ChatRoomEnvironment")
   evals                    Eval[]
   agentScores              AgentScore[]
   incidents                Incident[]
@@ -866,6 +867,10 @@ model ChatRoom {
   updatedAt   DateTime @updatedAt
   tokenCount  Int      @default(0) // rolling prompt_tokens from last LLM turn
   tokenLimit  Int? // override context limit; null = auto-discover from model
+  // Environment this room's agents operate against. Auto-selected when exactly one
+  // environment exists; when null, agents must ask the user before env-scoped actions.
+  environmentId String?
+  environment   Environment? @relation("ChatRoomEnvironment", fields: [environmentId], references: [id], onDelete: SetNull)
 
   members       ChatRoomMember[]
   messages      ChatMessage[]
@@ -874,6 +879,7 @@ model ChatRoom {
   goals         RoomGoal[]
 
   @@unique([featureId])
+  @@index([environmentId])
   @@map("chat_rooms")
 }
 
