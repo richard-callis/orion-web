@@ -289,6 +289,19 @@ function ownerFilterSql(callerId: string | undefined, noteAlias: string): Prisma
   return Prisma.sql`AND (${Prisma.raw(noteAlias)}."createdBy" IS NULL OR ${Prisma.raw(noteAlias)}."createdBy" = ${callerId})`
 }
 
+/**
+ * Prisma Client query-builder equivalent of `ownerFilterSql`, for callers
+ * (e.g. the `knowledge_graph` tool) that build their `Note` query with the
+ * Prisma Client fluent API rather than `$queryRaw`. Same semantics:
+ * `undefined` callerId means trusted/unscoped (no filter — spread yields
+ * nothing); a string restricts to that user's own notes plus unowned/shared
+ * (`createdBy: null`) notes.
+ */
+export function ownerFilterWhere(callerId: string | undefined): Prisma.NoteWhereInput {
+  if (callerId === undefined) return {}
+  return { OR: [{ createdBy: null }, { createdBy: callerId }] }
+}
+
 // ── Vector Search ────────────────────────────────────────────────────────────
 
 /**

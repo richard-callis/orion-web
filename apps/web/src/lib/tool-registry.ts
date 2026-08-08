@@ -11,7 +11,7 @@
 
 import { prisma } from '@/lib/db'
 import { getDefaultModelId } from '@/lib/default-model'
-import { hybridSearch } from '@/lib/embeddings'
+import { hybridSearch, ownerFilterWhere } from '@/lib/embeddings'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { writeFileSync, unlinkSync, mkdtempSync, rmdirSync } from 'fs'
@@ -2746,22 +2746,33 @@ registerTool({
   parallelSafe: true,
   availableIn: 'both',
   category: 'knowledge',
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const { threshold = 0.5, includeContent = false } =
       args as { threshold?: number; includeContent?: boolean }
 
-    const [notes, semanticEdges] = await Promise.all([
-      prisma.note.findMany({
-        select: { id: true, title: true, type: true, folder: true, content: true },
-        orderBy: { title: 'asc' },
-      }),
-      prisma.semanticConnection.findMany({
-        where: { score: { gte: threshold } },
-        select: { sourceNoteId: true, targetNoteId: true, score: true },
-        orderBy: { score: 'desc' },
-        take: 200,
-      }),
-    ])
+    // SOC2: same per-user note scoping as knowledge_search — see
+    // ownerFilterWhere/ownerFilterSql in lib/embeddings.ts. ctx.userId is
+    // only set for calls made on behalf of a specific logged-in user;
+    // agent-driven calls (MCP, room-agents) leave it unset and stay
+    // trusted/unscoped by design.
+    const notes = await prisma.note.findMany({
+      where: ownerFilterWhere(ctx.userId),
+      select: { id: true, title: true, type: true, folder: true, content: true },
+      orderBy: { title: 'asc' },
+    })
+    const noteIds = notes.map((n: any) => n.id)
+    // Scope semantic edges to notes the caller can actually see on both
+    // ends — otherwise an edge to/from an out-of-scope note would either
+    // leak that note's id or waste the `take: 200` budget on edges the
+    // caller can't use.
+    const semanticEdges = noteIds.length
+      ? await prisma.semanticConnection.findMany({
+          where: { score: { gte: threshold }, sourceNoteId: { in: noteIds }, targetNoteId: { in: noteIds } },
+          select: { sourceNoteId: true, targetNoteId: true, score: true },
+          orderBy: { score: 'desc' },
+          take: 200,
+        })
+      : []
 
     const noteByTitle = new Map(notes.map((n: any) => [n.title.toLowerCase(), n.title]))
     const wikilinkEdges: Array<{ from: string; to: string }> = []
