@@ -166,11 +166,17 @@ services:
       GITEA__service__REQUIRE_SIGNIN_VIEW: "true"
       GITEA__service__DISABLE_REGISTRATION: "true"
       GITEA__service__ALLOW_ONLY_EXTERNAL_REGISTRATION: "false"
+      GITEA__oauth2_client__ENABLE_AUTO_REGISTRATION: "true"
     volumes:
       - gitea-data:/data
     ports:
       - "2222:22"
       - "3002:3000"
+    extra_hosts:
+      # Authentik (auth.khalisio.com) sits behind Cloudflare's bot-challenge edge,
+      # which rejects Gitea's server-to-server OIDC discovery/token requests with a 403.
+      # Route directly to the cluster's MetalLB ingress IP instead.
+      - "auth.khalisio.com:10.4.4.101"
     labels:
       traefik.enable: "false"
     deploy:
