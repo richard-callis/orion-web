@@ -2,7 +2,7 @@
  * Tests for security-retention-daily.
  *
  * Covers:
- * - ensureSecurityRetentionJobScheduled: sets up cron + fires startup catch-up
+ * - ensureSecurityRetentionJobScheduled: sets up cron + fires a deduplicated startup catch-up
  * - runSecurityRetentionJob: verifies deleteMany calls with correct cutoffs
  * - runSecurityRetentionManual: delegates to startJob
  */
@@ -44,10 +44,12 @@ vi.mock('@/lib/db', () => ({
 
 vi.mock('@/lib/job-runner', () => ({
   startJob: vi.fn().mockResolvedValue('job-id'),
+  startJobOnce: vi.fn().mockResolvedValue('job-id'),
+  utcDateKey: () => '2026-09-26',
 }))
 
 import { prisma } from '@/lib/db'
-import { startJob } from '@/lib/job-runner'
+import { startJob, startJobOnce } from '@/lib/job-runner'
 import {
   ensureSecurityRetentionJobScheduled,
   runSecurityRetentionJob,
@@ -60,20 +62,34 @@ beforeEach(() => {
 })
 
 describe('ensureSecurityRetentionJobScheduled', () => {
-  // The module guards against double registration, so only the first call in
-  // this file does anything — assert everything off that one call.
-  it('registers a cron schedule and fires a startup catch-up via startJob', () => {
-    ensureSecurityRetentionJobScheduled()
+  it('registers a daily cron and a startup catch-up deduplicated per UTC day, once', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-26T12:00:00Z'))
+    const task = { stop: vi.fn() }
+    ;(globalThis as any).__cronScheduleMock.mockReturnValue(task)
+
+    expect(ensureSecurityRetentionJobScheduled()).toBe(task)
     expect((globalThis as any).__cronScheduleMock).toHaveBeenCalledWith(
       '0 4 * * *',
       expect.any(Function),
     )
-    expect(startJob).toHaveBeenCalledWith(
+    expect(startJobOnce).toHaveBeenCalledWith(
       'security-retention-daily',
       'Security retention: startup catch-up',
+      'security-retention-daily:2026-09-26',
       {},
       expect.any(Function),
     )
+
+    // The cron tick uses the same per-day key, so it can't double-run the job.
+    const tick = (globalThis as any).__cronScheduleMock.mock.calls[0][1] as () => void
+    tick()
+    expect(vi.mocked(startJobOnce).mock.calls[1][2]).toBe('security-retention-daily:2026-09-26')
+
+    // Registration itself is idempotent within a process.
+    expect(ensureSecurityRetentionJobScheduled()).toBe(task)
+    expect((globalThis as any).__cronScheduleMock).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
   })
 })
 

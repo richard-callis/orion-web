@@ -243,25 +243,37 @@ export async function embedNote(
  * part of Dream's own scheduled extraction/synthesis/pruning cycle — so it is
  * NOT attributed to Dream's token budget.
  */
-export async function embedAllNotes(): Promise<{ embedded: number; failed: number }> {
-  const notes = await prisma.note.findMany({
-    select: { id: true, title: true, content: true },
-  })
+// Page size for whole-table backfills — never hold every note (with its full
+// content) in memory at once.
+const BACKFILL_PAGE_SIZE = 100
 
+export async function embedAllNotes(): Promise<{ embedded: number; failed: number }> {
   let embedded = 0
   let failed = 0
 
-  for (const note of notes) {
-    try {
-      const ok = await embedNote(note)
-      if (ok) embedded++
-      else failed++
-      // Rate-limit: small delay between API calls
-      await new Promise(r => setTimeout(r, 100))
-    } catch (err) {
-      console.error(`[embeddings] embedNote(${note.id}) failed:`, err instanceof Error ? err.message : err)
-      failed++
+  for (let cursor: string | undefined; ;) {
+    const notes = await prisma.note.findMany({
+      select: { id: true, title: true, content: true },
+      orderBy: { id: 'asc' },
+      take: BACKFILL_PAGE_SIZE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    })
+    if (notes.length === 0) break
+    cursor = notes[notes.length - 1].id
+
+    for (const note of notes) {
+      try {
+        const ok = await embedNote(note)
+        if (ok) embedded++
+        else failed++
+        // Rate-limit: small delay between API calls
+        await new Promise(r => setTimeout(r, 100))
+      } catch (err) {
+        console.error(`[embeddings] embedNote(${note.id}) failed:`, err instanceof Error ? err.message : err)
+        failed++
+      }
     }
+    if (notes.length < BACKFILL_PAGE_SIZE) break
   }
 
   return { embedded, failed }
@@ -664,8 +676,10 @@ export async function computeSemanticEdges(
     LIMIT ${topN}
   `
 
-  for (const row of similar) {
-    await prisma.semanticConnection.upsert({
+  if (similar.length === 0) return
+  // One transaction for the whole edge set instead of a round-trip per edge.
+  await prisma.$transaction(similar.map(row =>
+    prisma.semanticConnection.upsert({
       where: {
         sourceNoteId_targetNoteId: {
           sourceNoteId: noteId,
@@ -678,8 +692,8 @@ export async function computeSemanticEdges(
         targetNoteId: row.targetNoteId,
         score: row.score,
       },
-    })
-  }
+    }),
+  ))
 }
 
 // ── RAG Context Retrieval ─────────────────────────────────────────────────────
@@ -814,22 +828,30 @@ export async function computeAllSemanticEdges(topN: number = 5): Promise<{
   computed: number
   failed: number
 }> {
-  const embeddings = await prisma.noteEmbedding.findMany({
-    select: { noteId: true },
-  })
-
   let computed = 0
   let failed = 0
 
-  for (const emb of embeddings) {
-    try {
-      await computeSemanticEdges(emb.noteId, topN)
-      computed++
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`computeSemanticEdges(${emb.noteId}) failed: ${msg}`)
-      failed++
+  for (let cursor: string | undefined; ;) {
+    const embeddings = await prisma.noteEmbedding.findMany({
+      select: { noteId: true },
+      orderBy: { noteId: 'asc' },
+      take: BACKFILL_PAGE_SIZE,
+      ...(cursor ? { cursor: { noteId: cursor }, skip: 1 } : {}),
+    })
+    if (embeddings.length === 0) break
+    cursor = embeddings[embeddings.length - 1].noteId
+
+    for (const emb of embeddings) {
+      try {
+        await computeSemanticEdges(emb.noteId, topN)
+        computed++
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error(`computeSemanticEdges(${emb.noteId}) failed: ${msg}`)
+        failed++
+      }
     }
+    if (embeddings.length < BACKFILL_PAGE_SIZE) break
   }
 
   return { computed, failed }
