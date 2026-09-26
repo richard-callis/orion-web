@@ -16,6 +16,7 @@ import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { randomBytes } from 'crypto'
+import { revokeEnvironmentGitCredential } from '@/lib/environment-git-credentials'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // Require admin auth — only admins can rotate environment gateway tokens
@@ -42,6 +43,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     where: { id: (await params).id },
     data: { gatewayToken: newToken },
   })
+
+  // M2: rotate the gateway's repo-scoped git credential along with its token.
+  // The gateway exits on the 401 from its old token, restarts with the new one,
+  // and re-registers ArgoCD with a freshly minted credential.
+  await revokeEnvironmentGitCredential(env.id)
 
   // SOC2: [M-005] Audit log the token rotation
   void logAudit({

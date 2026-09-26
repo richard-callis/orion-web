@@ -177,9 +177,28 @@ model Environment {
   suppressions             Suppression[]
   toolExecutions           ToolExecution[]
   driftReports             DriftReport[]
+  gitCredential            EnvironmentGitCredential?
   creator                  User?                     @relation("EnvironmentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@index([createdBy])
+}
+
+/// M2: the git credential handed to this environment's gateway so ArgoCD can
+/// clone the env repo. Read-only and scoped to that one repo — never the
+/// org-wide provider token. Minted lazily by GET /api/environments/:id/git-provider,
+/// revoked when the gateway first joins or its token is rotated (the next fetch
+/// mints a fresh one), and revoked at the provider when the environment is deleted.
+model EnvironmentGitCredential {
+  id            String      @id @default(cuid())
+  environmentId String      @unique
+  provider      String // "gitea" | "github" | "gitlab"
+  kind          String // "https-token" | "ssh-key"
+  username      String
+  secret        String      @db.Text // encrypted (enc:v1:) token or private key
+  repoUrl       String // exact URL ArgoCD clones (matches the Application repoURL)
+  providerRef   Json // what to revoke at the provider
+  createdAt     DateTime    @default(now())
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
 }
 
 /// Tracks every PR opened by the GitOps loop — open, auto-merged, or awaiting review.

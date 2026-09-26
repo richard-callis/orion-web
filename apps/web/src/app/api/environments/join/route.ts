@@ -15,6 +15,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/db'
 import { randomBytes, createHash } from 'crypto'
 import { logAudit } from '@/lib/audit'
+import { revokeEnvironmentGitCredential } from '@/lib/environment-git-credentials'
 
 function hashFingerprint(machineId: string): string {
   return createHash('sha256').update(machineId).digest('hex')
@@ -127,6 +128,12 @@ export async function POST(req: NextRequest) {
     // Another concurrent request already consumed this token
     return NextResponse.json({ error: 'Join token already used' }, { status: 409 })
   }
+
+  // M2: a new gateway joined — rotate its repo-scoped git credential. Revoking
+  // here means the gateway's first git-provider fetch mints a fresh one, and a
+  // previous gateway for this environment loses git access. (An idempotent
+  // re-join by the same machine, above, keeps the current credential.)
+  await revokeEnvironmentGitCredential(env.id)
 
   console.log(`[join] Gateway registered for environment "${env.name}" (${env.id})${fingerprint ? ' with fingerprint' : ' (no fingerprint)'}`)
 

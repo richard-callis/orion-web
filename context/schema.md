@@ -4,11 +4,11 @@
 > Migration workflow: `apps/web/prisma/MIGRATIONS.md`.
 > Referenced by: [[web-call-graph]], [[api-routes]]
 
-96 models, 8 enums.
+97 models, 8 enums.
 
 ## Index
 
-[Conversation](#conversation) · [Message](#message) · [ClaudeInvocation](#claudeinvocation) · [Memory](#memory) · [Agent](#agent) · [AgentTokenUsage](#agenttokenusage) · [Environment](#environment) · [GitOpsPR](#gitopspr) · [McpTool](#mcptool) · [AgentEnvironment](#agentenvironment) · [EnvironmentJoinToken](#environmentjointoken) · [AgentMessage](#agentmessage) · [Epic](#epic) · [Feature](#feature) · [Task](#task) · [FederatedDispatch](#federateddispatch) · [TaskEvent](#taskevent) · [AuditLog](#auditlog) · [SavedView](#savedview) · [SystemSetting](#systemsetting) · [SystemPrompt](#systemprompt) · [Note](#note) · [NoteEmbedding](#noteembedding) · [SemanticConnection](#semanticconnection) · [User](#user) · [ApiKey](#apikey) · [Session](#session) · [VerificationToken](#verificationtoken) · [Bug](#bug) · [ExternalModel](#externalmodel) · [OIDCProvider](#oidcprovider) · [ToolGroup](#toolgroup) · [ToolGroupTool](#toolgrouptool) · [AgentGroup](#agentgroup) · [AgentGroupMember](#agentgroupmember) · [AgentGroupToolAccess](#agentgrouptoolaccess) · [ToolAgentRestriction](#toolagentrestriction) · [EnvironmentUserTier](#environmentusertier) · [ToolApprovalRequest](#toolapprovalrequest) · [ToolExecutionGrant](#toolexecutiongrant) · [Domain](#domain) · [DnsRecord](#dnsrecord) · [IngressPoint](#ingresspoint) · [IngressRoute](#ingressroute) · [BackgroundJob](#backgroundjob) · [IngressMiddleware](#ingressmiddleware) · [Nova](#nova) · [NovaDeployment](#novadeployment) · [NovaRevision](#novarevision) · [ChatRoom](#chatroom) · [RoomGoal](#roomgoal) · [ChatRoomMember](#chatroommember) · [ChatMessage](#chatmessage) · [ManagedSecret](#managedsecret) · [SecurityEvent](#securityevent) · [SecurityConfig](#securityconfig) · [Incident](#incident) · [ContainmentRequest](#containmentrequest) · [ActionAudit](#actionaudit) · [ActionPolicy](#actionpolicy) · [CorrelationRule](#correlationrule) · [SourceHealth](#sourcehealth) · [EnvironmentSourceHealth](#environmentsourcehealth) · [VulnerabilityFinding](#vulnerabilityfinding) · [VulnerabilityScan](#vulnerabilityscan) · [Suppression](#suppression) · [AgentProfile](#agentprofile) · [RoomKnowledge](#roomknowledge) · [AgentKnowledge](#agentknowledge) · [NovaDefinition](#novadefinition) · [NebulaInstance](#nebulainstance) · [NebulaEmbedding](#nebulaembedding) · [HookExecutionLog](#hookexecutionlog) · [SkillExecutionLog](#skillexecutionlog) · [AgentTrace](#agenttrace) · [Eval](#eval) · [Ruleset](#ruleset) · [Nebula](#nebula) · [AgentScore](#agentscore) · [Investigation](#investigation) · [InvestigationNote](#investigationnote) · [InvestigationObservable](#investigationobservable) · [InvestigationTimeline](#investigationtimeline) · [InvestigationAudit](#investigationaudit) · [TaskCheckpoint](#taskcheckpoint) · [ToolExecution](#toolexecution) · [EvalSuite](#evalsuite) · [EvalCase](#evalcase) · [EvalRun](#evalrun) · [EvalCaseResult](#evalcaseresult) · [DriftReport](#driftreport) · [ScheduledTask](#scheduledtask) · [WebhookTrigger](#webhooktrigger) · [WebhookDelivery](#webhookdelivery) · [JobRun](#jobrun) · [NotificationChannel](#notificationchannel)
+[Conversation](#conversation) · [Message](#message) · [ClaudeInvocation](#claudeinvocation) · [Memory](#memory) · [Agent](#agent) · [AgentTokenUsage](#agenttokenusage) · [Environment](#environment) · [EnvironmentGitCredential](#environmentgitcredential) · [GitOpsPR](#gitopspr) · [McpTool](#mcptool) · [AgentEnvironment](#agentenvironment) · [EnvironmentJoinToken](#environmentjointoken) · [AgentMessage](#agentmessage) · [Epic](#epic) · [Feature](#feature) · [Task](#task) · [FederatedDispatch](#federateddispatch) · [TaskEvent](#taskevent) · [AuditLog](#auditlog) · [SavedView](#savedview) · [SystemSetting](#systemsetting) · [SystemPrompt](#systemprompt) · [Note](#note) · [NoteEmbedding](#noteembedding) · [SemanticConnection](#semanticconnection) · [User](#user) · [ApiKey](#apikey) · [Session](#session) · [VerificationToken](#verificationtoken) · [Bug](#bug) · [ExternalModel](#externalmodel) · [OIDCProvider](#oidcprovider) · [ToolGroup](#toolgroup) · [ToolGroupTool](#toolgrouptool) · [AgentGroup](#agentgroup) · [AgentGroupMember](#agentgroupmember) · [AgentGroupToolAccess](#agentgrouptoolaccess) · [ToolAgentRestriction](#toolagentrestriction) · [EnvironmentUserTier](#environmentusertier) · [ToolApprovalRequest](#toolapprovalrequest) · [ToolExecutionGrant](#toolexecutiongrant) · [Domain](#domain) · [DnsRecord](#dnsrecord) · [IngressPoint](#ingresspoint) · [IngressRoute](#ingressroute) · [BackgroundJob](#backgroundjob) · [IngressMiddleware](#ingressmiddleware) · [Nova](#nova) · [NovaDeployment](#novadeployment) · [NovaRevision](#novarevision) · [ChatRoom](#chatroom) · [RoomGoal](#roomgoal) · [ChatRoomMember](#chatroommember) · [ChatMessage](#chatmessage) · [ManagedSecret](#managedsecret) · [SecurityEvent](#securityevent) · [SecurityConfig](#securityconfig) · [Incident](#incident) · [ContainmentRequest](#containmentrequest) · [ActionAudit](#actionaudit) · [ActionPolicy](#actionpolicy) · [CorrelationRule](#correlationrule) · [SourceHealth](#sourcehealth) · [EnvironmentSourceHealth](#environmentsourcehealth) · [VulnerabilityFinding](#vulnerabilityfinding) · [VulnerabilityScan](#vulnerabilityscan) · [Suppression](#suppression) · [AgentProfile](#agentprofile) · [RoomKnowledge](#roomknowledge) · [AgentKnowledge](#agentknowledge) · [NovaDefinition](#novadefinition) · [NebulaInstance](#nebulainstance) · [NebulaEmbedding](#nebulaembedding) · [HookExecutionLog](#hookexecutionlog) · [SkillExecutionLog](#skillexecutionlog) · [AgentTrace](#agenttrace) · [Eval](#eval) · [Ruleset](#ruleset) · [Nebula](#nebula) · [AgentScore](#agentscore) · [Investigation](#investigation) · [InvestigationNote](#investigationnote) · [InvestigationObservable](#investigationobservable) · [InvestigationTimeline](#investigationtimeline) · [InvestigationAudit](#investigationaudit) · [TaskCheckpoint](#taskcheckpoint) · [ToolExecution](#toolexecution) · [EvalSuite](#evalsuite) · [EvalCase](#evalcase) · [EvalRun](#evalrun) · [EvalCaseResult](#evalcaseresult) · [DriftReport](#driftreport) · [ScheduledTask](#scheduledtask) · [WebhookTrigger](#webhooktrigger) · [WebhookDelivery](#webhookdelivery) · [JobRun](#jobrun) · [NotificationChannel](#notificationchannel)
 
 ## Models
 
@@ -183,9 +183,25 @@
 | suppressions | → Suppression[] |  |  |
 | toolExecutions | → ToolExecution[] |  |  |
 | driftReports | → DriftReport[] |  |  |
+| gitCredential | → EnvironmentGitCredential? |  |  |
 | creator | → User? | `@relation("EnvironmentCreator", fields: [createdBy], references: [id], onDelete: SetNull)` |  |
 
 `@@index([createdBy])`
+
+### EnvironmentGitCredential
+
+| Field | Type | Attributes | Notes |
+|---|---|---|---|
+| id | String | `@id @default(cuid())` |  |
+| environmentId | String | `@unique` |  |
+| provider | String |  | "gitea" \| "github" \| "gitlab" |
+| kind | String |  | "https-token" \| "ssh-key" |
+| username | String |  |  |
+| secret | String | `@db.Text` | encrypted (enc:v1:) token or private key |
+| repoUrl | String |  | exact URL ArgoCD clones (matches the Application repoURL) |
+| providerRef | Json |  | what to revoke at the provider |
+| createdAt | DateTime | `@default(now())` |  |
+| environment | → Environment | `@relation(fields: [environmentId], references: [id], onDelete: Cascade)` |  |
 
 ### GitOpsPR
 
