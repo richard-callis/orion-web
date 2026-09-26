@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { Bell, Plus, Trash2, Send, X } from 'lucide-react'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 type Channel = {
   id: string
@@ -33,6 +34,7 @@ const TYPE_BADGE: Record<string, string> = {
 }
 
 export default function NotificationChannelsPage() {
+  const confirmDialog = useConfirm()
   const [channels, setChannels] = useState<Channel[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -78,7 +80,7 @@ export default function NotificationChannelsPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this notification channel?')) return
+    if (!(await confirmDialog({ title: 'Delete channel?', message: 'Delete this notification channel?', confirmLabel: 'Delete' }))) return
     await fetch(`/api/notification-channels/${id}`, { method: 'DELETE' })
     await load()
   }

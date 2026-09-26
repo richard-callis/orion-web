@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Send, Loader2, ClipboardCheck, Check, ChevronLeft, Bot, Square, Server, Eye } from 'lucide-react'
 
@@ -13,6 +13,8 @@ const PROVIDER_CONFIG: Record<string, { label: string; activeClass: string; mode
 const PROVIDER_ORDER = ['anthropic', 'google', 'ollama', 'openai', 'custom']
 import { MessageBubble } from './MessageBubble'
 import type { StreamChunk } from '@/lib/claude'
+import { readSSE } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -20,6 +22,15 @@ interface Message {
   toolCalls?: Array<{ tool: string; input: string; output?: string }>
   streaming?: boolean
 }
+
+/** Return a new array with the trailing assistant message replaced by `update(msg)`. */
+function withLastAssistant(prev: Message[], update: (msg: Message) => Message): Message[] {
+  const last = prev[prev.length - 1]
+  if (!last || last.role !== 'assistant') return prev
+  return [...prev.slice(0, -1), update(last)]
+}
+
+const CONVERSATION_CHANGED = 'conversation-changed'
 
 interface AppModel { id: string; name: string; provider: string; builtIn: boolean; modelId: string; isDefault: boolean }
 
@@ -44,6 +55,7 @@ interface Props {
 
 export function ChatWindow({ conversationId, onConversationCreated, onMobileBack }: Props) {
   const router = useRouter()
+  const toast = useToast()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [planTarget, setPlanTarget] = useState<PlanTarget | null>(null)
@@ -107,6 +119,9 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const nearBottomRef = useRef(true)
+  const scrollFrameRef = useRef<number | null>(null)
   const skipNextFetchRef = useRef(false)
   const autoSendRef = useRef<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -114,6 +129,14 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
 
   // Load conversation metadata + messages when conversationId changes
   useEffect(() => {
+    const justCreated = skipNextFetchRef.current
+    // A stream started in another conversation must not keep writing into this
+    // one. The exception is the conversation we just created from send().
+    if (!justCreated && abortRef.current) {
+      abortRef.current.abort(CONVERSATION_CHANGED)
+      abortRef.current = null
+      setStreaming(false)
+    }
     if (!conversationId) {
       setMessages([])
       setInput('')
@@ -129,6 +152,8 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
       skipNextFetchRef.current = false
       return
     }
+    let cancelled = false
+    nearBottomRef.current = true
     setLoading(true)
     setLoadError(null)
     Promise.all([
@@ -139,6 +164,7 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
       }),
     ])
       .then(([convo, msgs]: [{ metadata?: { initialContext?: string; planTarget?: PlanTarget; agentTarget?: AgentTarget; agentChat?: AgentChat; agentDraft?: boolean; ollamaModel?: string } } | null, Array<{ role: string; content: string; metadata?: { toolCalls?: Array<{ tool: string; input: string; output?: string }> } }>]) => {
+        if (cancelled) return
         const mapped = msgs.map(m => ({
           role: m.role as 'user' | 'assistant',
           content: m.content,
@@ -178,13 +204,33 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
           setAgentDraft(false)
         }
       })
-      .catch(err => setLoadError(err.message))
-      .finally(() => setLoading(false))
+      .catch(err => { if (!cancelled) setLoadError(err.message) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [conversationId])
 
+  // Abort any in-flight stream on unmount.
+  useEffect(() => () => { abortRef.current?.abort() }, [])
+
+  // Follow new content only while the user is already near the bottom, and at
+  // most once per animation frame (streaming updates arrive per token).
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    if (!nearBottomRef.current || scrollFrameRef.current !== null) return
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null
+      bottomRef.current?.scrollIntoView({ behavior: streaming ? 'auto' : 'smooth', block: 'end' })
+    })
+  }, [messages, streaming])
+
+  useEffect(() => () => {
+    if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current)
+  }, [])
+
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+  }, [])
 
   // Fire auto-send once loading is done and there's a pending initialContext
   useEffect(() => {
@@ -232,6 +278,7 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
 
     const userMsg: Message = { role: 'user', content: prompt }
     const assistantMsg: Message = { role: 'assistant', content: '', toolCalls: [], streaming: true }
+    nearBottomRef.current = true
     setMessages(prev => [...prev, userMsg, assistantMsg])
 
     try {
@@ -250,78 +297,55 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
 
       if (!resp.ok) throw new Error(`Chat request failed: ${resp.status}`)
       if (!resp.body) throw new Error('No response body')
-      const reader = resp.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
+      for await (const evt of readSSE(resp.body, abort.signal)) {
+        if (abort.signal.aborted) break
+        const event = evt.event as StreamChunk['type']
+        let data: StreamChunk
+        try { data = JSON.parse(evt.data) } catch { continue }
 
-        const lines = buffer.split('\n\n')
-        buffer = lines.pop() ?? ''
-
-        for (const block of lines) {
-          const eventLine = block.split('\n').find(l => l.startsWith('event:'))
-          const dataLine  = block.split('\n').find(l => l.startsWith('data:'))
-          if (!eventLine || !dataLine) continue
-
-          const event = eventLine.replace('event: ', '').trim() as StreamChunk['type']
-          const data: StreamChunk = JSON.parse(dataLine.replace('data: ', ''))
-
-          setMessages(prev => {
-            const msgs = [...prev]
-            const last = msgs[msgs.length - 1]
-            if (!last || last.role !== 'assistant') return prev
-
-            if (event === 'text' && data.content) {
-              last.content += data.content
-            } else if (event === 'tool_call') {
-              last.toolCalls = [...(last.toolCalls ?? []), { tool: data.tool!, input: data.input! }]
-            } else if (event === 'tool_result') {
-              const tc = last.toolCalls?.[last.toolCalls.length - 1]
-              if (tc) tc.output = data.output
-            } else if (event === 'done' || event === 'error') {
-              last.streaming = false
-              if (event === 'error') {
-                const raw = data.error ?? ''
-                const msg = raw.includes('authentication_error') || raw.includes('Invalid API key') || raw.includes('401')
-                  ? 'Authentication error — credentials need to be refreshed. Please contact your admin.'
-                  : raw.includes('exited with code')
-                  ? raw.replace(/^.*?(Invalid .+?)\s*·.*$/, '$1').trim() || 'Claude process failed — please try again.'
-                  : raw
-                last.content += `\n\n⚠ ${msg}`
-              }
-            }
-            return msgs
-          })
-        }
+        setMessages(prev => withLastAssistant(prev, last => {
+          if (event === 'text' && data.content) {
+            return { ...last, content: last.content + data.content }
+          }
+          if (event === 'tool_call') {
+            return { ...last, toolCalls: [...(last.toolCalls ?? []), { tool: data.tool!, input: data.input! }] }
+          }
+          if (event === 'tool_result') {
+            const calls = last.toolCalls ?? []
+            if (calls.length === 0) return last
+            const lastCall = calls[calls.length - 1]
+            return { ...last, toolCalls: [...calls.slice(0, -1), { ...lastCall, output: data.output }] }
+          }
+          if (event === 'done') return { ...last, streaming: false }
+          if (event === 'error') {
+            const raw = data.error ?? ''
+            const msg = raw.includes('authentication_error') || raw.includes('Invalid API key') || raw.includes('401')
+              ? 'Authentication error — credentials need to be refreshed. Please contact your admin.'
+              : raw.includes('exited with code')
+              ? raw.replace(/^.*?(Invalid .+?)\s*·.*$/, '$1').trim() || 'Claude process failed — please try again.'
+              : raw
+            return { ...last, streaming: false, content: last.content + `\n\n⚠ ${msg}` }
+          }
+          return last
+        }))
       }
     } catch (err) {
-      // Ignore abort errors — user cancelled intentionally
-      if (err instanceof Error && err.name === 'AbortError') {
-        // leave the partial response as-is
-      } else {
-        setMessages(prev => {
-          const msgs = [...prev]
-          const last = msgs[msgs.length - 1]
-          if (last?.role === 'assistant') {
-            last.streaming = false
-            last.content += `\n\n⚠ Error: ${err instanceof Error ? err.message : String(err)}`
-          }
-          return msgs
-        })
+      // Ignore aborts — the user pressed Stop or switched conversation.
+      if (!abort.signal.aborted && !(err instanceof Error && err.name === 'AbortError')) {
+        setMessages(prev => withLastAssistant(prev, last => ({
+          ...last,
+          streaming: false,
+          content: last.content + `\n\n⚠ Error: ${err instanceof Error ? err.message : String(err)}`,
+        })))
       }
     } finally {
-      abortRef.current = null
-      setStreaming(false)
-      setMessages(prev => {
-        const msgs = [...prev]
-        const last = msgs[msgs.length - 1]
-        if (last?.role === 'assistant') last.streaming = false
-        return msgs
-      })
+      // If the conversation changed, this stream no longer owns the view.
+      if (abort.signal.reason !== CONVERSATION_CHANGED) {
+        if (abortRef.current === abort) abortRef.current = null
+        setStreaming(false)
+        setMessages(prev => withLastAssistant(prev, last => (last.streaming ? { ...last, streaming: false } : last)))
+      }
     }
   }
 
@@ -376,7 +400,7 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
       router.push('/agents')
     } catch (err) {
       console.error('Failed to create agent:', err)
-      alert(`Failed to create agent: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      toast.error(`Failed to create agent: ${err instanceof Error ? err.message : 'Unknown error'}`)
       setCreatingAgent(false)
     }
   }
@@ -606,7 +630,7 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
         </div>
       )}
       {/* Messages */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
+      <div ref={scrollRef} onScroll={onScroll} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
         {loading && (
           <div className="flex items-center justify-center h-full text-text-muted">
             <Loader2 size={20} className="animate-spin" />

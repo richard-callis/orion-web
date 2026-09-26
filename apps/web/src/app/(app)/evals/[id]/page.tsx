@@ -2,6 +2,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Play, Plus, Trash2, FlaskConical } from 'lucide-react'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { RunStatusBadge } from '@/components/ui/Badge'
 
 interface AssertionDef {
   type: 'contains_text' | 'not_contains_text' | 'regex_match' | 'llm_judge'
@@ -55,6 +57,7 @@ const ASSERTION_TYPE_COLORS: Record<string, string> = {
 }
 
 export default function EvalSuiteDetailPage() {
+  const confirmDialog = useConfirm()
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const [suite, setSuite] = useState<EvalSuite | null>(null)
@@ -137,7 +140,7 @@ export default function EvalSuiteDetailPage() {
   }
 
   async function deleteCase(caseId: string) {
-    if (!confirm('Delete this case?')) return
+    if (!(await confirmDialog({ title: 'Delete case?', message: 'Delete this eval case?', confirmLabel: 'Delete' }))) return
     await fetch(`/api/eval-suites/${params.id}/cases/${caseId}`, { method: 'DELETE' })
     await loadSuite()
   }
@@ -147,16 +150,6 @@ export default function EvalSuiteDetailPage() {
     if (score >= 80) return 'text-green-400'
     if (score >= 50) return 'text-yellow-400'
     return 'text-red-400'
-  }
-
-  function statusBadge(status: string) {
-    const colors: Record<string, string> = {
-      completed: 'bg-green-500/20 text-green-400',
-      running: 'bg-blue-500/20 text-blue-400',
-      pending: 'bg-yellow-500/20 text-yellow-400',
-      failed: 'bg-red-500/20 text-red-400',
-    }
-    return `inline-flex px-2 py-0.5 rounded text-xs font-medium ${colors[status] ?? 'bg-bg-raised text-text-muted'}`
   }
 
   if (loading) return <div className="p-6 text-text-muted text-sm">Loading...</div>
@@ -367,7 +360,7 @@ export default function EvalSuiteDetailPage() {
                   </td>
                   <td className="py-2 pr-4 text-text-secondary">{run.agent?.name ?? run.agentId}</td>
                   <td className="py-2 pr-4">
-                    <span className={statusBadge(run.status)}>{run.status}</span>
+                    <RunStatusBadge status={run.status} />
                   </td>
                   <td className={`py-2 pr-4 text-right font-medium ${scoreColor(run.scoreTotal)}`}>
                     {run.scoreTotal !== null ? `${run.scoreTotal.toFixed(1)}%` : '--'}

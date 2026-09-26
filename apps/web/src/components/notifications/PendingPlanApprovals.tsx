@@ -1,14 +1,10 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Pause, Play, XCircle, X, Loader2, ChevronDown, ChevronUp, ShieldAlert, ShieldOff } from 'lucide-react'
+import { usePendingValidationTasks, type PendingValidationTask } from '@/hooks/usePendingValidationTasks'
 
-interface PendingTask {
-  id: string
-  title: string
-  status: string
-  metadata: Record<string, unknown> | null
-}
+type PendingTask = PendingValidationTask
 
 const RISK_COLORS: Record<string, string> = {
   low:      'text-status-healthy',
@@ -32,7 +28,13 @@ const RISK_BORDER: Record<string, string> = {
  * before resuming. Blocked steps are skipped by the agent when it resumes.
  */
 export function PendingPlanApprovals() {
-  const [tasks, setTasks]         = useState<PendingTask[]>([])
+  const { tasks: pending, mutate } = usePendingValidationTasks(15_000)
+  const tasks = pending.filter(t => {
+    const meta = (t.metadata ?? {}) as Record<string, unknown>
+    return meta.planApproved === false && meta.planRisk !== undefined
+  })
+  const removeTask = (id: string) =>
+    mutate(prev => prev?.filter(t => t.id !== id), { revalidate: false })
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
   const [acting, setActing]       = useState<string | null>(null)
   const [actionError, setActionError] = useState<Record<string, string>>({})
@@ -40,26 +42,6 @@ export function PendingPlanApprovals() {
   const [blockedSteps, setBlockedSteps] = useState<Record<string, Set<number>>>({})
   // Per-task: whether the steps panel is expanded
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-
-  const fetchPending = useCallback(async () => {
-    try {
-      const res = await fetch('/api/tasks?status=pending_validation')
-      if (!res.ok) throw new Error(`Request failed: ${res.status}`)
-      const data: PendingTask[] = await res.json()
-      setTasks(
-        (Array.isArray(data) ? data : []).filter(t => {
-          const meta = (t.metadata ?? {}) as Record<string, unknown>
-          return meta.planApproved === false && meta.planRisk !== undefined
-        })
-      )
-    } catch { /* silent */ }
-  }, [])
-
-  useEffect(() => {
-    fetchPending()
-    const timer = setInterval(fetchPending, 15_000)
-    return () => clearInterval(timer)
-  }, [fetchPending])
 
   const toggleStep = (taskId: string, stepIdx: number) => {
     setBlockedSteps(prev => {
@@ -89,7 +71,7 @@ export function PendingPlanApprovals() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ blockedSteps: blocked }),
       })
-      if (r.ok) setTasks(prev => prev.filter(t => t.id !== task.id))
+      if (r.ok) removeTask(task.id)
       else setActionError(prev => ({ ...prev, [task.id]: 'Failed to resume task' }))
     } catch { setActionError(prev => ({ ...prev, [task.id]: 'Network error' })) }
     finally { setActing(null) }
@@ -100,7 +82,7 @@ export function PendingPlanApprovals() {
     setActionError(prev => ({ ...prev, [task.id]: '' }))
     try {
       const r = await fetch(`/api/tasks/${task.id}/cancel`, { method: 'POST' })
-      if (r.ok) setTasks(prev => prev.filter(t => t.id !== task.id))
+      if (r.ok) removeTask(task.id)
       else setActionError(prev => ({ ...prev, [task.id]: 'Failed to cancel task' }))
     } catch { setActionError(prev => ({ ...prev, [task.id]: 'Network error' })) }
     finally { setActing(null) }

@@ -7,6 +7,7 @@ import { GitOpsPage } from '@/components/gitops/GitOpsPage'
 import { NodeGrid } from '@/components/infrastructure/NodeGrid'
 import { PodTable } from '@/components/infrastructure/PodTable'
 import type { CachedNode, CachedPod } from '@/lib/k8s'
+import { Dialog } from '@/components/ui/Dialog'
 
 type InfraTab = 'overview' | 'ingress' | 'storage' | 'secrets' | 'backups' | 'logs' | 'gitops' | 'alerts'
 
@@ -569,253 +570,251 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
 
       {/* Edit Secret Values Modal */}
       {editSecret && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setEditSecret(null)}>
-          <div
-            className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <Pencil size={14} className="text-accent" />
-                <span className="text-sm font-semibold text-text-primary">Update Secret Values</span>
-                <span className="font-mono text-xs text-text-muted">· {editSecret.name}</span>
-              </div>
-              <button onClick={() => setEditSecret(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
+        <Dialog
+          onClose={() => setEditSecret(null)}
+          label="Update secret values"
+          className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+        >
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <Pencil size={14} className="text-accent" />
+              <span className="text-sm font-semibold text-text-primary">Update Secret Values</span>
+              <span className="font-mono text-xs text-text-muted">· {editSecret.name}</span>
+            </div>
+            <button onClick={() => setEditSecret(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+            <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2.5 text-[10px] text-text-muted leading-relaxed">
+              Values are written <span className="text-accent font-semibold">directly to Vault</span> at <span className="font-mono text-text-secondary">{editSecret.remoteRef}</span> and are never stored in ORION.
+              Current values are in Vault — enter new values to overwrite them.
             </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-              <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2.5 text-[10px] text-text-muted leading-relaxed">
-                Values are written <span className="text-accent font-semibold">directly to Vault</span> at <span className="font-mono text-text-secondary">{editSecret.remoteRef}</span> and are never stored in ORION.
-                Current values are in Vault — enter new values to overwrite them.
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Secret Values</p>
+                <button
+                  onClick={() => setEditValues(prev => [...prev, { vaultKey: '', value: '', k8sKey: '' }])}
+                  className="inline-flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition-colors"
+                >
+                  <Plus size={10} /> Add key
+                </button>
               </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Secret Values</p>
-                  <button
-                    onClick={() => setEditValues(prev => [...prev, { vaultKey: '', value: '', k8sKey: '' }])}
-                    className="inline-flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition-colors"
-                  >
-                    <Plus size={10} /> Add key
-                  </button>
+              <div className="space-y-1.5">
+                <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 text-[10px] text-text-muted px-0.5">
+                  <span>Vault key</span>
+                  <span>New value <span className="text-accent">*</span></span>
+                  <span>K8s key (optional)</span>
+                  <span />
                 </div>
-                <div className="space-y-1.5">
-                  <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 text-[10px] text-text-muted px-0.5">
-                    <span>Vault key</span>
-                    <span>New value <span className="text-accent">*</span></span>
-                    <span>K8s key (optional)</span>
-                    <span />
+                {editValues.map((row, i) => (
+                  <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
+                    <input
+                      className="w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                      placeholder="password"
+                      value={row.vaultKey}
+                      onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, vaultKey: e.target.value } : r))}
+                    />
+                    <input
+                      className="w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                      type="password"
+                      placeholder="new value"
+                      value={row.value}
+                      onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, value: e.target.value } : r))}
+                      autoComplete="new-password"
+                    />
+                    <input
+                      className="w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                      placeholder={row.vaultKey || 'DB_PASSWORD'}
+                      value={row.k8sKey}
+                      onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, k8sKey: e.target.value } : r))}
+                    />
+                    <button
+                      onClick={() => setEditValues(prev => prev.filter((_, idx) => idx !== i))}
+                      disabled={editValues.length === 1}
+                      className="p-1 rounded text-text-muted hover:text-status-error transition-colors disabled:opacity-30"
+                    >
+                      <X size={12} />
+                    </button>
                   </div>
-                  {editValues.map((row, i) => (
-                    <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
-                      <input
-                        className="w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
-                        placeholder="password"
-                        value={row.vaultKey}
-                        onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, vaultKey: e.target.value } : r))}
-                      />
-                      <input
-                        className="w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
-                        type="password"
-                        placeholder="new value"
-                        value={row.value}
-                        onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, value: e.target.value } : r))}
-                        autoComplete="new-password"
-                      />
-                      <input
-                        className="w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
-                        placeholder={row.vaultKey || 'DB_PASSWORD'}
-                        value={row.k8sKey}
-                        onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, k8sKey: e.target.value } : r))}
-                      />
-                      <button
-                        onClick={() => setEditValues(prev => prev.filter((_, idx) => idx !== i))}
-                        disabled={editValues.length === 1}
-                        className="p-1 rounded text-text-muted hover:text-status-error transition-colors disabled:opacity-30"
-                      >
-                        <X size={12} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
+                ))}
               </div>
-            </div>
-
-            {editError && (
-              <div className="px-5 py-2 border-t border-status-error/30 bg-status-error/10 text-xs text-status-error flex items-center gap-2 flex-shrink-0">
-                <ServerCrash size={12} />
-                <span>{editError}</span>
-              </div>
-            )}
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle flex-shrink-0">
-              <button onClick={() => setEditSecret(null)} className="px-3 py-1.5 rounded text-xs border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
-                Cancel
-              </button>
-              <button onClick={handleEditSave} disabled={editSaving} className="px-4 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50 flex items-center gap-1.5 transition-colors">
-                {editSaving ? <RefreshCw size={11} className="animate-spin" /> : <KeyRound size={11} />}
-                {editSaving ? 'Writing to Vault…' : 'Write to Vault'}
-              </button>
             </div>
           </div>
-        </div>
+
+          {editError && (
+            <div className="px-5 py-2 border-t border-status-error/30 bg-status-error/10 text-xs text-status-error flex items-center gap-2 flex-shrink-0">
+              <ServerCrash size={12} />
+              <span>{editError}</span>
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle flex-shrink-0">
+            <button onClick={() => setEditSecret(null)} className="px-3 py-1.5 rounded text-xs border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+              Cancel
+            </button>
+            <button onClick={handleEditSave} disabled={editSaving} className="px-4 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50 flex items-center gap-1.5 transition-colors">
+              {editSaving ? <RefreshCw size={11} className="animate-spin" /> : <KeyRound size={11} />}
+              {editSaving ? 'Writing to Vault…' : 'Write to Vault'}
+            </button>
+          </div>
+        </Dialog>
       )}
 
       {/* Add Secret Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowModal(false)}>
-          <div
-            className="w-full max-w-xl bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Modal header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <KeyRound size={14} className="text-accent" />
-                <span className="text-sm font-semibold text-text-primary">Add External Secret</span>
-              </div>
-              <button onClick={() => setShowModal(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
+        <Dialog
+          onClose={() => setShowModal(false)}
+          label="Add external secret"
+          className="w-full max-w-xl bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+        >
+          {/* Modal header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <KeyRound size={14} className="text-accent" />
+              <span className="text-sm font-semibold text-text-primary">Add External Secret</span>
+            </div>
+            <button onClick={() => setShowModal(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
+          </div>
+
+          {/* Modal body */}
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+
+            {/* Info banner */}
+            <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2.5 text-[10px] text-text-muted leading-relaxed">
+              Secret values are written <span className="text-accent font-semibold">directly to Vault</span> and are never stored in ORION.
+              Only the path and key names are saved here. ESO then syncs the values into the cluster as a Kubernetes Secret automatically.
             </div>
 
-            {/* Modal body */}
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-
-              {/* Info banner */}
-              <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2.5 text-[10px] text-text-muted leading-relaxed">
-                Secret values are written <span className="text-accent font-semibold">directly to Vault</span> and are never stored in ORION.
-                Only the path and key names are saved here. ESO then syncs the values into the cluster as a Kubernetes Secret automatically.
-              </div>
-
-              {/* Identity */}
-              <div className="space-y-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Identity</p>
-                <div className="grid grid-cols-2 gap-3">
-                  {field('Secret Name *',
-                    <input className={inputCls} placeholder="my-app-db-secret" value={form.name}
-                      onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />,
-                    'ExternalSecret CRD name. Also becomes the K8s Secret name unless overridden below.'
-                  )}
-                  {field('Namespace *',
-                    <input className={inputCls} placeholder="default" value={form.namespace}
-                      onChange={e => setForm(f => ({ ...f, namespace: e.target.value }))} />,
-                    'Kubernetes namespace where the Secret will be created.'
-                  )}
-                </div>
-                {field('Description',
-                  <textarea className={`${inputCls} resize-none`} rows={2} placeholder="What does this secret contain? Who uses it?"
-                    value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+            {/* Identity */}
+            <div className="space-y-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Identity</p>
+              <div className="grid grid-cols-2 gap-3">
+                {field('Secret Name *',
+                  <input className={inputCls} placeholder="my-app-db-secret" value={form.name}
+                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />,
+                  'ExternalSecret CRD name. Also becomes the K8s Secret name unless overridden below.'
+                )}
+                {field('Namespace *',
+                  <input className={inputCls} placeholder="default" value={form.namespace}
+                    onChange={e => setForm(f => ({ ...f, namespace: e.target.value }))} />,
+                  'Kubernetes namespace where the Secret will be created.'
                 )}
               </div>
-
-              {/* Vault / Store */}
-              <div className="space-y-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Vault / Secret Store</p>
-                <div className="grid grid-cols-2 gap-3">
-                  {field('Secret Store Name',
-                    <input className={inputCls} placeholder="vault-backend" value={form.secretStore}
-                      onChange={e => setForm(f => ({ ...f, secretStore: e.target.value }))} />,
-                    'Name of the SecretStore or ClusterSecretStore resource in the cluster.'
-                  )}
-                  {field('Store Kind',
-                    <select className={selectCls} value={form.secretStoreKind}
-                      onChange={e => setForm(f => ({ ...f, secretStoreKind: e.target.value as typeof form.secretStoreKind }))}>
-                      <option value="ClusterSecretStore">ClusterSecretStore</option>
-                      <option value="SecretStore">SecretStore</option>
-                    </select>
-                  )}
-                </div>
-                {field('Vault Path *',
-                  <input className={inputCls} placeholder="myapp/db" value={form.remoteRef}
-                    onChange={e => setForm(f => ({ ...f, remoteRef: e.target.value }))} />,
-                  'KV v2 path relative to the "secret" mount (e.g. "myapp/db"). Values will be written here.'
-                )}
-              </div>
-
-              {/* Target & refresh */}
-              <div className="space-y-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Sync Options</p>
-                <div className="grid grid-cols-2 gap-3">
-                  {field('Target K8s Secret Name',
-                    <input className={inputCls} placeholder={form.name || 'same as name above'} value={form.targetSecretName}
-                      onChange={e => setForm(f => ({ ...f, targetSecretName: e.target.value }))} />,
-                    'Leave blank to use the same name as the ExternalSecret.'
-                  )}
-                  {field('Refresh Interval',
-                    <select className={selectCls} value={form.refreshInterval}
-                      onChange={e => setForm(f => ({ ...f, refreshInterval: e.target.value }))}>
-                      <option value="5m">5 minutes</option>
-                      <option value="15m">15 minutes</option>
-                      <option value="1h">1 hour</option>
-                      <option value="6h">6 hours</option>
-                      <option value="24h">24 hours</option>
-                      <option value="168h">1 week</option>
-                    </select>,
-                    'How often ESO re-syncs from Vault.'
-                  )}
-                </div>
-              </div>
-
-              {/* Secret values — written to Vault, never stored in DB */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Secret Values</p>
-                    <p className="text-[10px] text-text-muted mt-0.5">Sent directly to Vault · never stored in ORION</p>
-                  </div>
-                  <button onClick={addValueRow} className="inline-flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition-colors">
-                    <Plus size={10} /> Add key
-                  </button>
-                </div>
-                <div className="space-y-1.5">
-                  <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 text-[10px] text-text-muted px-0.5">
-                    <span>Vault key</span>
-                    <span>Value <span className="text-accent">*</span></span>
-                    <span>K8s key (optional)</span>
-                    <span />
-                  </div>
-                  {secretValues.map((row, i) => (
-                    <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
-                      <input className={inputCls} placeholder="password" value={row.vaultKey}
-                        onChange={e => updateValueRow(i, 'vaultKey', e.target.value)} />
-                      <input className={inputCls} type="password" placeholder="••••••••" value={row.value}
-                        onChange={e => updateValueRow(i, 'value', e.target.value)}
-                        autoComplete="new-password" />
-                      <input className={inputCls} placeholder={row.vaultKey || 'DB_PASSWORD'} value={row.k8sKey}
-                        onChange={e => updateValueRow(i, 'k8sKey', e.target.value)} />
-                      <button onClick={() => removeValueRow(i)} disabled={secretValues.length === 1}
-                        className="p-1 rounded text-text-muted hover:text-status-error transition-colors disabled:opacity-30">
-                        <X size={12} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Tags */}
-              {field('Tags',
-                <input className={inputCls} placeholder="database, production, myapp" value={form.tags}
-                  onChange={e => setForm(f => ({ ...f, tags: e.target.value }))} />,
-                'Comma-separated labels for filtering and discovery.'
+              {field('Description',
+                <textarea className={`${inputCls} resize-none`} rows={2} placeholder="What does this secret contain? Who uses it?"
+                  value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
               )}
             </div>
 
-            {/* Modal footer */}
-            {modalError && (
-              <div className="px-5 py-2 border-t border-status-error/30 bg-status-error/10 text-xs text-status-error flex items-center gap-2 flex-shrink-0">
-                <ServerCrash size={12} />
-                <span>{modalError}</span>
+            {/* Vault / Store */}
+            <div className="space-y-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Vault / Secret Store</p>
+              <div className="grid grid-cols-2 gap-3">
+                {field('Secret Store Name',
+                  <input className={inputCls} placeholder="vault-backend" value={form.secretStore}
+                    onChange={e => setForm(f => ({ ...f, secretStore: e.target.value }))} />,
+                  'Name of the SecretStore or ClusterSecretStore resource in the cluster.'
+                )}
+                {field('Store Kind',
+                  <select className={selectCls} value={form.secretStoreKind}
+                    onChange={e => setForm(f => ({ ...f, secretStoreKind: e.target.value as typeof form.secretStoreKind }))}>
+                    <option value="ClusterSecretStore">ClusterSecretStore</option>
+                    <option value="SecretStore">SecretStore</option>
+                  </select>
+                )}
               </div>
-            )}
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle flex-shrink-0">
-              <button onClick={() => setShowModal(false)} className="px-3 py-1.5 rounded text-xs border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
-                Cancel
-              </button>
-              <button onClick={handleSave} disabled={saving} className="px-4 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50 flex items-center gap-1.5 transition-colors">
-                {saving ? <RefreshCw size={11} className="animate-spin" /> : <KeyRound size={11} />}
-                {saving ? 'Writing to Vault…' : 'Write to Vault'}
-              </button>
+              {field('Vault Path *',
+                <input className={inputCls} placeholder="myapp/db" value={form.remoteRef}
+                  onChange={e => setForm(f => ({ ...f, remoteRef: e.target.value }))} />,
+                'KV v2 path relative to the "secret" mount (e.g. "myapp/db"). Values will be written here.'
+              )}
             </div>
+
+            {/* Target & refresh */}
+            <div className="space-y-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Sync Options</p>
+              <div className="grid grid-cols-2 gap-3">
+                {field('Target K8s Secret Name',
+                  <input className={inputCls} placeholder={form.name || 'same as name above'} value={form.targetSecretName}
+                    onChange={e => setForm(f => ({ ...f, targetSecretName: e.target.value }))} />,
+                  'Leave blank to use the same name as the ExternalSecret.'
+                )}
+                {field('Refresh Interval',
+                  <select className={selectCls} value={form.refreshInterval}
+                    onChange={e => setForm(f => ({ ...f, refreshInterval: e.target.value }))}>
+                    <option value="5m">5 minutes</option>
+                    <option value="15m">15 minutes</option>
+                    <option value="1h">1 hour</option>
+                    <option value="6h">6 hours</option>
+                    <option value="24h">24 hours</option>
+                    <option value="168h">1 week</option>
+                  </select>,
+                  'How often ESO re-syncs from Vault.'
+                )}
+              </div>
+            </div>
+
+            {/* Secret values — written to Vault, never stored in DB */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Secret Values</p>
+                  <p className="text-[10px] text-text-muted mt-0.5">Sent directly to Vault · never stored in ORION</p>
+                </div>
+                <button onClick={addValueRow} className="inline-flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition-colors">
+                  <Plus size={10} /> Add key
+                </button>
+              </div>
+              <div className="space-y-1.5">
+                <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 text-[10px] text-text-muted px-0.5">
+                  <span>Vault key</span>
+                  <span>Value <span className="text-accent">*</span></span>
+                  <span>K8s key (optional)</span>
+                  <span />
+                </div>
+                {secretValues.map((row, i) => (
+                  <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
+                    <input className={inputCls} placeholder="password" value={row.vaultKey}
+                      onChange={e => updateValueRow(i, 'vaultKey', e.target.value)} />
+                    <input className={inputCls} type="password" placeholder="••••••••" value={row.value}
+                      onChange={e => updateValueRow(i, 'value', e.target.value)}
+                      autoComplete="new-password" />
+                    <input className={inputCls} placeholder={row.vaultKey || 'DB_PASSWORD'} value={row.k8sKey}
+                      onChange={e => updateValueRow(i, 'k8sKey', e.target.value)} />
+                    <button onClick={() => removeValueRow(i)} disabled={secretValues.length === 1}
+                      className="p-1 rounded text-text-muted hover:text-status-error transition-colors disabled:opacity-30">
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Tags */}
+            {field('Tags',
+              <input className={inputCls} placeholder="database, production, myapp" value={form.tags}
+                onChange={e => setForm(f => ({ ...f, tags: e.target.value }))} />,
+              'Comma-separated labels for filtering and discovery.'
+            )}
           </div>
-        </div>
+
+          {/* Modal footer */}
+          {modalError && (
+            <div className="px-5 py-2 border-t border-status-error/30 bg-status-error/10 text-xs text-status-error flex items-center gap-2 flex-shrink-0">
+              <ServerCrash size={12} />
+              <span>{modalError}</span>
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle flex-shrink-0">
+            <button onClick={() => setShowModal(false)} className="px-3 py-1.5 rounded text-xs border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+              Cancel
+            </button>
+            <button onClick={handleSave} disabled={saving} className="px-4 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50 flex items-center gap-1.5 transition-colors">
+              {saving ? <RefreshCw size={11} className="animate-spin" /> : <KeyRound size={11} />}
+              {saving ? 'Writing to Vault…' : 'Write to Vault'}
+            </button>
+          </div>
+        </Dialog>
       )}
     </div>
   )
@@ -847,21 +846,31 @@ function BackupsTab() {
 function LogsTab() {
   const [namespace, setNamespace] = useState('apps')
   const [pod, setPod] = useState('')
-  const [lines, setLines] = useState<string[]>([])
+  const [lines, setLines] = useState<Array<{ id: number; text: string }>>([])
   const [streaming, setStreaming] = useState(false)
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const nearBottomRef = useRef(true)
+  const nextLineId = useRef(0)
   const esRef = useRef<EventSource | null>(null)
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [lines])
+  // Follow the tail only while the user hasn't scrolled up; set scrollTop
+  // directly so the page itself doesn't scroll.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || !nearBottomRef.current) return
+    const frame = requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
+    return () => cancelAnimationFrame(frame)
+  }, [lines])
 
   const startStream = () => {
     if (!pod) return
     esRef.current?.close()
     setLines([])
+    nearBottomRef.current = true
     setStreaming(true)
     const es = new EventSource(`/api/k8s/pods/${namespace}/${pod}/logs`)
     esRef.current = es
-    es.onmessage = (e) => setLines(prev => [...prev.slice(-500), e.data])
+    es.onmessage = (e) => setLines(prev => [...prev.slice(-500), { id: nextLineId.current++, text: e.data }])
     es.onerror = () => { setStreaming(false); es.close() }
   }
 
@@ -881,14 +890,20 @@ function LogsTab() {
         </button>
       </div>
 
-      <div className="rounded-lg border border-border-subtle bg-bg-card overflow-auto font-mono text-xs p-3 min-h-[300px] max-h-[60vh]">
-        {lines.map((line, i) => (
-          <div key={i} className="text-text-secondary leading-5 whitespace-pre-wrap">{line}</div>
+      <div
+        ref={scrollRef}
+        onScroll={e => {
+          const el = e.currentTarget
+          nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+        }}
+        className="rounded-lg border border-border-subtle bg-bg-card overflow-auto font-mono text-xs p-3 min-h-[300px] max-h-[60vh]"
+      >
+        {lines.map(line => (
+          <div key={line.id} className="text-text-secondary leading-5 whitespace-pre-wrap">{line.text}</div>
         ))}
         {!lines.length && (
           <p className="text-text-muted">Enter a namespace and pod name, then click Stream Logs.</p>
         )}
-        <div ref={bottomRef} />
       </div>
     </div>
   )
@@ -966,23 +981,16 @@ export function InfrastructureTabs() {
 
   // Load environments
   useEffect(() => {
-    console.log('[InfrastructureTabs] Mounting, fetching environments...')
     fetch('/api/environments')
       .then(r => {
-        console.log('[InfrastructureTabs] API response status:', r.status, 'ok:', r.ok)
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json()
       })
       .then((envs: Environment[]) => {
-        console.log('[InfrastructureTabs] Loaded', envs.length, 'environments:', envs.map(e => ({ name: e.name, type: e.type })))
         if (!Array.isArray(envs)) return
         const clusters = envs.filter(e => e.type === 'cluster' && e.gatewayUrl)
-        console.log('[InfrastructureTabs] Filtered to', clusters.length, 'clusters:', clusters.map(e => e.name))
         setEnvironments(clusters)
         if (clusters.length === 1) setEnvId(clusters[0].id)
-        else if (clusters.length === 0) {
-          console.warn('[InfrastructureTabs] No cluster environments found')
-        }
       })
       .catch((err) => {
         console.error('[InfrastructureTabs] Failed to load environments:', err)
@@ -1042,10 +1050,7 @@ export function InfrastructureTabs() {
           <div className="flex items-center gap-2">
             <select
               value={envId}
-              onChange={e => {
-                setEnvId(e.target.value)
-                console.log('[InfrastructureTabs] Selected env:', e.target.value, 'Options:', environments.map(e => e.name))
-              }}
+              onChange={e => setEnvId(e.target.value)}
               className={selectCls}
               disabled={loading || environments.length === 0}
             >

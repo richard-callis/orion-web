@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Shield, Globe, Database, AlertTriangle, CheckCircle2, XCircle, Loader2, ExternalLink } from 'lucide-react'
+import { ArrowLeft, Shield, Globe, Database, CheckCircle2, Loader2, ExternalLink } from 'lucide-react'
 import Link from 'next/link'
+import { SeverityBadge } from '@/components/ui/Badge'
 
 const sourceIcons: Record<string, React.ElementType> = {
   crowdsec: Shield,
@@ -37,13 +38,6 @@ interface AlertEvent {
   createdAt: string
   incidentId: string | null
   environmentId: string | null
-}
-
-function SeverityBadge({ severity }: { severity: number }) {
-  if (severity >= 80) return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border bg-red-500/20 text-red-400 border-red-500/30"><XCircle size={10} />{severity} Critical</span>
-  if (severity >= 50) return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border bg-orange-500/20 text-orange-400 border-orange-500/30"><AlertTriangle size={10} />{severity} High</span>
-  if (severity >= 20) return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border bg-yellow-500/20 text-yellow-400 border-yellow-500/30"><AlertTriangle size={10} />{severity} Medium</span>
-  return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border bg-green-500/20 text-green-400 border-green-500/30"><CheckCircle2 size={10} />{severity} Low</span>
 }
 
 export default function AlertDetailPage() {
@@ -122,7 +116,7 @@ export default function AlertDetailPage() {
       {/* Meta */}
       <div className="bg-bg-surface border border-border-subtle rounded-xl p-4 space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
-          <SeverityBadge severity={event.severity} />
+          <SeverityBadge severity={event.severity} showLabel />
           <span className="text-xs text-text-muted px-2 py-0.5 rounded bg-bg-raised font-mono">{event.type}</span>
           <span className="text-xs text-text-muted px-2 py-0.5 rounded bg-bg-raised">{event.source}</span>
           {event.acknowledged && (

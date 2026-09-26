@@ -12,8 +12,14 @@ export default async function Page() {
     },
   })
 
-  // Mask tokens server-side before passing to client
-  const safe = environments.map((e: any) => ({ ...e, gatewayToken: e.gatewayToken ? '••••' : null }))
+  // Mask secrets server-side before passing to client. kubeconfig is only
+  // ever written (never read back) by the UI, and agent MCP tokens are unused.
+  const safe = environments.map(e => ({
+    ...e,
+    gatewayToken: e.gatewayToken ? '••••' : null,
+    kubeconfig: null,
+    agents: e.agents.map(link => ({ ...link, agent: { ...link.agent, mcpToken: null } })),
+  }))
 
   return <EnvironmentsPage initialEnvironments={safe as Parameters<typeof EnvironmentsPage>[0]['initialEnvironments']} />
 }

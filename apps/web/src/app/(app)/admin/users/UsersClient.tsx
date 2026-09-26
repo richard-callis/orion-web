@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { Trash2, RefreshCw } from 'lucide-react'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface User {
   id: string
@@ -17,6 +18,7 @@ interface User {
 const ROLES = ['admin', 'user', 'readonly']
 
 export function UsersClient({ initialUsers }: { initialUsers: User[] }) {
+  const confirmDialog = useConfirm()
   const [users, setUsers] = useState<User[]>(initialUsers)
   const [busy, setBusy] = useState<Record<string, boolean>>({})
 
@@ -38,7 +40,7 @@ export function UsersClient({ initialUsers }: { initialUsers: User[] }) {
   }
 
   const deleteUser = async (id: string) => {
-    if (!confirm('Delete this user? They will be re-created on next login.')) return
+    if (!(await confirmDialog({ title: 'Delete user?', message: 'They will be re-created on next login.', confirmLabel: 'Delete' }))) return
     setBusy(b => ({ ...b, [id]: true }))
     try {
       const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' })

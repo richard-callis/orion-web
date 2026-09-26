@@ -7,6 +7,8 @@ import type { Agent, Task, Feature, Epic, SelectionState, PlanTarget, Bug } from
 import { BugManager } from './BugManager'
 import { KanbanBoard } from '../ui/KanbanBoard'
 import { CreateEntityModal } from '../ui/CreateEntityModal'
+import { useToast } from '../ui/Toast'
+import { Dialog } from '../ui/Dialog'
 
 interface TaskEvent {
   id: string
@@ -110,6 +112,10 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   const [view, setView]         = useState<'tasks' | 'bugs' | 'my-tasks'>('tasks')
   const [selection, setSelection] = useState<SelectionState>({ kind: 'all' })
   const [panel, setPanel]       = useState<RightPanel>(null)
+  // Task shown in the detail panel — async loaders use it to drop stale responses.
+  const panelTaskIdRef = useRef<string | null>(null)
+  panelTaskIdRef.current = panel?.kind === 'task' ? panel.task.id : null
+  const toast = useToast()
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false)
 
   // Open the right panel when navigated back from a planning chat
@@ -180,9 +186,10 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
     setEventsLoading(true)
     try {
       const res = await fetch(`/api/tasks/${taskId}/events`)
-      if (res.ok) setTaskEvents(await res.json())
-    } finally {
-      setEventsLoading(false)
+      if (!res.ok || panelTaskIdRef.current !== taskId) return
+      setTaskEvents(await res.json())
+    } catch { /* keep previous events */ } finally {
+      if (panelTaskIdRef.current === taskId) setEventsLoading(false)
     }
   }, [])
 
@@ -192,37 +199,39 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
       const res = await fetch(`/api/tasks/${taskId}/chat`)
       if (res.ok) {
         const data = await res.json()
+        if (panelTaskIdRef.current !== taskId) return
         setTaskChatRooms(data.rooms || [])
         if (data.rooms?.length && !activeChatRoom) {
           setActiveChatRoom(data.rooms[0].id)
         }
       }
-    } finally {
-      setChatLoading(false)
+    } catch { /* keep previous rooms */ } finally {
+      if (panelTaskIdRef.current === taskId) setChatLoading(false)
     }
   }, [activeChatRoom])
 
   const sendChatMessage = async () => {
     const content = chatInput.trim()
     if (!content || chatSending || !activeChatRoom || panel?.kind !== 'task') return
+    const taskId = panel.task.id
     setChatSending(true)
     setChatInput('')
     try {
       const res = await fetch(`/api/chatrooms/${activeChatRoom}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, taskId: panel.task.id }),
+        body: JSON.stringify({ content, taskId }),
       })
-      if (res.ok) {
-        // Refresh room messages
-        const roomRes = await fetch(`/api/tasks/${panel.task.id}/chat`)
-        if (roomRes.ok) {
-          const data = await roomRes.json()
-          setTaskChatRooms(data.rooms || [])
-        }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      // Refresh room messages
+      const roomRes = await fetch(`/api/tasks/${taskId}/chat`)
+      if (roomRes.ok && panelTaskIdRef.current === taskId) {
+        const data = await roomRes.json()
+        setTaskChatRooms(data.rooms || [])
       }
     } catch (e) {
-      console.error('Failed to send message:', e)
+      setChatInput(content)
+      toast.error(`Failed to send message: ${e instanceof Error ? e.message : 'unknown error'}`)
     } finally {
       setChatSending(false)
     }
@@ -285,21 +294,57 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
 
   const activeFeatureId = selection.kind === 'feature' ? selection.featureId : null
 
+  // ── Mutations ──────────────────────────────────────────────────────────────
+  // Optimistic updates are applied first; if the request fails (network error
+  // or non-2xx) `rollback` restores the previous state and a toast is shown.
+
+  const persist = async (url: string, init: RequestInit, rollback: () => void, what: string) => {
+    try {
+      const res = await fetch(url, init)
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null
+        throw new Error(body?.error ?? `HTTP ${res.status}`)
+      }
+    } catch (e) {
+      rollback()
+      toast.error(`Failed to ${what}: ${e instanceof Error ? e.message : 'unknown error'}`)
+    }
+  }
+
+  const jsonInit = (method: string, body: unknown): RequestInit => ({
+    method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })
+
+  /** Re-insert `item` at `index` unless it is already present. */
+  function restoreAt<T extends { id: string }>(list: T[], item: T, index: number): T[] {
+    if (list.some(x => x.id === item.id)) return list
+    const next = [...list]
+    next.splice(Math.min(index, next.length), 0, item)
+    return next
+  }
+
   // ── Task CRUD ──────────────────────────────────────────────────────────────
 
   const updateTask = async (id: string, patch: Partial<Task>) => {
+    const original = tasks.find(t => t.id === id)
     setTasks(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t))
     if (panel?.kind === 'task' && panel.task.id === id)
       setPanel(p => p?.kind === 'task' ? { ...p, task: { ...p.task, ...patch } } : p)
-    await fetch(`/api/tasks/${id}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/tasks/${id}`, jsonInit('PUT', patch), () => {
+      if (!original) return
+      setTasks(prev => prev.map(t => t.id === id ? original : t))
+      setPanel(p => p?.kind === 'task' && p.task.id === id ? { ...p, task: original } : p)
+    }, 'update task')
   }
 
   const deleteTask = async (id: string) => {
+    const index = tasks.findIndex(t => t.id === id)
+    const original = tasks[index]
     setTasks(prev => prev.filter(t => t.id !== id))
     if (panel?.kind === 'task' && panel.task.id === id) setPanel(null)
-    await fetch(`/api/tasks/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/tasks/${id}`, { method: 'DELETE' }, () => {
+      if (original) setTasks(prev => restoreAt(prev, original, index))
+    }, 'delete task')
   }
 
   const createTask = async () => {
@@ -313,6 +358,11 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
           priority: taskForm.priority, featureId: activeFeatureId, createdBy: 'admin',
         }),
       })
+      if (!r.ok) {
+        const body = await r.json().catch(() => null) as { error?: string } | null
+        toast.error(`Failed to create task: ${body?.error ?? `HTTP ${r.status}`}`)
+        return
+      }
       const task: Task = await r.json()
       setTasks(prev => [task, ...prev])
       // Bump feature task count
@@ -345,19 +395,26 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   // ── Epic CRUD ──────────────────────────────────────────────────────────────
 
   const updateEpic = async (id: string, patch: Partial<Epic>) => {
+    const original = epics.find(e => e.id === id)
     setEpics(prev => prev.map(e => e.id === id ? { ...e, ...patch } : e))
     if (panel?.kind === 'epic' && panel.epic.id === id)
       setPanel(p => p?.kind === 'epic' ? { ...p, epic: { ...p.epic, ...patch } } : p)
-    await fetch(`/api/epics/${id}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/epics/${id}`, jsonInit('PUT', patch), () => {
+      if (!original) return
+      setEpics(prev => prev.map(e => e.id === id ? original : e))
+      setPanel(p => p?.kind === 'epic' && p.epic.id === id ? { ...p, epic: original } : p)
+    }, 'update epic')
   }
 
   const deleteEpic = async (id: string) => {
+    const index = epics.findIndex(e => e.id === id)
+    const original = epics[index]
     setEpics(prev => prev.filter(e => e.id !== id))
     setSelection({ kind: 'all' })
     setPanel(null)
-    await fetch(`/api/epics/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/epics/${id}`, { method: 'DELETE' }, () => {
+      if (original) setEpics(prev => restoreAt(prev, original, index))
+    }, 'delete epic')
   }
 
   const createEpic = async () => {
@@ -368,6 +425,11 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: epicForm.title, description: epicForm.description || null }),
       })
+      if (!r.ok) {
+        const body = await r.json().catch(() => null) as { error?: string } | null
+        toast.error(`Failed to create epic: ${body?.error ?? `HTTP ${r.status}`}`)
+        return
+      }
       const epic: Epic = await r.json()
       setEpics(prev => [epic, ...prev])
       setEpicForm({ title: '', description: '' })
@@ -382,6 +444,7 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   // ── Feature CRUD ───────────────────────────────────────────────────────────
 
   const updateFeature = async (id: string, epicId: string, patch: Partial<Feature>) => {
+    const original = epics.find(e => e.id === epicId)?.features.find(f => f.id === id)
     setEpics(prev => prev.map(e =>
       e.id === epicId
         ? { ...e, features: e.features.map(f => f.id === id ? { ...f, ...patch } : f) }
@@ -389,18 +452,30 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
     ))
     if (panel?.kind === 'feature' && panel.feature.id === id)
       setPanel(p => p?.kind === 'feature' ? { ...p, feature: { ...p.feature, ...patch } } : p)
-    await fetch(`/api/features/${id}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/features/${id}`, jsonInit('PUT', patch), () => {
+      if (!original) return
+      setEpics(prev => prev.map(e =>
+        e.id === epicId ? { ...e, features: e.features.map(f => f.id === id ? original : f) } : e
+      ))
+      setPanel(p => p?.kind === 'feature' && p.feature.id === id ? { ...p, feature: original } : p)
+    }, 'update feature')
   }
 
   const deleteFeature = async (id: string, epicId: string) => {
+    const features = epics.find(e => e.id === epicId)?.features ?? []
+    const index = features.findIndex(f => f.id === id)
+    const original = features[index]
     setEpics(prev => prev.map(e =>
       e.id === epicId ? { ...e, features: e.features.filter(f => f.id !== id) } : e
     ))
     setSelection({ kind: 'epic', epicId })
     setPanel(null)
-    await fetch(`/api/features/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/features/${id}`, { method: 'DELETE' }, () => {
+      if (!original) return
+      setEpics(prev => prev.map(e =>
+        e.id === epicId ? { ...e, features: restoreAt(e.features, original, index) } : e
+      ))
+    }, 'delete feature')
   }
 
   const createFeature = async () => {
@@ -411,6 +486,11 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ epicId: featureForm.epicId, title: featureForm.title, description: featureForm.description || null }),
       })
+      if (!r.ok) {
+        const body = await r.json().catch(() => null) as { error?: string } | null
+        toast.error(`Failed to create feature: ${body?.error ?? `HTTP ${r.status}`}`)
+        return
+      }
       const feature: Feature = await r.json()
       setEpics(prev => prev.map(e =>
         e.id === featureForm.epicId ? { ...e, features: [...e.features, feature] } : e
@@ -430,17 +510,24 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   const createAgent = (agent: Agent) => setAgents(prev => [...prev, agent])
 
   const updateAgent = async (id: string, patch: Partial<Agent>) => {
+    const original = agents.find(a => a.id === id)
     setAgents(prev => prev.map(a => a.id === id ? { ...a, ...patch } : a))
-    await fetch(`/api/agents/${id}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/agents/${id}`, jsonInit('PUT', patch), () => {
+      if (original) setAgents(prev => prev.map(a => a.id === id ? original : a))
+    }, 'update agent')
   }
 
   const deleteAgent = async (id: string) => {
+    const index = agents.findIndex(a => a.id === id)
+    const original = agents[index]
+    const assigned = new Map(tasks.filter(t => t.assignedAgent === id).map(t => [t.id, t]))
     setAgents(prev => prev.filter(a => a.id !== id))
     // Clear assignment from tasks
     setTasks(prev => prev.map(t => t.assignedAgent === id ? { ...t, assignedAgent: null, agent: null } : t))
-    await fetch(`/api/agents/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/agents/${id}`, { method: 'DELETE' }, () => {
+      if (original) setAgents(prev => restoreAt(prev, original, index))
+      setTasks(prev => prev.map(t => assigned.get(t.id) ?? t))
+    }, 'delete agent')
   }
 
   // ── Plan with AI ───────────────────────────────────────────────────────────
@@ -740,258 +827,258 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
 
       {/* ── Task detail panel — rendered outside view blocks so it works from My Tasks too ── */}
       {panel && (
-        <>
-          <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setPanel(null)} />
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
-          <div className="pointer-events-auto w-full flex justify-center">
-            {panel.kind === 'epic' && (
-              <EpicDetailPanel
-                epic={panel.epic}
-                onUpdate={patch => updateEpic(panel.epic.id, patch as Partial<Epic>)}
-                onDelete={() => deleteEpic(panel.epic.id)}
-                onPlanWithClaude={(modelId) => planWithClaude({ type: 'epic', id: panel.epic.id, title: panel.epic.title, description: panel.epic.description }, modelId)}
-                onNewFeature={() => {
-                  setFeatureForm({ title: '', description: '', epicId: panel.epic.id, epicTitle: panel.epic.title })
-                  setFeatureModal({ epicId: panel.epic.id, epicTitle: panel.epic.title })
-                }}
-                onSelectFeature={f => setPanel({ kind: 'feature', feature: f, epic: panel.epic })}
-                onClose={() => setPanel(null)}
-              />
-            )}
+        <Dialog
+          onClose={() => setPanel(null)}
+          label={panel.kind === 'task' ? panel.task.title : panel.kind === 'epic' ? panel.epic.title : panel.feature.title}
+          className="w-full flex justify-center"
+          overlayClassName="backdrop-blur-none"
+        >
+          {panel.kind === 'epic' && (
+            <EpicDetailPanel
+              epic={panel.epic}
+              onUpdate={patch => updateEpic(panel.epic.id, patch as Partial<Epic>)}
+              onDelete={() => deleteEpic(panel.epic.id)}
+              onPlanWithClaude={(modelId) => planWithClaude({ type: 'epic', id: panel.epic.id, title: panel.epic.title, description: panel.epic.description }, modelId)}
+              onNewFeature={() => {
+                setFeatureForm({ title: '', description: '', epicId: panel.epic.id, epicTitle: panel.epic.title })
+                setFeatureModal({ epicId: panel.epic.id, epicTitle: panel.epic.title })
+              }}
+              onSelectFeature={f => setPanel({ kind: 'feature', feature: f, epic: panel.epic })}
+              onClose={() => setPanel(null)}
+            />
+          )}
 
-            {panel.kind === 'feature' && (
-              <FeatureDetailPanel
-                feature={panel.feature}
-                epicTitle={panel.epic.title}
-                onUpdate={patch => updateFeature(panel.feature.id, panel.epic.id, patch as Partial<Feature>)}
-                onDelete={() => deleteFeature(panel.feature.id, panel.epic.id)}
-                onPlanWithClaude={(modelId) => planWithClaude({ type: 'feature', id: panel.feature.id, title: panel.feature.title, description: panel.feature.description, parentContext: { epicTitle: panel.epic.title, epicDescription: panel.epic.description, epicPlan: panel.epic.plan } }, modelId)}
-                onClose={() => setPanel(null)}
-              />
-            )}
+          {panel.kind === 'feature' && (
+            <FeatureDetailPanel
+              feature={panel.feature}
+              epicTitle={panel.epic.title}
+              onUpdate={patch => updateFeature(panel.feature.id, panel.epic.id, patch as Partial<Feature>)}
+              onDelete={() => deleteFeature(panel.feature.id, panel.epic.id)}
+              onPlanWithClaude={(modelId) => planWithClaude({ type: 'feature', id: panel.feature.id, title: panel.feature.title, description: panel.feature.description, parentContext: { epicTitle: panel.epic.title, epicDescription: panel.epic.description, epicPlan: panel.epic.plan } }, modelId)}
+              onClose={() => setPanel(null)}
+            />
+          )}
 
-            {panel.kind === 'task' && (
-              <aside className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-xl border border-border-subtle bg-bg-sidebar shadow-2xl overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
-                  <span className="text-xs font-semibold text-text-secondary">Task Detail</span>
-                  <button onClick={() => setPanel(null)} className="text-text-muted hover:text-text-primary"><X size={14} /></button>
+          {panel.kind === 'task' && (
+            <aside className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-xl border border-border-subtle bg-bg-sidebar shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
+                <span className="text-xs font-semibold text-text-secondary">Task Detail</span>
+                <button onClick={() => setPanel(null)} className="text-text-muted hover:text-text-primary"><X size={14} /></button>
+              </div>
+              {/* Tabs */}
+              <div className="flex items-center border-b border-border-subtle px-4">
+                <button onClick={() => setTaskTab('details')}
+                  className={`px-3 py-2 text-[11px] font-medium border-b-2 transition-colors ${taskTab === 'details' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
+                  Details
+                </button>
+                <button onClick={() => { setTaskTab('log'); loadEvents(panel.task.id) }}
+                  className={`px-3 py-2 text-[11px] font-medium border-b-2 transition-colors ${taskTab === 'log' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
+                  Run Log
+                </button>
+                <button onClick={() => { setTaskTab('chat'); loadChat(panel.task.id) }}
+                  className={`px-3 py-2 text-[11px] font-medium border-b-2 transition-colors ${taskTab === 'chat' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
+                  Chat
+                </button>
+                {taskTab === 'chat' && (activeChatRoom ?? taskChatRooms[0]?.id) && (
+                  <button
+                    onClick={() => router.push(`/messages?r=${activeChatRoom ?? taskChatRooms[0]?.id}`)}
+                    className="ml-auto flex items-center gap-1 px-2 py-1 mb-px rounded text-[10px] border border-border-subtle bg-bg-raised text-text-muted hover:text-text-secondary hover:border-accent/40 transition-colors"
+                    title="Open full feature chat room"
+                  >
+                    <MessageSquare size={10} />
+                    Open in Chat
+                  </button>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {taskTab === 'details' && (<>
+                <div>
+                  <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title</label>
+                  <input ref={titleRef} value={editTitle} onChange={e => setEditTitle(e.target.value)} onBlur={saveTaskDetail}
+                    className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent" />
                 </div>
-                {/* Tabs */}
-                <div className="flex items-center border-b border-border-subtle px-4">
-                  <button onClick={() => setTaskTab('details')}
-                    className={`px-3 py-2 text-[11px] font-medium border-b-2 transition-colors ${taskTab === 'details' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
-                    Details
-                  </button>
-                  <button onClick={() => { setTaskTab('log'); loadEvents(panel.task.id) }}
-                    className={`px-3 py-2 text-[11px] font-medium border-b-2 transition-colors ${taskTab === 'log' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
-                    Run Log
-                  </button>
-                  <button onClick={() => { setTaskTab('chat'); loadChat(panel.task.id) }}
-                    className={`px-3 py-2 text-[11px] font-medium border-b-2 transition-colors ${taskTab === 'chat' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
-                    Chat
-                  </button>
-                  {taskTab === 'chat' && (activeChatRoom ?? taskChatRooms[0]?.id) && (
-                    <button
-                      onClick={() => router.push(`/messages?r=${activeChatRoom ?? taskChatRooms[0]?.id}`)}
-                      className="ml-auto flex items-center gap-1 px-2 py-1 mb-px rounded text-[10px] border border-border-subtle bg-bg-raised text-text-muted hover:text-text-secondary hover:border-accent/40 transition-colors"
-                      title="Open full feature chat room"
-                    >
-                      <MessageSquare size={10} />
-                      Open in Chat
-                    </button>
-                  )}
+                <div>
+                  <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Priority</label>
+                  <select value={editPriority} onChange={e => { setEditPriority(e.target.value); updateTask(panel.task.id, { priority: e.target.value }) }}
+                    className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent">
+                    {Object.entries(priorityConfig).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                  </select>
                 </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  {taskTab === 'details' && (<>
+                <div>
+                  <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Assigned To (Agent)</label>
+                  <select
+                    value={panel.task.assignedAgent ?? ''}
+                    onChange={e => {
+                      const agentId = e.target.value || null
+                      const agent = agents.find(a => a.id === agentId) ?? null
+                      updateTask(panel.task.id, { assignedAgent: agentId, agent })
+                    }}
+                    className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+                  >
+                    <option value="">— No agent —</option>
+                    {activeAgents.map(a => <option key={a.id} value={a.id}>{a.name}{a.role ? ` (${a.role})` : ''}</option>)}
+                  </select>
+                </div>
+                {users.length > 0 && (
                   <div>
-                    <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title</label>
-                    <input ref={titleRef} value={editTitle} onChange={e => setEditTitle(e.target.value)} onBlur={saveTaskDetail}
-                      className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent" />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Priority</label>
-                    <select value={editPriority} onChange={e => { setEditPriority(e.target.value); updateTask(panel.task.id, { priority: e.target.value }) }}
-                      className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent">
-                      {Object.entries(priorityConfig).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Assigned To (Agent)</label>
+                    <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Assigned To (User)</label>
                     <select
-                      value={panel.task.assignedAgent ?? ''}
+                      value={panel.task.assignedUserId ?? ''}
                       onChange={e => {
-                        const agentId = e.target.value || null
-                        const agent = agents.find(a => a.id === agentId) ?? null
-                        updateTask(panel.task.id, { assignedAgent: agentId, agent })
+                        const userId = e.target.value || null
+                        const assignedUser = users.find(u => u.id === userId) ?? null
+                        updateTask(panel.task.id, { assignedUserId: userId, assignedUser })
                       }}
                       className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
                     >
-                      <option value="">— No agent —</option>
-                      {activeAgents.map(a => <option key={a.id} value={a.id}>{a.name}{a.role ? ` (${a.role})` : ''}</option>)}
+                      <option value="">— No user —</option>
+                      {users.map(u => <option key={u.id} value={u.id}>{u.name ?? u.username}</option>)}
                     </select>
                   </div>
-                  {users.length > 0 && (
-                    <div>
-                      <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Assigned To (User)</label>
-                      <select
-                        value={panel.task.assignedUserId ?? ''}
-                        onChange={e => {
-                          const userId = e.target.value || null
-                          const assignedUser = users.find(u => u.id === userId) ?? null
-                          updateTask(panel.task.id, { assignedUserId: userId, assignedUser })
-                        }}
-                        className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
-                      >
-                        <option value="">— No user —</option>
-                        {users.map(u => <option key={u.id} value={u.id}>{u.name ?? u.username}</option>)}
-                      </select>
-                    </div>
-                  )}
-                  <div>
-                    <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Status</label>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {columns.map(col => {
-                        const cfg = STATUS_CONFIG[col] ?? { label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), border: 'border-t-border-visible' }
-                        return (
-                        <button key={col} onClick={() => updateTask(panel.task.id, { status: col })}
-                          className={`px-2 py-1.5 rounded text-[10px] font-medium transition-colors ${
-                            panel.task.status === col ? 'bg-accent text-white' : 'bg-bg-raised text-text-muted hover:text-text-primary hover:bg-bg-card border border-border-subtle'
-                          }`}>
-                          {cfg.label}
-                        </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block flex items-center gap-1">
-                      <Layers size={10} /> Dependencies
-                    </label>
-                    {/* Current deps */}
-                    {(panel.task.dependsOn?.length ?? 0) > 0 && (
-                      <div className="space-y-1 mb-2">
-                        {panel.task.dependsOn!.map(depId => {
-                          const dep = tasks.find(t => t.id === depId)
-                          return dep ? (
-                            <div key={depId} className="flex items-center gap-1.5 text-[10px] text-text-muted bg-bg-card rounded px-2 py-1">
-                              {dep.status === 'done' ? <CheckCircle2 size={10} className="text-emerald-400" /> : <Lock size={10} className="text-amber-400" />}
-                              <span className="flex-1 truncate">{dep.title}</span>
-                              <span className="text-text-muted/60 mr-1">{dep.status}</span>
-                              <button
-                                onClick={() => {
-                                  const next = (panel.task.dependsOn ?? []).filter(d => d !== depId)
-                                  updateTask(panel.task.id, { dependsOn: next } as any)
-                                }}
-                                className="text-text-muted/40 hover:text-red-400 transition-colors"
-                                title="Remove dependency"
-                              >
-                                <X size={9} />
-                              </button>
-                            </div>
-                          ) : null
-                        })}
-                      </div>
-                    )}
-                    {/* Add dep search */}
-                    <input
-                      value={depSearch}
-                      onChange={e => setDepSearch(e.target.value)}
-                      placeholder="Search tasks to add as dependency…"
-                      className="w-full px-2.5 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
-                    />
-                    {depSearch.trim().length > 1 && (() => {
-                      const q = depSearch.toLowerCase()
-                      const candidates = tasks.filter(t =>
-                        t.id !== panel.task.id &&
-                        !(panel.task.dependsOn ?? []).includes(t.id) &&
-                        t.title.toLowerCase().includes(q)
-                      ).slice(0, 5)
-                      return candidates.length > 0 ? (
-                        <div className="border border-border-subtle rounded mt-1 overflow-hidden">
-                          {candidates.map(t => (
-                            <button
-                              key={t.id}
-                              onClick={() => {
-                                const next = [...(panel.task.dependsOn ?? []), t.id]
-                                updateTask(panel.task.id, { dependsOn: next } as any)
-                                setDepSearch('')
-                              }}
-                              className="w-full text-left px-2.5 py-1.5 text-xs text-text-secondary hover:bg-accent/10 hover:text-text-primary flex items-center gap-2 transition-colors"
-                            >
-                              <Plus size={9} className="text-accent flex-shrink-0" />
-                              <span className="truncate">{t.title}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : null
-                    })()}
-                    {/* Wave */}
-                    {panel.task.wave != null && (
-                      <p className="text-[10px] text-text-muted mt-1.5">Execution wave: {panel.task.wave}</p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
-                    <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} onBlur={saveTaskDetail} rows={4}
-                      placeholder="What needs to be done, context, requirements..."
-                      className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed" />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-accent uppercase tracking-wide mb-1 block">Claude&apos;s Plan</label>
-                    <textarea value={editPlan} onChange={e => setEditPlan(e.target.value)} onBlur={saveTaskPlan} rows={6}
-                      placeholder="No plan yet — use 'Plan with AI' to generate one..."
-                      className="w-full px-2.5 py-1.5 text-sm rounded border border-accent/30 bg-accent/5 text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed" />
-                  </div>
-                  <p className="text-[10px] text-text-muted">Created {new Date(panel.task.createdAt).toLocaleDateString()}</p>
-                  </>)}
-
-                  {taskTab === 'log' && (
-                    <TaskRunLog events={taskEvents} loading={eventsLoading} agents={agents}
-                      expanded={expandedEvents} onToggle={id => setExpandedEvents(prev => {
-                        const next = new Set(prev)
-                        next.has(id) ? next.delete(id) : next.add(id)
-                        return next
-                      })}
-                      onRefresh={() => loadEvents(panel.task.id)} />
-                  )}
-
-                  {taskTab === 'chat' && (
-                    <TaskChat rooms={taskChatRooms} loading={chatLoading} activeRoom={activeChatRoom}
-                      onRoomChange={setActiveChatRoom} onSend={sendChatMessage} sending={chatSending}
-                      inputRef={chatInputRef} onInput={setChatInput} input={chatInput} />
-                  )}
-                </div>
-                {taskTab === 'details' && (
-                <div className="p-3 border-t border-border-subtle space-y-2">
-                  <PlanWithAIButton onSelect={modelId => {
-                    const parentFeature = panel.task.featureId ? epics.flatMap(e => e.features).find(f => f.id === panel.task.featureId) : undefined
-                    const parentEpic = parentFeature ? epics.find(e => e.id === parentFeature.epicId) : undefined
-                    planWithClaude({
-                      type: 'task',
-                      id: panel.task.id,
-                      title: panel.task.title,
-                      description: panel.task.description,
-                      parentContext: parentFeature ? {
-                        featureTitle: parentFeature.title,
-                        featureDescription: parentFeature.description,
-                        featurePlan: parentFeature.plan,
-                        epicTitle: parentEpic?.title ?? '',
-                        epicDescription: parentEpic?.description ?? null,
-                        epicPlan: parentEpic?.plan ?? null,
-                      } : undefined,
-                    }, modelId)
-                  }} />
-                  <button onClick={() => deleteTask(panel.task.id)}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-border-subtle text-text-muted text-sm hover:border-status-error hover:text-status-error transition-colors">
-                    <Trash2 size={14} /> Delete Task
-                  </button>
-                </div>
                 )}
-              </aside>
-            )}
-          </div>
-          </div>
-        </>
+                <div>
+                  <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Status</label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {columns.map(col => {
+                      const cfg = STATUS_CONFIG[col] ?? { label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), border: 'border-t-border-visible' }
+                      return (
+                      <button key={col} onClick={() => updateTask(panel.task.id, { status: col })}
+                        className={`px-2 py-1.5 rounded text-[10px] font-medium transition-colors ${
+                          panel.task.status === col ? 'bg-accent text-white' : 'bg-bg-raised text-text-muted hover:text-text-primary hover:bg-bg-card border border-border-subtle'
+                        }`}>
+                        {cfg.label}
+                      </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block flex items-center gap-1">
+                    <Layers size={10} /> Dependencies
+                  </label>
+                  {/* Current deps */}
+                  {(panel.task.dependsOn?.length ?? 0) > 0 && (
+                    <div className="space-y-1 mb-2">
+                      {panel.task.dependsOn!.map(depId => {
+                        const dep = tasks.find(t => t.id === depId)
+                        return dep ? (
+                          <div key={depId} className="flex items-center gap-1.5 text-[10px] text-text-muted bg-bg-card rounded px-2 py-1">
+                            {dep.status === 'done' ? <CheckCircle2 size={10} className="text-emerald-400" /> : <Lock size={10} className="text-amber-400" />}
+                            <span className="flex-1 truncate">{dep.title}</span>
+                            <span className="text-text-muted/60 mr-1">{dep.status}</span>
+                            <button
+                              onClick={() => {
+                                const next = (panel.task.dependsOn ?? []).filter(d => d !== depId)
+                                updateTask(panel.task.id, { dependsOn: next } as any)
+                              }}
+                              className="text-text-muted/40 hover:text-red-400 transition-colors"
+                              title="Remove dependency"
+                            >
+                              <X size={9} />
+                            </button>
+                          </div>
+                        ) : null
+                      })}
+                    </div>
+                  )}
+                  {/* Add dep search */}
+                  <input
+                    value={depSearch}
+                    onChange={e => setDepSearch(e.target.value)}
+                    placeholder="Search tasks to add as dependency…"
+                    className="w-full px-2.5 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                  />
+                  {depSearch.trim().length > 1 && (() => {
+                    const q = depSearch.toLowerCase()
+                    const candidates = tasks.filter(t =>
+                      t.id !== panel.task.id &&
+                      !(panel.task.dependsOn ?? []).includes(t.id) &&
+                      t.title.toLowerCase().includes(q)
+                    ).slice(0, 5)
+                    return candidates.length > 0 ? (
+                      <div className="border border-border-subtle rounded mt-1 overflow-hidden">
+                        {candidates.map(t => (
+                          <button
+                            key={t.id}
+                            onClick={() => {
+                              const next = [...(panel.task.dependsOn ?? []), t.id]
+                              updateTask(panel.task.id, { dependsOn: next } as any)
+                              setDepSearch('')
+                            }}
+                            className="w-full text-left px-2.5 py-1.5 text-xs text-text-secondary hover:bg-accent/10 hover:text-text-primary flex items-center gap-2 transition-colors"
+                          >
+                            <Plus size={9} className="text-accent flex-shrink-0" />
+                            <span className="truncate">{t.title}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null
+                  })()}
+                  {/* Wave */}
+                  {panel.task.wave != null && (
+                    <p className="text-[10px] text-text-muted mt-1.5">Execution wave: {panel.task.wave}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
+                  <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} onBlur={saveTaskDetail} rows={4}
+                    placeholder="What needs to be done, context, requirements..."
+                    className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-accent uppercase tracking-wide mb-1 block">Claude&apos;s Plan</label>
+                  <textarea value={editPlan} onChange={e => setEditPlan(e.target.value)} onBlur={saveTaskPlan} rows={6}
+                    placeholder="No plan yet — use 'Plan with AI' to generate one..."
+                    className="w-full px-2.5 py-1.5 text-sm rounded border border-accent/30 bg-accent/5 text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed" />
+                </div>
+                <p className="text-[10px] text-text-muted">Created {new Date(panel.task.createdAt).toLocaleDateString()}</p>
+                </>)}
+
+                {taskTab === 'log' && (
+                  <TaskRunLog events={taskEvents} loading={eventsLoading} agents={agents}
+                    expanded={expandedEvents} onToggle={id => setExpandedEvents(prev => {
+                      const next = new Set(prev)
+                      next.has(id) ? next.delete(id) : next.add(id)
+                      return next
+                    })}
+                    onRefresh={() => loadEvents(panel.task.id)} />
+                )}
+
+                {taskTab === 'chat' && (
+                  <TaskChat rooms={taskChatRooms} loading={chatLoading} activeRoom={activeChatRoom}
+                    onRoomChange={setActiveChatRoom} onSend={sendChatMessage} sending={chatSending}
+                    inputRef={chatInputRef} onInput={setChatInput} input={chatInput} />
+                )}
+              </div>
+              {taskTab === 'details' && (
+              <div className="p-3 border-t border-border-subtle space-y-2">
+                <PlanWithAIButton onSelect={modelId => {
+                  const parentFeature = panel.task.featureId ? epics.flatMap(e => e.features).find(f => f.id === panel.task.featureId) : undefined
+                  const parentEpic = parentFeature ? epics.find(e => e.id === parentFeature.epicId) : undefined
+                  planWithClaude({
+                    type: 'task',
+                    id: panel.task.id,
+                    title: panel.task.title,
+                    description: panel.task.description,
+                    parentContext: parentFeature ? {
+                      featureTitle: parentFeature.title,
+                      featureDescription: parentFeature.description,
+                      featurePlan: parentFeature.plan,
+                      epicTitle: parentEpic?.title ?? '',
+                      epicDescription: parentEpic?.description ?? null,
+                      epicPlan: parentEpic?.plan ?? null,
+                    } : undefined,
+                  }, modelId)
+                }} />
+                <button onClick={() => deleteTask(panel.task.id)}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-border-subtle text-text-muted text-sm hover:border-status-error hover:text-status-error transition-colors">
+                  <Trash2 size={14} /> Delete Task
+                </button>
+              </div>
+              )}
+            </aside>
+          )}
+        </Dialog>
       )}
 
       {/* Create Task */}
