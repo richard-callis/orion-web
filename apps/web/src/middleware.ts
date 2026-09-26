@@ -11,6 +11,7 @@ wrapConsoleLog()
 // See: src/lib/rate-limit-redis.ts
 
 import { rateLimitRedis, getClientIpForRateLimit } from './lib/rate-limit-redis'
+import { rateLimitBucket } from './lib/rate-limit-bucket'
 import { isIpBlocked } from './lib/security/crowdsec-bouncer'
 import { SESSION_COOKIE_NAME } from './lib/auth-constants'
 
@@ -72,17 +73,23 @@ async function applyRateLimit(req: NextRequest, userId?: string): Promise<NextRe
   // Find the most specific rate limit config for this path
   let maxRequests = RATE_LIMITS['default']?.[0] ?? 100
   let windowMs = RATE_LIMITS['default']?.[1] ?? 15 * 60 * 1000
+  let matchedPrefix: string | null = null
 
   for (const [path, [max, window]] of Object.entries(RATE_LIMITS)) {
     if (path !== 'default' && pathname.startsWith(path)) {
       maxRequests = max
       windowMs = window
+      matchedPrefix = path
       break
     }
   }
 
+  // SOC2 [M6]: bucket by matched prefix for cost-bearing writes and by id-normalized
+  // path otherwise — keying by the raw pathname gave every new id a fresh quota.
+  const bucket = rateLimitBucket(pathname, req.method, matchedPrefix)
+
   // SOC2: [H-002] Primary IP-based rate limit (spoofing-resistant via TRUSTED_PROXY_COUNT)
-  const ipRateKey = `rate-limit:ip:${ip}:${pathname}`
+  const ipRateKey = `rate-limit:ip:${ip}:${bucket}`
   const ipResult = await rateLimitRedis(ipRateKey, maxRequests, windowMs)
 
   if (!ipResult.allowed) {
@@ -104,7 +111,7 @@ async function applyRateLimit(req: NextRequest, userId?: string): Promise<NextRe
   // SOC2: [H-002] Secondary per-user rate limit for authenticated requests.
   // A user who rotates IPs (VPN, mobile) still gets per-account quota enforcement.
   if (userId) {
-    const userRateKey = `rate-limit:user:${userId}:${pathname}`
+    const userRateKey = `rate-limit:user:${userId}:${bucket}`
     const userResult = await rateLimitRedis(userRateKey, maxRequests, windowMs)
     if (!userResult.allowed) {
       const retryAfterSeconds = Math.ceil((userResult.resetAt.getTime() - Date.now()) / 1000)
