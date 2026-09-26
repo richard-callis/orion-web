@@ -15,7 +15,7 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process'
-import { writeFile, readFile, rm, mkdir } from 'fs/promises'
+import { writeFile, readFile, rm, mkdir, mkdtemp } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
@@ -565,9 +565,9 @@ export async function deployMonitoringStack(
 
     if (stack === 'full') {
       emit({ type: 'step', message: 'Deploying ELK stack (logs & flow analysis)...' })
+      await runCommand('kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/elk/namespace.yaml'], kenv, msg => emit({ type: 'log', message: msg }))
+      await ensureElkCredentials(kenv, msg => emit({ type: 'log', message: msg }))
       for (const manifest of [
-        '/opt/orion/deploy/monitoring/elk/namespace.yaml',
-        '/opt/orion/deploy/monitoring/elk/secret.yaml',
         '/opt/orion/deploy/monitoring/elk/elasticsearch-deployment.yaml',
         '/opt/orion/deploy/monitoring/elk/logstash-configmap.yaml',
         '/opt/orion/deploy/monitoring/elk/logstash-deployment.yaml',
@@ -616,6 +616,42 @@ export async function deployMonitoringStack(
 
 function toSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '')
+}
+
+// ── ELK credentials ───────────────────────────────────────────────────────────
+
+/**
+ * Create the ELK `elasticsearch-credentials` Secret with a random password —
+ * only if it doesn't already exist.
+ *
+ * This used to `kubectl apply` deploy/monitoring/elk/secret.yaml, which
+ * committed a well-known default password ("orion-elk-default") to every
+ * cluster. Existing clusters keep whatever password Elasticsearch was
+ * initialised with (overwriting it would desync Logstash/Kibana/Elastiflow).
+ * The password is written via a 0600 temp file so it never appears in argv.
+ */
+async function ensureElkCredentials(
+  kenv: Record<string, string>,
+  log: (msg: string) => void,
+): Promise<void> {
+  const exists = await runQuiet('kubectl', ['get', 'secret', 'elasticsearch-credentials', '-n', 'elk', '-o', 'name'], kenv)
+  if (exists.ok) {
+    log('elk/elasticsearch-credentials already exists — keeping the current password')
+    return
+  }
+  const dir = await mkdtemp(join(tmpdir(), 'orion-elk-'))
+  const pwFile = join(dir, 'password')
+  try {
+    await writeFile(pwFile, randomBytes(24).toString('base64url'), { mode: 0o600 })
+    await runCommand(
+      'kubectl',
+      ['create', 'secret', 'generic', 'elasticsearch-credentials', '-n', 'elk', `--from-file=password=${pwFile}`],
+      kenv,
+      log,
+    )
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 }
 
 // ── Gateway manifest ──────────────────────────────────────────────────────────
@@ -1096,11 +1132,7 @@ async function bootstrapK8sCluster(
           kenv,
           msg => emit({ type: 'log', message: msg }),
         )
-        await runCommand(
-          'kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/elk/secret.yaml'],
-          kenv,
-          msg => emit({ type: 'log', message: msg }),
-        )
+        await ensureElkCredentials(kenv, msg => emit({ type: 'log', message: msg }))
         await runCommand(
           'kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/elk/elasticsearch-deployment.yaml'],
           kenv,
