@@ -29,6 +29,9 @@ if [ -f "$CERTS_DIR/ca.crt" ] && [ -f "$CERTS_DIR/ca.key" ] && [ ! -f "$CERTS_DI
   echo "ORION client cert generated."
 fi
 
+echo "Taking pre-deploy database backup..."
+"$COMPOSE_DIR/backup.sh" --pre-deploy
+
 echo "Pulling latest images from ghcr.io..."
 
 # Pull images (handles image tag rotation from ghcr.io)
@@ -43,16 +46,7 @@ docker compose up -d --remove-orphans || {
   exit 1
 }
 
+# :3000 is no longer published on localhost (see ORION_BIND_ADDR), so use the
+# container's own healthcheck rather than curling the host port.
 echo "Waiting for ORION to become healthy..."
-for i in $(seq 1 30); do
-  if curl -sf --max-time 10 http://localhost:3000/api/health > /dev/null 2>&1; then
-    echo "ORION is healthy!"
-    exit 0
-  fi
-  sleep 2
-done
-
-if ! curl -sf --max-time 10 http://localhost:3000/api/health 2>/dev/null; then
-  echo "ERROR: ORION health check failed" >&2
-  exit 1
-fi
+"$COMPOSE_DIR/wait-healthy.sh" orion 300
