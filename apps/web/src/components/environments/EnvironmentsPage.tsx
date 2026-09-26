@@ -43,6 +43,11 @@ interface Environment {
   gatewayUrl: string | null
   gatewayToken: string | null
   gatewayVersion: string | null
+  // Credentials are never sent to the client — only whether each is set.
+  hasGatewayToken?: boolean
+  hasKubeconfig?: boolean
+  hasFederationToken?: boolean
+  hasTalosConfig?: boolean
   status: string
   lastSeen: string | null
   tools: McpTool[]
@@ -342,8 +347,8 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   const openCreateEnv = () => { setEnvForm(EMPTY_ENV); setEnvError(null); setEnvModal('create') }
   const openEditEnv = (env: Environment) => {
     const meta = (env as unknown as { metadata?: Record<string, unknown> }).metadata ?? {}
-    const fedEnv = env as unknown as { federationRole?: string | null; federationToken?: string | null; spokeUrl?: string | null; hubUrl?: string | null }
-    setEnvForm({ name: env.name, type: env.type, description: env.description ?? '', gatewayUrl: env.gatewayUrl ?? '', gatewayToken: '', kubeconfig: '', nodeIp: (meta.nodeIp as string) ?? '', talosConfig: '', federationRole: fedEnv.federationRole ?? 'standalone', federationToken: fedEnv.federationToken ?? '', spokeUrl: fedEnv.spokeUrl ?? '', hubUrl: fedEnv.hubUrl ?? '' })
+    const fedEnv = env as unknown as { federationRole?: string | null; spokeUrl?: string | null; hubUrl?: string | null }
+    setEnvForm({ name: env.name, type: env.type, description: env.description ?? '', gatewayUrl: env.gatewayUrl ?? '', gatewayToken: '', kubeconfig: '', nodeIp: (meta.nodeIp as string) ?? '', talosConfig: '', federationRole: fedEnv.federationRole ?? 'standalone', federationToken: '', spokeUrl: fedEnv.spokeUrl ?? '', hubUrl: fedEnv.hubUrl ?? '' })
     setEnvError(null)
     setEnvModal('edit')
   }
@@ -373,7 +378,8 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
         kubeconfig: kubeconfigB64,
         metadata: metaUpdate,
         federationRole: (envForm.federationRole && envForm.federationRole !== 'standalone') ? envForm.federationRole : null,
-        federationToken: envForm.federationToken || null,
+        // Blank keeps the stored token; switching to standalone clears it.
+        federationToken: envForm.federationRole === 'standalone' ? null : (envForm.federationToken || undefined),
         spokeUrl: envForm.spokeUrl || null,
         hubUrl: envForm.hubUrl || null,
       }
@@ -1255,7 +1261,11 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                 <div>
                   <label className={labelCls}>
                     Talos Config{' '}
-                    <span className="text-text-muted">(optional — enables auto-remediation of Talos prerequisites)</span>
+                    <span className="text-text-muted">
+                      {envModal === 'edit' && selected?.hasTalosConfig
+                        ? '(set — leave blank to keep existing)'
+                        : '(optional — enables auto-remediation of Talos prerequisites)'}
+                    </span>
                   </label>
                   <textarea
                     value={envForm.talosConfig}
@@ -1292,7 +1302,10 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                   </select>
                 </div>
                 <div>
-                  <label className={labelCls}>Federation Token</label>
+                  <label className={labelCls}>
+                    Federation Token
+                    {envModal === 'edit' && selected?.hasFederationToken && <span className="text-text-muted"> (set — leave blank to keep existing)</span>}
+                  </label>
                   <div className="flex gap-2">
                     <input
                       type="password"

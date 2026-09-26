@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { prisma } from '@/lib/db'
 import { EnvironmentsPage } from '@/components/environments/EnvironmentsPage'
+import { toEnvironmentDTO } from '@/lib/environment-dto'
 
 export default async function Page() {
   const environments = await prisma.environment.findMany({
@@ -12,14 +13,10 @@ export default async function Page() {
     },
   })
 
-  // Mask secrets server-side before passing to client. kubeconfig is only
-  // ever written (never read back) by the UI, and agent MCP tokens are unused.
-  const safe = environments.map(e => ({
-    ...e,
-    gatewayToken: e.gatewayToken ? '••••' : null,
-    kubeconfig: null,
-    agents: e.agents.map(link => ({ ...link, agent: { ...link.agent, mcpToken: null } })),
-  }))
+  // Strip every credential server-side before passing to the client (gateway
+  // token, kubeconfig, federation token, metadata.talosConfig, agent MCP
+  // tokens). The UI only gets hasX flags.
+  const safe = environments.map(toEnvironmentDTO)
 
   return <EnvironmentsPage initialEnvironments={safe as Parameters<typeof EnvironmentsPage>[0]['initialEnvironments']} />
 }

@@ -7,6 +7,7 @@ import { getCurrentUser, requireAdmin } from '@/lib/auth'
 import { CreateEnvironmentSchema } from '@/lib/validate'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { encrypt } from '@/lib/encryption'
+import { toEnvironmentDTO } from '@/lib/environment-dto'
 
 export async function GET() {
   // SOC2: CR-002 — require authentication to list environments
@@ -21,8 +22,8 @@ export async function GET() {
     },
     take: 200,
   })
-  // Mask sensitive fields
-  return NextResponse.json(environments.map((e: any) => ({ ...e, gatewayToken: e.gatewayToken ? '••••' : null, kubeconfig: e.kubeconfig ? '••••' : null, federationToken: e.federationToken ? '••••' : null })))
+  // Never return credentials — only whether each one is set.
+  return NextResponse.json(environments.map(toEnvironmentDTO))
 }
 
 export async function POST(req: NextRequest) {
@@ -119,8 +120,5 @@ export async function POST(req: NextRequest) {
     userAgent: getUserAgent(req.headers),
   }).catch(() => {})
 
-  return NextResponse.json(
-    { ...envWithTools, gatewayToken: envWithTools?.gatewayToken ? '••••' : null, kubeconfig: envWithTools?.kubeconfig ? '••••' : null, federationToken: envWithTools?.federationToken ? '••••' : null },
-    { status: 201 }
-  )
+  return NextResponse.json(envWithTools ? toEnvironmentDTO(envWithTools) : null, { status: 201 })
 }

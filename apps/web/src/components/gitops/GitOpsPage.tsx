@@ -58,7 +58,8 @@ interface Environment {
   gitOwner: string | null
   gitRepo: string | null
   argoCdUrl: string | null
-  kubeconfig: string | null
+  /** Credentials are never returned by the API — only whether one is stored. */
+  hasKubeconfig?: boolean
   gitOpsPRs?: GitOpsPR[]
   metadata?: {
     argocd?: ArgoCDState
@@ -629,7 +630,7 @@ function EnvironmentCard({
         {/* Bootstrap button */}
         {!hasRepo && (
           <button
-            onClick={() => onBootstrap(env.id, env.name, env.type, !!env.kubeconfig)}
+            onClick={() => onBootstrap(env.id, env.name, env.type, !!env.hasKubeconfig)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-accent/10 text-accent border border-accent/30 hover:bg-accent/20 transition-colors font-medium"
           >
             <Rocket size={12} />
