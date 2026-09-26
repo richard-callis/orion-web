@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from 'axios'
 
-interface ToolExecution {
+export interface ToolExecution {
   id: string
   executionId: string
   tool: string
@@ -12,9 +12,11 @@ interface ToolExecution {
   output?: string
   exitCode?: number
   durationMs?: number
-  reviewDecision?: string
+  reviewDecision?: string | null
+  reviewerId?: string | null
   reviewedAt?: Date
-  expiresAt?: Date
+  expiresAt?: Date | string | null
+  createdAt?: Date | string
   completedAt?: Date
 }
 
@@ -25,6 +27,7 @@ export class OrionClient {
   constructor(baseURL: string, executorToken: string, gatewayToken: string) {
     this.client = axios.create({
       baseURL,
+      timeout: 15000,
       headers: {
         'x-executor-token': executorToken,
       },
@@ -39,9 +42,11 @@ export class OrionClient {
     actorId: string
     actorType: 'agent' | 'human'
     status: string
-  }): Promise<ToolExecution> {
+  }): Promise<{ execution: ToolExecution; created: boolean }> {
+    // ORION answers 201 for a new row and 200 with the EXISTING row when executionId was seen
+    // before. The caller must never run a command for a row it didn't just create.
     const response = await this.client.post('/api/executions', data)
-    return response.data
+    return { execution: response.data, created: response.status === 201 }
   }
 
   async getExecution(id: string): Promise<ToolExecution> {
