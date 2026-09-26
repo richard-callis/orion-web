@@ -3,7 +3,7 @@
  * SOC2: [M-003] Rate limiting compliance tests
  */
 
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { rateLimitRedis, fallbackRateLimit, getRedisStatus, RateLimitResult } from './rate-limit-redis'
 
 describe('Rate Limiter', () => {
@@ -37,7 +37,7 @@ describe('Rate Limiter', () => {
       expect(resetTs).toBeLessThanOrEqual(now + windowMs + 100)
     })
 
-    it('should respect window expiry', (done) => {
+    it('should respect window expiry', async () => {
       const key = 'test-key-4'
       const windowMs = 100
 
@@ -50,11 +50,9 @@ describe('Rate Limiter', () => {
       expect(result2.allowed).toBe(false)
 
       // After window expires, should succeed again
-      setTimeout(() => {
-        const result3 = fallbackRateLimit(key, 1, windowMs)
-        expect(result3.allowed).toBe(true)
-        done()
-      }, windowMs + 10)
+      await new Promise(r => setTimeout(r, windowMs + 10))
+      const result3 = fallbackRateLimit(key, 1, windowMs)
+      expect(result3.allowed).toBe(true)
     })
 
     it('should handle multiple keys independently', () => {

@@ -130,6 +130,10 @@ async function initRedisClient(): Promise<boolean> {
     if (fallbackStore.size > 0) fallbackStore.clear()
     return true
   } catch (error) {
+    // Tear the failed client down: dropping the reference alone left ioredis
+    // reconnecting (and logging) forever, and every later call while Redis was
+    // down leaked another such client.
+    try { redisClient?.disconnect() } catch { /* already closed */ }
     redisClient = null
     redisAvailable = false
     return false
