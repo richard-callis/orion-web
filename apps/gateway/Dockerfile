@@ -5,11 +5,10 @@
 #
 # Base image pinned by version + multi-arch index digest; every downloaded
 # binary is pinned and sha256-verified.
-ARG NODE_IMAGE=node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
 
 # npm ci validates every workspace in the lockfile, so all manifests are copied;
 # only apps/gateway's dependencies are installed (all hoisted to /app/node_modules).
-FROM ${NODE_IMAGE} AS manifests
+FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS manifests
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/package.json
@@ -26,7 +25,7 @@ FROM manifests AS prod-deps
 RUN npm ci --workspace apps/gateway --include-workspace-root=false --omit=dev --legacy-peer-deps
 
 # ── CLI tools (pinned + checksum-verified) ───────────────────────────────────
-FROM ${NODE_IMAGE} AS tools
+FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS tools
 ARG TARGETARCH
 ARG KUBECTL_VERSION=1.33.1
 ARG TALOSCTL_VERSION=1.13.2
@@ -67,7 +66,7 @@ RUN apk add --no-cache curl \
  && install -m 0755 kubectl talosctl helm velero trivy /out/
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
-FROM ${NODE_IMAGE}
+FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
 WORKDIR /app
 
 # curl/bash are used by builtin tools; docker-cli for docker-type environments.

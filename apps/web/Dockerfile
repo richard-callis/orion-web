@@ -5,11 +5,10 @@
 #
 # Base image is pinned by version AND digest (multi-arch index digest), and
 # every downloaded binary is pinned and sha256-verified, so builds are
-# reproducible. Dependabot (docker ecosystem) proposes digest bumps.
-ARG NODE_IMAGE=node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
+# reproducible. Dependabot (docker ecosystem) proposes version/digest bumps.
 
 # ── Dependencies (lockfile-enforced) ─────────────────────────────────────────
-FROM ${NODE_IMAGE} AS deps
+FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS deps
 WORKDIR /app
 # OpenSSL for Prisma; toolchain for any native module builds
 RUN apk add --no-cache openssl make g++
@@ -33,7 +32,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 # ── CLI tools (pinned + checksum-verified) ───────────────────────────────────
-FROM ${NODE_IMAGE} AS tools
+FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS tools
 ARG TARGETARCH
 ARG KUBECTL_VERSION=1.33.1
 ARG HELM_VERSION=4.2.0
@@ -60,7 +59,7 @@ RUN apk add --no-cache curl \
  && install -m 0755 kubectl helm talosctl /out/
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
-FROM ${NODE_IMAGE} AS runner
+FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1

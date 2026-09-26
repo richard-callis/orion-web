@@ -2,11 +2,10 @@
 # Build context: REPOSITORY ROOT (docker build -f apps/executor/Dockerfile .)
 # so the single workspace lockfile is enforced with `npm ci`.
 # Base image pinned by version + multi-arch index digest (same Node line as web/gateway).
-ARG NODE_IMAGE=node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
 
 # npm ci validates every workspace in the lockfile, so all manifests are copied;
 # only apps/executor's dependencies are installed (all hoisted to /app/node_modules).
-FROM ${NODE_IMAGE} AS manifests
+FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS manifests
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/package.json
@@ -22,7 +21,7 @@ RUN npm run build --workspace apps/executor
 FROM manifests AS prod-deps
 RUN npm ci --workspace apps/executor --include-workspace-root=false --omit=dev
 
-FROM ${NODE_IMAGE}
+FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
 
 WORKDIR /app
 
