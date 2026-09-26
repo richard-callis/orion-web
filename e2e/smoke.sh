@@ -4,20 +4,21 @@
 # SOC II Compliance Smoke Test Suite — Quick Start
 #
 # Usage:
-#   ./SMOKE_TESTS_QUICK_START.sh [setup|run|cleanup|all]
+#   e2e/smoke.sh [setup|run|cleanup|all]
 #
 # Examples:
-#   ./SMOKE_TESTS_QUICK_START.sh setup      # Initialize test environment
-#   ./SMOKE_TESTS_QUICK_START.sh run        # Run all smoke tests
-#   ./SMOKE_TESTS_QUICK_START.sh cleanup    # Tear down test environment
-#   ./SMOKE_TESTS_QUICK_START.sh all        # Setup + run tests
+#   e2e/smoke.sh setup      # Initialize test environment
+#   e2e/smoke.sh run        # Run all smoke tests
+#   e2e/smoke.sh cleanup    # Tear down test environment
+#   e2e/smoke.sh all        # Setup + run tests
 #
 ################################################################################
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEPLOY_DIR="$SCRIPT_DIR/deploy"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEPLOY_DIR="$REPO_DIR/deploy"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_DIR="$SCRIPT_DIR/test-results/$TIMESTAMP"
 RESULTS_FILE="$LOG_DIR/test-results.txt"
@@ -55,7 +56,7 @@ check_prerequisites() {
         exit 1
     fi
 
-    if ! command -v docker-compose &> /dev/null; then
+    if ! docker compose version &> /dev/null; then
         log_fail "Docker Compose not found. Please install Docker Compose."
         exit 1
     fi
@@ -90,16 +91,16 @@ setup() {
     # Start Docker services
     log_info "Starting Docker Compose services..."
     cd "$DEPLOY_DIR"
-    docker-compose up -d
+    docker compose up -d
 
     log_info "Waiting for services to be healthy (60 seconds)..."
     local max_wait=60
     local elapsed=0
 
     while [ $elapsed -lt $max_wait ]; do
-        ORION_HEALTHY=$(docker-compose exec -T orion curl -f http://localhost:3000/api/health &>/dev/null && echo "true" || echo "false")
-        POSTGRES_HEALTHY=$(docker-compose exec -T postgres pg_isready -U orion &>/dev/null && echo "true" || echo "false")
-        REDIS_HEALTHY=$(docker-compose exec -T redis redis-cli ping &>/dev/null && echo "true" || echo "false")
+        ORION_HEALTHY=$(docker compose exec -T orion curl -f http://localhost:3000/api/health &>/dev/null && echo "true" || echo "false")
+        POSTGRES_HEALTHY=$(docker compose exec -T postgres pg_isready -U orion &>/dev/null && echo "true" || echo "false")
+        REDIS_HEALTHY=$(docker compose exec -T redis redis-cli ping &>/dev/null && echo "true" || echo "false")
 
         if [ "$ORION_HEALTHY" = "true" ] && [ "$POSTGRES_HEALTHY" = "true" ] && [ "$REDIS_HEALTHY" = "true" ]; then
             log_pass "All services healthy"
@@ -113,7 +114,7 @@ setup() {
 
     log_fail "Services did not become healthy within 60 seconds"
     log_info "Current service status:"
-    docker-compose ps
+    docker compose ps
     exit 1
 }
 
@@ -244,7 +245,7 @@ run_tests() {
 # Individual test functions
 test_k8s_001() {
     # Quick check: verify wrapConsoleLog is called
-    local logs=$(docker-compose logs orion 2>&1 | grep -i "redact\|wrap" | wc -l)
+    local logs=$(docker compose logs orion 2>&1 | grep -i "redact\|wrap" | wc -l)
     [ $logs -gt 0 ]
 }
 
@@ -263,7 +264,7 @@ test_sql_001() {
         -d '{"title": "test; DROP TABLE;"}' &>/dev/null
 
     # Verify table still exists
-    docker-compose exec -T postgres psql -U orion -d orion -c "SELECT COUNT(*) FROM Task;" &>/dev/null
+    docker compose exec -T postgres psql -U orion -d orion -c "SELECT COUNT(*) FROM Task;" &>/dev/null
 }
 
 test_rate_001() {
@@ -296,7 +297,7 @@ test_sso_001() {
 
 test_audit_001() {
     # Quick check: MinIO is running and bucket exists
-    docker-compose exec -T minio mc ls local/orion-audit-logs &>/dev/null
+    docker compose exec -T minio mc ls local/orion-audit-logs &>/dev/null
 }
 
 # Cleanup: Tear down test environment
@@ -305,7 +306,7 @@ cleanup() {
 
     cd "$DEPLOY_DIR"
     log_info "Stopping Docker Compose services..."
-    docker-compose down
+    docker compose down
 
     log_pass "Cleanup complete"
 }

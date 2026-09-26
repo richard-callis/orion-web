@@ -1,6 +1,7 @@
-import { chromium } from 'playwright'
+import { chromium } from '@playwright/test'
+import { BASE, requireCredentials } from '../env.mjs'
 
-const BASE = 'http://localhost:3000'
+const creds = requireCredentials()
 
 async function run() {
   const browser = await chromium.launch({ headless: true })
@@ -52,8 +53,8 @@ async function run() {
   // Fill by label or by input order
   const allInputs = await page.locator('input').all()
   // First input is username (type="text" or no type), second is password
-  await page.locator('input').first().fill('admin')
-  await page.locator('input[type="password"]').first().fill('admin')
+  await page.locator('input').first().fill(creds.user)
+  await page.locator('input[type="password"]').first().fill(creds.password)
 
   // Click sign in button
   const signInBtn = page.locator('button:has-text("Sign in")')

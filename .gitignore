@@ -16,3 +16,7 @@ deploy/.last-good
 deploy/vector-data/
 deploy/vault-unseal-keys/
 deploy/vault-proxy/certs/
+
+# Playwright output
+e2e/test-results/
+e2e/playwright-report/
