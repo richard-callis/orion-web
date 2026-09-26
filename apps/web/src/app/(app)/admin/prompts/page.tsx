@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { Save, RotateCcw, RefreshCw, ChevronDown, ChevronRight, Info } from 'lucide-react'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface PromptVariable { name: string; description: string }
 
@@ -24,6 +25,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 const CATEGORY_ORDER = ['system', 'bootstrap', 'context']
 
 export default function PromptsPage() {
+  const confirmDialog = useConfirm()
   const [prompts, setPrompts] = useState<Prompt[]>([])
   const [loading, setLoading] = useState(true)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
@@ -78,7 +80,7 @@ export default function PromptsPage() {
   }
 
   const handleReset = async (key: string) => {
-    if (!confirm('Reset this prompt to the factory default?')) return
+    if (!(await confirmDialog({ title: 'Reset prompt?', message: 'Reset this prompt to the factory default?', confirmLabel: 'Reset' }))) return
     setResetting(s => ({ ...s, [key]: true }))
     try {
       const res = await fetch(`/api/admin/prompts/${encodeURIComponent(key)}`, { method: 'DELETE' })

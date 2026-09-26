@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Play, Plus, Trash2, FlaskConical } from 'lucide-react'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface AssertionDef {
   type: 'contains_text' | 'not_contains_text' | 'regex_match' | 'llm_judge'
@@ -55,6 +56,7 @@ const ASSERTION_TYPE_COLORS: Record<string, string> = {
 }
 
 export default function EvalSuiteDetailPage() {
+  const confirmDialog = useConfirm()
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const [suite, setSuite] = useState<EvalSuite | null>(null)
@@ -137,7 +139,7 @@ export default function EvalSuiteDetailPage() {
   }
 
   async function deleteCase(caseId: string) {
-    if (!confirm('Delete this case?')) return
+    if (!(await confirmDialog({ title: 'Delete case?', message: 'Delete this eval case?', confirmLabel: 'Delete' }))) return
     await fetch(`/api/eval-suites/${params.id}/cases/${caseId}`, { method: 'DELETE' })
     await loadSuite()
   }

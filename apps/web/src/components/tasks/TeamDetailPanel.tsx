@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { X, Plus, Trash2, Bot, User, Cpu, MessageSquarePlus, MessageSquare, Rocket, Loader2, Check, Send, Square, Archive, Coins } from 'lucide-react'
 import type { Agent } from '@/types/tasks'
 import { NovaBrowser, Toast, type NovaImportResult, type ToastState } from '@/components/nova/NovaBrowser'
+import { useToast } from '@/components/ui/Toast'
 
 const ROLE_COLORS = [
   'bg-blue-500', 'bg-purple-500', 'bg-emerald-500', 'bg-orange-500',
@@ -154,6 +155,7 @@ interface Props {
 }
 
 export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, onUpdate, onDelete, onClose }: Props) {
+  const toast = useToast()
   const [localAgents, setLocalAgents] = useState<Agent[]>(initialAgents ?? [])
   const agents = agentsProp ?? localAgents
 
@@ -354,8 +356,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
       setPlanningMessages([])
       setDraftForm({ name: '', role: '', type: 'claude' })
     } catch (err) {
-      console.error('Failed to create agent:', err)
-      alert(`Failed to create agent: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      toast.error(`Failed to create agent: ${err instanceof Error ? err.message : 'Unknown error'}`)
       setDraftCreating(false)
     }
   }
@@ -406,8 +407,7 @@ export function TeamDetailPanel({ initialAgents, agents: agentsProp, onCreate, o
       setCreateModal(false)
       setForm(emptyForm)
     } catch (err) {
-      console.error('Failed to create agent:', err)
-      alert(`Failed to create agent: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      toast.error(`Failed to create agent: ${err instanceof Error ? err.message : 'Unknown error'}`)
     } finally {
       setSaving(false)
     }

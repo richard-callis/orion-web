@@ -8,6 +8,7 @@ import {
   AlertOctagon, Tag, Layers
 } from 'lucide-react'
 import Link from 'next/link'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface Investigation {
   id: string
@@ -59,6 +60,7 @@ interface Investigation {
 }
 
 export default function InvestigationDetailPage() {
+  const confirmDialog = useConfirm()
   const params = useParams()
   const router = useRouter()
   const investigationId = params.id as string
@@ -117,7 +119,7 @@ export default function InvestigationDetailPage() {
   }
 
   const deleteObservable = async (obsId: string) => {
-    if (!confirm('Delete this observable?')) return
+    if (!(await confirmDialog({ title: 'Delete observable?', message: 'Delete this observable?', confirmLabel: 'Delete' }))) return
     try {
       await fetch(`/api/monitoring/security/investigations/${investigationId}/observables/${obsId}`, {
         method: 'DELETE',
