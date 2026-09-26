@@ -2,6 +2,7 @@ import type { AgentRunner, AgentEvent, TaskRunContext } from './types'
 import { getPrompt, interpolate } from '@/lib/system-prompts'
 import { prisma } from '@/lib/db'
 import { decryptStrict } from '@/lib/encryption'
+import { runSignal, describeRunnerError } from './abort'
 
 const CLAUDE_URL = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
 
@@ -42,7 +43,7 @@ export const claudeRunner: AgentRunner = {
     // Fetch per-agent MCP token so the sidecar can set it as x-mcp-token in
     // the MCP transport headers when writing the per-request .mcp.json config.
     let mcpTokenForSidecar: string | undefined
-    if (ctx.agentId) {
+    if (ctx.agentId && !ctx.planOnly) {
       try {
         const agentRow = await prisma.agent.findUnique({
           where:  { id: ctx.agentId },
@@ -64,12 +65,13 @@ export const claudeRunner: AgentRunner = {
           prompt:       fullPrompt,
           systemPrompt: ctx.systemPrompt,
           model:        modelName,
-          agentId:      ctx.agentId,
-          maxTurns:     20,
+          // Plan-only turns omit agentId so the sidecar writes no MCP config —
+          // the model gets no ORION tools and a single turn to produce its plan.
+          ...(ctx.planOnly ? { maxTurns: 1 } : { agentId: ctx.agentId, maxTurns: 20 }),
           ...(ctx.nebula && { nebula: ctx.nebula }),
           ...(mcpTokenForSidecar && { mcpToken: mcpTokenForSidecar }),
         }),
-        signal: AbortSignal.timeout(300_000),
+        signal: runSignal(ctx.signal, 300_000),
       })
 
       if (!res.ok) {
@@ -104,7 +106,7 @@ export const claudeRunner: AgentRunner = {
 
       yield { type: 'done' }
     } catch (err) {
-      yield { type: 'error', error: err instanceof Error ? err.message : String(err) }
+      yield { type: 'error', error: describeRunnerError(err) }
     }
   },
 }

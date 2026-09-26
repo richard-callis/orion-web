@@ -40,6 +40,18 @@ export interface TaskRunContext {
    * injects the stored result instead, preventing duplicate side effects on retry.
    */
   checkpoints?: Map<number, { toolName: string; result: string }>
+  /**
+   * Task-level cancellation (worker timeout / shutdown). Runners combine it
+   * with their per-request timeouts and stop issuing LLM or tool calls once
+   * it fires.
+   */
+  signal?: AbortSignal
+  /**
+   * Plan-only turn: produce a plan with NO tool access. Used by the worker's
+   * plan-approval gate for runners that execute tools internally (claude:*),
+   * where the worker cannot intercept individual tool calls.
+   */
+  planOnly?: boolean
 }
 
 export type AgentEvent =

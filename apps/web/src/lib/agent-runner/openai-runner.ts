@@ -1,5 +1,6 @@
 import type { AgentRunner, AgentEvent, TaskRunContext, GatewayTool } from './types'
 import { GatewayClient } from './gateway-client'
+import { runSignal, describeRunnerError, throwIfAborted } from './abort'
 import { getPrompt, interpolate } from '@/lib/system-prompts'
 import { validateToolArgs } from '@/lib/tool-registry'
 import { checkToolPermission } from '@/lib/tool-permissions'
@@ -66,7 +67,7 @@ export const openaiRunner: AgentRunner = {
     if (ctx.gateway) {
       gateway = new GatewayClient(ctx.gateway.url, ctx.gateway.token)
       try {
-        gatewayTools = await gateway.listTools()
+        gatewayTools = await gateway.listTools(ctx.signal)
       } catch (err) {
         yield { type: 'text', content: `⚠ Could not reach gateway: ${err instanceof Error ? err.message : err}\nProceeding without tools.\n` }
       }
@@ -81,7 +82,8 @@ export const openaiRunner: AgentRunner = {
       },
     }))
 
-    const openaiToolDefs = [
+    // Plan-only turns get no tools at all — the model can only describe what it would do.
+    const openaiToolDefs = ctx.planOnly ? [] : [
       ...mgmtToolDefs,
       ...gatewayTools.map(t => ({
         type: 'function',
@@ -114,6 +116,7 @@ export const openaiRunner: AgentRunner = {
     try {
       while (turns < MAX_TURNS) {
         turns++
+        throwIfAborted(ctx.signal)
         const trimmedMessages = trimConversationHistory(messages)
         const res = await fetch(`${baseUrl}/v1/chat/completions`, {
           method: 'POST',
@@ -128,7 +131,7 @@ export const openaiRunner: AgentRunner = {
             ...(maxTokens !== null && { max_tokens: maxTokens }),
             ...(openaiToolDefs.length > 0 && { tools: openaiToolDefs }),
           }),
-          signal: AbortSignal.timeout(timeoutSecs * 1000),
+          signal: runSignal(ctx.signal, timeoutSecs * 1000),
         })
 
         if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`)
@@ -180,7 +183,7 @@ export const openaiRunner: AgentRunner = {
             } else if (gateway) {
               try {
                 const args = JSON.parse(argsRaw)
-                result = await gateway.executeTool(fn.name, args)
+                result = await gateway.executeTool(fn.name, args, ctx.signal)
               } catch (err) {
                 result = `Error: ${err instanceof Error ? err.message : String(err)}`
               }
@@ -231,7 +234,7 @@ export const openaiRunner: AgentRunner = {
       }
       yield { type: 'done' }
     } catch (err) {
-      yield { type: 'error', error: err instanceof Error ? err.message : String(err) }
+      yield { type: 'error', error: describeRunnerError(err) }
     }
   },
 }
