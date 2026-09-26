@@ -254,6 +254,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     limit: null,
   })
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const nearBottomRef = useRef(true)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   // Latest roomId, used to discard responses for a room the user already left.
@@ -322,6 +323,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     setRoom(null)
     setLoading(true)
     setMessageLimit(100)
+    nearBottomRef.current = true
     setTypingAgents([])
   }, [roomId])
 
@@ -341,7 +343,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   // Debounce scroll to avoid performance issues with rapid message arrivals
   useEffect(() => {
     const timer = setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      if (nearBottomRef.current) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
     }, 100)
     return () => clearTimeout(timer)
   }, [room?.messages?.length])
@@ -497,6 +499,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   const handleSendMessage = async () => {
     if (!message.trim() || !room || sending) return
     setSending(true)
+    nearBottomRef.current = true
     try {
       const res = await fetch(`/api/chatrooms/${room.id}/messages`, {
         method: 'POST',
@@ -777,7 +780,13 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       )}
 
       {/* Messages */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
+      <div
+        className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3"
+        onScroll={e => {
+          const el = e.currentTarget
+          nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 150
+        }}
+      >
         {loading ? (
           <div className="flex items-center justify-center h-full"><Loader2 size={20} className="animate-spin text-text-muted" /></div>
         ) : (

@@ -846,21 +846,31 @@ function BackupsTab() {
 function LogsTab() {
   const [namespace, setNamespace] = useState('apps')
   const [pod, setPod] = useState('')
-  const [lines, setLines] = useState<string[]>([])
+  const [lines, setLines] = useState<Array<{ id: number; text: string }>>([])
   const [streaming, setStreaming] = useState(false)
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const nearBottomRef = useRef(true)
+  const nextLineId = useRef(0)
   const esRef = useRef<EventSource | null>(null)
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [lines])
+  // Follow the tail only while the user hasn't scrolled up; set scrollTop
+  // directly so the page itself doesn't scroll.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || !nearBottomRef.current) return
+    const frame = requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
+    return () => cancelAnimationFrame(frame)
+  }, [lines])
 
   const startStream = () => {
     if (!pod) return
     esRef.current?.close()
     setLines([])
+    nearBottomRef.current = true
     setStreaming(true)
     const es = new EventSource(`/api/k8s/pods/${namespace}/${pod}/logs`)
     esRef.current = es
-    es.onmessage = (e) => setLines(prev => [...prev.slice(-500), e.data])
+    es.onmessage = (e) => setLines(prev => [...prev.slice(-500), { id: nextLineId.current++, text: e.data }])
     es.onerror = () => { setStreaming(false); es.close() }
   }
 
@@ -880,14 +890,20 @@ function LogsTab() {
         </button>
       </div>
 
-      <div className="rounded-lg border border-border-subtle bg-bg-card overflow-auto font-mono text-xs p-3 min-h-[300px] max-h-[60vh]">
-        {lines.map((line, i) => (
-          <div key={i} className="text-text-secondary leading-5 whitespace-pre-wrap">{line}</div>
+      <div
+        ref={scrollRef}
+        onScroll={e => {
+          const el = e.currentTarget
+          nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+        }}
+        className="rounded-lg border border-border-subtle bg-bg-card overflow-auto font-mono text-xs p-3 min-h-[300px] max-h-[60vh]"
+      >
+        {lines.map(line => (
+          <div key={line.id} className="text-text-secondary leading-5 whitespace-pre-wrap">{line.text}</div>
         ))}
         {!lines.length && (
           <p className="text-text-muted">Enter a namespace and pod name, then click Stream Logs.</p>
         )}
-        <div ref={bottomRef} />
       </div>
     </div>
   )
@@ -965,23 +981,16 @@ export function InfrastructureTabs() {
 
   // Load environments
   useEffect(() => {
-    console.log('[InfrastructureTabs] Mounting, fetching environments...')
     fetch('/api/environments')
       .then(r => {
-        console.log('[InfrastructureTabs] API response status:', r.status, 'ok:', r.ok)
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json()
       })
       .then((envs: Environment[]) => {
-        console.log('[InfrastructureTabs] Loaded', envs.length, 'environments:', envs.map(e => ({ name: e.name, type: e.type })))
         if (!Array.isArray(envs)) return
         const clusters = envs.filter(e => e.type === 'cluster' && e.gatewayUrl)
-        console.log('[InfrastructureTabs] Filtered to', clusters.length, 'clusters:', clusters.map(e => e.name))
         setEnvironments(clusters)
         if (clusters.length === 1) setEnvId(clusters[0].id)
-        else if (clusters.length === 0) {
-          console.warn('[InfrastructureTabs] No cluster environments found')
-        }
       })
       .catch((err) => {
         console.error('[InfrastructureTabs] Failed to load environments:', err)
@@ -1041,10 +1050,7 @@ export function InfrastructureTabs() {
           <div className="flex items-center gap-2">
             <select
               value={envId}
-              onChange={e => {
-                setEnvId(e.target.value)
-                console.log('[InfrastructureTabs] Selected env:', e.target.value, 'Options:', environments.map(e => e.name))
-              }}
+              onChange={e => setEnvId(e.target.value)}
               className={selectCls}
               disabled={loading || environments.length === 0}
             >
