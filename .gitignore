@@ -23,3 +23,6 @@ e2e/playwright-report/
 
 # esbuild output of apps/web/src/worker.ts (built during `npm run build`)
 apps/web/worker.js
+
+# Worktrees created by orion-worktree.sh
+.worktrees/

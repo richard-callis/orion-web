@@ -246,7 +246,17 @@ fi
 # ── Pull latest images ────────────────────────────────────────────────────────
 echo ""
 echo "Pulling images..."
-GITHUB_ORG="${GITHUB_ORG}" $COMPOSE pull
+# --ignore-buildable: services with a build: section are handled below, so a
+# not-yet-published image (e.g. orion-minio before its first CI build) can't
+# fail the whole deploy under set -e.
+GITHUB_ORG="${GITHUB_ORG}" $COMPOSE pull --ignore-buildable
+
+# MinIO is built from source (deploy/minio/) and published to GHCR by CI.
+# Prefer the registry image; build it here only if it isn't published yet.
+if ! GITHUB_ORG="${GITHUB_ORG}" $COMPOSE pull minio minio-init; then
+  echo "MinIO images not in the registry yet — building from source (one-off, takes a few minutes)..."
+  GITHUB_ORG="${GITHUB_ORG}" $COMPOSE build minio minio-init
+fi
 
 # ── Rebuild locally-built services ───────────────────────────────────────────
 # These services use build: in docker-compose.yml and are not pushed to a

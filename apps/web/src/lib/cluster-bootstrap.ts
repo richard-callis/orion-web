@@ -24,6 +24,7 @@ import { decrypt } from './encryption'
 import { bootstrapEnvironmentRepo } from './gitops'
 import { getGitProvider, getGitProviderConfig } from './git-provider'
 import { VAULT_ADDR, vaultFetch } from './vault'
+import { gatewayImageSpec } from './gateway-image'
 
 const ARGOCD_SERVER = process.env.ARGOCD_SERVER ?? 'http://host.docker.internal:8083'
 const ARGOCD_PASSWORD = process.env.ARGOCD_AUTH_TOKEN
@@ -658,7 +659,7 @@ async function ensureElkCredentials(
 
 function gatewayManifest(envName: string, joinToken: string): string {
   const slug = envName.toLowerCase().replace(/[^a-z0-9-]/g, '-')
-  const image = `ghcr.io/${process.env.GITHUB_ORG ?? 'richard-callis'}/orion-gateway:latest`
+  const gw = gatewayImageSpec()
 
   return `---
 apiVersion: v1
@@ -741,8 +742,8 @@ spec:
       serviceAccountName: orion-gateway
       containers:
         - name: gateway
-          image: ${image}
-          imagePullPolicy: Always
+          image: ${gw.image}
+          imagePullPolicy: ${gw.pullPolicy}
           ports:
             - containerPort: 3001
           env:
@@ -797,14 +798,15 @@ spec:
                   optional: true
             - name: GATEWAY_URL
               value: "http://orion-gateway.orion-management.svc.cluster.local:3001"
+          # /health exists in every gateway image; /readyz (503 until the gateway
+          # has registered and loaded its tool policy) only when the image is
+          # pinned to a release that has it. See lib/gateway-image.ts.
           livenessProbe:
-            httpGet: { path: /livez, port: 3001 }
+            httpGet: { path: ${gw.livenessPath}, port: 3001 }
             initialDelaySeconds: 15
             periodSeconds: 30
-          # /readyz is 503 until the gateway has registered with ORION and
-          # loaded its tool policy, so traffic only arrives once it can serve.
           readinessProbe:
-            httpGet: { path: /readyz, port: 3001 }
+            httpGet: { path: ${gw.readinessPath}, port: 3001 }
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
