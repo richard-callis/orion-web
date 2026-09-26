@@ -338,6 +338,9 @@
 | nextRetryAt | DateTime? |  |  |
 | dependsOn | String[] | `@default([])` | IDs of Task records that must be 'done' before this runs |
 | wave | Int? |  | Execution wave (0 = no deps, 1 = depends on wave-0, etc.) — computed at plan approval time |
+| claimedBy | String? |  |  |
+| claimedAt | DateTime? |  |  |
+| heartbeatAt | DateTime? |  |  |
 | events | → TaskEvent[] |  |  |
 | metadata | Json? |  |  |
 | chatRooms | → ChatRoom[] | `@relation("ChatRoomTask")` |  |
@@ -345,7 +348,7 @@
 | federatedDispatch | → FederatedDispatch? |  |  |
 | vulnerabilityFindings | → VulnerabilityFinding[] |  |  |
 
-`@@index([status, assignedAgent, wave, priority, createdAt])` · `@@index([createdBy])` · `@@index([featureId])` · `@@index([assignedAgent])`
+`@@index([status, assignedAgent, wave, priority, createdAt])` · `@@index([createdBy])` · `@@index([featureId])` · `@@index([assignedAgent])` · `@@index([status, heartbeatAt])`
 
 ### FederatedDispatch
 
@@ -808,6 +811,11 @@
 | updatedAt | DateTime | `@updatedAt` |  |
 | completedAt | DateTime? |  |  |
 | archivedAt | DateTime? |  |  |
+| ownerId | String? |  |  |
+| heartbeatAt | DateTime? |  |  |
+| dedupeKey | String? | `@unique` |  |
+
+`@@index([status, heartbeatAt])`
 
 ### IngressMiddleware
 
@@ -1736,10 +1744,11 @@
 | lastRunAt | DateTime? |  |  |
 | nextRunAt | DateTime? |  |  |
 | lastTaskId | String? |  |  |
+| createdBy | String? |  | User.id of the owner; null = legacy row (admin-only to modify) |
 | createdAt | DateTime | `@default(now())` |  |
 | updatedAt | DateTime | `@updatedAt` |  |
 
-`@@index([agentId])` · `@@index([nextRunAt, enabled])`
+`@@index([agentId])` · `@@index([nextRunAt, enabled])` · `@@index([createdBy])`
 
 ### WebhookTrigger
 
