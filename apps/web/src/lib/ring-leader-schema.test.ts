@@ -3,7 +3,7 @@
  * Phase 1: AgentProfile, RoomKnowledge, AgentKnowledge models + AgentContextConfig additions
  */
 
-import { describe, it, expect } from '@jest/globals'
+import { describe, it, expect } from 'vitest'
 
 // ── AgentContextConfig interface tests ────────────────────────────────────────
 
@@ -50,7 +50,7 @@ describe('Prisma Schema', () => {
   beforeAll(async () => {
     const { readFileSync } = await import('fs')
     const path = await import('path')
-    const schemaPath = path.default.join(__dirname, '../../../prisma/schema.prisma')
+    const schemaPath = path.default.join(__dirname, '../../prisma/schema.prisma')
     schemaContent = readFileSync(schemaPath, 'utf-8')
   })
 
@@ -184,12 +184,12 @@ describe('Prisma Schema', () => {
  * Handles last model in file by allowing EOF as terminator.
  */
 function extractModelBlock(schema: string, modelName: string): string {
-  const regex = new RegExp(
-    `model\\s+${modelName}\\s*\\{([\\s\\S]*?)(?=\\nmodel\\s+\\w+\\n\\s*\\{|\\Z)`,
-  )
-  const match = schema.match(regex)
-  if (!match) {
+  // A model block runs from `model Name {` to the first line that is just `}`.
+  const start = schema.search(new RegExp(`^model\\s+${modelName}\\s*\\{`, 'm'))
+  if (start === -1) {
     throw new Error(`Model ${modelName} not found in schema`)
   }
-  return match[1]
+  const bodyStart = schema.indexOf('{', start) + 1
+  const close = schema.slice(bodyStart).search(/^\}/m)
+  return close === -1 ? schema.slice(bodyStart) : schema.slice(bodyStart, bodyStart + close)
 }
