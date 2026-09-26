@@ -1,5 +1,7 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
+import useSWR from 'swr'
+import { PENDING_TOOLS_KEY } from '@/hooks/usePendingTools'
 import { createPortal } from 'react-dom'
 import { Clock, CheckCircle, XCircle, X, ChevronRight, Sparkles, ToggleRight, ToggleLeft } from 'lucide-react'
 
@@ -18,23 +20,13 @@ interface McpTool {
 }
 
 export function PendingToolNotifications() {
-  const [tools, setTools]           = useState<McpTool[]>([])
+  // Same SWR key as usePendingTools (sidebar badge), so this shares its request.
+  const { data, mutate } = useSWR<McpTool[]>(PENDING_TOOLS_KEY, { refreshInterval: 20_000 })
+  const tools = Array.isArray(data) ? data : []
+  const removeTool = (id: string) => mutate(prev => prev?.filter(t => t.id !== id), { revalidate: false })
   const [dismissed, setDismissed]   = useState<Set<string>>(new Set())
   const [viewTool, setViewTool]     = useState<McpTool | null>(null)
   const [acting, setActing]         = useState<string | null>(null)
-
-  const fetchPending = useCallback(async () => {
-    try {
-      const data: McpTool[] = await fetch('/api/tools/pending').then(r => r.json())
-      setTools(data)
-    } catch { /* silent */ }
-  }, [])
-
-  useEffect(() => {
-    fetchPending()
-    const timer = setInterval(fetchPending, 20_000)
-    return () => clearInterval(timer)
-  }, [fetchPending])
 
   const approve = async (tool: McpTool) => {
     setActing(tool.id)
@@ -48,7 +40,7 @@ export function PendingToolNotifications() {
         }),
       })
       if (!res.ok) return
-      setTools(prev => prev.filter(t => t.id !== tool.id))
+      removeTool(tool.id)
       setViewTool(null)
     } finally { setActing(null) }
   }
@@ -58,7 +50,7 @@ export function PendingToolNotifications() {
     try {
       const res = await fetch(`/api/environments/${tool.environment.id}/tools/${tool.id}/reject`, { method: 'POST' })
       if (!res.ok) return
-      setTools(prev => prev.filter(t => t.id !== tool.id))
+      removeTool(tool.id)
       setViewTool(null)
     } finally { setActing(null) }
   }

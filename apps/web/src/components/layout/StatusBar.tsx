@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import useSWR from 'swr'
 
 interface Health {
   k8s: boolean
@@ -27,30 +27,15 @@ const PROVIDER_LABELS: Record<string, string> = {
 }
 
 export function StatusBar() {
-  const [health, setHealth] = useState<Health | null>(null)
-  const [models, setModels] = useState<AppModel[]>([])
-  const [domain, setDomain] = useState<string>('')
+  // SWR-shared, visibility-aware polling. /api/models is also used by the
+  // chat model picker, so those requests are deduplicated.
+  const { data: setup } = useSWR<{ internalDomain?: string }>('/api/setup/status', { revalidateOnFocus: false })
+  const { data: healthData, error: healthError } = useSWR<Health>('/api/health', { refreshInterval: 30_000 })
+  const { data: modelData } = useSWR<AppModel[]>('/api/models', { refreshInterval: 30_000 })
 
-  useEffect(() => {
-    fetch('/api/setup/status')
-      .then(r => { if (!r.ok) throw new Error(`Request failed: ${r.status}`); return r.json() })
-      .then(d => { if (d.internalDomain) setDomain(d.internalDomain) })
-      .catch((e) => console.error("[fetch]", e))
-  }, [])
-
-  useEffect(() => {
-    const check = () =>
-      Promise.all([
-        fetch('/api/health').then(r => { if (!r.ok) throw new Error(`Request failed: ${r.status}`); return r.json() }).catch(() => null),
-        fetch('/api/models').then(r => { if (!r.ok) throw new Error(`Request failed: ${r.status}`); return r.json() }).catch(() => []),
-      ]).then(([h, m]) => {
-        setHealth(h)
-        setModels(Array.isArray(m) ? m : [])
-      })
-    check()
-    const t = setInterval(check, 30_000)
-    return () => clearInterval(t)
-  }, [])
+  const health = healthError ? null : (healthData ?? null)
+  const models = Array.isArray(modelData) ? modelData : []
+  const domain = setup?.internalDomain ?? ''
 
   const dot = (ok: boolean | undefined) => (
     <span className={`inline-block w-2 h-2 rounded-full status-pulse ${ok ? 'bg-status-healthy' : ok === false ? 'bg-status-error' : 'bg-text-muted'}`} />
