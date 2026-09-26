@@ -14,6 +14,7 @@ import { randomBytes } from 'crypto'
 import { prisma } from './db'
 import { getGitProvider, getGitProviderConfig } from './git-provider'
 import { GiteaGitProvider } from './git-provider/gitea-provider'
+import { gatewayImageSpec } from './gateway-image'
 
 export type LocalBootstrapEvent =
   | { type: 'step';  message: string }
@@ -22,7 +23,7 @@ export type LocalBootstrapEvent =
   | { type: 'done';  message: string }
 
 const SOCKET           = '/var/run/docker.sock'
-const GATEWAY_IMAGE    = `ghcr.io/${process.env.GITHUB_ORG ?? 'richard-callis'}/orion-gateway:latest`
+const GATEWAY_IMAGE    = gatewayImageSpec().image
 const RUNNER_IMAGE     = 'gitea/act_runner:latest'
 const ORION_CALLBACK_URL = (
   process.env.ORION_CALLBACK_URL ??
