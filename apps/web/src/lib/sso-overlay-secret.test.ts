@@ -14,11 +14,8 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 
-vi.mock('@/lib/db', () => ({ prisma: {} }))
-vi.mock('@/lib/auth', () => ({ requireAdmin: vi.fn() }))
-
 import { renderProviderConfig, type ProviderConfig } from '@/lib/provider-engine'
-import { syncOverlaySecret } from './route'
+import { syncOverlaySecret } from './sso-overlay-secret'
 
 describe('resolveSecret placeholder resolution (renderProviderConfig -> syncOverlaySecret)', () => {
   it('resolves {{ resolveSecret <name> <key> }} to the real secret value in the final overlay Secret', async () => {
