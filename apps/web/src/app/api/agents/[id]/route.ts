@@ -41,7 +41,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     },
   })
   if (!agent) return new NextResponse(null, { status: 404 })
-  return NextResponse.json(agent)
+  // SOC2 [L3]: never return the per-agent MCP token (a credential)
+  const { mcpToken: _mcpToken, ...safeAgent } = agent
+  return NextResponse.json(safeAgent)
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -82,7 +84,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     data.metadata = { ...existingMeta, ...validatedData.metadata }
   }
   const agent = await prisma.agent.update({ where: { id: (await params).id }, data })
-  return NextResponse.json(agent)
+  const { mcpToken: _mcpToken, ...safeAgent } = agent
+  return NextResponse.json(safeAgent)
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

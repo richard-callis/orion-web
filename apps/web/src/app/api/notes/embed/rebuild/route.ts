@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { embedAllNotes, computeAllSemanticEdges } from '@/lib/embeddings'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { constantTimeCompare } from '@/lib/security/webhook-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,7 +18,8 @@ export async function POST(req: NextRequest) {
   // Auth check — allow session, OR an embed trigger token set via env
   const session = await getServerSession(authOptions)
   const embedToken = process.env.EMBED_TRIGGER_TOKEN
-  const hasToken = embedToken && req.headers.get('x-embed-token') === embedToken
+  // SOC2 [L2]: constant-time comparison (was `===`)
+  const hasToken = !!embedToken && constantTimeCompare(req.headers.get('x-embed-token') ?? '', embedToken)
   // MAJOR fix: embed rebuild re-processes ALL notes with paid API calls. Require admin
   // role for session callers; the token path is for MCP/internal tooling only.
   if (!hasToken) {

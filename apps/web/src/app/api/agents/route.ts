@@ -27,7 +27,8 @@ export async function GET(_req: NextRequest): Promise<NextResponse> {
       : { OR: [{ createdBy: caller.id }, { createdBy: null }] }
 
   const agents = await prisma.agent.findMany({ where, orderBy: { name: 'asc' } })
-  return NextResponse.json(agents)
+  // SOC2 [L3]: never return the per-agent MCP token (a credential) to the browser
+  return NextResponse.json(agents.map(({ mcpToken: _mcpToken, ...agent }) => agent))
 }
 
 // SOC2 [PRIV-001]: Agent creation is admin-only — readonly/user roles must not be able
