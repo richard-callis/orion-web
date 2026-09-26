@@ -24,7 +24,7 @@ import { DEPLOYMENT_TEMPLATES, getTemplate } from '@/lib/deployment-templates'
 import { writeVaultSecret } from '@/lib/vault'
 import { randomBytes } from 'crypto'
 import { isPrivateUrl } from '@/lib/ssrf-guard'
-import { reviewExecution, ExecutionReviewError } from '@/lib/execution-review'
+import { findExecutionForReview, assertCanReview, ExecutionReviewError } from '@/lib/execution-review'
 
 const execAsync = promisify(exec)
 
@@ -3340,9 +3340,9 @@ registerTool({
  * SOC2 [H1]: approve/deny are human-only. Agents (MCP, task runners, room agents)
  * must never be able to approve an escalated command — including their own — so the
  * handler refuses any call carrying agent/task context and requires a human admin
- * user who is not the execution's actor. The decision is written through the same
- * compare-and-set helper as POST /api/executions/[id]/review, which records the
- * reviewer and audit-logs the reason.
+ * user who is not the execution's actor (assertCanReview). The decision is then sent
+ * to the executor's review endpoint with that user as reviewerId; ORION re-validates
+ * the reviewer when the executor writes the decision back (PATCH /api/executions/[id]).
  */
 async function reviewExecutionFromTool(
   args: unknown,
@@ -3357,24 +3357,39 @@ async function reviewExecutionFromTool(
     return 'Error: execution review is human-only — an admin must approve or deny this execution from the ORION UI or API.'
   }
 
-  const user = await ctx.prisma.user.findUnique({
+  const reviewer = await ctx.prisma.user.findUnique({
     where: { id: ctx.userId },
-    select: { id: true, username: true, email: true, name: true, role: true, active: true },
+    select: { id: true, role: true, active: true },
   })
-  if (!user || !user.active) return 'Error: reviewer not found'
+  if (!reviewer) return 'Error: reviewer not found'
 
+  let execution
   try {
-    const execution = await reviewExecution({
-      id: executionId,
-      reviewer: { ...user, email: user.email ?? '' },
-      decision,
-      reason,
-    })
-    return `Execution ${execution.executionId} ${decision}. Reason: ${reason}`
+    execution = await findExecutionForReview(executionId)
+    assertCanReview(execution, reviewer)
   } catch (e) {
     if (e instanceof ExecutionReviewError) return `Error: ${e.message}`
     throw e
   }
+
+  const executorUrl = process.env.ORION_EXECUTOR_URL || 'http://orion-executor:3200'
+  const executorToken = process.env.ORION_EXECUTOR_TOKEN
+  if (!executorToken) return 'Error: executor service token not configured'
+
+  const response = await fetch(`${executorUrl}/executions/${encodeURIComponent(execution.id)}/review`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-executor-token': executorToken,
+    },
+    body: JSON.stringify({ decision, reason, reviewerId: reviewer.id }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!response.ok) {
+    return `Error: executor service returned ${response.status}`
+  }
+
+  return `Execution ${execution.executionId} ${decision}. Reason: ${reason}`
 }
 
 registerTool({

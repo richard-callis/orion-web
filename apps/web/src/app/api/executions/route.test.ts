@@ -4,24 +4,28 @@
  * Guards that:
  *  - POST/PATCH reject session users and the gateway token; only x-executor-token passes
  *  - POST idempotency returns the existing row only while it is freshly pending (409 otherwise)
- *  - PATCH can never record an approval or a reviewer identity
+ *  - PATCH records an approval only with a forwarded reviewerId that is an admin other
+ *    than the actor, as a compare-and-set on the still-pending row
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { NextRequest } from 'next/server'
 
-const { toolExecution, sessionUser } = vi.hoisted(() => ({
+const { toolExecution, user, sessionUser } = vi.hoisted(() => ({
   toolExecution: {
     findUnique: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
   },
+  user: { findUnique: vi.fn() },
   sessionUser: { id: 'user-1', username: 'u', email: '', name: null, role: 'user', active: true },
 }))
 
 vi.mock('@/lib/db', () => ({
-  prisma: { toolExecution },
+  prisma: { toolExecution, user },
 }))
+vi.mock('@/lib/audit', () => ({ logAudit: vi.fn(async () => {}) }))
 
 // Keep the real isExecutorServiceCall; a logged-in session must NOT be enough.
 vi.mock('@/lib/auth', async (importOriginal) => {
@@ -63,6 +67,12 @@ beforeEach(() => {
   toolExecution.findUnique.mockReset().mockResolvedValue(null)
   toolExecution.create.mockReset().mockImplementation(async ({ data }) => ({ id: 'exec-row-1', ...data }))
   toolExecution.update.mockReset().mockImplementation(async ({ data }) => ({ id: 'exec-row-1', ...data }))
+  toolExecution.updateMany.mockReset().mockResolvedValue({ count: 1 })
+  user.findUnique.mockReset().mockImplementation(async ({ where }) => (
+    where.id === 'admin-1' ? { id: 'admin-1', role: 'admin', active: true }
+      : where.id === 'user-1' ? { id: 'user-1', role: 'user', active: true }
+      : null
+  ))
 })
 
 afterEach(() => {
@@ -135,21 +145,55 @@ describe('PATCH /api/executions/[id]', () => {
     expect(toolExecution.update).not.toHaveBeenCalled()
   })
 
-  it('refuses to record an approval even from the executor', async () => {
+  it('refuses an approval without a reviewerId, even from the executor', async () => {
     const res = await PATCH(req('PATCH', { reviewDecision: 'approved' }, { 'x-executor-token': EXECUTOR_TOKEN }), params)
-    expect(res.status).toBe(403)
-    expect(toolExecution.update).not.toHaveBeenCalled()
+    expect(res.status).toBe(400)
+    expect(toolExecution.updateMany).not.toHaveBeenCalled()
   })
 
-  it('refuses to set reviewerId from the executor', async () => {
-    const res = await PATCH(req('PATCH', { status: 'denied', reviewDecision: 'denied', reviewerId: 'user-2' }, { 'x-executor-token': EXECUTOR_TOKEN }), params)
+  it('refuses a forwarded self-approval (reviewer == actor)', async () => {
+    toolExecution.findUnique.mockResolvedValue({ id: 'exec-row-1', actorId: 'admin-1', status: 'pending', reviewDecision: null })
+    const res = await PATCH(req('PATCH', { reviewDecision: 'approved', reviewerId: 'admin-1' }, { 'x-executor-token': EXECUTOR_TOKEN }), params)
+    expect(res.status).toBe(403)
+    expect(toolExecution.updateMany).not.toHaveBeenCalled()
+  })
+
+  it('refuses a forwarded approval by a non-admin reviewer', async () => {
+    toolExecution.findUnique.mockResolvedValue({ id: 'exec-row-1', actorId: 'agent-1', status: 'pending', reviewDecision: null })
+    const res = await PATCH(req('PATCH', { reviewDecision: 'approved', reviewerId: 'user-1' }, { 'x-executor-token': EXECUTOR_TOKEN }), params)
     expect(res.status).toBe(403)
   })
 
-  it('lets the executor record a TTL auto-deny', async () => {
+  it('refuses a forwarded approval by an unknown reviewer', async () => {
+    const res = await PATCH(req('PATCH', { reviewDecision: 'approved', reviewerId: 'ghost' }, { 'x-executor-token': EXECUTOR_TOKEN }), params)
+    expect(res.status).toBe(403)
+  })
+
+  it('records a valid forwarded approval as a compare-and-set with the reviewer', async () => {
+    const res = await PATCH(req('PATCH', { reviewDecision: 'approved', reviewerId: 'admin-1' }, { 'x-executor-token': EXECUTOR_TOKEN }), params)
+    expect(res.status).toBe(200)
+    const call = toolExecution.updateMany.mock.calls[0][0]
+    expect(call.where).toEqual({ id: 'exec-row-1', status: 'pending', reviewDecision: null })
+    expect(call.data).toMatchObject({ reviewDecision: 'approved', reviewerId: 'admin-1' })
+  })
+
+  it('lets the executor record a TTL auto-deny as a compare-and-set', async () => {
     const res = await PATCH(req('PATCH', { status: 'denied', reviewDecision: 'denied' }, { 'x-executor-token': EXECUTOR_TOKEN }), params)
     expect(res.status).toBe(200)
-    expect(toolExecution.update).toHaveBeenCalledOnce()
+    const call = toolExecution.updateMany.mock.calls[0][0]
+    expect(call.where).toEqual({ id: 'exec-row-1', status: 'pending', reviewDecision: null })
+    expect(call.data).toMatchObject({ status: 'denied', reviewDecision: 'denied' })
+  })
+
+  it('does not let a late auto-deny overwrite a recorded decision', async () => {
+    toolExecution.updateMany.mockResolvedValue({ count: 0 })
+    const res = await PATCH(req('PATCH', { reviewDecision: 'denied' }, { 'x-executor-token': EXECUTOR_TOKEN }), params)
+    expect(res.status).toBe(409)
+  })
+
+  it('rejects an unknown reviewDecision value', async () => {
+    const res = await PATCH(req('PATCH', { reviewDecision: 'maybe' }, { 'x-executor-token': EXECUTOR_TOKEN }), params)
+    expect(res.status).toBe(400)
   })
 
   it('lets the executor record completion', async () => {

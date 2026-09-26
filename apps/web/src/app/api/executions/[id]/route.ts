@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireServiceAuth, assertCanModify, isExecutorServiceCall } from '@/lib/auth'
+import {
+  assertCanReview,
+  recordReviewDecision,
+  auditReview,
+  ExecutionReviewError,
+} from '@/lib/execution-review'
 
 export async function GET(
   req: NextRequest,
@@ -40,10 +46,11 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // SOC2 [C2]: execution records are updated only by the executor service. Human
-  // approve/deny decisions go through POST /api/executions/[id]/review (admin-only,
-  // reviewer != actor). Previously any session whose id matched actorId could PATCH
-  // reviewDecision: 'approved' on its own request.
+  // SOC2 [C2]: execution records are updated only by the executor service. Sessions
+  // are rejected — previously any session whose id matched actorId could PATCH
+  // reviewDecision: 'approved' on its own request. Human decisions arrive either via
+  // POST /api/executions/[id]/review or forwarded by the executor's review endpoint
+  // with a reviewerId, which is re-validated here (admin, not the actor, still pending).
   if (!isExecutorServiceCall(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
@@ -68,21 +75,56 @@ export async function PATCH(
       durationMs,
       reviewerId,
       reviewDecision,
-      reviewedAt,
       expiresAt,
       completedAt,
     } = body
 
-    // The executor may record a denial (TTL auto-deny) but never an approval or a
-    // reviewer identity — those come only from the human review endpoint.
-    if (reviewDecision !== undefined && reviewDecision !== 'denied') {
-      return NextResponse.json(
-        { error: 'Approvals must be recorded via /api/executions/[id]/review' },
-        { status: 403 }
-      )
+    if (reviewDecision !== undefined && reviewDecision !== 'approved' && reviewDecision !== 'denied') {
+      return NextResponse.json({ error: 'reviewDecision must be "approved" or "denied"' }, { status: 400 })
     }
-    if (reviewerId !== undefined) {
-      return NextResponse.json({ error: 'reviewerId cannot be set by the executor' }, { status: 403 })
+    if (reviewerId !== undefined && reviewDecision === undefined) {
+      return NextResponse.json({ error: 'reviewerId requires reviewDecision' }, { status: 400 })
+    }
+
+    if (reviewDecision !== undefined) {
+      // A decision is a compare-and-set on the still-pending row, so a late TTL
+      // auto-deny can never overwrite an approval (or vice versa).
+      if (reviewDecision === 'approved' || reviewerId !== undefined) {
+        // Human decision forwarded by the executor: the reviewer must be a real
+        // user. Approvals additionally require an admin who is not the actor.
+        if (typeof reviewerId !== 'string' || !reviewerId) {
+          return NextResponse.json({ error: 'Approvals require a reviewerId' }, { status: 400 })
+        }
+        const reviewer = await prisma.user.findUnique({
+          where: { id: reviewerId },
+          select: { id: true, role: true, active: true },
+        })
+        if (!reviewer) {
+          return NextResponse.json({ error: 'Reviewer not found' }, { status: 403 })
+        }
+        if (reviewDecision === 'approved') {
+          assertCanReview(existing, reviewer)
+        }
+        await recordReviewDecision(existing.id, reviewer.id, reviewDecision)
+        await auditReview(existing, reviewer.id, reviewDecision, typeof body.reason === 'string' ? body.reason : undefined)
+      } else {
+        // TTL auto-deny by the executor (no human reviewer).
+        const now = new Date()
+        const { count } = await prisma.toolExecution.updateMany({
+          where: { id: existing.id, status: 'pending', reviewDecision: null },
+          data: {
+            status: 'denied',
+            reviewDecision: 'denied',
+            reviewedAt: now,
+            completedAt: now,
+          },
+        })
+        if (count !== 1) {
+          return NextResponse.json({ error: 'Execution is no longer pending' }, { status: 409 })
+        }
+      }
+      const reviewed = await prisma.toolExecution.findUnique({ where: { id: existing.id } })
+      return NextResponse.json(reviewed)
     }
 
     // Build update object with only provided fields
@@ -92,8 +134,6 @@ export async function PATCH(
     if (exitCode !== undefined) updateData.exitCode = exitCode
     if (output !== undefined) updateData.output = output
     if (durationMs !== undefined) updateData.durationMs = durationMs
-    if (reviewDecision !== undefined) updateData.reviewDecision = reviewDecision
-    if (reviewedAt !== undefined) updateData.reviewedAt = reviewedAt
     if (expiresAt !== undefined) updateData.expiresAt = expiresAt
     if (completedAt !== undefined) updateData.completedAt = completedAt
 
@@ -104,6 +144,9 @@ export async function PATCH(
 
     return NextResponse.json(execution)
   } catch (error: any) {
+    if (error instanceof ExecutionReviewError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     if (error?.code === 'P2025') {
       // Not found
       return NextResponse.json(
