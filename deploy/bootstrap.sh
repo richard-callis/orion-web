@@ -116,6 +116,18 @@ if ! grep -q "^GATEWAY_AUDIT_SECRET=" "$DEPLOY_DIR/.env" || \
   echo "Generated GATEWAY_AUDIT_SECRET."
 fi
 
+# ── Auto-generate ORION_EXECUTOR_TOKEN if missing ──────────────────────────
+# The executor's ONLY credential to ORION (it no longer receives
+# ORION_GATEWAY_TOKEN). ORION accepts it solely for execution records and the
+# execution-room notice — see apps/web/src/lib/executor-scope.ts.
+if ! grep -q "^ORION_EXECUTOR_TOKEN=" "$DEPLOY_DIR/.env" || \
+   grep -q "^ORION_EXECUTOR_TOKEN=$" "$DEPLOY_DIR/.env"; then
+  TOKEN=$(openssl rand -hex 32)
+  sed -i '/^ORION_EXECUTOR_TOKEN=/d' "$DEPLOY_DIR/.env"
+  echo "ORION_EXECUTOR_TOKEN=${TOKEN}" >> "$DEPLOY_DIR/.env"
+  echo "Generated ORION_EXECUTOR_TOKEN."
+fi
+
 # ── Seed NVD_API_KEY into SecurityConfig (Phase 3 PR12) ────────────────────
 # CVE enrichment uses the NIST NVD API. Without a key: 5 req/30s; with: 50.
 # The env var is optional — if absent, enrichNvd() falls back to anon mode.

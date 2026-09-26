@@ -828,7 +828,6 @@ services:
     environment:
       ORION_URL: http://orion:3000
       ORION_EXECUTOR_TOKEN: ${ORION_EXECUTOR_TOKEN}
-      ORION_GATEWAY_TOKEN: ${ORION_GATEWAY_TOKEN}
       VECTOR_WEBHOOK_URL: http://orion:3000/api/monitoring/security/webhooks/host-agent
       HOST_AGENT_WEBHOOK_SECRET: ${HOST_AGENT_WEBHOOK_SECRET}
       FILE_READ_ALLOWLIST: /var/log,/etc/hosts,/proc/cpuinfo,/proc/meminfo

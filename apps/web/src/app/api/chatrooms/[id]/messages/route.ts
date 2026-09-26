@@ -6,7 +6,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
-import { authOptions, requireServiceAuth, type AppUser } from '@/lib/auth'
+import { authOptions, requireServiceAuth, isExecutorServiceCall, type AppUser } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { triggerRoomAgentReplies } from '@/lib/room-agents'
 import { getRoomMember } from '@/lib/room-access'
@@ -72,10 +72,20 @@ export async function POST(
   // OrionClient.notifyRoom authenticates with Authorization: Bearer <ORION_GATEWAY_TOKEN>,
   // the same mechanism already trusted for other API routes), or throws if neither is present.
   let user: AppUser | null
-  try {
-    user = await requireServiceAuth(req)
-  } catch {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (isExecutorServiceCall(req)) {
+    // H2: the executor's token may only post system notices into the configured
+    // execution room — not into arbitrary rooms.
+    const executionRoom = await prisma.systemSetting.findUnique({ where: { key: 'system.room.execution' } })
+    if (!executionRoom?.value || executionRoom.value !== id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+    user = null
+  } else {
+    try {
+      user = await requireServiceAuth(req)
+    } catch {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
   }
   const isService = user === null
   const userId = user?.id
