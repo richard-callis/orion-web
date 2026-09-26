@@ -4,16 +4,20 @@ import { prisma } from '@/lib/db'
 import { UsersClient } from './UsersClient'
 
 export default async function UsersPage() {
+  // Explicit select: never serialize password hashes, TOTP secrets or tokens.
   const rawUsers = await prisma.user.findMany({
     orderBy: { createdAt: 'desc' },
+    select: {
+      id: true, username: true, name: true, email: true, role: true,
+      provider: true, lastSeen: true, active: true, createdAt: true,
+    },
   })
 
   // Serialize dates for client component
-  const users = rawUsers.map((u: any) => ({
+  const users = rawUsers.map(u => ({
     ...u,
     lastSeen: u.lastSeen?.toISOString() ?? null,
     createdAt: u.createdAt.toISOString(),
-    updatedAt: u.updatedAt.toISOString(),
   }))
 
   return (
