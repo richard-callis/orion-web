@@ -8,11 +8,8 @@
  * Requires: /var/run/docker.sock mounted (already present on docker/localhost gateways).
  */
 
-import { exec } from 'child_process'
-import { promisify } from 'util'
+import { run } from './lib/run.js'
 import type { ArgoCDApp } from './argocd-watcher.js'
-
-const execAsync = promisify(exec)
 
 type SyncReportFn = (apps: ArgoCDApp[]) => Promise<void>
 
@@ -39,10 +36,8 @@ export class DockerComposeWatcher {
 
   private async poll() {
     try {
-      const result = await execAsync(
-        'docker ps -a --format json 2>/dev/null',
-        { timeout: 15_000 },
-      )
+      // maxOutput 0: parsed here, must not be truncated (bounded by the 16 MB maxBuffer).
+      const result = await run('docker', ['ps', '-a', '--format', 'json'], { timeoutMs: 15_000, maxOutput: 0 })
 
       const lines = result.stdout.trim().split('\n').filter(Boolean)
       const containers = lines.map(line => JSON.parse(line))

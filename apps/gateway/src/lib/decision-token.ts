@@ -8,8 +8,12 @@
  * routed through the action-service decision/audit layer.
  *
  * Token format: <base64url(payload)>.<base64url(hmac)>
- *   payload = JSON.stringify({ auditId, actionType, target, exp })
+ *   payload = JSON.stringify({ auditId, actionType, target, exp, params? })
  *   hmac    = HMAC-SHA256(payloadBytes, ACTION_SERVICE_TOKEN_SECRET)
+ *
+ * `params` (optional) binds additional tool arguments (e.g. scope, duration)
+ * so they cannot be altered after signing. Tokens without `params` are still
+ * accepted, but then the caller may only use each bound argument's default.
  *
  * MIRROR OF apps/web/src/lib/security/decision-token.ts — keep in sync.
  * The gateway only verifies (never signs), so signDecisionToken is omitted.
@@ -23,6 +27,8 @@ export interface DecisionTokenPayload {
   target: string
   /** Unix ms expiry timestamp. */
   exp: number
+  /** Optional additional bound arguments. */
+  params?: Record<string, string>
 }
 
 function getSecret(): Buffer {
@@ -41,12 +47,20 @@ function b64urlDecode(s: string): Buffer {
 
 /**
  * Verify a decision token. Throws on any failure (malformed, bad signature,
- * expired, or mismatched actionType/target). Returns the parsed payload on
- * success.
+ * expired, mismatched actionType/target, or a bound param that doesn't match).
+ * Returns the parsed payload on success.
+ *
+ * `expected.params` lists the tool arguments that must be bound: each entry
+ * gives the value actually being used and the default that legacy tokens
+ * (without `params`) are implicitly limited to.
  */
 export function verifyDecisionToken(
   token: string,
-  expected: { actionType: string; target: string },
+  expected: {
+    actionType: string
+    target: string
+    params?: Record<string, { value: string; default: string }>
+  },
 ): DecisionTokenPayload {
   const secret = getSecret()
 
@@ -83,6 +97,9 @@ export function verifyDecisionToken(
   ) {
     throw new Error('token: payload missing required fields')
   }
+  if (payload.params !== undefined && (typeof payload.params !== 'object' || payload.params === null)) {
+    throw new Error('token: params must be an object')
+  }
 
   if (!(payload.exp > Date.now())) {
     throw new Error('token: expired')
@@ -96,5 +113,51 @@ export function verifyDecisionToken(
     throw new Error('token: target mismatch')
   }
 
+  for (const [key, { value, default: dflt }] of Object.entries(expected.params ?? {})) {
+    const bound = payload.params?.[key]
+    const allowed = bound === undefined ? dflt : String(bound)
+    if (value !== allowed) {
+      throw new Error(`token: ${key} mismatch`)
+    }
+  }
+
   return payload
+}
+
+// ── Replay protection ────────────────────────────────────────────────────────
+//
+// A token is valid until `exp` (5 min). Without tracking, the same token could
+// be replayed any number of times inside that window. Each (actionType, auditId)
+// pair may be consumed once; entries are dropped after they expire, and the map
+// is bounded so it cannot grow without limit.
+
+const MAX_USED_ENTRIES = 10_000
+const usedTokens = new Map<string, number>() // key → exp
+
+function pruneUsed(now: number): void {
+  for (const [k, exp] of usedTokens) {
+    if (exp <= now) usedTokens.delete(k)
+  }
+  // Still over the cap: drop the oldest insertions (Map preserves insertion order).
+  while (usedTokens.size > MAX_USED_ENTRIES) {
+    const oldest = usedTokens.keys().next().value
+    if (oldest === undefined) break
+    usedTokens.delete(oldest)
+  }
+}
+
+/** Mark a verified token as used. Throws if it was already consumed. */
+export function consumeDecisionToken(payload: DecisionTokenPayload): void {
+  const now = Date.now()
+  pruneUsed(now)
+  const key = `${payload.actionType}:${payload.auditId}`
+  if (usedTokens.has(key)) {
+    throw new Error('token: already used')
+  }
+  usedTokens.set(key, payload.exp)
+}
+
+/** Test helper — clears the replay cache. */
+export function __resetDecisionTokenReplayCache(): void {
+  usedTokens.clear()
 }
