@@ -24,6 +24,7 @@ import { DEPLOYMENT_TEMPLATES, getTemplate } from '@/lib/deployment-templates'
 import { writeVaultSecret } from '@/lib/vault'
 import { randomBytes } from 'crypto'
 import { isPrivateUrl } from '@/lib/ssrf-guard'
+import { reviewExecution, ExecutionReviewError } from '@/lib/execution-review'
 
 const execAsync = promisify(exec)
 
@@ -3335,9 +3336,50 @@ registerTool({
 
 // ── Execution: Tool Execution Approval Gating ─────────────────────────────────
 
+/**
+ * SOC2 [H1]: approve/deny are human-only. Agents (MCP, task runners, room agents)
+ * must never be able to approve an escalated command — including their own — so the
+ * handler refuses any call carrying agent/task context and requires a human admin
+ * user who is not the execution's actor. The decision is written through the same
+ * compare-and-set helper as POST /api/executions/[id]/review, which records the
+ * reviewer and audit-logs the reason.
+ */
+async function reviewExecutionFromTool(
+  args: unknown,
+  ctx: ToolExecutionContext,
+  decision: 'approved' | 'denied',
+): Promise<string> {
+  const { executionId, reason } = parseArgs(args) as { executionId?: string; reason?: string }
+  if (!executionId) return 'Error: executionId is required'
+  if (!reason) return 'Error: reason is required'
+
+  if (ctx.agentId || ctx.taskId || !ctx.userId) {
+    return 'Error: execution review is human-only — an admin must approve or deny this execution from the ORION UI or API.'
+  }
+
+  const user = await ctx.prisma.user.findUnique({
+    where: { id: ctx.userId },
+    select: { id: true, username: true, email: true, name: true, role: true, active: true },
+  })
+  if (!user || !user.active) return 'Error: reviewer not found'
+
+  try {
+    const execution = await reviewExecution({
+      id: executionId,
+      reviewer: { ...user, email: user.email ?? '' },
+      decision,
+      reason,
+    })
+    return `Execution ${execution.executionId} ${decision}. Reason: ${reason}`
+  } catch (e) {
+    if (e instanceof ExecutionReviewError) return `Error: ${e.message}`
+    throw e
+  }
+}
+
 registerTool({
   name: 'approve_execution',
-  description: 'Approve a pending tool execution that is waiting for review. Only use this after reviewing the tool, args, and actor. The execution will proceed immediately after approval.',
+  description: 'Approve a pending tool execution that is waiting for review. Human admins only — agents cannot approve executions. The execution will proceed immediately after approval.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -3356,46 +3398,12 @@ registerTool({
   parallelSafe: false,
   availableIn: 'chat',
   category: 'execution',
-  handler: async (args, ctx) => {
-    try {
-      const { executionId, reason } = parseArgs(args) as { executionId?: string; reason?: string }
-      if (!executionId) return 'Error: executionId is required'
-      if (!reason) return 'Error: reason is required'
-
-      // Call executor service to approve
-      const executorUrl = process.env.ORION_EXECUTOR_URL || 'http://orion-executor:3200'
-      const executorToken = process.env.ORION_EXECUTOR_TOKEN
-
-      if (!executorToken) {
-        return 'Error: executor service token not configured'
-      }
-
-      const response = await fetch(`${executorUrl}/executions/${executionId}/review`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-executor-token': executorToken,
-        },
-        body: JSON.stringify({
-          decision: 'approved',
-          reason,
-        }),
-      })
-
-      if (!response.ok) {
-        return `Error: executor service returned ${response.status}`
-      }
-
-      return `Execution ${executionId} approved. Reason: ${reason}`
-    } catch (e) {
-      return `Error: ${e instanceof Error ? e.message : String(e)}`
-    }
-  },
+  handler: (args, ctx) => reviewExecutionFromTool(args, ctx, 'approved'),
 })
 
 registerTool({
   name: 'deny_execution',
-  description: 'Deny a pending tool execution. The calling agent will receive an error. Use when the command looks suspicious, out of scope, or unsafe.',
+  description: 'Deny a pending tool execution. Human admins only. The calling agent will receive an error. Use when the command looks suspicious, out of scope, or unsafe.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -3414,41 +3422,7 @@ registerTool({
   parallelSafe: false,
   availableIn: 'chat',
   category: 'execution',
-  handler: async (args, ctx) => {
-    try {
-      const { executionId, reason } = parseArgs(args) as { executionId?: string; reason?: string }
-      if (!executionId) return 'Error: executionId is required'
-      if (!reason) return 'Error: reason is required'
-
-      // Call executor service to deny
-      const executorUrl = process.env.ORION_EXECUTOR_URL || 'http://orion-executor:3200'
-      const executorToken = process.env.ORION_EXECUTOR_TOKEN
-
-      if (!executorToken) {
-        return 'Error: executor service token not configured'
-      }
-
-      const response = await fetch(`${executorUrl}/executions/${executionId}/review`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-executor-token': executorToken,
-        },
-        body: JSON.stringify({
-          decision: 'denied',
-          reason,
-        }),
-      })
-
-      if (!response.ok) {
-        return `Error: executor service returned ${response.status}`
-      }
-
-      return `Execution ${executionId} denied. Reason: ${reason}`
-    } catch (e) {
-      return `Error: ${e instanceof Error ? e.message : String(e)}`
-    }
-  },
+  handler: (args, ctx) => reviewExecutionFromTool(args, ctx, 'denied'),
 })
 
 // ── Security / SOC Tools — registered so Warden can access them via MCP ────────

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth, assertCanModify } from '@/lib/auth'
+import { requireServiceAuth, assertCanModify, isExecutorServiceCall } from '@/lib/auth'
 
 export async function GET(
   req: NextRequest,
@@ -21,7 +21,11 @@ export async function GET(
       )
     }
 
-    await assertCanModify(caller, isService, execution.actorId ?? '')
+    try {
+      await assertCanModify(caller, isService, execution.actorId ?? '')
+    } catch {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
     return NextResponse.json(execution)
   } catch (error) {
     console.error('Error getting execution:', error)
@@ -36,11 +40,14 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  let caller
-  try { caller = await requireServiceAuth(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
-  const isService = caller === null
+  // SOC2 [C2]: execution records are updated only by the executor service. Human
+  // approve/deny decisions go through POST /api/executions/[id]/review (admin-only,
+  // reviewer != actor). Previously any session whose id matched actorId could PATCH
+  // reviewDecision: 'approved' on its own request.
+  if (!isExecutorServiceCall(req)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   try {
-    // Load execution first to verify ownership before mutation
     const existing = await prisma.toolExecution.findUnique({
       where: { id: (await params).id },
     })
@@ -50,7 +57,6 @@ export async function PATCH(
         { status: 404 }
       )
     }
-    await assertCanModify(caller, isService, existing.actorId ?? '')
 
     const body = await req.json()
 
@@ -67,6 +73,18 @@ export async function PATCH(
       completedAt,
     } = body
 
+    // The executor may record a denial (TTL auto-deny) but never an approval or a
+    // reviewer identity — those come only from the human review endpoint.
+    if (reviewDecision !== undefined && reviewDecision !== 'denied') {
+      return NextResponse.json(
+        { error: 'Approvals must be recorded via /api/executions/[id]/review' },
+        { status: 403 }
+      )
+    }
+    if (reviewerId !== undefined) {
+      return NextResponse.json({ error: 'reviewerId cannot be set by the executor' }, { status: 403 })
+    }
+
     // Build update object with only provided fields
     const updateData: any = {}
     if (status !== undefined) updateData.status = status
@@ -74,7 +92,6 @@ export async function PATCH(
     if (exitCode !== undefined) updateData.exitCode = exitCode
     if (output !== undefined) updateData.output = output
     if (durationMs !== undefined) updateData.durationMs = durationMs
-    if (reviewerId !== undefined) updateData.reviewerId = reviewerId
     if (reviewDecision !== undefined) updateData.reviewDecision = reviewDecision
     if (reviewedAt !== undefined) updateData.reviewedAt = reviewedAt
     if (expiresAt !== undefined) updateData.expiresAt = expiresAt
