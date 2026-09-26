@@ -7,6 +7,7 @@ import type { Agent, Task, Feature, Epic, SelectionState, PlanTarget, Bug } from
 import { BugManager } from './BugManager'
 import { KanbanBoard } from '../ui/KanbanBoard'
 import { CreateEntityModal } from '../ui/CreateEntityModal'
+import { useToast } from '../ui/Toast'
 
 interface TaskEvent {
   id: string
@@ -110,6 +111,10 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   const [view, setView]         = useState<'tasks' | 'bugs' | 'my-tasks'>('tasks')
   const [selection, setSelection] = useState<SelectionState>({ kind: 'all' })
   const [panel, setPanel]       = useState<RightPanel>(null)
+  // Task shown in the detail panel — async loaders use it to drop stale responses.
+  const panelTaskIdRef = useRef<string | null>(null)
+  panelTaskIdRef.current = panel?.kind === 'task' ? panel.task.id : null
+  const toast = useToast()
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false)
 
   // Open the right panel when navigated back from a planning chat
@@ -180,9 +185,10 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
     setEventsLoading(true)
     try {
       const res = await fetch(`/api/tasks/${taskId}/events`)
-      if (res.ok) setTaskEvents(await res.json())
-    } finally {
-      setEventsLoading(false)
+      if (!res.ok || panelTaskIdRef.current !== taskId) return
+      setTaskEvents(await res.json())
+    } catch { /* keep previous events */ } finally {
+      if (panelTaskIdRef.current === taskId) setEventsLoading(false)
     }
   }, [])
 
@@ -192,37 +198,39 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
       const res = await fetch(`/api/tasks/${taskId}/chat`)
       if (res.ok) {
         const data = await res.json()
+        if (panelTaskIdRef.current !== taskId) return
         setTaskChatRooms(data.rooms || [])
         if (data.rooms?.length && !activeChatRoom) {
           setActiveChatRoom(data.rooms[0].id)
         }
       }
-    } finally {
-      setChatLoading(false)
+    } catch { /* keep previous rooms */ } finally {
+      if (panelTaskIdRef.current === taskId) setChatLoading(false)
     }
   }, [activeChatRoom])
 
   const sendChatMessage = async () => {
     const content = chatInput.trim()
     if (!content || chatSending || !activeChatRoom || panel?.kind !== 'task') return
+    const taskId = panel.task.id
     setChatSending(true)
     setChatInput('')
     try {
       const res = await fetch(`/api/chatrooms/${activeChatRoom}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, taskId: panel.task.id }),
+        body: JSON.stringify({ content, taskId }),
       })
-      if (res.ok) {
-        // Refresh room messages
-        const roomRes = await fetch(`/api/tasks/${panel.task.id}/chat`)
-        if (roomRes.ok) {
-          const data = await roomRes.json()
-          setTaskChatRooms(data.rooms || [])
-        }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      // Refresh room messages
+      const roomRes = await fetch(`/api/tasks/${taskId}/chat`)
+      if (roomRes.ok && panelTaskIdRef.current === taskId) {
+        const data = await roomRes.json()
+        setTaskChatRooms(data.rooms || [])
       }
     } catch (e) {
-      console.error('Failed to send message:', e)
+      setChatInput(content)
+      toast.error(`Failed to send message: ${e instanceof Error ? e.message : 'unknown error'}`)
     } finally {
       setChatSending(false)
     }
@@ -285,21 +293,57 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
 
   const activeFeatureId = selection.kind === 'feature' ? selection.featureId : null
 
+  // ── Mutations ──────────────────────────────────────────────────────────────
+  // Optimistic updates are applied first; if the request fails (network error
+  // or non-2xx) `rollback` restores the previous state and a toast is shown.
+
+  const persist = async (url: string, init: RequestInit, rollback: () => void, what: string) => {
+    try {
+      const res = await fetch(url, init)
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null
+        throw new Error(body?.error ?? `HTTP ${res.status}`)
+      }
+    } catch (e) {
+      rollback()
+      toast.error(`Failed to ${what}: ${e instanceof Error ? e.message : 'unknown error'}`)
+    }
+  }
+
+  const jsonInit = (method: string, body: unknown): RequestInit => ({
+    method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })
+
+  /** Re-insert `item` at `index` unless it is already present. */
+  function restoreAt<T extends { id: string }>(list: T[], item: T, index: number): T[] {
+    if (list.some(x => x.id === item.id)) return list
+    const next = [...list]
+    next.splice(Math.min(index, next.length), 0, item)
+    return next
+  }
+
   // ── Task CRUD ──────────────────────────────────────────────────────────────
 
   const updateTask = async (id: string, patch: Partial<Task>) => {
+    const original = tasks.find(t => t.id === id)
     setTasks(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t))
     if (panel?.kind === 'task' && panel.task.id === id)
       setPanel(p => p?.kind === 'task' ? { ...p, task: { ...p.task, ...patch } } : p)
-    await fetch(`/api/tasks/${id}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/tasks/${id}`, jsonInit('PUT', patch), () => {
+      if (!original) return
+      setTasks(prev => prev.map(t => t.id === id ? original : t))
+      setPanel(p => p?.kind === 'task' && p.task.id === id ? { ...p, task: original } : p)
+    }, 'update task')
   }
 
   const deleteTask = async (id: string) => {
+    const index = tasks.findIndex(t => t.id === id)
+    const original = tasks[index]
     setTasks(prev => prev.filter(t => t.id !== id))
     if (panel?.kind === 'task' && panel.task.id === id) setPanel(null)
-    await fetch(`/api/tasks/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/tasks/${id}`, { method: 'DELETE' }, () => {
+      if (original) setTasks(prev => restoreAt(prev, original, index))
+    }, 'delete task')
   }
 
   const createTask = async () => {
@@ -313,6 +357,11 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
           priority: taskForm.priority, featureId: activeFeatureId, createdBy: 'admin',
         }),
       })
+      if (!r.ok) {
+        const body = await r.json().catch(() => null) as { error?: string } | null
+        toast.error(`Failed to create task: ${body?.error ?? `HTTP ${r.status}`}`)
+        return
+      }
       const task: Task = await r.json()
       setTasks(prev => [task, ...prev])
       // Bump feature task count
@@ -345,19 +394,26 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   // ── Epic CRUD ──────────────────────────────────────────────────────────────
 
   const updateEpic = async (id: string, patch: Partial<Epic>) => {
+    const original = epics.find(e => e.id === id)
     setEpics(prev => prev.map(e => e.id === id ? { ...e, ...patch } : e))
     if (panel?.kind === 'epic' && panel.epic.id === id)
       setPanel(p => p?.kind === 'epic' ? { ...p, epic: { ...p.epic, ...patch } } : p)
-    await fetch(`/api/epics/${id}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/epics/${id}`, jsonInit('PUT', patch), () => {
+      if (!original) return
+      setEpics(prev => prev.map(e => e.id === id ? original : e))
+      setPanel(p => p?.kind === 'epic' && p.epic.id === id ? { ...p, epic: original } : p)
+    }, 'update epic')
   }
 
   const deleteEpic = async (id: string) => {
+    const index = epics.findIndex(e => e.id === id)
+    const original = epics[index]
     setEpics(prev => prev.filter(e => e.id !== id))
     setSelection({ kind: 'all' })
     setPanel(null)
-    await fetch(`/api/epics/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/epics/${id}`, { method: 'DELETE' }, () => {
+      if (original) setEpics(prev => restoreAt(prev, original, index))
+    }, 'delete epic')
   }
 
   const createEpic = async () => {
@@ -368,6 +424,11 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: epicForm.title, description: epicForm.description || null }),
       })
+      if (!r.ok) {
+        const body = await r.json().catch(() => null) as { error?: string } | null
+        toast.error(`Failed to create epic: ${body?.error ?? `HTTP ${r.status}`}`)
+        return
+      }
       const epic: Epic = await r.json()
       setEpics(prev => [epic, ...prev])
       setEpicForm({ title: '', description: '' })
@@ -382,6 +443,7 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   // ── Feature CRUD ───────────────────────────────────────────────────────────
 
   const updateFeature = async (id: string, epicId: string, patch: Partial<Feature>) => {
+    const original = epics.find(e => e.id === epicId)?.features.find(f => f.id === id)
     setEpics(prev => prev.map(e =>
       e.id === epicId
         ? { ...e, features: e.features.map(f => f.id === id ? { ...f, ...patch } : f) }
@@ -389,18 +451,30 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
     ))
     if (panel?.kind === 'feature' && panel.feature.id === id)
       setPanel(p => p?.kind === 'feature' ? { ...p, feature: { ...p.feature, ...patch } } : p)
-    await fetch(`/api/features/${id}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/features/${id}`, jsonInit('PUT', patch), () => {
+      if (!original) return
+      setEpics(prev => prev.map(e =>
+        e.id === epicId ? { ...e, features: e.features.map(f => f.id === id ? original : f) } : e
+      ))
+      setPanel(p => p?.kind === 'feature' && p.feature.id === id ? { ...p, feature: original } : p)
+    }, 'update feature')
   }
 
   const deleteFeature = async (id: string, epicId: string) => {
+    const features = epics.find(e => e.id === epicId)?.features ?? []
+    const index = features.findIndex(f => f.id === id)
+    const original = features[index]
     setEpics(prev => prev.map(e =>
       e.id === epicId ? { ...e, features: e.features.filter(f => f.id !== id) } : e
     ))
     setSelection({ kind: 'epic', epicId })
     setPanel(null)
-    await fetch(`/api/features/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/features/${id}`, { method: 'DELETE' }, () => {
+      if (!original) return
+      setEpics(prev => prev.map(e =>
+        e.id === epicId ? { ...e, features: restoreAt(e.features, original, index) } : e
+      ))
+    }, 'delete feature')
   }
 
   const createFeature = async () => {
@@ -411,6 +485,11 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ epicId: featureForm.epicId, title: featureForm.title, description: featureForm.description || null }),
       })
+      if (!r.ok) {
+        const body = await r.json().catch(() => null) as { error?: string } | null
+        toast.error(`Failed to create feature: ${body?.error ?? `HTTP ${r.status}`}`)
+        return
+      }
       const feature: Feature = await r.json()
       setEpics(prev => prev.map(e =>
         e.id === featureForm.epicId ? { ...e, features: [...e.features, feature] } : e
@@ -430,17 +509,24 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
   const createAgent = (agent: Agent) => setAgents(prev => [...prev, agent])
 
   const updateAgent = async (id: string, patch: Partial<Agent>) => {
+    const original = agents.find(a => a.id === id)
     setAgents(prev => prev.map(a => a.id === id ? { ...a, ...patch } : a))
-    await fetch(`/api/agents/${id}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/agents/${id}`, jsonInit('PUT', patch), () => {
+      if (original) setAgents(prev => prev.map(a => a.id === id ? original : a))
+    }, 'update agent')
   }
 
   const deleteAgent = async (id: string) => {
+    const index = agents.findIndex(a => a.id === id)
+    const original = agents[index]
+    const assigned = new Map(tasks.filter(t => t.assignedAgent === id).map(t => [t.id, t]))
     setAgents(prev => prev.filter(a => a.id !== id))
     // Clear assignment from tasks
     setTasks(prev => prev.map(t => t.assignedAgent === id ? { ...t, assignedAgent: null, agent: null } : t))
-    await fetch(`/api/agents/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
+    await persist(`/api/agents/${id}`, { method: 'DELETE' }, () => {
+      if (original) setAgents(prev => restoreAt(prev, original, index))
+      setTasks(prev => prev.map(t => assigned.get(t.id) ?? t))
+    }, 'delete agent')
   }
 
   // ── Plan with AI ───────────────────────────────────────────────────────────
