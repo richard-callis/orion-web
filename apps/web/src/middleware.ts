@@ -14,6 +14,7 @@ import { rateLimitRedis, getClientIpForRateLimit } from './lib/rate-limit-redis'
 import { rateLimitBucket } from './lib/rate-limit-bucket'
 import { isIpBlocked } from './lib/security/crowdsec-bouncer'
 import { SESSION_COOKIE_NAME } from './lib/auth-constants'
+import { isExecutorAllowedRequest } from './lib/executor-scope'
 
 function getRateLimitKey(req: NextRequest): string {
   // SOC2: [M-006] Use x-forwarded-for first so self-hosted Node deployments
@@ -321,12 +322,13 @@ export async function middleware(req: NextRequest) {
     return addSecurityHeaders(nextWithNonce(req, nonce, correlationId), nonce)
   }
 
-  // Executor service calls — x-executor-token header is the auth.
-  // Executor logs execution records and reads them for status polling.
+  // Executor service calls — x-executor-token header is the auth, accepted only for
+  // the executor's own calls (lib/executor-scope.ts): execution records, the
+  // execution-room notice, and the execution-room setting (H2).
   // Use constant-time comparison to prevent timing attacks (SOC2 #166)
   const executorToken = process.env.ORION_EXECUTOR_TOKEN
   if (
-    pathname.startsWith('/api/executions') &&
+    isExecutorAllowedRequest(req.method, pathname) &&
     executorToken &&
     timingSafeCompare(req.headers.get('x-executor-token') ?? '', executorToken)
   ) {

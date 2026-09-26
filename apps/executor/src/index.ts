@@ -9,7 +9,6 @@ import { buildApp } from './app.js'
 const PORT = parseInt(process.env.PORT || '3200')
 const ORION_URL = process.env.ORION_URL || 'http://orion:3000'
 const ORION_EXECUTOR_TOKEN = process.env.ORION_EXECUTOR_TOKEN || ''
-const ORION_GATEWAY_TOKEN = process.env.ORION_GATEWAY_TOKEN || ''
 const VECTOR_WEBHOOK_URL = process.env.VECTOR_WEBHOOK_URL || ''
 const HOST_AGENT_WEBHOOK_SECRET = process.env.HOST_AGENT_WEBHOOK_SECRET || ''
 const EXECUTION_APPROVE_TIMEOUT_SECONDS = parseInt(process.env.EXECUTION_APPROVE_TIMEOUT_SECONDS || '90')
@@ -19,16 +18,9 @@ const SHUTDOWN_GRACE_MS = parseInt(process.env.EXECUTOR_SHUTDOWN_GRACE_MS || '25
 if (!ORION_EXECUTOR_TOKEN) {
   throw new Error('ORION_EXECUTOR_TOKEN environment variable not set')
 }
-if (!ORION_GATEWAY_TOKEN) {
-  // Required for OrionClient.notifyRoom/getSystemSetting (gateway-token auth — see
-  // orion-client.ts). Failing loudly here matches ORION_EXECUTOR_TOKEN above: an unset
-  // token used to fail silently per-call (swallowed by getSystemSetting's try/catch),
-  // reproducing the exact "executor can't talk to Orion" failure class this fix exists for.
-  throw new Error('ORION_GATEWAY_TOKEN environment variable not set')
-}
 
 const { fastify, rehydratePendingExecutions, shutdown } = buildApp({
-  orion: new OrionClient(ORION_URL, ORION_EXECUTOR_TOKEN, ORION_GATEWAY_TOKEN),
+  orion: new OrionClient(ORION_URL, ORION_EXECUTOR_TOKEN),
   events: new VectorClient(VECTOR_WEBHOOK_URL, HOST_AGENT_WEBHOOK_SECRET),
   sandbox,
   classifier,

@@ -6,6 +6,7 @@ import { parseBodyOrError, CreateEnvironmentSchema } from '@/lib/validate'
 import { encrypt, decrypt } from '@/lib/encryption'
 import { timingSafeEqual } from 'crypto'
 import { toEnvironmentDTO, isUnchangedSecret, mergeEnvironmentMetadata } from '@/lib/environment-dto'
+import { revokeEnvironmentGitCredential } from '@/lib/environment-git-credentials'
 
 /**
  * Map an assertCanModify rejection to the right HTTP status.
@@ -220,6 +221,11 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     select: { name: true },
   })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // M2: revoke the gateway's repo-scoped git credential at the provider before
+  // the row cascades away with the environment (failures are logged, not fatal).
+  await revokeEnvironmentGitCredential(id)
+
   try {
     await prisma.environment.delete({ where: { id } })
   } catch (e: any) {
