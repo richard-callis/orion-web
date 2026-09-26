@@ -7,6 +7,7 @@ import { retrieveKnowledgeContext } from '@/lib/embeddings'
 import { prisma } from '@/lib/db'
 import { getPrompt } from '@/lib/system-prompts'
 import { getToken } from 'next-auth/jwt'
+import { getChatUserRole, canUseTools } from '@/lib/chat-tool-policy'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,6 +42,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // Get the current user from session (used for permission checks in tool loop)
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   const userId = token?.sub as string | undefined
+  // readonly users may chat but never run tools. The lib loops enforce this per
+  // call; the Claude sidecar path is enforced here via allowedTools: [].
+  const toolsAllowed = canUseTools(await getChatUserRole(userId))
 
   // Conversation already verified by assertConversationOwner above
   const convo = await prisma.conversation.findUnique({ where: { id: conversationId } })
@@ -152,7 +156,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         ? streamOllamaChat(prompt, conversationId, history, ollamaModel, ollamaBaseUrl, abortCtrl.signal, userId, targetEnvironmentId, agentCreationPrompt, knowledgeContext)
         : geminiModel
         ? streamGeminiChat(prompt, conversationId, history, geminiModel, abortCtrl.signal, knowledgeContext)
-        : streamClaudeResponse(prompt, conversationId, history, planTarget, agentCreationPrompt, undefined, abortCtrl.signal, knowledgeContext)
+        : streamClaudeResponse(prompt, conversationId, history, planTarget, agentCreationPrompt, toolsAllowed ? undefined : { allowedTools: [] }, abortCtrl.signal, knowledgeContext)
       for await (const chunk of generator) {
         send(chunk.type, chunk)
         if (chunk.type === 'done' || chunk.type === 'error') {
