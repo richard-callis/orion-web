@@ -32,6 +32,13 @@ vi.mock('@/lib/db', () => ({
     actionAudit: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    vulnerabilityFinding: {
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    systemSetting: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
+    $executeRawUnsafe: vi.fn().mockResolvedValue(0),
   },
 }))
 
@@ -45,6 +52,7 @@ import {
   ensureSecurityRetentionJobScheduled,
   runSecurityRetentionJob,
   runSecurityRetentionManual,
+  purgeOperationalData,
 } from './security-retention-daily'
 
 beforeEach(() => {
@@ -52,16 +60,14 @@ beforeEach(() => {
 })
 
 describe('ensureSecurityRetentionJobScheduled', () => {
-  it('registers a cron schedule', () => {
+  // The module guards against double registration, so only the first call in
+  // this file does anything — assert everything off that one call.
+  it('registers a cron schedule and fires a startup catch-up via startJob', () => {
     ensureSecurityRetentionJobScheduled()
     expect((globalThis as any).__cronScheduleMock).toHaveBeenCalledWith(
       '0 4 * * *',
       expect.any(Function),
     )
-  })
-
-  it('fires a startup catch-up via startJob', () => {
-    ensureSecurityRetentionJobScheduled()
     expect(startJob).toHaveBeenCalledWith(
       'security-retention-daily',
       'Security retention: startup catch-up',
@@ -83,9 +89,14 @@ describe('runSecurityRetentionJob', () => {
 
     await runSecurityRetentionJob(log)
 
-    expect(prisma.securityEvent.deleteMany).toHaveBeenCalledWith({
-      where: { createdAt: { lt: cutoff } },
-    })
+    const where = vi.mocked(prisma.securityEvent.deleteMany).mock.calls[0][0]!.where as any
+    // Cutoff is computed inside the job, a few ms after ours
+    expect(Math.abs(where.createdAt.lt.getTime() - cutoff.getTime())).toBeLessThan(5_000)
+    // Events linked to non-closed incidents are kept as evidence
+    expect(where.OR).toEqual([
+      { incidentId: null },
+      { incident: { status: { in: ['closed'] } } },
+    ])
   })
 
   it('deletes incidents older than 365 days', async () => {
@@ -140,5 +151,61 @@ describe('runSecurityRetentionManual', () => {
       expect.any(Function),
     )
     expect(result).toBe('manual-job-id')
+  })
+})
+
+describe('purgeOperationalData', () => {
+  const sqlCalls = () => vi.mocked(prisma.$executeRawUnsafe).mock.calls.map(c => String(c[0]))
+
+  it('clears AgentTrace.fullContext and purges every operational table in batches', async () => {
+    const log = vi.fn()
+    await purgeOperationalData(log)
+
+    const sql = sqlCalls()
+    expect(sql[0]).toMatch(/UPDATE "AgentTrace" SET "fullContext" = NULL/)
+    for (const table of [
+      'AgentTrace', 'ToolExecution', 'HookExecutionLog', 'SkillExecutionLog', 'JobRun',
+      'WebhookDelivery', 'AgentMessage', 'ClaudeInvocation', 'TaskEvent',
+      'InvestigationTimeline', 'AgentTokenUsage',
+    ]) {
+      expect(sql.some(q => q.startsWith(`DELETE FROM "${table}"`))).toBe(true)
+    }
+    expect(sql.every(q => /LIMIT 5000/.test(q))).toBe(true)
+  })
+
+  it('never purges user chat history or live approvals', async () => {
+    await purgeOperationalData(vi.fn())
+    const sql = sqlCalls()
+    expect(sql.some(q => q.includes('DELETE FROM "Message"'))).toBe(false)
+    const toolExec = sql.find(q => q.startsWith('DELETE FROM "ToolExecution"'))!
+    expect(toolExec).toContain(`NOT IN ('pending', 'running')`)
+  })
+
+  it('keeps deleting while full batches come back', async () => {
+    vi.mocked(prisma.$executeRawUnsafe)
+      .mockResolvedValueOnce(0)     // fullContext clear
+      .mockResolvedValueOnce(5000)  // AgentTrace batch 1 (full)
+      .mockResolvedValueOnce(12)    // AgentTrace batch 2 (partial -> stop)
+    const log = vi.fn()
+    await purgeOperationalData(log)
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('AgentTrace purged: 5012 rows'))
+  })
+
+  it('honours retention.<Model>.days overrides, with 0 disabling the table', async () => {
+    vi.mocked(prisma.systemSetting.findUnique).mockImplementation((async (args: any) =>
+      args.where.key === 'retention.TaskEvent.days' ? { key: args.where.key, value: 0 } : null) as any)
+    const log = vi.fn()
+    await purgeOperationalData(log)
+    expect(sqlCalls().some(q => q.startsWith('DELETE FROM "TaskEvent"'))).toBe(false)
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('TaskEvent: retention disabled'))
+    vi.mocked(prisma.systemSetting.findUnique).mockResolvedValue(null)
+  })
+
+  it('does not fail the security purge when operational retention errors', async () => {
+    vi.mocked(prisma.$executeRawUnsafe).mockRejectedValueOnce(new Error('db down'))
+    const log = vi.fn()
+    await runSecurityRetentionJob(log)
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Operational retention failed: db down'))
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Security retention complete'))
   })
 })

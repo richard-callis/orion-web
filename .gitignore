@@ -3,4 +3,20 @@ node_modules/
 *.log
 dist/
 .claude/
-.env*
+
+# Environment files — secrets. Templates (*.example) stay tracked.
+.env
+.env.*
+!.env*.example
+!**/.env*.example
+
+# Deploy host runtime state (created by bootstrap/backup/deploy on the host)
+deploy/backups/
+deploy/.last-good
+deploy/vector-data/
+deploy/vault-unseal-keys/
+deploy/vault-proxy/certs/
+
+# Playwright output
+e2e/test-results/
+e2e/playwright-report/

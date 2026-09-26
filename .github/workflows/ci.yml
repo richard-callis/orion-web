@@ -1,0 +1,114 @@
+name: CI
+
+# Required PR gate. Runs on GitHub-hosted runners only: pull requests must never
+# reach the self-hosted runner, which has deploy access to /opt/orion.
+# Make the jobs below required status checks in branch protection for main.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+  PRISMA_HIDE_UPDATE_MESSAGE: '1'
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  lint-typecheck:
+    name: Lint + typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Prisma validate + generate
+        working-directory: apps/web
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci # validate needs the var, not a connection
+        run: |
+          npx prisma validate
+          npx prisma generate
+      - name: ESLint (fails on errors; warnings are the existing-code baseline)
+        run: npm run lint
+      - name: TypeScript (web, gateway, executor)
+        run: npm run typecheck
+      - name: context/schema.md is regenerated from schema.prisma
+        run: |
+          node context/gen-schema.mjs
+          git diff --exit-code context/schema.md || { echo "::error::Run 'node context/gen-schema.mjs' and commit context/schema.md"; exit 1; }
+
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+        working-directory: apps/web
+      - name: web
+        run: npm test --workspace apps/web
+      - name: gateway
+        run: npm test --workspace apps/gateway
+      - name: executor
+        run: npm test --workspace apps/executor -- --passWithNoTests
+
+  migrations:
+    name: Migrations replay + drift
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: orion
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: orion
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U orion"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://orion:ci@localhost:5432/orion
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      # Empty DB -> fresh-install baseline -> every migration -> second deploy is
+      # a no-op -> database matches schema.prisma (see apps/web/prisma/MIGRATIONS.md).
+      - run: apps/web/prisma/check-drift.sh
+
+  build-web:
+    name: Next.js production build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      # Catches what tsc alone does not (e.g. invalid Route exports), which is
+      # what broke the image build on main before this gate existed.
+      - run: npm run build --workspace apps/web

@@ -1,3 +1,6 @@
+# GitNexus code-intelligence server — DEVELOPER TOOLING, not part of ORION.
+# ORION's own stack lives in deploy/docker-compose.yml.
+#   docker compose -f docker-compose.gitnexus.yaml up -d
 services:
   gitnexus-server:
     image: ${SERVER_IMAGE:-ghcr.io/abhigyanpatwari/gitnexus:latest}

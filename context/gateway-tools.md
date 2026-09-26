@@ -5,16 +5,28 @@
 
 ## Registration by GATEWAY_TYPE
 
-| Tool Set | File | GATEWAY_TYPE that activates it |
-|----------|------|-------------------------------|
-| kubernetesTools | kubernetes.ts | cluster, localhost |
-| talosTools | talos.ts | cluster, localhost |
-| dockerTools | docker.ts | docker, localhost, cluster+ENABLE_DOCKER |
-| localhostTools | localhost.ts | localhost only |
-| sshTools | ssh.ts | cluster, localhost |
-| backupTools | backup.ts | cluster, localhost |
-| storageTools | storage.ts | cluster, localhost |
-| networkTools | network-diagnostics.ts | cluster, localhost |
+> Counts verified 2026-09-26 by importing each module's exported tool array (63 in total).
+> Registration lives in `apps/gateway/src/index.ts` (~line 286). The gateway
+> workstream (fix/review-gateway) additionally gates velero tools on the binary
+> existing or `ENABLE_VELERO=true`.
+
+| Tool Set | File | Tools | GATEWAY_TYPE that activates it |
+|----------|------|------:|-------------------------------|
+| kubernetesTools | kubernetes.ts | 19 | cluster, localhost |
+| talosTools | talos.ts | 5 | cluster, localhost |
+| dockerTools | docker.ts | 6 | docker, localhost, cluster+ENABLE_DOCKER=true |
+| localhostTools | localhost.ts | 3 | localhost only |
+| knowledgeGraphTools | knowledge-graph.ts | 5 | cluster, localhost |
+| discoveryTools | discovery.ts | 1 | cluster, docker, localhost |
+| backupTools (velero) | backup.ts | 5 | cluster, localhost |
+| securityTools | security.ts | 16 | all types |
+| trivyTools | trivy.ts | 3 | ENABLE_TRIVY=true (cluster: without trivy_scan_host) |
+
+Tools added after this note was first written (kubectl_delete, kubectl_apply_url,
+kubectl_patch, kubectl_rollout_status, kubectl_exec, kubectl_wait_nodes_ready,
+helm_upgrade_install, docker_exec, docker_run, talos_*, knowledge_*, security_*,
+trivy_*, velero_*, find_specialist) are **not yet documented in the per-tool
+tables below** — read the source for their commands and schemas.
 
 ## Shared Helper Functions
 
@@ -35,7 +47,7 @@ try { execFile(...) }
 finally { unlinkSync(tmpFile) }   // always cleaned up
 ```
 
-## All 26 Builtin Tools
+## Builtin Tools (original 26 documented; 63 exist — see table above)
 
 ### Kubernetes Tools (`kubernetes.ts`) — 12 tools
 

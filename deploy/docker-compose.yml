@@ -1,8 +1,91 @@
+# Shared by the orion (web) and orion-worker services — same image, same config.
+x-orion-env: &orion-env
+    DATABASE_URL: postgresql://orion:${POSTGRES_PASSWORD}@postgres:5432/orion
+    NEXTAUTH_URL: https://${ORION_DOMAIN:-orion.khalis.corp}
+    NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+    ORION_ENCRYPTION_KEY: ${ORION_ENCRYPTION_KEY}
+    ORION_UNSEALER_TOKEN: ${ORION_UNSEALER_TOKEN}
+    VAULT_ADDR: https://vault-proxy:8200
+    VAULT_TOKEN: ${VAULT_TOKEN}
+    VAULT_CACERT: /vault-proxy-certs/ca.crt
+    VAULT_CLIENT_CERT: /vault-proxy-certs/orion-client.crt
+    VAULT_CLIENT_KEY: /vault-proxy-certs/orion-client.key
+    # Git provider — configured via first-run wizard (stored in DB).
+    # These env vars are used as fallback before the wizard completes.
+    GITEA_URL: http://gitea:3000
+    GITEA_PUBLIC_URL: https://${GITEA_DOMAIN:-gitea.khalisio.com}
+    GITEA_ADMIN_TOKEN: ${GITEA_ADMIN_TOKEN:-}
+    GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-}
+    GITEA_ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-}
+    GITEA_WEBHOOK_SECRET: ${GITEA_WEBHOOK_SECRET:-}
+    MANAGEMENT_IP: ${MANAGEMENT_IP:-}
+    ALLOW_PRIVATE_GATEWAY_URLS: ${ALLOW_PRIVATE_GATEWAY_URLS:-false}
+    # URL gateways/clusters use to reach ORION (bypasses Cloudflare, works from cluster nodes).
+    # Defaults to http://<management IP>:3000 during initial setup.
+    # Override in .env with your public domain once HTTPS is configured.
+    ORION_CALLBACK_URL: ${ORION_CALLBACK_URL:-http://${MANAGEMENT_IP:-localhost}:3000}
+    COREDNS_DIR: /etc/coredns-managed
+    LOCALHOST_JOIN_TOKEN: ${LOCALHOST_JOIN_TOKEN}
+    EMBED_TRIGGER_TOKEN: ${EMBED_TRIGGER_TOKEN:-}
+    # Service token for gateway↔ORION authentication (SOC2: [AC-001])
+    ORION_GATEWAY_TOKEN: ${ORION_GATEWAY_TOKEN:-}
+    # Service token for executor↔ORION authentication (middleware.ts checks this
+    # against the executor's x-executor-token header on /api/executions). Missing
+    # here means process.env.ORION_EXECUTOR_TOKEN is undefined in this container,
+    # so middleware's `executorToken && timingSafeCompare(...)` guard is always
+    # false — the executor-token auth path can never succeed regardless of what
+    # token the executor sends. It was wired to `gateway` and `orion-executor`
+    # but never to `orion` itself. Confirmed live: this container has no
+    # ORION_EXECUTOR_TOKEN in its environment at all (checked via docker exec
+    # printenv), which is why every executor→Orion /api/executions call still
+    # fails auth even after the token-mixup fix in apps/executor (#714).
+    ORION_EXECUTOR_TOKEN: ${ORION_EXECUTOR_TOKEN}
+    # Shared secret for gateway-to-web security audit channel (PR4)
+    GATEWAY_AUDIT_SECRET: ${GATEWAY_AUDIT_SECRET:-}
+    # Shared HMAC secret for Falco webhook ingest (Phase 2 PR6/PR7).
+    # Used by every Falcosidekick instance (Orion host + managed envs) to
+    # sign POSTs to /api/monitoring/security/webhooks/falco.
+    FALCO_WEBHOOK_SECRET: ${FALCO_WEBHOOK_SECRET:-}
+    # Audit Log Archival (S3 Export) — SOC2 [L-001]
+    AUDIT_EXPORT_S3_BACKEND: ${AUDIT_EXPORT_S3_BACKEND:-minio}
+    AUDIT_EXPORT_S3_ENDPOINT: ${AUDIT_EXPORT_S3_ENDPOINT:-http://minio:9000}
+    AUDIT_EXPORT_S3_REGION: ${AUDIT_EXPORT_S3_REGION:-us-east-1}
+    AUDIT_EXPORT_S3_BUCKET: ${AUDIT_EXPORT_S3_BUCKET:-orion-audit-logs}
+    AUDIT_EXPORT_RETENTION_DAYS: ${AUDIT_EXPORT_RETENTION_DAYS:-30}
+    AUDIT_EXPORT_MANIFEST_PATH: ${AUDIT_EXPORT_MANIFEST_PATH:-manifests/}
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+    # Redis Sentinel for distributed rate limiting (SOC2: [RATE-001])
+    REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-mymaster}
+    REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26380,redis-sentinel-3:26381}
+    REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:-}
+    REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    # ArgoCD — bootstrap uses this to register clusters and create apps
+    ARGOCD_SERVER: http://host.docker.internal:8083
+    ARGOCD_AUTH_TOKEN: ${ARGOCD_ADMIN_PASSWORD:-}
+    # Claude Code sidecar URL (for OAuth bootstrap and credential status)
+    ORION_CLAUDE_URL: ${ORION_CLAUDE_URL:-http://orion-claude:3100}
+    # MCP service token — shared with orion-claude so Claude can call ORION tools via MCP
+    ORION_MCP_TOKEN: ${ORION_MCP_TOKEN:-}
+    # Host-agent webhook secret — must match the value passed to the vector service
+    HOST_AGENT_WEBHOOK_SECRET: ${HOST_AGENT_WEBHOOK_SECRET:-}
+    # Loki — log query proxy
+    LOKI_URL: http://loki:3100
+
+x-orion-volumes: &orion-volumes
+  - /var/run/docker.sock:/var/run/docker.sock:ro
+  - orion-claude-creds:/claude-creds
+  - ./coredns:/etc/coredns-managed
+  - /root/.ssh:/root/.ssh:ro
+  - /root/.kube:/root/.kube:ro
+  - /root/.talos:/root/.talos:ro
+  - ./vault-proxy/certs:/vault-proxy-certs:ro
+
 services:
 
   # ── ORION ────────────────────────────────────────────────────────
   orion:
-    image: ghcr.io/${GITHUB_ORG}/orion-web:${ORION_VERSION:-latest}
+    image: ghcr.io/${GITHUB_ORG}/orion-web:${ORION_WEB_VERSION:-${ORION_VERSION:-latest}}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -13,90 +96,22 @@ services:
         condition: service_healthy
       redis-master:
         condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://orion:${POSTGRES_PASSWORD}@postgres:5432/orion
-      NEXTAUTH_URL: https://${ORION_DOMAIN:-orion.khalis.corp}
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
-      ORION_ENCRYPTION_KEY: ${ORION_ENCRYPTION_KEY}
-      ORION_UNSEALER_TOKEN: ${ORION_UNSEALER_TOKEN}
-      VAULT_ADDR: https://vault-proxy:8200
-      VAULT_TOKEN: ${VAULT_TOKEN}
-      VAULT_CACERT: /vault-proxy-certs/ca.crt
-      VAULT_CLIENT_CERT: /vault-proxy-certs/orion-client.crt
-      VAULT_CLIENT_KEY: /vault-proxy-certs/orion-client.key
-      # Git provider — configured via first-run wizard (stored in DB).
-      # These env vars are used as fallback before the wizard completes.
-      GITEA_URL: http://gitea:3000
-      GITEA_PUBLIC_URL: https://${GITEA_DOMAIN:-gitea.khalisio.com}
-      GITEA_ADMIN_TOKEN: ${GITEA_ADMIN_TOKEN:-}
-      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-}
-      GITEA_ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-}
-      GITEA_WEBHOOK_SECRET: ${GITEA_WEBHOOK_SECRET:-}
-      MANAGEMENT_IP: ${MANAGEMENT_IP:-}
-      ALLOW_PRIVATE_GATEWAY_URLS: ${ALLOW_PRIVATE_GATEWAY_URLS:-false}
-      # URL gateways/clusters use to reach ORION (bypasses Cloudflare, works from cluster nodes).
-      # Defaults to http://<management IP>:3000 during initial setup.
-      # Override in .env with your public domain once HTTPS is configured.
-      ORION_CALLBACK_URL: ${ORION_CALLBACK_URL:-http://${MANAGEMENT_IP:-localhost}:3000}
-      COREDNS_DIR: /etc/coredns-managed
-      LOCALHOST_JOIN_TOKEN: ${LOCALHOST_JOIN_TOKEN}
-      EMBED_TRIGGER_TOKEN: ${EMBED_TRIGGER_TOKEN:-}
-      # Service token for gateway↔ORION authentication (SOC2: [AC-001])
-      ORION_GATEWAY_TOKEN: ${ORION_GATEWAY_TOKEN:-}
-      # Service token for executor↔ORION authentication (middleware.ts checks this
-      # against the executor's x-executor-token header on /api/executions). Missing
-      # here means process.env.ORION_EXECUTOR_TOKEN is undefined in this container,
-      # so middleware's `executorToken && timingSafeCompare(...)` guard is always
-      # false — the executor-token auth path can never succeed regardless of what
-      # token the executor sends. It was wired to `gateway` and `orion-executor`
-      # but never to `orion` itself. Confirmed live: this container has no
-      # ORION_EXECUTOR_TOKEN in its environment at all (checked via docker exec
-      # printenv), which is why every executor→Orion /api/executions call still
-      # fails auth even after the token-mixup fix in apps/executor (#714).
-      ORION_EXECUTOR_TOKEN: ${ORION_EXECUTOR_TOKEN}
-      # Shared secret for gateway-to-web security audit channel (PR4)
-      GATEWAY_AUDIT_SECRET: ${GATEWAY_AUDIT_SECRET:-}
-      # Shared HMAC secret for Falco webhook ingest (Phase 2 PR6/PR7).
-      # Used by every Falcosidekick instance (Orion host + managed envs) to
-      # sign POSTs to /api/monitoring/security/webhooks/falco.
-      FALCO_WEBHOOK_SECRET: ${FALCO_WEBHOOK_SECRET:-}
-      # Audit Log Archival (S3 Export) — SOC2 [L-001]
-      AUDIT_EXPORT_S3_BACKEND: ${AUDIT_EXPORT_S3_BACKEND:-minio}
-      AUDIT_EXPORT_S3_ENDPOINT: ${AUDIT_EXPORT_S3_ENDPOINT:-http://minio:9000}
-      AUDIT_EXPORT_S3_REGION: ${AUDIT_EXPORT_S3_REGION:-us-east-1}
-      AUDIT_EXPORT_S3_BUCKET: ${AUDIT_EXPORT_S3_BUCKET:-orion-audit-logs}
-      AUDIT_EXPORT_RETENTION_DAYS: ${AUDIT_EXPORT_RETENTION_DAYS:-30}
-      AUDIT_EXPORT_MANIFEST_PATH: ${AUDIT_EXPORT_MANIFEST_PATH:-manifests/}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
-      # Redis Sentinel for distributed rate limiting (SOC2: [RATE-001])
-      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-mymaster}
-      REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:-redis-sentinel-1:26379,redis-sentinel-2:26380,redis-sentinel-3:26381}
-      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:-}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      # ArgoCD — bootstrap uses this to register clusters and create apps
-      ARGOCD_SERVER: http://host.docker.internal:8083
-      ARGOCD_AUTH_TOKEN: ${ARGOCD_ADMIN_PASSWORD:-}
-      # Claude Code sidecar URL (for OAuth bootstrap and credential status)
-      ORION_CLAUDE_URL: ${ORION_CLAUDE_URL:-http://orion-claude:3100}
-      # MCP service token — shared with orion-claude so Claude can call ORION tools via MCP
-      ORION_MCP_TOKEN: ${ORION_MCP_TOKEN:-}
-      # Host-agent webhook secret — must match the value passed to the vector service
-      HOST_AGENT_WEBHOOK_SECRET: ${HOST_AGENT_WEBHOOK_SECRET:-}
-      # Loki — log query proxy
-      LOKI_URL: http://loki:3100
+    environment: *orion-env
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - orion-claude-creds:/claude-creds
-      - ./coredns:/etc/coredns-managed
-      - /root/.ssh:/root/.ssh:ro
-      - /root/.kube:/root/.kube:ro
-      - /root/.talos:/root/.talos:ro
-      - ./vault-proxy/certs:/vault-proxy-certs:ro
+    volumes: *orion-volumes
+    # docker.sock is root:docker 0660 — the container runs as uid 1001, so it
+    # needs the host's docker group (DOCKER_GID is detected by bootstrap.sh).
+    group_add:
+      - "${DOCKER_GID:-999}"
+    init: true
+    # Published on ORION_BIND_ADDR only (bootstrap.sh sets it to the management
+    # IP; the compose default is loopback). Never 0.0.0.0: on the direct port a
+    # client controls X-Forwarded-For (rate-limit / CrowdSec bypass) and reaches
+    # /api/internal/*. Remote gateways and first-run setup use
+    # http://<management-ip>:3000; everything else should go through Traefik.
     ports:
-      - "3000:3000"
+      - "${ORION_BIND_ADDR:-127.0.0.1}:3000:3000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 10s
@@ -108,15 +123,50 @@ services:
       traefik.http.routers.orion.rule: "Host(`${ORION_DOMAIN:-orion.khalis.corp}`)"
       traefik.http.routers.orion.entrypoints: "websecure"
       traefik.http.services.orion.loadbalancer.server.port: "3000"
+      # /api/internal/* (Vault unseal keys, key rotation) is only for sidecars
+      # on the compose network; deny it at the edge.
+      traefik.http.routers.orion-internal.rule: "Host(`${ORION_DOMAIN:-orion.khalis.corp}`) && PathPrefix(`/api/internal`)"
+      traefik.http.routers.orion-internal.entrypoints: "websecure"
+      traefik.http.routers.orion-internal.priority: "1000"
+      traefik.http.routers.orion-internal.service: "orion"
+      traefik.http.routers.orion-internal.middlewares: "orion-internal-deny"
+      traefik.http.middlewares.orion-internal-deny.ipallowlist.sourcerange: "127.0.0.1/32"
     deploy:
       resources:
         limits:
           cpus: '4'
           memory: 4G
 
+  # ── Orchestrator (worker.js) ────────────────────────────────────────────────
+  # Same image as orion, separate process: it receives SIGTERM directly (drains
+  # in-flight tasks, up to 60s), Docker restarts it if it crashes, and it owns
+  # the cron-style background jobs. Migrations run in the orion service first.
+  orion-worker:
+    image: ghcr.io/${GITHUB_ORG}/orion-web:${ORION_WEB_VERSION:-${ORION_VERSION:-latest}}
+    command: ["node", "worker.js"]
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 75s
+    depends_on:
+      orion:
+        condition: service_healthy
+    environment: *orion-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes: *orion-volumes
+    group_add:
+      - "${DOCKER_GID:-999}"
+    labels:
+      traefik.enable: "false"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
   # ── Local Gateway ─────────────────────────────────────────────────────────────
   gateway:
-    image: ghcr.io/${GITHUB_ORG}/orion-gateway:${ORION_VERSION:-latest}
+    image: ghcr.io/${GITHUB_ORG}/orion-gateway:${ORION_GATEWAY_VERSION:-${ORION_VERSION:-latest}}
     restart: unless-stopped
     depends_on:
       orion:
@@ -137,6 +187,10 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - gateway-creds:/gateway-creds
+    # uid 1001 needs the host docker group for docker.sock (note: docker.sock
+    # access is root-equivalent on the host even when mounted :ro)
+    group_add:
+      - "${DOCKER_GID:-999}"
     deploy:
       resources:
         limits:
@@ -148,7 +202,7 @@ services:
   # If connecting to GitHub, GitLab, or an external Gitea, leave this profile inactive.
   gitea:
     profiles: [gitea]
-    image: gitea/gitea:latest
+    image: gitea/gitea:1.27.3
     restart: unless-stopped
     environment:
       USER_UID: 1000
@@ -231,7 +285,7 @@ services:
 
   # ── Vault init — fixes data dir ownership for vault user (uid=100) ────────────
   vault-init:
-    image: alpine
+    image: alpine:3.24.2
     restart: "no"
     command: ["sh", "-c", "chown -R 100:1000 /vault/data && mkdir -p /vault/audit && chown -R 100:1000 /vault/audit && echo 'vault data dir ready'"]
     volumes:
@@ -291,7 +345,7 @@ services:
   # Provides: mTLS termination, IP allowlisting, rate limiting, circuit breaking,
   # per-connection access logs, and Prometheus metrics on :9901.
   vault-proxy:
-    image: envoyproxy/envoy:v1.29-latest
+    image: envoyproxy/envoy:v1.29.12
     restart: unless-stopped
     depends_on:
       vault:
@@ -392,7 +446,7 @@ services:
 
   # ── CoreDNS ────────────────────────────────────────────────────────────────
   coredns:
-    image: coredns/coredns:latest
+    image: coredns/coredns:1.14.7
     restart: unless-stopped
     command: -conf /etc/coredns/Corefile
     volumes:
@@ -408,7 +462,13 @@ services:
 
   # ── MinIO (S3-compatible object storage for audit log archival — SOC2 [L-001]) ──
   minio:
-    image: minio/minio:latest
+    # MinIO no longer publishes images to Docker Hub or Quay (the minio/minio and
+    # minio/mc repositories return "repository does not exist"), so this is
+    # pinned to the digest already present on existing hosts and never pulled.
+    # Fresh installs cannot pull it — see docs/archive/ note / decision needed on
+    # a replacement image (source build, community rebuild, or another S3 store).
+    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    pull_policy: missing
     restart: unless-stopped
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
@@ -435,7 +495,8 @@ services:
 
   # ── MinIO init container — creates orion-audit-logs bucket on startup ────────
   minio-init:
-    image: minio/mc:latest
+    image: minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    pull_policy: missing
     restart: "no"
     depends_on:
       minio:
@@ -451,7 +512,7 @@ services:
   # ── Redis Sentinel cluster (3 sentinels for HA + distributed rate limiting) ──
   # Master node (port 6379)
   redis-master:
-    image: redis:7-alpine
+    image: redis:7.4.11-alpine
     restart: unless-stopped
     command: redis-server --appendonly yes --dir /data --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
     volumes:
@@ -474,7 +535,7 @@ services:
 
   # ── Redis Sentinel 1 (port 26379) ──────────────────────────────────────────
   redis-sentinel-1:
-    image: redis:7-alpine
+    image: redis:7.4.11-alpine
     restart: unless-stopped
     depends_on:
       redis-master:
@@ -502,7 +563,7 @@ services:
 
   # ── Redis Sentinel 2 (port 26380) ──────────────────────────────────────────
   redis-sentinel-2:
-    image: redis:7-alpine
+    image: redis:7.4.11-alpine
     restart: unless-stopped
     depends_on:
       redis-master:
@@ -530,7 +591,7 @@ services:
 
   # ── Redis Sentinel 3 (port 26381) ──────────────────────────────────────────
   redis-sentinel-3:
-    image: redis:7-alpine
+    image: redis:7.4.11-alpine
     restart: unless-stopped
     depends_on:
       redis-master:
@@ -565,7 +626,7 @@ services:
     # Custom image: timberio/vector:0.39.0-debian + docker CLI (no daemon).
     # The docker_lifecycle source `exec`s `docker events`; stock image has no
     # docker binary. See deploy/host-agent/Dockerfile.
-    image: ghcr.io/${GITHUB_ORG}/orion-vector:${ORION_VERSION:-latest}
+    image: ghcr.io/${GITHUB_ORG}/orion-vector:${ORION_VECTOR_VERSION:-${ORION_VERSION:-latest}}
     # The image's default config path is /etc/vector/vector.yaml, which exists
     # in the image as a demo-logs generator. Without --config, vector loads
     # that demo and ships fake events. Point it explicitly at the mounted TOML.
@@ -757,8 +818,9 @@ services:
   # executes in this container (limited mounts + resource caps), logs to Orion.
   orion-executor:
     build:
-      context: ../apps/executor
-      dockerfile: Dockerfile
+      # Repo-root context: the Dockerfile installs from the workspace lockfile.
+      context: ..
+      dockerfile: apps/executor/Dockerfile
     restart: unless-stopped
     depends_on:
       orion:
@@ -778,7 +840,7 @@ services:
       - /proc/cpuinfo:/proc/cpuinfo:ro
       - /proc/meminfo:/proc/meminfo:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3200/health"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3200/health >/dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3

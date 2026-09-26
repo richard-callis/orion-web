@@ -1,6 +1,5 @@
-import { chromium } from 'playwright'
-
-const BASE = 'http://localhost:3000'
+import { chromium } from '@playwright/test'
+import { BASE } from '../env.mjs'
 
 async function run() {
   const browser = await chromium.launch({ headless: true })

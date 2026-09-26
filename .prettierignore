@@ -1,0 +1,11 @@
+# Formatting is opt-in per file for now (the codebase predates Prettier);
+# never mass-reformat in an unrelated PR.
+node_modules
+**/.next
+**/dist
+package-lock.json
+apps/web/prisma/migrations
+apps/web/prisma/fresh-install/baseline.sql
+docs/archive
+context
+*.md

@@ -4,8 +4,8 @@ services:
 
   orion:
     build:
-      context: ../apps/web
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: apps/web/Dockerfile
     restart: unless-stopped
     depends_on:
       postgres:
@@ -24,6 +24,8 @@ services:
       COREDNS_DIR: /tmp/coredns-managed
       NODE_ENV: production
       LOCALHOST_JOIN_TOKEN: ${LOCALHOST_JOIN_TOKEN}
+      # Single-container test stack: run the orchestrator inside the web container
+      ORION_EMBEDDED_WORKER: "true"
     ports:
       - "${ORION_PORT:-3001}:3000"
     healthcheck:
@@ -36,8 +38,8 @@ services:
   # ── Local Gateway ────────────────────────────────────────────────────────────
   gateway:
     build:
-      context: ../apps/gateway
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: apps/gateway/Dockerfile
     restart: unless-stopped
     depends_on:
       orion:
@@ -53,7 +55,7 @@ services:
       - gateway-creds:/gateway-creds
 
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_DB: orion
