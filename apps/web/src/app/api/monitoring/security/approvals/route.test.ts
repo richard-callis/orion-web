@@ -21,6 +21,9 @@ const actionAudit_update = vi.fn(async (args: { data: Record<string, unknown> })
   id: 'audit-1',
   ...args.data,
 }))
+// Atomic compare-and-set used by the POST route: only transitions a 'pending' row.
+const actionAudit_updateMany = vi.fn(async (_args: unknown) => ({ count: 0 }))
+const gatewayExecutorMock = vi.fn(async (..._a: unknown[]) => ({ success: true, result: 'ok' }))
 
 vi.mock('@/lib/db', () => ({
   prisma: {
@@ -28,8 +31,13 @@ vi.mock('@/lib/db', () => ({
       findMany: (...a: unknown[]) => actionAudit_findMany(a[0]),
       findUnique: (...a: unknown[]) => actionAudit_findUnique(a[0]),
       update: (...a: unknown[]) => actionAudit_update(a[0] as { data: Record<string, unknown> }),
+      updateMany: (...a: unknown[]) => actionAudit_updateMany(a[0]),
     },
   },
+}))
+
+vi.mock('@/lib/security/action-service', () => ({
+  gatewayExecutor: (...a: unknown[]) => gatewayExecutorMock(...a),
 }))
 
 // requireAdmin must succeed for the POST tests.
@@ -54,6 +62,12 @@ beforeEach(() => {
   actionAudit_findMany.mockReset().mockResolvedValue([])
   actionAudit_findUnique.mockReset().mockResolvedValue(null)
   actionAudit_update.mockReset().mockResolvedValue({})
+  // Simulate the DB: the CAS only matches while the row is still 'pending'.
+  actionAudit_updateMany.mockReset().mockImplementation(async () => {
+    const row = (await actionAudit_findUnique.mock.results.at(-1)?.value) as { status?: string } | null
+    return { count: row?.status === 'pending' ? 1 : 0 }
+  })
+  gatewayExecutorMock.mockReset().mockResolvedValue({ success: true, result: 'ok' })
   requireAdminMock.mockReset().mockResolvedValue({ id: 'u1', username: 'admin' })
 })
 
@@ -132,13 +146,19 @@ describe('POST /api/monitoring/security/approvals/[id] — accepts pending only 
     expect(res.status).toBe(200)
     const body = (await res.json()) as { success: boolean; status: string }
     expect(body.success).toBe(true)
-    // Implementation transitions pending → attempting on approve.
-    expect(body.status).toBe('attempting')
+    expect(body.status).toBe('succeeded')
 
-    // First update writes the approver + post-pending status.
-    const firstUpdate = actionAudit_update.mock.calls[0]?.[0] as { data: Record<string, unknown> }
-    expect(firstUpdate.data.status).toBe('attempting')
-    expect(firstUpdate.data.approvedBy).toBe('admin')
+    // The CAS only transitions a row that is still 'pending', recording the approver.
+    const cas = actionAudit_updateMany.mock.calls[0]?.[0] as { where: Record<string, unknown>; data: Record<string, unknown> }
+    expect(cas.where).toEqual({ id: 'audit-1', status: 'pending' })
+    expect(cas.data.status).toBe('attempting')
+    expect(cas.data.approvedBy).toBe('admin')
+
+    // The gateway call carries the audit id so a decision token gets minted.
+    const execPayload = gatewayExecutorMock.mock.calls[0]?.[2] as Record<string, unknown>
+    expect(execPayload.__auditId).toBe('audit-1')
+    const finalUpdate = actionAudit_update.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> }
+    expect(finalUpdate.data.status).toBe('succeeded')
   })
 
   it("rejects rows that are NOT in 'pending' (denies the regression path)", async () => {
@@ -160,7 +180,8 @@ describe('POST /api/monitoring/security/approvals/[id] — accepts pending only 
       { params: { id: 'audit-1' } },
     )
     expect(res.status).toBe(409)
-    // No mutation when the row is not pending.
+    // No execution and no further writes when the row is not pending.
+    expect(gatewayExecutorMock).not.toHaveBeenCalled()
     expect(actionAudit_update).not.toHaveBeenCalled()
   })
 
@@ -190,6 +211,9 @@ describe('POST /api/monitoring/security/approvals/[id] — accepts pending only 
     expect(res.status).toBe(200)
     const body = (await res.json()) as { success: boolean; status: string }
     expect(body.status).toBe('denied')
+    const cas = actionAudit_updateMany.mock.calls[0]?.[0] as { data: Record<string, unknown> }
+    expect(cas.data.status).toBe('denied')
+    expect(gatewayExecutorMock).not.toHaveBeenCalled()
   })
 
   it('returns 401 when not admin', async () => {

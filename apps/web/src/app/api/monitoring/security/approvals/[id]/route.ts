@@ -80,7 +80,11 @@ export async function POST(
     return NextResponse.json({ success: true, id: auditId, status: 'denied' })
   }
 
-  // Execute the approved action via the gateway (B1 fix — was a dead end before)
+  // Execute the approved action via the gateway (B1 fix — was a dead end before).
+  // gatewayExecutor only mints the decision token the gateway's write tools
+  // require when payload.__auditId is set (as action-service execute() does);
+  // without it every operator-approved action was rejected by the gateway.
+  const execPayload = { ...((audit.payload as Record<string, unknown> | null) ?? {}), __auditId: auditId }
   try {
     const { success, result } = await gatewayExecutor(
       {
@@ -91,7 +95,7 @@ export async function POST(
         incidentId: audit.incidentId,
       },
       audit.target,
-      audit.payload as Record<string, unknown> | undefined,
+      execPayload,
       audit.environmentId
     )
 
