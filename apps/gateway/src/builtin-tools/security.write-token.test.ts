@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createHmac } from 'crypto'
 import { securityTools } from './security'
+import { __resetDecisionTokenReplayCache } from '../lib/decision-token'
 
 const SECRET = 'test-secret-must-be-at-least-32-chars-long!!'
 
@@ -20,7 +21,7 @@ function b64url(buf: Buffer): string {
 }
 
 function signLocal(
-  payload: { auditId: string; actionType: string; target: string },
+  payload: { auditId: string; actionType: string; target: string; params?: Record<string, string> },
   ttlMs = 60_000,
 ): string {
   const full = { ...payload, exp: Date.now() + ttlMs }
@@ -41,6 +42,7 @@ describe('Security write tools — decision token gate', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    __resetDecisionTokenReplayCache()
     // Reset every env var the write tools touch
     delete process.env.CROWDSEC_API
     delete process.env.CROWDSEC_API_KEY
@@ -148,6 +150,62 @@ describe('Security write tools — decision token gate', () => {
       const result = await tool().execute({ ip: '1.2.3.4', decisionId: '1.2.3.4', __decision_token: token })
       expect(result).toContain('expired')
       expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('token for one decision cannot unban a different ip (target binds to ip)', async () => {
+      // Previously the token was checked against decisionId while the DELETE used ip.
+      const token = signLocal({ auditId: 'a', actionType: 'crowdsec_decision_delete', target: '1.2.3.4' })
+      const result = await tool().execute({ ip: '6.6.6.6', decisionId: '1.2.3.4', __decision_token: token })
+      expect(result).toContain('target mismatch')
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('legacy token (no params) cannot change scope from the default', async () => {
+      const token = signLocal({ auditId: 'a', actionType: 'crowdsec_decision_delete', target: '1.2.3.4' })
+      const result = await tool().execute({ ip: '1.2.3.4', scope: 'range', __decision_token: token })
+      expect(result).toContain('scope mismatch')
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+  })
+
+  // ── Parameter binding + replay protection ────────────────────────────────
+  describe('params binding and replay', () => {
+    const create = () => findTool('crowdsec_decision_create')
+
+    it('legacy token cannot extend the ban duration', async () => {
+      const token = signLocal({ auditId: 'p1', actionType: 'crowdsec_decision_create', target: '1.2.3.4' })
+      const result = await create().execute({ ip: '1.2.3.4', duration: 'infinite', __decision_token: token })
+      expect(result).toContain('duration mismatch')
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('token with bound params allows exactly those params', async () => {
+      const token = signLocal({
+        auditId: 'p2', actionType: 'crowdsec_decision_create', target: '203.0.113.0/24',
+        params: { scope: 'range', duration: '7d' },
+      })
+      const ok = await create().execute({ ip: '203.0.113.0/24', scope: 'range', duration: '7d', __decision_token: token })
+      expect(ok).not.toContain('decision token rejected')
+      expect(fetchMock).toHaveBeenCalledOnce()
+    })
+
+    it('token with bound params rejects a different value', async () => {
+      const token = signLocal({
+        auditId: 'p3', actionType: 'crowdsec_decision_create', target: '1.2.3.4',
+        params: { scope: 'ip', duration: '1h' },
+      })
+      const result = await create().execute({ ip: '1.2.3.4', duration: '30d', __decision_token: token })
+      expect(result).toContain('duration mismatch')
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('the same token cannot be replayed', async () => {
+      const token = signLocal({ auditId: 'p4', actionType: 'crowdsec_decision_create', target: '1.2.3.4' })
+      const first = await create().execute({ ip: '1.2.3.4', __decision_token: token })
+      expect(first).not.toContain('decision token rejected')
+      const second = await create().execute({ ip: '1.2.3.4', __decision_token: token })
+      expect(second).toContain('already used')
+      expect(fetchMock).toHaveBeenCalledOnce()
     })
   })
 

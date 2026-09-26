@@ -7,10 +7,8 @@
  * Requires: kubectl in PATH, cluster-admin ServiceAccount (provided by bootstrap).
  */
 
-import { exec } from 'child_process'
-import { promisify } from 'util'
-
-const execAsync = promisify(exec)
+import { run } from './lib/run.js'
+import { logger } from './lib/logger.js'
 
 export interface ArgoCDApp {
   name: string
@@ -50,13 +48,17 @@ export class ArgoCDWatcher {
   private async poll() {
     let stdout: string
     try {
-      const result = await execAsync(
-        'kubectl get applications -n argocd -o json 2>/dev/null',
-        { timeout: 15_000 },
-      )
+      // maxOutput 0: the JSON is parsed here, so it must not be truncated
+      // (maxBuffer still bounds it at 16 MB instead of Node's 1 MB default).
+      const result = await run('kubectl', ['get', 'applications', '-n', 'argocd', '-o', 'json'], { timeoutMs: 15_000, maxOutput: 0 })
       stdout = result.stdout
-    } catch {
-      // ArgoCD may not be installed yet (bootstrapping in progress) — silent skip
+    } catch (err) {
+      // ArgoCD may not be installed yet (bootstrapping in progress) — skip quietly,
+      // but surface output-size failures, which used to make large clusters go dark.
+      const code = (err as { code?: unknown }).code
+      if (code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+        logger.error({ err: String(err) }, '[argocd-watcher] kubectl output exceeded buffer')
+      }
       return
     }
 

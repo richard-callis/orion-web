@@ -3,18 +3,37 @@
  * Provides talosctl-based operations for Talos cluster management.
  * The caller must supply a base64-encoded talosconfig as `talosConfig` in args.
  */
-import { execFile } from 'child_process'
-import { promisify } from 'util'
 import { writeFileSync, unlinkSync } from 'fs'
 import { randomUUID } from 'crypto'
+import { runOut } from '../lib/run.js'
+import { withValidation, hostOrIp, imageRef, ArgValidationError } from '../lib/validate-args.js'
 
-const exec = promisify(execFile)
+/**
+ * Run talosctl against one node with a temporary talosconfig.
+ *
+ * Unique temp file name (randomUUID) prevents collisions under concurrent calls;
+ * mode 0600 keeps the credentials unreadable by other users. The node address is
+ * validated so it cannot be read as a talosctl flag.
+ */
+async function talosctl(args: Record<string, unknown>, sub: string[], timeoutMs: number): Promise<string> {
+  const node = hostOrIp('nodeIp', args.nodeIp)
+  const tmpFile = `/tmp/orion-talosconfig-${randomUUID()}.yaml`
+  writeFileSync(tmpFile, Buffer.from(String(args.talosConfig ?? ''), 'base64').toString('utf8'), { encoding: 'utf8', mode: 0o600 })
+  try {
+    return await runOut('talosctl', ['--talosconfig', tmpFile, '--nodes', node, '--endpoints', node, ...sub], { timeoutMs })
+  } finally {
+    try { unlinkSync(tmpFile) } catch { /* ignore */ }
+  }
+}
 
-// Unique temp file name using randomUUID to prevent collision under concurrent
-// calls (Date.now() has ms resolution → two simultaneous calls → same path →
-// cross-actor credential overwrite / ENOENT in the other call's finally).
-function tmpConfig(): string {
-  return `/tmp/orion-talosconfig-${randomUUID()}.yaml`
+/** talosctl --patch accepts `@file` to read a local file — never allow that from an agent. */
+function patchArg(value: unknown): string {
+  const s = String(value ?? '').trim()
+  if (!s) throw new ArgValidationError(`Invalid argument 'patch': is required`)
+  if (s.startsWith('@') || s.startsWith('-')) {
+    throw new ArgValidationError(`Invalid argument 'patch': must be inline JSON, not a file reference or flag`)
+  }
+  return s
 }
 
 export const talosTools = ([
@@ -30,20 +49,7 @@ export const talosTools = ([
       required: ['nodeIp', 'talosConfig'],
     },
     async execute(args: Record<string, unknown>) {
-      const cfg = String(args.talosConfig)
-      const tmpFile = tmpConfig()
-      writeFileSync(tmpFile, Buffer.from(cfg, 'base64').toString('utf8'), 'utf8')
-      try {
-        const { stdout, stderr } = await exec('talosctl', [
-          '--talosconfig', tmpFile,
-          '--nodes', String(args.nodeIp),
-          '--endpoints', String(args.nodeIp),
-          'version',
-        ], { timeout: 15_000 })
-        return stdout || stderr
-      } finally {
-        try { unlinkSync(tmpFile) } catch { /* ignore */ }
-      }
+      return withValidation(() => talosctl(args, ['version'], 15_000))
     },
   },
 
@@ -59,19 +65,7 @@ export const talosTools = ([
       required: ['nodeIp', 'talosConfig'],
     },
     async execute(args: Record<string, unknown>) {
-      const tmpFile = tmpConfig()
-      writeFileSync(tmpFile, Buffer.from(String(args.talosConfig), 'base64').toString('utf8'), 'utf8')
-      try {
-        const { stdout, stderr } = await exec('talosctl', [
-          '--talosconfig', tmpFile,
-          '--nodes', String(args.nodeIp),
-          '--endpoints', String(args.nodeIp),
-          'get', 'extensions', '-o', 'json',
-        ], { timeout: 20_000 })
-        return stdout || stderr
-      } finally {
-        try { unlinkSync(tmpFile) } catch { /* ignore */ }
-      }
+      return withValidation(() => talosctl(args, ['get', 'extensions', '-o', 'json'], 20_000))
     },
   },
 
@@ -88,20 +82,7 @@ export const talosTools = ([
       required: ['nodeIp', 'talosConfig', 'patch'],
     },
     async execute(args: Record<string, unknown>) {
-      const tmpFile = tmpConfig()
-      writeFileSync(tmpFile, Buffer.from(String(args.talosConfig), 'base64').toString('utf8'), 'utf8')
-      try {
-        const { stdout, stderr } = await exec('talosctl', [
-          '--talosconfig', tmpFile,
-          '--nodes', String(args.nodeIp),
-          '--endpoints', String(args.nodeIp),
-          'patch', 'machineconfig',
-          '--patch', String(args.patch),
-        ], { timeout: 30_000 })
-        return stdout || stderr
-      } finally {
-        try { unlinkSync(tmpFile) } catch { /* ignore */ }
-      }
+      return withValidation(() => talosctl(args, ['patch', 'machineconfig', `--patch=${patchArg(args.patch)}`], 30_000))
     },
   },
 
@@ -119,23 +100,15 @@ export const talosTools = ([
       required: ['nodeIp', 'talosConfig', 'installerImage'],
     },
     async execute(args: Record<string, unknown>) {
-      const tmpFile = tmpConfig()
-      writeFileSync(tmpFile, Buffer.from(String(args.talosConfig), 'base64').toString('utf8'), 'utf8')
-      const preserve = args.preserve !== false
-      try {
-        const { stdout, stderr } = await exec('talosctl', [
-          '--talosconfig', tmpFile,
-          '--nodes', String(args.nodeIp),
-          '--endpoints', String(args.nodeIp),
+      return withValidation(() => {
+        const preserve = args.preserve !== false
+        return talosctl(args, [
           'upgrade',
-          '--image', String(args.installerImage),
+          `--image=${imageRef('installerImage', args.installerImage)}`,
           preserve ? '--preserve' : '--no-preserve',
           '--wait',
-        ], { timeout: 600_000 }) // 10 min — upgrades take time
-        return stdout || stderr
-      } finally {
-        try { unlinkSync(tmpFile) } catch { /* ignore */ }
-      }
+        ], 600_000) // 10 min — upgrades take time
+      })
     },
   },
 
@@ -151,20 +124,7 @@ export const talosTools = ([
       required: ['nodeIp', 'talosConfig'],
     },
     async execute(args: Record<string, unknown>) {
-      const tmpFile = tmpConfig()
-      writeFileSync(tmpFile, Buffer.from(String(args.talosConfig), 'base64').toString('utf8'), 'utf8')
-      try {
-        const { stdout, stderr } = await exec('talosctl', [
-          '--talosconfig', tmpFile,
-          '--nodes', String(args.nodeIp),
-          '--endpoints', String(args.nodeIp),
-          'reboot',
-          '--wait',
-        ], { timeout: 300_000 }) // 5 min
-        return stdout || stderr
-      } finally {
-        try { unlinkSync(tmpFile) } catch { /* ignore */ }
-      }
+      return withValidation(() => talosctl(args, ['reboot', '--wait'], 300_000)) // 5 min
     },
   },
 ] as const).map(t => ({ ...t, category: 'talos' as const }))

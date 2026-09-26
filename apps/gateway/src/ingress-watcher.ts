@@ -6,10 +6,8 @@
  * appear in the Ingress management page.
  */
 
-import { exec } from 'child_process'
-import { promisify } from 'util'
-
-const execAsync = promisify(exec)
+import { run } from './lib/run.js'
+import { logger } from './lib/logger.js'
 
 export interface K8sIngressRule {
   host: string
@@ -45,13 +43,15 @@ export class IngressWatcher {
   private async poll() {
     let stdout: string
     try {
-      const result = await execAsync(
-        'kubectl get ingress -A -o json 2>/dev/null',
-        { timeout: 15_000 },
-      )
+      // maxOutput 0: parsed here, must not be truncated (bounded by the 16 MB maxBuffer).
+      const result = await run('kubectl', ['get', 'ingress', '-A', '-o', 'json'], { timeoutMs: 15_000, maxOutput: 0 })
       stdout = result.stdout
-    } catch {
-      // Ingress API may not be available yet — silent skip
+    } catch (err) {
+      // Ingress API may not be available yet — skip quietly, but surface size failures.
+      const code = (err as { code?: unknown }).code
+      if (code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+        logger.error({ err: String(err) }, '[ingress-watcher] kubectl output exceeded buffer')
+      }
       return
     }
 

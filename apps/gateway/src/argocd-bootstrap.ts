@@ -7,12 +7,15 @@
  * Designed to be idempotent — safe to call on every restart.
  */
 
-import { exec } from 'child_process'
-import { promisify } from 'util'
-import { writeFileSync, unlinkSync, mkdtempSync, rmSync } from 'fs'
-import { tmpdir } from 'os'
+import { run } from './lib/run.js'
 
-const execAsync = promisify(exec)
+/**
+ * ArgoCD release to install. Defaults to the moving `stable` manifest for
+ * backward compatibility; set ARGOCD_VERSION (e.g. "v2.14.11") to pin it so
+ * installs are reproducible.
+ */
+const ARGOCD_VERSION = process.env.ARGOCD_VERSION ?? 'stable'
+const ARGOCD_INSTALL_URL = `https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml`
 
 export interface GitProviderInfo {
   type: 'gitea-bundled' | 'gitea' | 'github' | 'gitlab'
@@ -32,7 +35,7 @@ export async function bootstrapArgoCD(
   // Step 1: Check if ArgoCD namespace exists
   let argocdInstalled = false
   try {
-    await execAsync('kubectl get namespace argocd 2>/dev/null', { timeout: 10_000 })
+    await run('kubectl', ['get', 'namespace', 'argocd'], { timeoutMs: 10_000 })
     argocdInstalled = true
     console.log('[argocd-bootstrap] ArgoCD already installed, skipping install')
   } catch {
@@ -44,20 +47,16 @@ export async function bootstrapArgoCD(
       console.log('[argocd-bootstrap] Installing ArgoCD into cluster...')
 
       // Step 2: Create namespace and apply ArgoCD manifests
-      await execAsync('kubectl create namespace argocd 2>/dev/null', { timeout: 10_000 })
+      await run('kubectl', ['create', 'namespace', 'argocd'], { timeoutMs: 10_000 })
       console.log('[argocd-bootstrap] Namespace argocd created')
 
-      await execAsync(
-        'kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml',
-        { timeout: 120_000 },
-      )
-      console.log('[argocd-bootstrap] ArgoCD manifests applied')
+      await run('kubectl', ['apply', '-n', 'argocd', '-f', ARGOCD_INSTALL_URL], { timeoutMs: 120_000 })
+      console.log(`[argocd-bootstrap] ArgoCD manifests applied (${ARGOCD_VERSION})`)
 
       // Step 3: Wait for ArgoCD server to be ready
-      await execAsync(
-        'kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=120s',
-        { timeout: 130_000 },
-      )
+      await run('kubectl', [
+        'wait', '--for=condition=available', 'deployment/argocd-server', '-n', 'argocd', '--timeout=120s',
+      ], { timeoutMs: 130_000 })
       console.log('[argocd-bootstrap] ArgoCD server is ready')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -89,10 +88,9 @@ export async function bootstrapArgoCD(
     // Step 5: Check if repo is already registered in ArgoCD
     try {
       const repoUrl = `${gitConfig.url}/${gitConfig.org}`
-      const secretsResult = await execAsync(
-        'kubectl get secret -n argocd -l argocd.argoproj.io/secret-type=repository -o json 2>/dev/null',
-        { timeout: 15_000 },
-      )
+      const secretsResult = await run('kubectl', [
+        'get', 'secret', '-n', 'argocd', '-l', 'argocd.argoproj.io/secret-type=repository', '-o', 'json',
+      ], { timeoutMs: 15_000, maxOutput: 0 })
       const secrets = JSON.parse(secretsResult.stdout)
       const items = secrets.items ?? []
 
@@ -142,19 +140,9 @@ stringData:
   password: ${yamlToken}
   username: ${yamlUsername}`
 
-      // Write to a temp file and apply — avoids stdin piping issues with exec
-      const tmpDir = mkdtempSync(tmpdir() + '/argocd-bootstrap-')
-      const tmpFile = `${tmpDir}/repo-secret.yaml`
-      writeFileSync(tmpFile, secretYaml, { mode: 0o600 })
-      try {
-        await execAsync(`kubectl apply -f ${tmpFile} -n argocd 2>/dev/null`, {
-          timeout: 15_000,
-        })
-        console.log(`[argocd-bootstrap] Registered git repo ${repoUrl} in ArgoCD`)
-      } finally {
-        try { unlinkSync(tmpFile) } catch { /* ignore */ }
-        try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
-      }
+      // Pipe the Secret through stdin — never touches disk, no shell involved.
+      await run('kubectl', ['apply', '-f', '-', '-n', 'argocd'], { timeoutMs: 15_000, input: secretYaml })
+      console.log(`[argocd-bootstrap] Registered git repo ${repoUrl} in ArgoCD`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(`[argocd-bootstrap] Failed to register git repo in ArgoCD (non-fatal): ${msg}`)

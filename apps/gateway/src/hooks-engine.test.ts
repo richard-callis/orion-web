@@ -240,16 +240,30 @@ describe('HooksEngine', () => {
       spy.mockRestore()
     })
 
-    it('polls refresh every 30 seconds', async () => {
+    it('refreshes immediately on start, then every 30 seconds', async () => {
       mockClient.fetchNebula.mockResolvedValue([])
       const refreshSpy = vi.spyOn(engine, 'refresh')
       engine.start('env1')
-      vi.advanceTimersByTime(30000)
       expect(refreshSpy).toHaveBeenCalledTimes(1)
       vi.advanceTimersByTime(30000)
       expect(refreshSpy).toHaveBeenCalledTimes(2)
+      vi.advanceTimersByTime(30000)
+      expect(refreshSpy).toHaveBeenCalledTimes(3)
       engine.stop()
       refreshSpy.mockRestore()
+    })
+
+    it('does not throw (no unhandled rejection) when a poll fails', async () => {
+      mockClient.fetchNebula.mockRejectedValue(new Error('HTTP 502'))
+      const rejections: unknown[] = []
+      const onRej = (r: unknown) => rejections.push(r)
+      process.on('unhandledRejection', onRej)
+      engine.start('env1')
+      await vi.advanceTimersByTimeAsync(30000)
+      await Promise.resolve()
+      process.off('unhandledRejection', onRej)
+      engine.stop()
+      expect(rejections).toEqual([])
     })
   })
 

@@ -1,19 +1,39 @@
-import { execFile } from 'child_process'
-import { promisify } from 'util'
 import { writeFileSync, unlinkSync } from 'fs'
 import { randomUUID } from 'crypto'
+import { runOut } from '../lib/run.js'
+import { safeFetch } from '../lib/ssrf.js'
+import {
+  withValidation, noFlag, k8sName, k8sLabel, k8sNamespace, k8sResource, labelSelector,
+  oneOf, duration, durationSeconds, positiveInt, helmName, httpUrl,
+} from '../lib/validate-args.js'
 
-const exec = promisify(execFile)
+// Every agent-supplied value goes through validate-args before reaching argv, and
+// positionals follow a `--` terminator: a value such as `--server=https://attacker`
+// must never become a kubectl/helm flag (it would redirect the service-account token).
 
-async function kubectl(args: string[], timeoutMs = 30_000): Promise<string> {
-  const { stdout, stderr } = await exec('kubectl', args, { timeout: timeoutMs })
-  return stdout || stderr
+async function kubectl(args: string[], timeoutMs = 30_000, input?: string): Promise<string> {
+  return runOut('kubectl', args, { timeoutMs, input })
 }
 
-async function helm(args: string[]): Promise<string> {
-  const { stdout, stderr } = await exec('helm', args, { timeout: 300_000 })
-  return stdout || stderr
+/** Untruncated output (still bounded by maxBuffer) for JSON the tool parses itself. */
+async function kubectlJson(args: string[], timeoutMs = 30_000): Promise<string> {
+  return runOut('kubectl', args, { timeoutMs, maxOutput: 0 })
 }
+
+async function helm(args: string[], timeoutMs = 300_000): Promise<string> {
+  return runOut('helm', args, { timeoutMs })
+}
+
+const ROLLOUT_KINDS = ['deployment', 'statefulset', 'daemonset'] as const
+const GET_OUTPUTS = ['wide', 'json', 'yaml', 'name'] as const
+const MANIFEST_MAX_BYTES = 10 * 1024 * 1024
+
+/**
+ * Read-only diagnostic binaries allowed in kubectl_exec. Deliberately excludes
+ * find (-exec runs arbitrary commands), curl/wget/nc (network pivot and cloud
+ * metadata access) and env/printenv (dumps pod secrets).
+ */
+const EXEC_ALLOWED = new Set(['nslookup', 'dig', 'ping', 'cat', 'ls', 'ps', 'df', 'free', 'uptime', 'id', 'uname', 'hostname', 'head', 'tail', 'grep'])
 
 export const kubernetesTools = ([
   {
@@ -27,11 +47,13 @@ export const kubernetesTools = ([
       },
     },
     async execute(args: Record<string, unknown>) {
-      const cmdArgs = ['get', 'pods', '-o', 'wide']
-      if (args.namespace) cmdArgs.push('-n', String(args.namespace))
-      else cmdArgs.push('-A')
-      if (args.selector) cmdArgs.push('-l', String(args.selector))
-      return kubectl(cmdArgs)
+      return withValidation(async () => {
+        const cmdArgs = ['get', 'pods', '-o', 'wide']
+        if (args.namespace) cmdArgs.push('-n', k8sNamespace('namespace', args.namespace))
+        else cmdArgs.push('-A')
+        if (args.selector) cmdArgs.push('-l', labelSelector('selector', args.selector))
+        return kubectl(cmdArgs)
+      })
     },
   },
   {
@@ -62,10 +84,14 @@ export const kubernetesTools = ([
       required: ['pod', 'namespace'],
     },
     async execute(args: Record<string, unknown>) {
-      const cmdArgs = ['logs', String(args.pod), '-n', String(args.namespace), `--tail=${args.tail ?? 100}`]
-      if (args.container) cmdArgs.push('-c', String(args.container))
-      if (args.previous) cmdArgs.push('--previous')
-      return kubectl(cmdArgs)
+      return withValidation(async () => {
+        const tail = args.tail === undefined ? 100 : positiveInt('tail', args.tail)
+        const cmdArgs = ['logs', '-n', k8sNamespace('namespace', args.namespace), `--tail=${tail}`]
+        if (args.container) cmdArgs.push('-c', k8sLabel('container', args.container))
+        if (args.previous) cmdArgs.push('--previous')
+        cmdArgs.push('--', k8sName('pod', args.pod))
+        return kubectl(cmdArgs)
+      })
     },
   },
   {
@@ -81,9 +107,12 @@ export const kubernetesTools = ([
       required: ['resource', 'name'],
     },
     async execute(args: Record<string, unknown>) {
-      const cmdArgs = ['describe', String(args.resource), String(args.name)]
-      if (args.namespace) cmdArgs.push('-n', String(args.namespace))
-      return kubectl(cmdArgs)
+      return withValidation(async () => {
+        const cmdArgs = ['describe']
+        if (args.namespace) cmdArgs.push('-n', k8sNamespace('namespace', args.namespace))
+        cmdArgs.push('--', k8sResource('resource', args.resource), k8sName('name', args.name))
+        return kubectl(cmdArgs)
+      })
     },
   },
   {
@@ -101,19 +130,22 @@ export const kubernetesTools = ([
       required: ['resource'],
     },
     async execute(args: Record<string, unknown>) {
-      const resource = String(args.resource).toLowerCase()
-      const cmdArgs = ['delete', resource]
-      if (args.name) cmdArgs.push(String(args.name))
-      if (args.namespace) cmdArgs.push('-n', String(args.namespace))
-      if (args.selector) {
-        cmdArgs.push('-l', String(args.selector))
-        // --all only works for workload resources, not for pods or services
-        if (!args.name && ['deployment', 'statefulset', 'daemonset', 'replicaset', 'job', 'replicationcontroller'].includes(resource)) {
-          cmdArgs.push('--all')
+      return withValidation(async () => {
+        const resource = k8sResource('resource', args.resource).toLowerCase()
+        const cmdArgs = ['delete']
+        if (args.namespace) cmdArgs.push('-n', k8sNamespace('namespace', args.namespace))
+        if (args.selector) {
+          cmdArgs.push('-l', labelSelector('selector', args.selector))
+          // --all only works for workload resources, not for pods or services
+          if (!args.name && ['deployment', 'statefulset', 'daemonset', 'replicaset', 'job', 'replicationcontroller'].includes(resource)) {
+            cmdArgs.push('--all')
+          }
         }
-      }
-      if (args.ignoreNotFound !== false) cmdArgs.push('--ignore-not-found=true')
-      return kubectl(cmdArgs)
+        if (args.ignoreNotFound !== false) cmdArgs.push('--ignore-not-found=true')
+        cmdArgs.push('--', resource)
+        if (args.name) cmdArgs.push(k8sName('name', args.name))
+        return kubectl(cmdArgs)
+      })
     },
   },
   {
@@ -130,22 +162,27 @@ export const kubernetesTools = ([
       required: ['resource'],
     },
     async execute(args: Record<string, unknown>) {
-      const cmdArgs = ['get', String(args.resource)]
-      if (args.name) cmdArgs.push(String(args.name))
-      if (args.namespace) {
-        cmdArgs.push('-n', String(args.namespace))
-      } else if (!args.name) {
-        // Only add -A for namespaced resources — cluster-scoped resources (nodes, pv,
-        // clusterrole, namespace, etc.) error or return nothing with -A.
-        const clusterScoped = ['node', 'nodes', 'persistentvolume', 'pv', 'storageclass',
-          'clusterrole', 'clusterrolebinding', 'namespace', 'ns', 'ingressclass',
-          'priorityclass', 'runtimeclass', 'crd', 'customresourcedefinition']
-        if (!clusterScoped.includes(String(args.resource).toLowerCase())) {
-          cmdArgs.push('-A')
+      return withValidation(async () => {
+        const resource = k8sResource('resource', args.resource)
+        const name = args.name ? k8sName('name', args.name) : undefined
+        const cmdArgs = ['get']
+        if (args.namespace) {
+          cmdArgs.push('-n', k8sNamespace('namespace', args.namespace))
+        } else if (!name) {
+          // Only add -A for namespaced resources — cluster-scoped resources (nodes, pv,
+          // clusterrole, namespace, etc.) error or return nothing with -A.
+          const clusterScoped = ['node', 'nodes', 'persistentvolume', 'pv', 'storageclass',
+            'clusterrole', 'clusterrolebinding', 'namespace', 'ns', 'ingressclass',
+            'priorityclass', 'runtimeclass', 'crd', 'customresourcedefinition']
+          if (!clusterScoped.includes(resource.toLowerCase())) {
+            cmdArgs.push('-A')
+          }
         }
-      }
-      cmdArgs.push('-o', String(args.output ?? 'wide'))
-      return kubectl(cmdArgs)
+        cmdArgs.push('-o', oneOf('output', args.output ?? 'wide', GET_OUTPUTS))
+        cmdArgs.push('--', resource)
+        if (name) cmdArgs.push(name)
+        return kubectl(cmdArgs)
+      })
     },
   },
   {
@@ -161,7 +198,10 @@ export const kubernetesTools = ([
       required: ['kind', 'name', 'namespace'],
     },
     async execute(args: Record<string, unknown>) {
-      return kubectl(['rollout', 'restart', `${args.kind}/${args.name}`, '-n', String(args.namespace)])
+      return withValidation(async () => {
+        const kind = oneOf('kind', args.kind, ROLLOUT_KINDS)
+        return kubectl(['rollout', 'restart', '-n', k8sNamespace('namespace', args.namespace), '--', `${kind}/${k8sName('name', args.name)}`])
+      })
     },
   },
   {
@@ -174,10 +214,12 @@ export const kubernetesTools = ([
       },
     },
     async execute(args: Record<string, unknown>) {
-      const cmdArgs = ['top', 'pods']
-      if (args.namespace) cmdArgs.push('-n', String(args.namespace))
-      else cmdArgs.push('-A')
-      return kubectl(cmdArgs)
+      return withValidation(async () => {
+        const cmdArgs = ['top', 'pods']
+        if (args.namespace) cmdArgs.push('-n', k8sNamespace('namespace', args.namespace))
+        else cmdArgs.push('-A')
+        return kubectl(cmdArgs)
+      })
     },
   },
   {
@@ -192,25 +234,23 @@ export const kubernetesTools = ([
       required: ['url'],
     },
     async execute(args: Record<string, unknown>) {
-      const rawUrl = String(args.url)
-      // N9 fix: validate URL to prevent SSRF to internal metadata services.
-      // kubectl fetches the manifest server-side — no validation would allow
-      // an agent to apply manifests from http://169.254.169.254/ or internal hosts.
-      try {
-        const parsed = new URL(rawUrl)
-        if (!['http:', 'https:'].includes(parsed.protocol)) {
-          return `Error: URL must use http or https (got '${parsed.protocol}')`
+      return withValidation(async () => {
+        // N9/M4 fix: kubectl used to fetch the URL itself after a regex-only hostname
+        // check (no DNS resolution, no IPv6, redirects followed). The manifest is now
+        // downloaded via safeFetch — which pins the validated IP and re-validates every
+        // redirect hop — and piped to `kubectl apply -f -`.
+        const namespace = args.namespace ? k8sNamespace('namespace', args.namespace) : undefined
+        let res
+        try {
+          res = await safeFetch(String(args.url ?? ''), { timeoutMs: 60_000, maxBytes: MANIFEST_MAX_BYTES, onOverflow: 'error' })
+        } catch (err) {
+          return `Error: could not download manifest: ${err instanceof Error ? err.message : String(err)}`
         }
-        const PRIVATE = [/^127\./, /^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./, /^169\.254\./]
-        if (parsed.hostname === 'localhost' || PRIVATE.some(p => p.test(parsed.hostname))) {
-          return `Error: URL must not point to a private or internal host`
-        }
-      } catch {
-        return `Error: invalid URL '${rawUrl}'`
-      }
-      const cmdArgs = ['apply', '-f', rawUrl]
-      if (args.namespace) cmdArgs.push('-n', String(args.namespace))
-      return kubectl(cmdArgs, 120_000) // 2 min — large manifests take time to download + apply
+        if (res.status < 200 || res.status >= 300) return `Error: manifest download returned HTTP ${res.status}`
+        const cmdArgs = ['apply', '-f', '-']
+        if (namespace) cmdArgs.push('-n', namespace)
+        return kubectl(cmdArgs, 120_000, res.body)
+      })
     },
   },
   {
@@ -224,15 +264,7 @@ export const kubernetesTools = ([
       required: ['manifest'],
     },
     async execute(args: Record<string, unknown>) {
-      const manifest = String(args.manifest)
-      const tmpFile = `/tmp/orion-manifest-${randomUUID()}.yaml`
-      writeFileSync(tmpFile, manifest, 'utf8')
-      try {
-        const { stdout, stderr } = await exec('kubectl', ['apply', '-f', tmpFile], { timeout: 60_000 })
-        return stdout || stderr
-      } finally {
-        try { unlinkSync(tmpFile) } catch { /* ignore */ }
-      }
+      return kubectl(['apply', '-f', '-'], 60_000, String(args.manifest ?? ''))
     },
   },
   {
@@ -250,12 +282,14 @@ export const kubernetesTools = ([
       required: ['resource', 'name', 'patch'],
     },
     async execute(args: Record<string, unknown>) {
-      const patchType = String(args.patchType ?? 'merge')
-      const typeFlag = patchType === 'json' ? 'json' : patchType === 'strategic' ? 'strategic' : 'merge'
-      const cmd = ['patch', String(args.resource), String(args.name), `--type=${typeFlag}`, '-p', String(args.patch)]
-      if (args.namespace) cmd.push('-n', String(args.namespace))
-      const { stdout, stderr } = await exec('kubectl', cmd, { timeout: 30_000 })
-      return stdout || stderr
+      return withValidation(async () => {
+        const patchType = String(args.patchType ?? 'merge')
+        const typeFlag = patchType === 'json' ? 'json' : patchType === 'strategic' ? 'strategic' : 'merge'
+        const cmd = ['patch', `--type=${typeFlag}`, `--patch=${String(args.patch ?? '')}`]
+        if (args.namespace) cmd.push('-n', k8sNamespace('namespace', args.namespace))
+        cmd.push('--', k8sResource('resource', args.resource), k8sName('name', args.name))
+        return kubectl(cmd)
+      })
     },
   },
   {
@@ -264,7 +298,7 @@ export const kubernetesTools = ([
     inputSchema: {
       type: 'object',
       properties: {
-        kind:      { type: 'string', description: 'Resource kind (deployment, statefulset, daemonset)' },
+        kind:      { type: 'string', enum: ['deployment', 'statefulset', 'daemonset'], description: 'Resource kind' },
         name:      { type: 'string', description: 'Resource name' },
         namespace: { type: 'string', description: 'Namespace' },
         timeout:   { type: 'string', description: 'Timeout (default 120s)' },
@@ -272,41 +306,44 @@ export const kubernetesTools = ([
       required: ['kind', 'name', 'namespace'],
     },
     async execute(args: Record<string, unknown>) {
-      // Parse the kubectl --timeout value and add 5s buffer for the Node exec timeout
-      const ktimeout = String(args.timeout ?? '120s')
-      const seconds  = ktimeout.endsWith('s') ? parseInt(ktimeout) : parseInt(ktimeout) * 60
-      const execMs   = (seconds + 5) * 1_000
-      return kubectl([
-        'rollout', 'status', `${args.kind}/${args.name}`,
-        '-n', String(args.namespace),
-        `--timeout=${ktimeout}`,
-      ], execMs)
+      return withValidation(async () => {
+        // Parse the kubectl --timeout value and add 5s buffer for the Node exec timeout
+        const ktimeout = duration('timeout', args.timeout ?? '120s')
+        const execMs   = (durationSeconds(ktimeout) + 5) * 1_000
+        const kind = oneOf('kind', args.kind, ROLLOUT_KINDS)
+        return kubectl([
+          'rollout', 'status',
+          '-n', k8sNamespace('namespace', args.namespace),
+          `--timeout=${ktimeout}`,
+          '--', `${kind}/${k8sName('name', args.name)}`,
+        ], execMs)
+      })
     },
   },
   {
     name: 'kubectl_exec',
-    description: 'Execute a read-only diagnostic command inside a running pod. Allowed commands: curl, wget, nslookup, dig, nc, ping, cat, ls, env, ps, df, free, uptime, id, uname, hostname, printenv, head, tail, grep, find.',
+    description: 'Execute a read-only diagnostic command inside a running pod. Allowed commands: nslookup, dig, ping, cat, ls, ps, df, free, uptime, id, uname, hostname, head, tail, grep.',
     inputSchema: {
       type: 'object',
       properties: {
         namespace: { type: 'string', description: 'Namespace of the pod' },
         pod:       { type: 'string', description: 'Pod name' },
         container: { type: 'string', description: 'Container name (omit for default)' },
-        command:   { type: 'array', items: { type: 'string' }, description: 'Command and args, e.g. ["curl", "-s", "http://svc:80"]' },
+        command:   { type: 'array', items: { type: 'string' }, description: 'Command and args, e.g. ["nslookup", "my-svc.default"]' },
       },
       required: ['namespace', 'pod', 'command'],
     },
     async execute(args: Record<string, unknown>) {
-      const ALLOWED = new Set(['curl','wget','nslookup','dig','nc','ping','cat','ls','env','ps','df','free','uptime','id','uname','hostname','printenv','head','tail','grep','find'])
-      const ns  = String(args.namespace ?? '').trim()
-      const pod = String(args.pod ?? '').trim()
-      const cmd = Array.isArray(args.command) ? (args.command as string[]) : []
-      if (!ns || !pod || cmd.length === 0) return 'Error: namespace, pod and command are required'
-      const binary = cmd[0].replace(/^.*\//, '') // strip any path prefix e.g. /bin/cat → cat
-      if (!ALLOWED.has(binary)) return `Error: command '${binary}' is not permitted. Allowed: ${[...ALLOWED].join(', ')}`
-      const base = ['exec', pod, '-n', ns]
-      if (args.container) base.push('-c', String(args.container))
-      return kubectl([...base, '--', ...cmd], 30_000)
+      return withValidation(async () => {
+        const cmd = Array.isArray(args.command) ? (args.command as unknown[]).map(String) : []
+        if (cmd.length === 0) return 'Error: namespace, pod and command are required'
+        const binary = cmd[0].replace(/^.*\//, '') // strip any path prefix e.g. /bin/cat → cat
+        if (!EXEC_ALLOWED.has(binary)) return `Error: command '${binary}' is not permitted. Allowed: ${[...EXEC_ALLOWED].join(', ')}`
+        const base = ['exec', '-n', k8sNamespace('namespace', args.namespace)]
+        if (args.container) base.push('-c', k8sLabel('container', args.container))
+        base.push(k8sName('pod', args.pod))
+        return kubectl([...base, '--', ...cmd], 30_000)
+      })
     },
   },
 
@@ -321,27 +358,28 @@ export const kubernetesTools = ([
       },
     },
     async execute(args: Record<string, unknown>) {
-      const ktimeout = String(args.timeout ?? '300s')
-      const seconds  = ktimeout.endsWith('s') ? parseInt(ktimeout) : parseInt(ktimeout) * 60
-      const execMs   = (seconds + 10) * 1_000
-      const nodeIps  = Array.isArray(args.nodeNames) ? (args.nodeNames as string[]) : []
+      return withValidation(async () => {
+        const ktimeout = duration('timeout', args.timeout ?? '300s')
+        const execMs   = (durationSeconds(ktimeout) + 10) * 1_000
+        const nodeIps  = Array.isArray(args.nodeNames) ? (args.nodeNames as string[]) : []
 
-      if (nodeIps.length === 0) {
-        return kubectl(['wait', '--for=condition=Ready', 'nodes', '--all', `--timeout=${ktimeout}`], execMs)
-      }
+        if (nodeIps.length === 0) {
+          return kubectl(['wait', '--for=condition=Ready', 'nodes', '--all', `--timeout=${ktimeout}`], execMs)
+        }
 
-      // Resolve IPs to node names via kubectl get nodes
-      const nodesJson = await kubectl(['get', 'nodes', '-o', 'json'], 10_000)
-      const list = JSON.parse(nodesJson) as { items?: { metadata?: { name?: string }; status?: { addresses?: { type: string; address: string }[] } }[] }
-      const nodeNames: string[] = []
-      for (const ip of nodeIps) {
-        const node = (list.items ?? []).find(n =>
-          (n.status?.addresses ?? []).some(a => a.address === ip),
-        )
-        if (node?.metadata?.name) nodeNames.push(node.metadata.name)
-      }
-      if (nodeNames.length === 0) return 'No matching nodes found'
-      return kubectl(['wait', '--for=condition=Ready', ...nodeNames.map(n => `node/${n}`), `--timeout=${ktimeout}`], execMs)
+        // Resolve IPs to node names via kubectl get nodes (names come from the API, not the agent)
+        const nodesJson = await kubectlJson(['get', 'nodes', '-o', 'json'], 10_000)
+        const list = JSON.parse(nodesJson) as { items?: { metadata?: { name?: string }; status?: { addresses?: { type: string; address: string }[] } }[] }
+        const nodeNames: string[] = []
+        for (const ip of nodeIps) {
+          const node = (list.items ?? []).find(n =>
+            (n.status?.addresses ?? []).some(a => a.address === ip),
+          )
+          if (node?.metadata?.name) nodeNames.push(node.metadata.name)
+        }
+        if (nodeNames.length === 0) return 'No matching nodes found'
+        return kubectl(['wait', '--for=condition=Ready', `--timeout=${ktimeout}`, '--', ...nodeNames.map(n => `node/${n}`)], execMs)
+      })
     },
   },
 
@@ -357,13 +395,17 @@ export const kubernetesTools = ([
       required: ['name', 'url'],
     },
     async execute(args: Record<string, unknown>) {
-      try {
-        return await helm(['repo', 'add', String(args.name), String(args.url)])
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e)
-        if (msg.includes('already exists')) return `Repository "${args.name}" already exists`
-        throw new Error(`helm repo add failed: ${msg}`)
-      }
+      return withValidation(async () => {
+        const name = helmName('name', args.name)
+        const url = httpUrl('url', args.url, ['http:', 'https:', 'oci:'])
+        try {
+          return await helm(['repo', 'add', '--', name, url])
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e)
+          if (msg.includes('already exists')) return `Repository "${name}" already exists`
+          throw new Error(`helm repo add failed: ${msg}`)
+        }
+      })
     },
   },
 
@@ -378,10 +420,12 @@ export const kubernetesTools = ([
       },
     },
     async execute(args: Record<string, unknown>) {
-      const cmdArgs = ['list', '--short']
-      if (args.namespace) cmdArgs.push('-n', String(args.namespace))
-      if (args.filter) cmdArgs.push('--filter', String(args.filter))
-      return await helm(cmdArgs)
+      return withValidation(async () => {
+        const cmdArgs = ['list', '--short']
+        if (args.namespace) cmdArgs.push('-n', k8sNamespace('namespace', args.namespace))
+        if (args.filter) cmdArgs.push(`--filter=${noFlag('filter', args.filter, 256)}`)
+        return helm(cmdArgs)
+      })
     },
   },
 
@@ -398,11 +442,12 @@ export const kubernetesTools = ([
       required: ['release', 'namespace'],
     },
     async execute(args: Record<string, unknown>) {
-      return helm([
-        'uninstall', String(args.release),
-        '--namespace', String(args.namespace),
-        '--timeout', String(args.timeout ?? '60s'),
-      ])
+      return withValidation(async () => helm([
+        'uninstall',
+        '--namespace', k8sNamespace('namespace', args.namespace),
+        '--timeout', duration('timeout', args.timeout ?? '60s'),
+        '--', helmName('release', args.release),
+      ]))
     },
   },
 
@@ -431,7 +476,7 @@ export const kubernetesTools = ([
       ])
 
       if (hasLonghorn) {
-        const json = await kubectl(['get', 'nodes.longhorn.io', '-n', 'longhorn-system', '-o', 'json'])
+        const json = await kubectlJson(['get', 'nodes.longhorn.io', '-n', 'longhorn-system', '-o', 'json'])
         const list = JSON.parse(json) as { items?: unknown[] }
         const items = list.items ?? []
         const nodes: Array<{ name: string; totalGiB: number; usedGiB: number; freeGiB: number }> = []
@@ -463,7 +508,7 @@ export const kubernetesTools = ([
       }
 
       if (hasCeph) {
-        const json = await kubectl(['get', 'cephcluster', 'rook-ceph', '-n', 'rook-ceph', '-o', 'json'])
+        const json = await kubectlJson(['get', 'cephcluster', 'rook-ceph', '-n', 'rook-ceph', '-o', 'json'])
         const cluster = JSON.parse(json) as any
         const cap = cluster.status?.ceph?.capacity ?? {}
         const toGiB = (b: number) => Math.round(b / 1073741824 * 10) / 10
@@ -497,43 +542,45 @@ export const kubernetesTools = ([
       required: ['release', 'chart', 'namespace'],
     },
     async execute(args: Record<string, unknown>) {
-      const chart = String(args.chart)
-      const repo = String(args.repo ?? '')
-      const cmdArgs: string[] = [
-        'upgrade', '--install', String(args.release), chart,
-      ]
-      // If repo is a URL, use --repo mode (remote repo without pre-registering)
-      // --repo takes a URL string (not NAME URL pair)
-      if (repo.startsWith('http')) {
-        cmdArgs.push('--repo', repo)
-      }
-      cmdArgs.push(
-        '--namespace', String(args.namespace),
-        '--timeout', String(args.timeout ?? '120s'),
-      )
-      if (args.createNamespace) cmdArgs.push('--create-namespace')
-      if (args.wait !== false)  cmdArgs.push('--wait')
-      // Handle valuesFile (YAML string for complex/nested values including arrays)
-      if (args.valuesFile) {
-        const { writeFileSync, unlinkSync } = await import('fs')
-        const valuesFile = String(args.valuesFile)
-        const tmpFile = `/tmp/helm-values-${randomUUID()}.yaml`
-        writeFileSync(tmpFile, valuesFile, { mode: 0o600 })
-        cmdArgs.push('--values', tmpFile)
-        try {
-          return await helm(cmdArgs)
-        } finally {
-          try { unlinkSync(tmpFile) } catch { /* ignore */ }
+      return withValidation(async () => {
+        const release = helmName('release', args.release)
+        const chart = noFlag('chart', args.chart, 512)
+        const repo = args.repo === undefined || args.repo === '' ? '' : noFlag('repo', args.repo, 2048)
+        const cmdArgs: string[] = ['upgrade', '--install']
+        // If repo is a URL, use --repo mode (remote repo without pre-registering)
+        // --repo takes a URL string (not NAME URL pair)
+        if (repo.startsWith('http')) cmdArgs.push('--repo', httpUrl('repo', repo))
+        cmdArgs.push(
+          '--namespace', k8sNamespace('namespace', args.namespace),
+          '--timeout', duration('timeout', args.timeout ?? '120s'),
+        )
+        if (args.createNamespace) cmdArgs.push('--create-namespace')
+        if (args.wait !== false)  cmdArgs.push('--wait')
+
+        // Handle valuesFile (YAML string for complex/nested values including arrays)
+        if (args.valuesFile) {
+          const tmpFile = `/tmp/helm-values-${randomUUID()}.yaml`
+          writeFileSync(tmpFile, String(args.valuesFile), { mode: 0o600 })
+          cmdArgs.push('--values', tmpFile, '--', release, chart)
+          try {
+            return await helm(cmdArgs)
+          } finally {
+            try { unlinkSync(tmpFile) } catch { /* ignore */ }
+          }
         }
-      }
-      // Simple key-value --set flags
-      const values = args.values as Record<string, unknown> | undefined
-      if (values) {
-        for (const [k, v] of Object.entries(values)) {
-          cmdArgs.push('--set', `${k}=${v}`)
+        // Simple key-value --set flags
+        const values = args.values as Record<string, unknown> | undefined
+        if (values) {
+          for (const [k, v] of Object.entries(values)) {
+            if (!/^[A-Za-z0-9_][A-Za-z0-9_.[\]-]*$/.test(k)) {
+              return `Error: Invalid argument 'values': key '${k}' is not a valid Helm value path`
+            }
+            cmdArgs.push('--set', `${k}=${v}`)
+          }
         }
-      }
-      return helm(cmdArgs)
+        cmdArgs.push('--', release, chart)
+        return helm(cmdArgs)
+      })
     },
   },
 ] as const).map(t => ({ ...t, category: 'cluster-ops' as const }))
