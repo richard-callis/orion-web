@@ -231,14 +231,30 @@ spec:
                   optional: true
             - name: GATEWAY_SECRET_NAME
               value: "orion-gateway-${envName}-join"
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: { fieldPath: metadata.namespace }
+            - name: POD_NAME
+              valueFrom:
+                fieldRef: { fieldPath: metadata.name }
+            - name: GATEWAY_DEPLOYMENT_NAME
+              value: "orion-gateway-${envName}"
+            - name: MACHINE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: orion-gateway-${envName}-join
+                  key: machine-id
+                  optional: true
             - name: GITEA_CLUSTER_URL
               value: "${giteaClusterUrl}"
           livenessProbe:
-            httpGet: { path: /health, port: 3001 }
+            httpGet: { path: /livez, port: 3001 }
             initialDelaySeconds: 15
             periodSeconds: 30
+          # /readyz is 503 until the gateway has registered with ORION and
+          # loaded its tool policy, so traffic only arrives once it can serve.
           readinessProbe:
-            httpGet: { path: /health, port: 3001 }
+            httpGet: { path: /readyz, port: 3001 }
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:

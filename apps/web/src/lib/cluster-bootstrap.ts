@@ -718,6 +718,14 @@ spec:
               value: "${envName}"
             - name: GATEWAY_NAMESPACE
               value: "orion-management"
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: { fieldPath: metadata.namespace }
+            - name: POD_NAME
+              valueFrom:
+                fieldRef: { fieldPath: metadata.name }
+            - name: GATEWAY_DEPLOYMENT_NAME
+              value: "orion-gateway"
             - name: ORION_URL
               valueFrom:
                 secretKeyRef:
@@ -728,14 +736,39 @@ spec:
                 secretKeyRef:
                   name: orion-gateway-credentials
                   key: join-token
+            # Credentials the gateway writes back after registering (the Role
+            # above allows patching this Secret). Without GATEWAY_SECRET_NAME they
+            # were never persisted, so a restarted pod re-joined with a spent token.
+            - name: GATEWAY_SECRET_NAME
+              value: "orion-gateway-credentials"
+            - name: ENVIRONMENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: orion-gateway-credentials
+                  key: environment-id
+                  optional: true
+            - name: GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: orion-gateway-credentials
+                  key: gateway-token
+                  optional: true
+            - name: MACHINE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: orion-gateway-credentials
+                  key: machine-id
+                  optional: true
             - name: GATEWAY_URL
               value: "http://orion-gateway.orion-management.svc.cluster.local:3001"
           livenessProbe:
-            httpGet: { path: /health, port: 3001 }
+            httpGet: { path: /livez, port: 3001 }
             initialDelaySeconds: 15
             periodSeconds: 30
+          # /readyz is 503 until the gateway has registered with ORION and
+          # loaded its tool policy, so traffic only arrives once it can serve.
           readinessProbe:
-            httpGet: { path: /health, port: 3001 }
+            httpGet: { path: /readyz, port: 3001 }
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
