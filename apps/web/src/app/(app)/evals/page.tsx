@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, Play, FlaskConical, ChevronRight } from 'lucide-react'
+import { RunStatusBadge } from '@/components/ui/Badge'
 
 interface EvalSuite {
   id: string
@@ -104,16 +105,6 @@ export default function EvalsPage() {
     if (score >= 80) return 'text-green-400'
     if (score >= 50) return 'text-yellow-400'
     return 'text-red-400'
-  }
-
-  function statusBadge(status: string) {
-    const colors: Record<string, string> = {
-      completed: 'bg-green-500/20 text-green-400',
-      running: 'bg-blue-500/20 text-blue-400',
-      pending: 'bg-yellow-500/20 text-yellow-400',
-      failed: 'bg-red-500/20 text-red-400',
-    }
-    return `inline-flex px-2 py-0.5 rounded text-xs font-medium ${colors[status] ?? 'bg-bg-raised text-text-muted'}`
   }
 
   return (
@@ -234,7 +225,7 @@ export default function EvalsPage() {
                         <div className={`text-sm font-medium ${scoreColor(latestRun.scoreTotal)}`}>
                           {latestRun.scoreTotal !== null ? `${latestRun.scoreTotal.toFixed(1)}%` : '--'}
                         </div>
-                        <div className={statusBadge(latestRun.status)}>{latestRun.status}</div>
+                        <RunStatusBadge status={latestRun.status} />
                       </div>
                     )}
                     <ChevronRight size={16} className="text-text-muted" />
@@ -254,7 +245,7 @@ export default function EvalsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-text-primary">{run.suite?.name ?? run.suiteId}</span>
-                    <span className={statusBadge(run.status)}>{run.status}</span>
+                    <RunStatusBadge status={run.status} />
                   </div>
                   <div className="text-xs text-text-muted mt-0.5">
                     Agent: {run.agent?.name ?? run.agentId} &middot; Model: {run.modelId} &middot; {new Date(run.createdAt).toLocaleString()}

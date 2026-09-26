@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  AlertTriangle, CheckCircle2, XCircle, Loader2, Shield, Globe,
+  Loader2, Shield, Globe,
   Database, CheckCheck, ChevronDown, RefreshCw,
 } from 'lucide-react'
 import Link from 'next/link'
 import { type NotifyMessage } from '@/lib/security/stream-utils'
+import { SeverityBadge } from '@/components/ui/Badge'
 
 // ── Source metadata ──────────────────────────────────────────────────────────
 
@@ -109,29 +110,6 @@ function matchesFilters(alert: any, f: Filters): boolean {
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
-
-function SeverityBadge({ severity }: { severity: number }) {
-  let cls = ''
-  let icon = null
-  if (severity >= 80) {
-    cls = 'bg-red-500/20 text-red-400 border-red-500/30'
-    icon = <XCircle size={10} />
-  } else if (severity >= 50) {
-    cls = 'bg-orange-500/20 text-orange-400 border-orange-500/30'
-    icon = <AlertTriangle size={10} />
-  } else if (severity >= 20) {
-    cls = 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-    icon = <AlertTriangle size={10} />
-  } else {
-    cls = 'bg-green-500/20 text-green-400 border-green-500/30'
-    icon = <CheckCircle2 size={10} />
-  }
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border ${cls}`}>
-      {icon}{severity}
-    </span>
-  )
-}
 
 // ── Filter bar ────────────────────────────────────────────────────────────────
 
