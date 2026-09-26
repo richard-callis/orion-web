@@ -10,7 +10,6 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { decrypt } from '@/lib/encryption'
 import { timingSafeEqual } from 'crypto'
 
 /**
@@ -43,8 +42,8 @@ async function validateFederationToken(req: NextRequest, environmentId: string):
   if (!env?.federationToken) return false
 
   try {
-    const stored = decrypt(env.federationToken) // handles enc:v1: prefix and plaintext passthrough
-    return constantTimeEqual(stored, token)
+    // Already decrypted by the encryption middleware.
+    return constantTimeEqual(env.federationToken, token)
   } catch {
     /* fall through */
   }

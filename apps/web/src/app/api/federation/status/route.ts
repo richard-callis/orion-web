@@ -9,17 +9,12 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { findEnvironmentByFederationToken } from '@/lib/federation-auth'
 
 async function validateFederationToken(req: NextRequest): Promise<boolean> {
   const auth = req.headers.get('authorization')
   if (!auth?.startsWith('Bearer ')) return false
-  const token = auth.slice(7)
-
-  const env = await prisma.environment.findFirst({
-    where: { federationToken: token },
-    select: { id: true },
-  })
-  return env !== null
+  return (await findEnvironmentByFederationToken(auth.slice(7))) !== null
 }
 
 export async function GET(req: NextRequest) {
