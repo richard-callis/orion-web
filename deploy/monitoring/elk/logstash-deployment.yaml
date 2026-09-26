@@ -50,6 +50,11 @@ spec:
           env:
             - name: LS_JAVA_OPTS
               value: "-Xmx1g -Xms1g"
+            - name: ELASTIC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elasticsearch-credentials
+                  key: password
           resources:
             requests:
               memory: "1Gi"
