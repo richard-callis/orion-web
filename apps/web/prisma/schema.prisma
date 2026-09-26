@@ -310,6 +310,12 @@ model Task {
   nextRetryAt       DateTime?
   dependsOn         String[]           @default([]) // IDs of Task records that must be 'done' before this runs
   wave              Int? // Execution wave (0 = no deps, 1 = depends on wave-0, etc.) — computed at plan approval time
+  // Worker claim + liveness. claimedBy/claimedAt are set atomically when a worker
+  // claims a pending task; heartbeatAt is bumped while it runs so stuck-task
+  // recovery can tell a live long-running task from one orphaned by a crash.
+  claimedBy         String?
+  claimedAt         DateTime?
+  heartbeatAt       DateTime?
   events            TaskEvent[]
   metadata          Json?
   chatRooms         ChatRoom[]         @relation("ChatRoomTask")
@@ -320,6 +326,7 @@ model Task {
   // Worker poll: pollOnce queries status+assignedAgent ordered by wave,priority,createdAt every 15s
   @@index([status, assignedAgent, wave, priority, createdAt])
   @@index([createdBy])
+  @@index([status, heartbeatAt])
 }
 
 model FederatedDispatch {
@@ -782,6 +789,14 @@ model BackgroundJob {
   updatedAt     DateTime  @updatedAt
   completedAt   DateTime?
   archivedAt    DateTime?
+  // Liveness: ownerId identifies the process running the job; heartbeatAt is
+  // bumped while it runs so startup recovery only fails genuinely orphaned jobs.
+  ownerId       String?
+  heartbeatAt   DateTime?
+  // Idempotency key for scheduled jobs, e.g. "security-retention-daily:2026-09-26".
+  dedupeKey     String?   @unique
+
+  @@index([status, heartbeatAt])
 }
 
 model IngressMiddleware {

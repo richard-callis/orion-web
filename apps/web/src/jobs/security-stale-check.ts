@@ -16,32 +16,40 @@
  */
 
 import cron from 'node-cron'
+import type { ScheduledTask } from 'node-cron'
 import { prisma } from '@/lib/db'
-import { startJob } from '@/lib/job-runner'
+import { startJob, startJobOnce, periodKey } from '@/lib/job-runner'
 import type { JobLogger } from '@/lib/job-runner'
+
+const STALE_CHECK_PERIOD_MS = 5 * 60_000
+
+function startStaleCheck(title: string): void {
+  startJobOnce(
+    'security-stale-check',
+    title,
+    `security-stale-check:${periodKey(STALE_CHECK_PERIOD_MS)}`,
+    {},
+    runSecurityStaleCheckJob,
+  ).catch((err) => console.error('[security-stale-check] run failed to start:', err))
+}
+
+let _task: ScheduledTask | null = null
 
 /**
  * Schedule the staleness check with node-cron (every 5 minutes) and fire
- * once on startup. startJob's idempotency gate prevents duplicate enqueue.
+ * once on startup. Called only from the worker process. Each 5-minute period
+ * gets one job at most (dedupe key), so the catch-up, the cron tick and any
+ * overlapping worker never double-run it.
  *
  * Cron: "*\/5 * * * *" — every 5 minutes.
  */
-export function ensureSecurityStaleCheckJobScheduled(): void {
-  cron.schedule('*/5 * * * *', () => {
-    startJob(
-      'security-stale-check',
-      'Security staleness check: detect sources that have gone dark',
-      {},
-      runSecurityStaleCheckJob,
-    ).catch((err) => console.error('[security-stale-check] cron run failed:', err))
+export function ensureSecurityStaleCheckJobScheduled(): ScheduledTask {
+  if (_task) return _task
+  _task = cron.schedule('*/5 * * * *', () => {
+    startStaleCheck('Security staleness check: detect sources that have gone dark')
   })
-
-  startJob(
-    'security-stale-check',
-    'Security staleness check: startup catch-up',
-    {},
-    runSecurityStaleCheckJob,
-  ).catch((err) => console.error('[security-stale-check] startup catch-up failed:', err))
+  startStaleCheck('Security staleness check: startup catch-up')
+  return _task
 }
 
 /**

@@ -16,8 +16,9 @@
  */
 
 import cron from 'node-cron'
+import type { ScheduledTask } from 'node-cron'
 import { prisma } from '@/lib/db'
-import { startJob } from '@/lib/job-runner'
+import { startJob, startJobOnce, utcDateKey } from '@/lib/job-runner'
 import type { JobLogger } from '@/lib/job-runner'
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -30,7 +31,13 @@ const ACTION_AUDIT_RETENTION_DAYS = 365
 
 /**
  * Schedule the retention job with node-cron (daily at 4 AM) and fire once
- * on startup to cover any gap since last shutdown.
+ * on startup to cover any gap since last shutdown. Called only from the worker
+ * process (jobs/scheduled-jobs.ts), never from the web server, so it is
+ * registered once per deployment rather than once per web replica.
+ *
+ * Idempotent per UTC day: every run goes through startJobOnce() with the key
+ * "security-retention-daily:<date>", so the startup catch-up, the cron tick and
+ * any overlapping worker (e.g. during a deploy) create at most one job per day.
  *
  * Cron: "0 4 * * *" — daily at 4:00 AM.
  * node-cron chosen because:
@@ -40,30 +47,29 @@ const ACTION_AUDIT_RETENTION_DAYS = 365
  */
 // Guard against duplicate cron registrations if this module is evaluated
 // more than once (e.g. hot-reload or multiple import paths in the same process).
-let _scheduled = false
+let _task: ScheduledTask | null = null
 
-export function ensureSecurityRetentionJobScheduled(): void {
-  if (_scheduled) return
-  _scheduled = true
-
-  // Set up daily cron schedule (4 AM)
-  cron.schedule('0 4 * * *', () => {
-    startJob(
-      'security-retention-daily',
-      'Security retention: purge old events, incidents, action audits',
-      {},
-      runSecurityRetentionJob,
-    ).catch((err) => console.error('[security-retention] cron run failed:', err))
-  })
-
-  // Fire once immediately on startup (catch-up). startJob's own idempotency
-  // gate prevents duplicate enqueue if a cron-triggered job is already queued.
-  startJob(
+function startDailyRetention(title: string): void {
+  startJobOnce(
     'security-retention-daily',
-    'Security retention: startup catch-up',
+    title,
+    `security-retention-daily:${utcDateKey()}`,
     {},
     runSecurityRetentionJob,
-  ).catch((err) => console.error('[security-retention] startup catch-up failed:', err))
+  ).catch((err) => console.error('[security-retention] run failed to start:', err))
+}
+
+export function ensureSecurityRetentionJobScheduled(): ScheduledTask {
+  if (_task) return _task
+
+  // Set up daily cron schedule (4 AM)
+  _task = cron.schedule('0 4 * * *', () => {
+    startDailyRetention('Security retention: purge old events, incidents, action audits')
+  })
+
+  // Fire once on startup (catch-up) — a no-op if today's run already exists.
+  startDailyRetention('Security retention: startup catch-up')
+  return _task
 }
 
 /**

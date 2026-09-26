@@ -12,7 +12,7 @@
  *
  * Usage:
  * - Manual trigger: POST /api/admin/audit-export
- * - Automatic: Worker polls and executes at scheduled time
+ * - Automatic: node-cron in the worker process (jobs/scheduled-jobs.ts)
  *
  * Dependencies:
  * - AUDIT_EXPORT_S3_BUCKET — S3 bucket name (required)
@@ -20,7 +20,10 @@
  * - AUDIT_EXPORT_RETENTION_DAYS — Logs older than this are exported (default: 30)
  */
 
+import cron from 'node-cron'
+import type { ScheduledTask } from 'node-cron'
 import { prisma } from '@/lib/db'
+import { startJobOnce, utcDateKey } from '@/lib/job-runner'
 import { exportAuditLogs, loadAuditExportConfig, type AuditExportResult } from '@/lib/audit-export'
 import { logAudit } from '@/lib/audit'
 
@@ -123,81 +126,40 @@ export async function runAuditExportJob(
   }
 }
 
-/**
- * Get the next scheduled run time for the daily export
- * Runs at 2 AM UTC every day
- */
-export function getNextExportSchedule(): Date {
-  const now = new Date()
-  const next = new Date(now.getTime() + 24 * 60 * 60 * 1000) // Tomorrow
+let _task: ScheduledTask | null = null
 
-  // Set to 2 AM UTC
-  next.setUTCHours(2, 0, 0, 0)
-
-  // If it's before 2 AM UTC today, run today
-  const today = new Date()
-  today.setUTCHours(2, 0, 0, 0)
-  if (today > now) {
-    return today
-  }
-
-  return next
+function startDailyExport(title: string): void {
+  const dedupeKey = `audit-export-daily:${utcDateKey()}`
+  startJobOnce('audit-export-daily', title, dedupeKey, {}, async (log) => {
+    await runAuditExportJob(dedupeKey, log)
+    // AUDIT-001 retention (lib/worker-tasks.ts) only deletes when a successful
+    // export happened within the last 25h — record that this one succeeded.
+    await prisma.systemSetting.upsert({
+      where:  { key: 'audit.lastExportTime' },
+      update: { value: Date.now() },
+      create: { key: 'audit.lastExportTime', value: Date.now() },
+    })
+  }).catch(err => console.error('[audit-export-job] run failed to start:', err))
 }
 
 /**
- * Check if it's time to run the export job
- * Used by worker to decide if it should execute the scheduled job
+ * Schedule the daily audit export (02:00 UTC) in the worker process, with a
+ * startup catch-up. Idempotent per UTC day via the job's dedupe key.
+ *
+ * Only scheduled when AUDIT_EXPORT_S3_BUCKET is explicitly set — without a
+ * real destination every run would just fail. The manual trigger
+ * (POST /api/admin/audit-export) is unaffected.
+ *
+ * Previously this created a 'queued' BackgroundJob row at web startup that
+ * nothing ever executed.
  */
-export function isTimeForExport(): boolean {
-  const now = new Date()
-  const hour = now.getUTCHours()
-  const minute = now.getUTCMinutes()
-
-  // Run between 2:00 AM and 2:30 AM UTC
-  // This allows a 30-minute window for the job to complete
-  return hour === 2 && minute < 30
-}
-
-/**
- * Create or get the daily audit export job
- * Called during system startup to ensure the job exists in the scheduler
- */
-export async function ensureAuditExportJobScheduled(): Promise<void> {
-  try {
-    // Check if export job already exists in the database
-    const existing = await prisma.backgroundJob.findFirst({
-      where: {
-        type: 'audit-export-daily',
-        status: { in: ['queued', 'running'] },
-      },
-    })
-
-    if (existing) {
-      // Job already scheduled
-      return
-    }
-
-    // Create a new scheduled job (will be picked up by worker on next poll)
-    const config = loadAuditExportConfig()
-
-    await prisma.backgroundJob.create({
-      data: {
-        id: `audit-export-${Date.now()}`,
-        type: 'audit-export-daily',
-        title: 'Daily Audit Log Export to S3',
-        status: 'queued',
-        metadata: {
-          retentionDays: config.retentionDays,
-          s3Bucket: config.bucketName,
-          s3Region: config.region,
-          manifestPath: config.manifestPath,
-        } as ExportJobMetadata,
-      },
-    })
-
-    console.log('[audit-export-job] Scheduled daily audit export job')
-  } catch (err) {
-    // Non-blocking — if scheduling fails, it will be attempted again on next startup
-    console.error('[audit-export-job] Failed to schedule export job:', err)
+export function ensureAuditExportJobScheduled(): ScheduledTask | null {
+  if (_task) return _task
+  if (!process.env.AUDIT_EXPORT_S3_BUCKET) {
+    console.log('[audit-export-job] AUDIT_EXPORT_S3_BUCKET not set — daily audit export disabled')
+    return null
   }
+  _task = cron.schedule('0 2 * * *', () => startDailyExport('Daily Audit Log Export to S3'), { timezone: 'UTC' })
+  startDailyExport('Daily Audit Log Export to S3: startup catch-up')
+  return _task
 }
