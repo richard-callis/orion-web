@@ -51,7 +51,9 @@ export interface ToolDefinition {
   inputSchema: Record<string, unknown>  // JSON Schema
   tier: ToolTier
   parallelSafe: boolean  // can run concurrently with other read tools
-  availableIn: 'task' | 'chat' | 'both'
+  // 'room' = chat-room agents only (see room-tools.ts). Excluded from
+  // getToolsForContext('task' | 'chat') and from MANAGEMENT_TOOL_DEFS.
+  availableIn: 'task' | 'chat' | 'both' | 'room'
   category: ToolCategory
   handler: (args: unknown, context: ToolExecutionContext) => Promise<string>
 }

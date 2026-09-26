@@ -97,11 +97,16 @@ async function callClaude(prompt: string): Promise<string> {
 
   const { query } = await import('@anthropic-ai/claude-code')
 
+  // query() accepts an AbortController: on timeout we abort the SDK call
+  // itself, so the underlying run stops instead of spending tokens in the
+  // background after the caller has given up.
+  const abort = new AbortController()
+
   const collect = async (): Promise<string> => {
     let text = ''
     const response = query({
       prompt,
-      options: { allowedTools: [], maxTurns: 1 },
+      options: { allowedTools: [], maxTurns: 1, abortController: abort },
     })
 
     for await (const msg of response) {
@@ -121,19 +126,21 @@ async function callClaude(prompt: string): Promise<string> {
     return text
   }
 
-  // Best-effort timeout: this races the collector rather than aborting the
-  // underlying SDK call (query() takes no abort signal), so the orphaned
-  // generator keeps running in the background — but the caller is unblocked,
-  // which is what actually matters for not wedging a room's compaction.
-  return Promise.race([
-    collect(),
-    new Promise<string>((_, reject) => {
-      setTimeout(
-        () => reject(new Error(`callDefaultModel: claude query timed out after ${CLAUDE_TIMEOUT_MS}ms`)),
-        CLAUDE_TIMEOUT_MS,
-      )
-    }),
-  ])
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      collect(),
+      new Promise<string>((_, reject) => {
+        timer = setTimeout(() => {
+          abort.abort()
+          reject(new Error(`callDefaultModel: claude query timed out after ${CLAUDE_TIMEOUT_MS}ms`))
+        }, CLAUDE_TIMEOUT_MS)
+      }),
+    ])
+  } finally {
+    // Always clear the timer — previously it stayed armed after a fast success
+    clearTimeout(timer)
+  }
 }
 
 async function callOpenAI(

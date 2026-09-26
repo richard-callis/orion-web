@@ -4,6 +4,10 @@ import { getPrompt, interpolate } from './system-prompts'
 import { hybridSearch, generateEmbedding, skillVectorSearch } from './embeddings'
 import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './management-tools'
 import { validateToolArgs } from './tool-registry'
+import { getChatUserRole, canUseTools, filterToolsForRole, checkChatToolPermission } from './chat-tool-policy'
+import { resolveModel, DEFAULT_ROLE_MODELS, type ModelRole } from './model-roles'
+import { beginBudgetedRun, getRunTokenCap, RunTokenCap } from './llm-budget'
+import { estimateTokens } from './token-budget'
 import type { SkillSpec } from './skill-tools'
 
 // ── Agent Tracing: record AgentTrace records for observability ──────────────────
@@ -234,103 +238,8 @@ export interface AgentContextConfig {
 }
 
 // ── Permission check ─────────────────────────────────────────────────────────
-
-const TIER_RANK: Record<string, number> = { viewer: 0, operator: 1, admin: 2 }
-
-async function checkToolPermission(
-  toolName: string,
-  toolArgs: Record<string, unknown>,
-  environmentId: string,
-  conversationId: string,
-  userId: string | undefined,
-): Promise<{ allowed: boolean; reason?: string }> {
-  // No userId — treat as unauthenticated viewer
-  const uid = userId ?? '__anon__'
-
-  // Check if tool is agent-restricted (only specific agents may run it)
-  const restrictionCount = await prisma.toolAgentRestriction.count({
-    where: { tool: { name: toolName, environmentId } },
-  })
-  if (restrictionCount > 0) {
-    return { allowed: false, reason: `\`${toolName}\` is restricted to specific agents only and cannot be called from human chat.` }
-  }
-
-  // Check if caller is a global admin — admins bypass all tier checks
-  if (userId) {
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } })
-    if (user?.role === 'admin') return { allowed: true }
-  }
-
-  // Find which tool groups this tool belongs to (in this environment)
-  const toolGroupMemberships = await prisma.toolGroupTool.findMany({
-    where: { tool: { name: toolName, environmentId } },
-    include: { toolGroup: true },
-  })
-
-  // No group membership = unrestricted
-  if (toolGroupMemberships.length === 0) return { allowed: true }
-
-  // Get user's tier in this environment (default: viewer)
-  const tierRecord = userId
-    ? await prisma.environmentUserTier.findUnique({ where: { userId_environmentId: { userId, environmentId } } })
-    : null
-  const userTierRank = TIER_RANK[tierRecord?.tier ?? 'viewer'] ?? 0
-
-  // Check if user meets minimum tier for ANY of the groups this tool is in
-  // (tool is accessible if the user qualifies for at least one of the groups)
-  const blocked = toolGroupMemberships.every((m: any) => {
-    const required = TIER_RANK[m.toolGroup.minimumTier] ?? 0
-    return userTierRank < required
-  })
-
-  if (!blocked) return { allowed: true }
-
-  // User is blocked — check for a one-time execution grant
-  const grant = userId ? await prisma.toolExecutionGrant.findFirst({
-    where: {
-      userId,
-      environmentId,
-      toolName,
-      usedAt:    null,
-      expiresAt: { gt: new Date() },
-    },
-  }) : null
-
-  if (grant) {
-    // Consume the grant
-    await prisma.toolExecutionGrant.update({ where: { id: grant.id }, data: { usedAt: new Date() } })
-    return { allowed: true }
-  }
-
-  // Create an approval request
-  const minRequired = toolGroupMemberships.reduce((min: any, m: any) => {
-    const r = TIER_RANK[m.toolGroup.minimumTier] ?? 0
-    return r > min ? r : min
-  }, 0)
-  const requiredTierName = Object.entries(TIER_RANK).find(([, v]) => v === minRequired)?.[0] ?? 'operator'
-
-  // Don't create duplicate pending requests for the same tool in this conversation
-  const existing = await prisma.toolApprovalRequest.findFirst({
-    where: { conversationId, toolName, status: 'pending' },
-  })
-  if (!existing) {
-    await prisma.toolApprovalRequest.create({
-      data: {
-        conversationId,
-        userId: uid,
-        environmentId,
-        toolName,
-        toolArgs: toolArgs as never,
-        reason: `User's tier is below the minimum required (${requiredTierName}) for this tool group.`,
-      },
-    })
-  }
-
-  return {
-    allowed: false,
-    reason: `\`${toolName}\` requires **${requiredTierName}** access in this environment. An approval request has been submitted — an administrator can approve it, after which you can retry.`,
-  }
-}
+// Lives in chat-tool-policy.ts (role policy + env restrictions/groups/grants).
+const checkToolPermission = checkChatToolPermission
 
 export async function* streamOllamaChat(
   prompt: string,
@@ -355,7 +264,9 @@ export async function* streamOllamaChat(
   let gatewayTools: GatewayTool[] = []
   let gatewayClient: InstanceType<typeof GatewayClient> | null = null
 
-  const connectedEnv = targetEnvironmentId
+  // readonly users never get tools — skip the gateway entirely
+  const toolsAllowed = canUseTools(await getChatUserRole(userId))
+  const connectedEnv = !toolsAllowed ? null : targetEnvironmentId
     ? await prisma.environment.findFirst({
         where: { id: targetEnvironmentId, status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
       })
@@ -507,13 +418,14 @@ async function* streamOllamaToolLoop(
     },
   ]
 
-  const ollamaToolDefs = [
+  const role = await getChatUserRole(userId)
+  const ollamaToolDefs = filterToolsForRole([
     ...tools.map(t => ({
       type: 'function',
       function: { name: t.name, description: t.description, parameters: t.inputSchema },
     })),
     ...localToolDefs,
-  ]
+  ], role, t => t.function.name)
 
   const messages: OllamaMsg[] = [
     { role: 'system', content: systemPrompt },
@@ -524,9 +436,15 @@ async function* streamOllamaToolLoop(
   const start = Date.now()
   let totalText = ''
   const MAX_TURNS = 15
+  const runCap = new RunTokenCap(await getRunTokenCap())
 
   try {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
+      if (runCap.exceeded) {
+        totalText = runCap.message
+        yield { type: 'text', content: runCap.message }
+        break
+      }
       const fetchSignal = abortSignal
         ? AbortSignal.any([abortSignal, AbortSignal.timeout(timeoutSecs * 1000)])
         : AbortSignal.timeout(timeoutSecs * 1000)
@@ -538,7 +456,8 @@ async function* streamOllamaToolLoop(
         signal: fetchSignal,
       })
       if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`)
-      const data = await res.json() as { message: OllamaMsg; done: boolean }
+      const data = await res.json() as { message: OllamaMsg; done: boolean; prompt_eval_count?: number; eval_count?: number }
+      runCap.add((data.prompt_eval_count ?? estimateTokens(JSON.stringify(messages))) + (data.eval_count ?? estimateTokens(data.message?.content ?? '')))
       const assistantMsg = data.message
       messages.push(assistantMsg)
 
@@ -546,6 +465,15 @@ async function* streamOllamaToolLoop(
         for (const toolCall of assistantMsg.tool_calls) {
           const fn = toolCall.function
           const args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : fn.arguments as Record<string, unknown>
+
+          // readonly / anonymous callers may not run any tool — including the
+          // locally-handled ones below, which bypass checkToolPermission.
+          if (!canUseTools(role)) {
+            const denied = 'Permission denied: your account is not permitted to run tools from chat.'
+            yield { type: 'tool_result', tool: fn.name, output: denied }
+            messages.push({ role: 'tool', content: denied })
+            continue
+          }
 
           // Handle propose_tool locally
           if (fn.name === 'propose_tool') {
@@ -644,7 +572,8 @@ async function* streamOllamaToolLoop(
         yield { type: 'text', content: assistantMsg.content }
       }
       await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: totalText, modelUsed: model, durationMs: Date.now() - start })
-      yield { type: 'done' }
+      // No `done` here: the consumer stops at the first `done`, which would
+      // skip the message persistence below. It is yielded once, after saving.
       break
     }
 
@@ -665,7 +594,48 @@ async function* streamOllamaToolLoop(
   }
 }
 
+/**
+ * Direct chat with an agent. Enforces the agent's token budget (previously only
+ * worker task runs did): checks before the call, records estimated spend after.
+ * Providers on this path don't report usage, so spend is estimated from length.
+ */
 export async function* streamAgentChat(
+  prompt: string,
+  conversationId: string,
+  agentSystemPrompt: string,
+  previousMessages: Array<{ role: string; content: string }> = [],
+  contextConfig: AgentContextConfig = {},
+  agentId?: string,
+  userId?: string,
+  targetEnvironmentId?: string,
+  knowledgeContext?: string,
+  traceId?: string,
+): AsyncGenerator<StreamChunk> {
+  const run = await beginBudgetedRun(agentId)
+  if (!run.allowed) {
+    yield { type: 'error', error: `This agent is over its token budget: ${run.reason}` }
+    return
+  }
+  const inputEstimate = estimateTokens(
+    agentSystemPrompt + (knowledgeContext ?? '') + previousMessages.map(m => m.content).join('\n') + prompt,
+  )
+  let outputText = ''
+  try {
+    for await (const chunk of streamAgentChatInner(
+      prompt, conversationId, agentSystemPrompt, previousMessages, contextConfig,
+      agentId, userId, targetEnvironmentId, knowledgeContext, traceId,
+    )) {
+      if (chunk.type === 'text' && chunk.content) outputText += chunk.content
+      if (chunk.type === 'tool_result' && chunk.output) outputText += chunk.output
+      yield chunk
+    }
+  } finally {
+    // Runs on normal completion and when the consumer stops after `done`
+    await run.finish(inputEstimate, estimateTokens(outputText), contextConfig.llm ?? 'claude')
+  }
+}
+
+async function* streamAgentChatInner(
   prompt: string,
   conversationId: string,
   agentSystemPrompt: string,
@@ -697,7 +667,11 @@ export async function* streamAgentChat(
   // any connected environment — exposing the gatewayToken to the LLM context and
   // enabling unauthenticated API access via the gateway's sh tool.
   // Agents must be explicitly linked to an environment to receive gateway tools.
+  const toolsAllowed = canUseTools(await getChatUserRole(userId))
+
   const loadAgentGateway = async () => {
+    // readonly users never get tools
+    if (!toolsAllowed) return null
     const { GatewayClient } = await import('./agent-runner/gateway-client')
     type GatewayTool = import('./agent-runner/types').GatewayTool
 
@@ -787,9 +761,10 @@ export async function* streamAgentChat(
       const activeTasks = await getActiveTasksSection()
       let openAISystemPrompt: string
       if (gw) {
-        // Build system prompt: persona + tasks + tool definitions + cluster context
+        // Build system prompt: stable parts first (persona, tools, rules, cluster
+        // context), volatile parts last (active tasks, RAG) so the prefix is cacheable.
         const toolDefs = gw.tools.map(t => `  - ${t.name}: ${t.description || 'No description'}`).join('\n')
-        openAISystemPrompt = `${agentSystemPrompt}${activeTasks}
+        openAISystemPrompt = `${agentSystemPrompt}
 
 You have the following MCP tools available:
 ${toolDefs}
@@ -798,7 +773,7 @@ Tool usage rules:
 - Call tools immediately when you need real data. Do not ask permission first.
 - NEVER make up or hallucinate tool output. Always use a tool and return its real result.
 
-${readClusterContext()}${kcSection}`
+${readClusterContext()}${activeTasks}${kcSection}`
       } else {
         openAISystemPrompt = agentSystemPrompt + activeTasks + noGwSuffix + kcSection
       }
@@ -821,7 +796,7 @@ ${readClusterContext()}${kcSection}`
   // Claude path — claude:<model-id> or bare 'claude' (default)
   const claudeModel  = llm.startsWith('claude:') ? llm.slice('claude:'.length) : undefined
   const maxTurns     = contextConfig.maxTurns    ?? 6
-  const allowedTools = contextConfig.allowedTools ?? []
+  const allowedTools = toolsAllowed ? (contextConfig.allowedTools ?? []) : []
 
   const kcSectionClaude = knowledgeContext
     ? '\n\n---\n## Relevant Knowledge Base\n\n' + knowledgeContext + '\n---'
@@ -921,7 +896,7 @@ async function* streamOllamaAgentChat(
           const text = chunk.message?.content ?? ''
           if (text) {
             totalText += text
-            await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: text, modelUsed: model })
+            void recordTrace({ conversationId, step: inc(), type: 'text_generation', content: text, modelUsed: model }) // per-chunk: don't block the stream
             yield { type: 'text', content: text }
           }
         } catch { /* skip malformed line */ }
@@ -978,7 +953,9 @@ export async function* streamOpenAIChat(
   let gatewayTools: GatewayTool[] = []
   let gatewayClient: InstanceType<typeof GatewayClient> | null = null
 
-  const connectedEnv = targetEnvironmentId
+  // readonly users never get tools — skip the gateway entirely
+  const toolsAllowed = canUseTools(await getChatUserRole(userId))
+  const connectedEnv = !toolsAllowed ? null : targetEnvironmentId
     ? await prisma.environment.findFirst({
         where: { id: targetEnvironmentId, status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
       })
@@ -1456,14 +1433,16 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
     },
   ]
 
-  // OpenAI tool schema format
-  const openaiTools = [
+  // OpenAI tool schema format — filtered by the caller's role so the model is
+  // never offered tools this user can't run (readonly → no tools at all).
+  const role = await getChatUserRole(userId)
+  const openaiTools = filterToolsForRole([
     ...MANAGEMENT_TOOLS,
     ...tools.map(t => ({
       type: 'function' as const,
       function: { name: t.name, description: t.description, parameters: t.inputSchema },
     })),
-  ]
+  ], role, t => t.function.name)
 
   type OAIMessage = { role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }
   const messages: OAIMessage[] = [
@@ -1476,9 +1455,19 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
   const toolsUsed: string[] = []
   const toolCallLog: Array<{ tool: string; input: string; output?: string }> = []
 
+  // Per-run token cap — the OpenAI stream doesn't report usage, so each turn's
+  // spend is estimated from the request messages plus the streamed reply.
+  const runCap = new RunTokenCap(await getRunTokenCap())
+
   try {
     // Agentic loop — handles tool calls until model returns a final text response
     for (let turn = 0; turn < 10; turn++) {
+      if (runCap.exceeded) {
+        totalText += (totalText ? '\n\n' : '') + runCap.message
+        yield { type: 'text', content: runCap.message }
+        break
+      }
+      runCap.add(estimateTokens(JSON.stringify(messages)))
       const body: Record<string, unknown> = { model, messages, stream: true }
       if (openaiTools.length)        body.tools       = openaiTools
       if (temperature !== undefined) body.temperature = temperature
@@ -1504,51 +1493,58 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
       let turnText = ''
       const pendingToolCalls: Array<{ id: string; name: string; argsRaw: string }> = []
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        const lines = buf.split('\n')
-        buf = lines.pop() ?? ''
+      // Release the upstream stream if we exit early (error, consumer stopped)
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          const lines = buf.split('\n')
+          buf = lines.pop() ?? ''
 
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const data = line.slice(6).trim()
-          if (data === '[DONE]') continue
-          try {
-            const chunk = JSON.parse(data) as {
-              choices?: Array<{
-                delta?: {
-                  content?: string
-                  tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>
-                }
-                finish_reason?: string
-              }>
-            }
-            const delta = chunk.choices?.[0]?.delta
-            if (!delta) continue
-
-            // Accumulate text
-            if (delta.content) {
-              turnText += delta.content
-              totalText += delta.content
-              yield { type: 'text', content: delta.content }
-            }
-
-            // Accumulate tool call fragments
-            if (delta.tool_calls) {
-              for (const tc of delta.tool_calls) {
-                const idx = tc.index
-                if (!pendingToolCalls[idx]) {
-                  pendingToolCalls[idx] = { id: tc.id ?? `tc_${idx}`, name: tc.function?.name ?? '', argsRaw: '' }
-                }
-                if (tc.function?.name) pendingToolCalls[idx].name = tc.function.name
-                if (tc.function?.arguments) pendingToolCalls[idx].argsRaw += tc.function.arguments
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            const data = line.slice(6).trim()
+            if (data === '[DONE]') continue
+            try {
+              const chunk = JSON.parse(data) as {
+                choices?: Array<{
+                  delta?: {
+                    content?: string
+                    tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>
+                  }
+                  finish_reason?: string
+                }>
               }
-            }
-          } catch { /* skip malformed chunk */ }
+              const delta = chunk.choices?.[0]?.delta
+              if (!delta) continue
+
+              // Accumulate text
+              if (delta.content) {
+                turnText += delta.content
+                totalText += delta.content
+                yield { type: 'text', content: delta.content }
+              }
+
+              // Accumulate tool call fragments
+              if (delta.tool_calls) {
+                for (const tc of delta.tool_calls) {
+                  const idx = tc.index
+                  if (!pendingToolCalls[idx]) {
+                    pendingToolCalls[idx] = { id: tc.id ?? `tc_${idx}`, name: tc.function?.name ?? '', argsRaw: '' }
+                  }
+                  if (tc.function?.name) pendingToolCalls[idx].name = tc.function.name
+                  if (tc.function?.arguments) pendingToolCalls[idx].argsRaw += tc.function.arguments
+                }
+              }
+            } catch { /* skip malformed chunk */ }
+          }
         }
+      } finally {
+        reader.cancel().catch(() => {})
       }
+
+      runCap.add(estimateTokens(turnText + pendingToolCalls.map(tc => tc.argsRaw).join('')))
 
       // If no tool calls, we're done
       if (!pendingToolCalls.length) break
@@ -1581,21 +1577,14 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
         }
 
         const toolStart = Date.now()
-        // ── Management tools — handled server-side by ORION ──────────────────
-        // Gate management tools through the same permission check as gateway tools.
-        // Previously these ran with NO checkToolPermission call, allowing any
-        // authenticated user to invoke orion_patch_environment (overwrites kubeconfig/
-        // gatewayUrl), orion_bootstrap_environment, and gitops_propose (auto-merge PRs).
-        {
-          const mgmtArgs = JSON.parse(tc.argsRaw || '{}') as Record<string, unknown>
-          const mgmtPerm = await checkToolPermission(tc.name, mgmtArgs, environmentId ?? '', conversationId, userId)
-          if (!mgmtPerm.allowed) {
-            result = `Permission denied: ${mgmtPerm.reason}`
-            messages.push({ role: 'tool' as const, content: result, tool_call_id: tc.id })
-            continue
-          }
-        }
-        if (tc.name === 'propose_tool') {
+        // ── Single permission gate for every tool (management and gateway) ────
+        // Role policy (readonly → none, admin-only tools, destructive tier) plus
+        // env restrictions/groups/grants. Checked exactly once per call so a
+        // one-time grant is not consumed twice.
+        const perm = await checkToolPermission(tc.name, tcParsedArgs as Record<string, unknown>, environmentId ?? '', conversationId, userId)
+        if (!perm.allowed) {
+          result = `Permission denied: ${perm.reason}`
+        } else if (tc.name === 'propose_tool') {
           result = await handleProposeTool(tc.argsRaw, environmentId, conversationId)
         } else if (tc.name === 'orion_get_environment') {
           result = await handleOrionGetEnvironment(tc.argsRaw)
@@ -1621,15 +1610,9 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
           // executeManagedTool's doc comment.
           result = await executeManagedTool(tc.name, tc.argsRaw, undefined, userId)
         } else if (gateway && environmentId) {
-          // ── Gateway tools ─────────────────────────────────────────────────
+          // ── Gateway tools (already permission-checked above) ──────────────
           try {
-            const args = JSON.parse(tc.argsRaw || '{}') as Record<string, unknown>
-            const perm = await checkToolPermission(tc.name, args, environmentId, conversationId, userId)
-            if (!perm.allowed) {
-              result = `Permission denied: ${perm.reason}`
-            } else {
-              result = await gateway.executeTool(tc.name, args)
-            }
+            result = await gateway.executeTool(tc.name, tcParsedArgs as Record<string, unknown>)
           } catch (e) {
             result = `Error: ${e instanceof Error ? e.message : String(e)}`
           }
@@ -1758,7 +1741,7 @@ async function* streamGeminiAgentChat(
           const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
           if (text) {
             totalText += text
-            await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: text, modelUsed: model })
+            void recordTrace({ conversationId, step: inc(), type: 'text_generation', content: text, modelUsed: model }) // per-chunk: don't block the stream
             yield { type: 'text', content: text }
           }
         } catch { /* skip malformed line */ }
@@ -1931,7 +1914,12 @@ export async function* streamClaudeResponse(
   const toolsUsed: string[] = []
   let totalText = ''
   const toolCallLog: Array<{ tool: string; input: string; output?: string }> = []
-  const claudeModel = overrides?.model ?? 'claude-sonnet-4-6'
+  // Model: explicit override > SystemSetting model.role.<chat|planner> > built-in default.
+  // Only forwarded to the sidecar when it differs from the built-in default, so
+  // the sidecar's own default applies until an admin configures an override.
+  const modelRole: ModelRole = planTarget ? 'planner' : 'chat'
+  const claudeModel = overrides?.model ?? await resolveModel(modelRole)
+  const sidecarModel = overrides?.model ?? (claudeModel !== DEFAULT_ROLE_MODELS[modelRole] ? claudeModel : undefined)
 
   const claudeUrl = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
 
@@ -1943,12 +1931,14 @@ export async function* streamClaudeResponse(
       ? agentSystemPrompt + '\n\n---\n## Relevant Knowledge Base\n\n' + knowledgeContext + '\n---'
       : baseSystemPrompt
 
-    // Inject matched skill(s) into the system prompt
+    // Inject matched skill(s) into the system prompt. Appended AFTER the stable
+    // system prompt: the persona/template prefix stays identical across turns
+    // (cacheable), and the per-message skill goes in the volatile tail.
     let effectiveSystemPrompt = systemPrompt
     if (environmentId) {
       const { injected, skillName } = await matchAndInjectSkills(environmentId, prompt, 'chat_match', conversationId)
       if (injected) {
-        effectiveSystemPrompt = `## INJECTED SKILL: ${skillName}\n${injected}\n---\n\n` + systemPrompt
+        effectiveSystemPrompt = systemPrompt + `\n\n---\n## INJECTED SKILL: ${skillName}\n${injected}\n---`
       }
     }
 
@@ -1974,7 +1964,7 @@ export async function* streamClaudeResponse(
         systemPrompt: effectiveSystemPrompt,
         allowedTools: overrides?.allowedTools ?? ALLOWED_TOOLS,
         maxTurns:     overrides?.maxTurns ?? 20,
-        ...(overrides?.model && { model: overrides.model }),
+        ...(sidecarModel && { model: sidecarModel }),
       }),
       signal: abortSignal ?? AbortSignal.timeout(300_000),
     })
@@ -1988,88 +1978,87 @@ export async function* streamClaudeResponse(
     const decoder = new TextDecoder()
     let   buf     = ''
 
-    const processLine = (line: string) => {
-      if (!line.trim()) return
+    // Trace writes are fire-and-forget during streaming (step numbers are
+    // assigned synchronously so ordering is preserved) and awaited once at the
+    // end — a DB round-trip per streamed chunk no longer sits in the hot path.
+    const pendingTraces: Promise<void>[] = []
+    const trace = (data: Parameters<typeof recordTrace>[0]) => { pendingTraces.push(recordTrace(data)) }
+
+    // Parse one NDJSON line into zero or more chunks to yield. Throws on an SDK error event.
+    const parseLine = (line: string): StreamChunk[] => {
+      if (!line.trim()) return []
       let msg: Record<string, unknown>
-      try { msg = JSON.parse(line) } catch { return }
+      try { msg = JSON.parse(line) } catch { return [] }
+      const out: StreamChunk[] = []
+
+      if (msg.type === 'error') {
+        throw new Error((msg as any).error ?? 'Unknown error from orion-claude')
+      }
 
       if (msg.type === 'assistant') {
-        const content = (msg as any).message?.content as Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }> ?? []
+        const content = (msg as any).message?.content as Array<{ type: string; text?: string; name?: string; input?: unknown }> ?? []
         for (const block of content) {
           if (block.type === 'text' && block.text) {
             totalText += block.text
-            // Note: can't yield inside a regular function — batched below
+            trace({ conversationId, step: inc(), type: 'text_generation', content: block.text, modelUsed: claudeModel })
+            out.push({ type: 'text', content: block.text })
           } else if (block.type === 'tool_use') {
             const toolInput = JSON.stringify(block.input ?? {})
             toolsUsed.push(`${block.name}(${toolInput})`)
             toolCallLog.push({ tool: block.name!, input: toolInput })
+            trace({ conversationId, step: inc(), type: 'tool_call', toolName: block.name, toolArgs: toolInput, modelUsed: claudeModel })
+            out.push({ type: 'tool_call', tool: block.name!, input: toolInput })
+          }
+        }
+      } else if (msg.type === 'user') {
+        const content = (msg as any).message?.content as Array<{ type: string; content?: unknown }> ?? []
+        for (const block of content) {
+          if (block.type === 'tool_result') {
+            const result = Array.isArray(block.content)
+              ? (block.content as Array<{ type: string; text?: string }>).map(c => c.type === 'text' ? c.text : '').join('')
+              : String(block.content ?? '')
+            const lastToolCall = toolCallLog.length > 0 ? toolCallLog[toolCallLog.length - 1] : null
+            trace({ conversationId, step: inc(), type: 'tool_result', toolName: lastToolCall?.tool ?? null, toolResult: result, modelUsed: claudeModel })
+            if (lastToolCall) lastToolCall.output = result
+            out.push({ type: 'tool_result', output: result })
           }
         }
       } else if (msg.type === 'result') {
         const subtype    = (msg as any).subtype as string | undefined
         const resultText = subtype === 'success' ? (msg as any).result as string : undefined
+        process.stderr.write(`[claude] result: subtype=${subtype} result_len=${resultText?.length ?? 0}\n`)
         if (resultText?.trim() && !totalText.includes(resultText.trim())) {
           totalText += (totalText ? '\n\n' : '') + resultText
+          trace({ conversationId, step: inc(), type: 'text_generation', content: resultText, modelUsed: claudeModel })
+          out.push({ type: 'text', content: resultText })
         }
       }
+      return out
     }
 
-    // Streaming yield loop — process lines and yield events as they arrive
-    while (true) {
-      if (abortSignal?.aborted) break
-      const { done, value } = await reader.read()
-      if (done) { if (buf.trim()) processLine(buf); break }
-      buf += decoder.decode(value, { stream: true })
-      const lines = buf.split('\n')
-      buf = lines.pop()!
-      for (const line of lines) {
-        if (!line.trim()) continue
-        let msg: Record<string, unknown>
-        try { msg = JSON.parse(line) } catch { continue }
-
-        if (msg.type === 'error') {
-          throw new Error((msg as any).error ?? 'Unknown error from orion-claude')
+    // Streaming yield loop. `finally` cancels the upstream body on any early
+    // exit (SDK error, abort, consumer stopped iterating) so the sidecar run
+    // stops instead of burning tokens with nobody listening.
+    try {
+      while (true) {
+        if (abortSignal?.aborted) break
+        const { done, value } = await reader.read()
+        if (done) {
+          // Flush the final line when the stream doesn't end with a newline
+          buf += decoder.decode()
+          for (const chunk of parseLine(buf)) yield chunk
+          break
         }
-
-        if (msg.type === 'assistant') {
-          const content = (msg as any).message?.content as Array<{ type: string; text?: string; name?: string; input?: unknown }> ?? []
-          for (const block of content) {
-            if (block.type === 'text' && block.text) {
-              totalText += block.text
-              await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: block.text, modelUsed: claudeModel })
-              yield { type: 'text', content: block.text }
-            } else if (block.type === 'tool_use') {
-              const toolInput = JSON.stringify(block.input ?? {})
-              toolsUsed.push(`${block.name}(${toolInput})`)
-              toolCallLog.push({ tool: block.name!, input: toolInput })
-              await recordTrace({ conversationId, step: inc(), type: 'tool_call', toolName: block.name, toolArgs: toolInput, modelUsed: claudeModel })
-              yield { type: 'tool_call', tool: block.name!, input: toolInput }
-            }
-          }
-        } else if (msg.type === 'user') {
-          const content = (msg as any).message?.content as Array<{ type: string; content?: unknown }> ?? []
-          for (const block of content) {
-            if (block.type === 'tool_result') {
-              const result = Array.isArray(block.content)
-                ? (block.content as Array<{ type: string; text?: string }>).map(c => c.type === 'text' ? c.text : '').join('')
-                : String(block.content ?? '')
-              const lastToolCall = toolCallLog.length > 0 ? toolCallLog[toolCallLog.length - 1] : null
-              await recordTrace({ conversationId, step: inc(), type: 'tool_result', toolName: lastToolCall?.tool ?? null, toolResult: result, modelUsed: claudeModel })
-              if (toolCallLog.length > 0) toolCallLog[toolCallLog.length - 1].output = result
-              yield { type: 'tool_result', output: result }
-            }
-          }
-        } else if (msg.type === 'result') {
-          const subtype    = (msg as any).subtype as string | undefined
-          const resultText = subtype === 'success' ? (msg as any).result as string : undefined
-          process.stderr.write(`[claude] result: subtype=${subtype} result_len=${resultText?.length ?? 0}\n`)
-          if (resultText?.trim() && !totalText.includes(resultText.trim())) {
-            totalText += (totalText ? '\n\n' : '') + resultText
-            await recordTrace({ conversationId, step: inc(), type: 'text_generation', content: resultText, modelUsed: claudeModel })
-            yield { type: 'text', content: resultText }
-          }
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop()!
+        for (const line of lines) {
+          for (const chunk of parseLine(line)) yield chunk
         }
       }
+    } finally {
+      reader.cancel().catch(() => {})
+      await Promise.all(pendingTraces)
     }
 
     // ── Phase 2 (planning only): Opus reviews the Sonnet draft via orion-claude ─
@@ -2090,7 +2079,7 @@ ${totalText}`,
           systemPrompt: await getPrompt('system.plan-review'),
           allowedTools: [],
           maxTurns:     1,
-          model:        'claude-opus-4-6',
+          model:        await resolveModel('reviewer'),
         }),
         signal: AbortSignal.timeout(120_000),
       }).catch(() => null)
