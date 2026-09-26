@@ -1,5 +1,6 @@
 import type { AgentRunner, AgentEvent, TaskRunContext, GatewayTool } from './types'
 import { GatewayClient } from './gateway-client'
+import { agentActor } from '../gateway-headers'
 import { runSignal, describeRunnerError, throwIfAborted } from './abort'
 import { getPrompt, interpolate } from '@/lib/system-prompts'
 import { validateToolArgs } from '@/lib/tool-registry'
@@ -48,7 +49,7 @@ export const ollamaRunner: AgentRunner = {
     let gatewayTools: GatewayTool[] = []
     let gateway: GatewayClient | null = null
     if (ctx.gateway) {
-      gateway = new GatewayClient(ctx.gateway.url, ctx.gateway.token)
+      gateway = new GatewayClient(ctx.gateway.url, ctx.gateway.token, agentActor(ctx.agentId))
       try {
         gatewayTools = await gateway.listTools(ctx.signal)
       } catch (err) {

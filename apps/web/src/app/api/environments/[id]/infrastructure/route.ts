@@ -4,6 +4,7 @@
  * Fetches nodes and pods from an environment via the ORION Gateway.
  * Returns { nodes: CachedNode[], pods: CachedPod[] }
  */
+import { gatewayHeaders } from '@/lib/gateway-headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
@@ -17,7 +18,7 @@ async function gatewayExec(
 ): Promise<string> {
   const res = await fetch(`${gatewayUrl}/tools/execute`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${gatewayToken}` },
+    headers: gatewayHeaders(gatewayToken),
     body: JSON.stringify({ name: toolName, arguments: args }),
   })
   if (!res.ok) throw new Error(`Gateway tool ${toolName} failed: ${res.status}`)

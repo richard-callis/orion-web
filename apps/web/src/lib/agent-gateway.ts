@@ -1,5 +1,6 @@
 import { prisma } from './db'
 import { GatewayClient } from './agent-runner/gateway-client'
+import { agentActor } from './gateway-headers'
 import type { GatewayTool } from './agent-runner/types'
 
 export interface AgentGateway {
@@ -22,7 +23,7 @@ export async function resolveAgentGateway(agentId: string): Promise<AgentGateway
   const token         = envLink?.environment?.gatewayToken
   const environmentId = envLink?.environment?.id
   if (!url || !token || !environmentId) return null
-  return { url, token, environmentId, client: new GatewayClient(url, token) }
+  return { url, token, environmentId, client: new GatewayClient(url, token, agentActor(agentId)) }
 }
 
 /**

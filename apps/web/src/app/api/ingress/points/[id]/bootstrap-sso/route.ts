@@ -8,6 +8,7 @@
  *
  * Returns { jobId } immediately — progress tracked via /api/jobs/[id].
  */
+import { gatewayHeaders } from '@/lib/gateway-headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { startJob, type JobLogger } from '@/lib/job-runner'
@@ -67,7 +68,7 @@ export async function POST(
     try {
       const res = await fetch(`${gwUrl}/tools/execute`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${gwToken}` },
+        headers: gatewayHeaders(gwToken),
         body: JSON.stringify({ name: 'kubectl_get_nodes', arguments: { wide: false } }),
         signal: AbortSignal.timeout(5000),
       })

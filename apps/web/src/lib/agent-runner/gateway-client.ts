@@ -1,15 +1,16 @@
 import type { GatewayTool } from './types'
 import { runSignal } from './abort'
+import { gatewayHeaders, SYSTEM_ACTOR, type GatewayActor } from '../gateway-headers'
 
 /**
  * Lightweight HTTP client for the gateway's REST tool API.
  * Used by agent runners that can't speak MCP natively (Ollama, Gemini).
  */
 export class GatewayClient {
-  constructor(private url: string, private token: string) {}
+  constructor(private url: string, private token: string, private actor: GatewayActor = SYSTEM_ACTOR) {}
 
   private headers() {
-    return { 'Authorization': `Bearer ${this.token}`, 'Content-Type': 'application/json' }
+    return gatewayHeaders(this.token, this.actor)
   }
 
   async listTools(signal?: AbortSignal): Promise<GatewayTool[]> {

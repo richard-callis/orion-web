@@ -1,3 +1,4 @@
+import { gatewayHeaders } from '@/lib/gateway-headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
@@ -11,7 +12,7 @@ async function getGatewayExec(envId: string) {
     exec: async (tool: string, args: Record<string, unknown>) => {
       const res = await fetch(`${env.gatewayUrl}/tools/execute`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.gatewayToken}` },
+        headers: gatewayHeaders(env.gatewayToken ?? ''),
         body: JSON.stringify({ name: tool, arguments: args }),
       })
       if (!res.ok) throw new Error(`Gateway ${tool} failed: ${res.status}`)

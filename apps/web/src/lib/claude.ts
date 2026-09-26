@@ -1,4 +1,5 @@
 import fs from 'fs'
+import { humanActor } from './gateway-headers'
 import { prisma } from './db'
 import { getPrompt, interpolate } from './system-prompts'
 import { hybridSearch, generateEmbedding, skillVectorSearch } from './embeddings'
@@ -274,7 +275,7 @@ export async function* streamOllamaChat(
         where: { status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
       })
   if (connectedEnv?.gatewayUrl && connectedEnv.gatewayToken) {
-    gatewayClient = new GatewayClient(connectedEnv.gatewayUrl, connectedEnv.gatewayToken)
+    gatewayClient = new GatewayClient(connectedEnv.gatewayUrl, connectedEnv.gatewayToken, humanActor(userId))
     try {
       gatewayTools = await gatewayClient.listTools()
     } catch {
@@ -699,7 +700,7 @@ async function* streamAgentChatInner(
     if (!connectedEnv?.gatewayUrl || !connectedEnv.gatewayToken) return null
 
     try {
-      const gc = new GatewayClient(connectedEnv.gatewayUrl, connectedEnv.gatewayToken)
+      const gc = new GatewayClient(connectedEnv.gatewayUrl, connectedEnv.gatewayToken, humanActor(userId))
       const tools: GatewayTool[] = await gc.listTools()
       return tools.length ? { tools, gc, environmentId: connectedEnv.id } : null
     } catch {
@@ -963,7 +964,7 @@ export async function* streamOpenAIChat(
         where: { status: 'connected', gatewayUrl: { not: null }, gatewayToken: { not: null } },
       })
   if (connectedEnv?.gatewayUrl && connectedEnv.gatewayToken) {
-    gatewayClient = new GatewayClient(connectedEnv.gatewayUrl, connectedEnv.gatewayToken)
+    gatewayClient = new GatewayClient(connectedEnv.gatewayUrl, connectedEnv.gatewayToken, humanActor(userId))
     try { gatewayTools = await gatewayClient.listTools() } catch { /* proceed without tools */ }
   }
 
