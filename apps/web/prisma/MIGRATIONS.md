@@ -27,8 +27,15 @@ Existing databases already have all of them applied, so they are unaffected.
 
 ## Adding a migration
 
-Name new migrations `YYYYMMDDHHMMSS_short_description`, for example
-`20260926120000_fk_indexes_and_ondelete`.
+Name new migrations `tYYYYMMDDHHMMSS_short_description` (UTC), for example
+`t20260926130000_fk_indexes_and_ondelete`.
+
+Prisma sorts folder names byte-wise, and `'2' < '_'`. So a bare
+`2026…_` name sorts before the legacy `20_`…`29_` folders and could run before
+the migration that created its table. The leading letter makes every new
+migration sort after all digit-prefixed legacy folders, and the timestamps keep
+new migrations in order among themselves. Always use a timestamp later than the
+newest existing `t…` folder.
 
 **Do not use `prisma migrate dev` or `prisma db push`.** Its shadow-database
 replay fails on the legacy chain. Also, `schema.prisma` declares a few columns
@@ -45,11 +52,11 @@ Instead:
    npx prisma migrate diff \
      --from-schema-datamodel /tmp/schema.before.prisma \
      --to-schema-datamodel prisma/schema.prisma --script \
-     > prisma/migrations/$(date -u +%Y%m%d%H%M%S)_my_change/migration.sql
+     > prisma/migrations/t$(date -u +%Y%m%d%H%M%S)_my_change/migration.sql
    ```
 3. **Make the SQL idempotent.** Use `IF NOT EXISTS` / `IF EXISTS`. Never rely
    on constraint names from older migrations; see how
-   `20260926120000_fk_indexes_and_ondelete` locates FKs by column.
+   `t20260926130000_fk_indexes_and_ondelete` locates FKs by column.
 4. **Verify** against a throwaway database with `prisma/check-drift.sh`. CI runs
    the same check on every PR.
 
