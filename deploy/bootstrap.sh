@@ -3,8 +3,17 @@ set -euo pipefail
 
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Image versions exported by the caller (e.g. .github/workflows/deploy.yml pins
+# the image it just built) must win over any value in .env, which is sourced
+# below. Capture them now and re-export after every `source .env`.
+VERSION_OVERRIDES=""
+for v in ORION_VERSION ORION_WEB_VERSION ORION_GATEWAY_VERSION ORION_VECTOR_VERSION; do
+  if [[ -n "${!v:-}" ]]; then VERSION_OVERRIDES+="export $v=$(printf '%q' "${!v}"); "; fi
+done
+
 # Activate the gitea profile if GIT_PROVIDER is gitea-bundled (or unset, for backwards compat)
 source "$DEPLOY_DIR/.env" 2>/dev/null || true
+eval "$VERSION_OVERRIDES"
 GIT_PROVIDER="${GIT_PROVIDER:-gitea-bundled}"
 PROFILE_FLAGS=""
 if [[ "$GIT_PROVIDER" == "gitea-bundled" ]]; then
@@ -207,8 +216,21 @@ if [[ -S /var/run/docker.sock ]]; then
   fi
 fi
 
+# ── Bind address for ORION's direct :3000 port ────────────────────────────────
+# docker-compose.yml publishes :3000 on ORION_BIND_ADDR (default 127.0.0.1)
+# instead of every interface. Remote gateways and first-run setup reach ORION
+# at http://<management-ip>:3000, so existing installs get the management IP.
+if ! grep -q "^ORION_BIND_ADDR=" "$DEPLOY_DIR/.env"; then
+  BIND_ADDR="${MANAGEMENT_IP:-}"
+  [[ -z "$BIND_ADDR" ]] && BIND_ADDR=$(hostname -I 2>/dev/null | awk '{print $1}')
+  BIND_ADDR="${BIND_ADDR:-127.0.0.1}"
+  echo "ORION_BIND_ADDR=${BIND_ADDR}" >> "$DEPLOY_DIR/.env"
+  echo "Set ORION_BIND_ADDR=${BIND_ADDR} (ORION :3000 is published on this address only)."
+fi
+
 # ── Validate required vars ────────────────────────────────────────────────────
 source "$DEPLOY_DIR/.env"
+eval "$VERSION_OVERRIDES"
 MISSING=()
 [[ -z "${GITHUB_ORG:-}" ]]        && MISSING+=("GITHUB_ORG")
 [[ -z "${POSTGRES_PASSWORD:-}" ]] && MISSING+=("POSTGRES_PASSWORD")
@@ -426,6 +448,6 @@ else
 fi
 
 echo ""
-echo "IMPORTANT [SOC2]: No automated backup is configured."
-echo "  Schedule backups: crontab -e"
+echo "IMPORTANT [SOC2]: CI deploys take a pre-deploy database dump (backup.sh --pre-deploy),"
+echo "  but no scheduled backup is configured. Schedule one: crontab -e"
 echo "  Add: 0 2 * * * $DEPLOY_DIR/backup.sh >> /var/log/orion-backup.log 2>&1"
