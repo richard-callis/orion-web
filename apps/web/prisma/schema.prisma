@@ -31,18 +31,23 @@ model Message {
   outputTokens   Int?
   createdAt      DateTime     @default(now())
   metadata       Json?
+
+  @@index([conversationId, createdAt])
 }
 
 model ClaudeInvocation {
   id             String       @id @default(cuid())
   conversationId String
-  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   prompt         String       @db.Text
   toolsUsed      Json
   tokensUsed     Int?
   durationMs     Int
   success        Boolean      @default(true)
   createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+  @@index([createdAt])
 }
 
 // ── Conversation Memory ──────────────────────────────────────────────────────
@@ -111,6 +116,7 @@ model AgentTokenUsage {
   @@index([agentId, recordedAt])
   @@index([taskId])
   @@index([modelId])
+  @@index([recordedAt])
 }
 
 model Environment {
@@ -244,13 +250,17 @@ model EnvironmentJoinToken {
 model AgentMessage {
   id          String   @id @default(cuid())
   agentId     String?
-  agent       Agent?   @relation(fields: [agentId], references: [id])
+  agent       Agent?   @relation(fields: [agentId], references: [id], onDelete: SetNull)
   channel     String   @default("general")
   content     String   @db.Text
   messageType String   @default("text")
   threadId    String?
   createdAt   DateTime @default(now())
   metadata    Json?
+
+  @@index([channel, createdAt])
+  @@index([agentId])
+  @@index([createdAt])
 }
 
 model Epic {
@@ -295,7 +305,7 @@ model Task {
   featureId         String?
   feature           Feature?           @relation(fields: [featureId], references: [id], onDelete: Cascade)
   assignedAgent     String?
-  agent             Agent?             @relation("AssignedTasks", fields: [assignedAgent], references: [id])
+  agent             Agent?             @relation("AssignedTasks", fields: [assignedAgent], references: [id], onDelete: SetNull)
   assignedUserId    String?
   assignedUser      User?              @relation("AssignedUserTasks", fields: [assignedUserId], references: [id], onDelete: SetNull)
   createdBy         String?
@@ -320,12 +330,14 @@ model Task {
   // Worker poll: pollOnce queries status+assignedAgent ordered by wave,priority,createdAt every 15s
   @@index([status, assignedAgent, wave, priority, createdAt])
   @@index([createdBy])
+  @@index([featureId])
+  @@index([assignedAgent])
 }
 
 model FederatedDispatch {
   id             String    @id @default(cuid())
   taskId         String    @unique
-  task           Task      @relation(fields: [taskId], references: [id])
+  task           Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
   targetEnvId    String // which environment the task was routed to
   spokeUrl       String // URL of the spoke that received it
   status         String    @default("dispatched") // dispatched | acknowledged | completed | failed
@@ -347,6 +359,9 @@ model TaskEvent {
   content   String?  @db.Text
   agentId   String?
   createdAt DateTime @default(now())
+
+  @@index([taskId, createdAt])
+  @@index([createdAt])
 }
 
 model AuditLog {
@@ -426,6 +441,14 @@ model Note {
 // match the HNSW index's `vector_cosine_ops`.
 // vectorSearch() filters by modelRef so vectors from different embedding
 // models are never compared against each other.
+//
+// SCHEMA DRIFT WARNING: because the column is declared String but is
+// vector(768) in the database, `prisma migrate dev` / `prisma db push` would
+// generate `ALTER COLUMN "embedding" SET DATA TYPE TEXT` and destroy the HNSW
+// index. Never use them against a real database; write migrations by hand
+// (see prisma/MIGRATIONS.md). The CI drift check allowlists this difference.
+// Switching to Unsupported("vector(768)") needs embeddings.ts upserts moved to
+// $executeRaw first (Prisma disallows create/upsert on required Unsupported fields).
 
 model NoteEmbedding {
   noteId    String   @id @default(cuid())
@@ -519,6 +542,7 @@ model ApiKey {
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("api_keys")
+  @@index([userId])
 }
 
 model Session {
@@ -527,6 +551,8 @@ model Session {
   userId       String
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model VerificationToken {
@@ -728,6 +754,8 @@ model DnsRecord {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   domain    Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@index([domainId])
 }
 
 model IngressPoint {
@@ -748,6 +776,9 @@ model IngressPoint {
   environment   Environment?        @relation(fields: [environmentId], references: [id], onDelete: SetNull)
   routes        IngressRoute[]
   middlewares   IngressMiddleware[]
+
+  @@index([domainId])
+  @@index([environmentId])
 }
 
 model IngressRoute {
@@ -843,6 +874,8 @@ model NovaDeployment {
 
   @@unique([novaId, environmentId])
   @@index([novaId])
+  @@index([environmentId])
+  @@index([agentId])
 }
 
 model NovaRevision {
@@ -887,6 +920,8 @@ model ChatRoom {
 
   @@unique([featureId])
   @@map("chat_rooms")
+  @@index([taskId])
+  @@index([epicId])
 }
 
 model RoomGoal {
@@ -947,6 +982,9 @@ model ChatMessage {
   @@index([roomId, taskId, createdAt])
   @@index([incidentId])
   @@map("chat_messages")
+  @@index([agentId])
+  @@index([userId])
+  @@index([taskId])
 }
 
 // ── Managed Secrets ────────────────────────────────────────────────────────────
@@ -1290,6 +1328,8 @@ model VulnerabilityFinding {
   @@index([isKev])
   @@index([status])
   @@index([severity])
+  @@index([taskId])
+  @@index([scanId])
 }
 
 model VulnerabilityScan {
@@ -1433,7 +1473,7 @@ model NebulaInstance {
   environmentId   String
   environment     Environment         @relation(fields: [environmentId], references: [id], onDelete: Cascade)
   sourceNovaId    String?
-  novaDefinition  NovaDefinition?     @relation(fields: [sourceNovaId], references: [id])
+  novaDefinition  NovaDefinition?     @relation(fields: [sourceNovaId], references: [id], onDelete: SetNull)
   name            String
   category        String // "skill" | "hook"
   spec            String              @db.Text
@@ -1467,7 +1507,7 @@ model NebulaInstance {
 model NebulaEmbedding {
   nebulaId  String         @id
   nebula    NebulaInstance @relation(fields: [nebulaId], references: [id], onDelete: Cascade)
-  embedding String         @db.Text // JSON-encoded vector array: [0.1, -0.3, ...]
+  embedding String         @db.Text // pgvector native vector(768) at the DB level — see NoteEmbedding note on schema drift
   dimension Int // 1536 (OpenAI) or 768 (Ollama nomic)
   modelRef  String? // which model generated this embedding (ext:xxx ID)
   version   Int            @default(1) // bump when re-embedding
@@ -1492,6 +1532,7 @@ model HookExecutionLog {
 
   @@index([nebulaId, startedAt])
   @@index([status, startedAt])
+  @@index([startedAt])
 }
 
 model SkillExecutionLog {
@@ -1504,6 +1545,7 @@ model SkillExecutionLog {
   createdAt      DateTime       @default(now())
 
   @@index([nebulaId, createdAt])
+  @@index([createdAt])
 }
 
 model AgentTrace {
@@ -1767,6 +1809,7 @@ model InvestigationTimeline {
 
   @@index([investigationId, eventTime])
   @@index([investigationId, eventType])
+  @@index([createdAt])
 }
 
 model InvestigationAudit {
@@ -1826,12 +1869,14 @@ model ToolExecution {
   createdAt      DateTime  @default(now())
   completedAt    DateTime?
 
-  environment Environment? @relation(fields: [environmentId], references: [id])
+  environment Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
 
   @@index([actorId, createdAt])
   @@index([status, createdAt])
   @@index([tool, createdAt])
   @@index([expiresAt]) // for expiry sweep job
+  @@index([environmentId])
+  @@index([createdAt])
 }
 
 // ── Agent Benchmark Harness ────────────────────────────────────────────────────
@@ -1843,7 +1888,7 @@ model EvalSuite {
   name        String     @unique
   description String?
   agentId     String?
-  agent       Agent?     @relation("EvalSuiteAgent", fields: [agentId], references: [id])
+  agent       Agent?     @relation("EvalSuiteAgent", fields: [agentId], references: [id], onDelete: SetNull)
   cases       EvalCase[]
   runs        EvalRun[]
   createdAt   DateTime   @default(now())
@@ -1870,9 +1915,9 @@ model EvalCase {
 model EvalRun {
   id          String           @id @default(cuid())
   suiteId     String
-  suite       EvalSuite        @relation(fields: [suiteId], references: [id])
+  suite       EvalSuite        @relation(fields: [suiteId], references: [id], onDelete: Cascade)
   agentId     String
-  agent       Agent            @relation("EvalRunAgent", fields: [agentId], references: [id])
+  agent       Agent            @relation("EvalRunAgent", fields: [agentId], references: [id], onDelete: Cascade)
   modelId     String
   status      String           @default("pending")
   scoreTotal  Float?
@@ -1892,7 +1937,7 @@ model EvalCaseResult {
   runId       String
   run         EvalRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
   caseId      String
-  case        EvalCase @relation(fields: [caseId], references: [id])
+  case        EvalCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
   taskId      String?
   passed      Boolean?
   score       Float?
@@ -1928,7 +1973,7 @@ model ScheduledTask {
   name        String
   description String?
   agentId     String
-  agent       Agent     @relation("ScheduledTaskAgent", fields: [agentId], references: [id])
+  agent       Agent     @relation("ScheduledTaskAgent", fields: [agentId], references: [id], onDelete: Cascade)
   cronExpr    String
   taskTitle   String
   taskDesc    String?   @db.Text
@@ -1997,6 +2042,7 @@ model JobRun {
 
   @@index([source, startedAt])
   @@index([sourceId, startedAt])
+  @@index([startedAt])
 }
 
 // ── Notification Channels ──────────────────────────────────────────────────────
