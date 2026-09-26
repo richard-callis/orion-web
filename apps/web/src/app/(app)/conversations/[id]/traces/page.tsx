@@ -38,13 +38,13 @@ const TYPE_CONFIG: Record<string, {
     icon: <Wrench size={14} />,
     color: 'text-blue-400',
     bg: 'bg-blue-500/10 border-blue-500/30',
-    label: 'Wrench Call',
+    label: 'Tool Call',
   },
   tool_result: {
     icon: <Play size={14} />,
     color: 'text-green-400',
     bg: 'bg-green-500/10 border-green-500/30',
-    label: 'Wrench Result',
+    label: 'Tool Result',
   },
   skill_injected: {
     icon: <Sparkles size={14} />,
@@ -242,8 +242,8 @@ export default function TracesPage() {
           className="px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
         >
           <option value="">All Types</option>
-          <option value="tool_call">Wrench Calls</option>
-          <option value="tool_result">Wrench Results</option>
+          <option value="tool_call">Tool Calls</option>
+          <option value="tool_result">Tool Results</option>
           <option value="skill_injected">Skill Injected</option>
           <option value="hook_triggered">Hook Triggered</option>
           <option value="text_generation">Text Generation</option>

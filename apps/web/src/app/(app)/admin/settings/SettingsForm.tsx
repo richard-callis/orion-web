@@ -165,7 +165,7 @@ export function SettingsForm({
         </SettingRow>
 
         <SettingRow
-          label="Max Agent Wrench Rounds"
+          label="Max Agent Tool Rounds"
           description="How many tool calls a chat room agent can make before it must reply."
         >
           <input
