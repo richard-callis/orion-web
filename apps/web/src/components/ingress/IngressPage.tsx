@@ -7,6 +7,7 @@ import {
   AlertCircle, Shield, Zap, ShieldCheck, Settings2, Play, Terminal,
   DatabaseZap, KeyRound, Bot, UserCog, Gauge, Package,
 } from 'lucide-react'
+import { Dialog } from '@/components/ui/Dialog'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -417,185 +418,184 @@ function SSOBootstrapModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div
-        className="w-full max-w-lg max-h-[90vh] overflow-auto bg-[#1e1e2e] border border-border-subtle rounded-xl shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
-          <div className="flex items-center gap-3">
-            <Icon size={18} className="text-accent" />
-            <div>
-              <h2 className="text-sm font-semibold text-text-primary">Bootstrap Identity Provider</h2>
-              <p className="text-[11px] text-text-muted">Deploy and configure an SSO provider for your services</p>
-            </div>
+    <Dialog
+      onClose={onClose}
+      label="Bootstrap identity provider"
+      className="w-full max-w-lg max-h-[90vh] overflow-auto bg-[#1e1e2e] border border-border-subtle rounded-xl shadow-2xl"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+        <div className="flex items-center gap-3">
+          <Icon size={18} className="text-accent" />
+          <div>
+            <h2 className="text-sm font-semibold text-text-primary">Bootstrap Identity Provider</h2>
+            <p className="text-[11px] text-text-muted">Deploy and configure an SSO provider for your services</p>
           </div>
-          <button onClick={onClose} className="text-text-muted hover:text-text-primary">
-            <X size={16} />
-          </button>
+        </div>
+        <button onClick={onClose} className="text-text-muted hover:text-text-primary">
+          <X size={16} />
+        </button>
+      </div>
+
+      {/* Body */}
+      <div className="px-5 py-4 space-y-3">
+        {/* Provider selection */}
+        <div>
+          <label className="text-[11px] font-medium text-text-muted mb-1 block">Provider Type</label>
+          <select value={provider} onChange={e => setProvider(e.target.value)} className={inputCls}>
+            {loading && providers.length === 0
+              ? <option value={provider}>Loading…</option>
+              : (
+                  Object.entries(SSO_PROVIDER_TYPES)
+                    .filter(([key]) => !providers.some(p => p.name === key)) // show bundled ones not yet in remote
+                    .map(([key, t]) => <option key={key} value={key}>{t.label}</option>)
+                )
+                .concat(providers.map(p => <option key={p.name} value={p.name}>{p.displayName}</option>))
+            }
+          </select>
+          {resolved.description && <p className="text-[10px] text-text-muted mt-1">{resolved.description}</p>}
+          {remoteProvider?.source === 'remote' && <span className="text-[9px] text-text-muted opacity-50">Loaded from orion-nub</span>}
         </div>
 
-        {/* Body */}
-        <div className="px-5 py-4 space-y-3">
-          {/* Provider selection */}
-          <div>
-            <label className="text-[11px] font-medium text-text-muted mb-1 block">Provider Type</label>
-            <select value={provider} onChange={e => setProvider(e.target.value)} className={inputCls}>
-              {loading && providers.length === 0
-                ? <option value={provider}>Loading…</option>
-                : (
-                    Object.entries(SSO_PROVIDER_TYPES)
-                      .filter(([key]) => !providers.some(p => p.name === key)) // show bundled ones not yet in remote
-                      .map(([key, t]) => <option key={key} value={key}>{t.label}</option>)
-                  )
-                  .concat(providers.map(p => <option key={p.name} value={p.name}>{p.displayName}</option>))
-              }
-            </select>
-            {resolved.description && <p className="text-[10px] text-text-muted mt-1">{resolved.description}</p>}
-            {remoteProvider?.source === 'remote' && <span className="text-[9px] text-text-muted opacity-50">Loaded from orion-nub</span>}
-          </div>
+        {/* Hostname */}
+        <div>
+          <label className="text-[11px] font-medium text-text-muted mb-1 block">Hostname</label>
+          <input
+            autoFocus
+            value={hostname}
+            onChange={e => setHostname(e.target.value)}
+            placeholder={`e.g. auth.${domainName}`}
+            className={inputCls}
+          />
+        </div>
 
-          {/* Hostname */}
+        {/* Namespace */}
+        <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="text-[11px] font-medium text-text-muted mb-1 block">Hostname</label>
+            <label className="text-[11px] font-medium text-text-muted mb-1 block">Namespace</label>
             <input
-              autoFocus
-              value={hostname}
-              onChange={e => setHostname(e.target.value)}
-              placeholder={`e.g. auth.${domainName}`}
+              value={namespace}
+              onChange={e => setNamespace(e.target.value)}
+              placeholder="security"
               className={inputCls}
             />
           </div>
-
-          {/* Namespace */}
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-[11px] font-medium text-text-muted mb-1 block">Namespace</label>
-              <input
-                value={namespace}
-                onChange={e => setNamespace(e.target.value)}
-                placeholder="security"
-                className={inputCls}
-              />
-            </div>
-            <div>
-              <label className="text-[11px] font-medium text-text-muted mb-1 block">ClusterIssuer</label>
-              <input
-                value={clusterIssuer}
-                onChange={e => setClusterIssuer(e.target.value)}
-                placeholder="letsencrypt-prod"
-                className={inputCls}
-              />
-            </div>
+          <div>
+            <label className="text-[11px] font-medium text-text-muted mb-1 block">ClusterIssuer</label>
+            <input
+              value={clusterIssuer}
+              onChange={e => setClusterIssuer(e.target.value)}
+              placeholder="letsencrypt-prod"
+              className={inputCls}
+            />
           </div>
+        </div>
 
-          {/* Provider-specific: admin password */}
-          {resolved.fields.includes('adminPassword') && (
+        {/* Provider-specific: admin password */}
+        {resolved.fields.includes('adminPassword') && (
+          <div>
+            <label className="text-[11px] font-medium text-text-muted mb-1 block">Admin Password</label>
+            <input
+              type="password"
+              value={adminPassword}
+              onChange={e => setAdminPassword(e.target.value)}
+              placeholder="Set initial admin password"
+              className={inputCls}
+            />
+          </div>
+        )}
+
+        {/* Provider-specific: OIDC fields */}
+        {(provider === 'oauth2_proxy' || provider === 'custom_oidc') && (
+          <>
             <div>
-              <label className="text-[11px] font-medium text-text-muted mb-1 block">Admin Password</label>
+              <label className="text-[11px] font-medium text-text-muted mb-1 block">OIDC Issuer URL</label>
               <input
-                type="password"
-                value={adminPassword}
-                onChange={e => setAdminPassword(e.target.value)}
-                placeholder="Set initial admin password"
+                value={oidcIssuerUrl}
+                onChange={e => setOidcIssuerUrl(e.target.value)}
+                placeholder="https://auth.example.com/oauth2/token"
                 className={inputCls}
               />
             </div>
-          )}
-
-          {/* Provider-specific: OIDC fields */}
-          {(provider === 'oauth2_proxy' || provider === 'custom_oidc') && (
-            <>
+            <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[11px] font-medium text-text-muted mb-1 block">OIDC Issuer URL</label>
+                <label className="text-[11px] font-medium text-text-muted mb-1 block">Client ID</label>
                 <input
-                  value={oidcIssuerUrl}
-                  onChange={e => setOidcIssuerUrl(e.target.value)}
-                  placeholder="https://auth.example.com/oauth2/token"
+                  value={clientId}
+                  onChange={e => setClientId(e.target.value)}
+                  placeholder="oauth2-proxy-client"
                   className={inputCls}
                 />
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[11px] font-medium text-text-muted mb-1 block">Client ID</label>
-                  <input
-                    value={clientId}
-                    onChange={e => setClientId(e.target.value)}
-                    placeholder="oauth2-proxy-client"
-                    className={inputCls}
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-medium text-text-muted mb-1 block">Client Secret</label>
-                  <input
-                    type="password"
-                    value={clientSecret}
-                    onChange={e => setClientSecret(e.target.value)}
-                    placeholder="client-secret-from-provider"
-                    className={inputCls}
-                  />
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* Provider-specific: Keycloak/Custom CA */}
-          {provider === 'custom_oidc' && (
-            <div>
-              <label className="text-[11px] font-medium text-text-muted mb-1 block">Issuer CA Secret</label>
-              <input
-                value={customIssuerCaSecret}
-                onChange={e => setCustomIssuerCaSecret(e.target.value)}
-                placeholder="namespace/secret-name"
-                className={inputCls}
-              />
-            </div>
-          )}
-
-          {/* Provider-specific: Authelia database */}
-          {provider === 'authelia' && (
-            <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[11px] font-medium text-text-muted mb-1 block">Database</label>
-                <select value={databaseType} onChange={e => setDatabaseType(e.target.value)} className={inputCls}>
-                  <option value="sqlite">SQLite</option>
-                  <option value="postgresql">PostgreSQL</option>
-                </select>
+                <label className="text-[11px] font-medium text-text-muted mb-1 block">Client Secret</label>
+                <input
+                  type="password"
+                  value={clientSecret}
+                  onChange={e => setClientSecret(e.target.value)}
+                  placeholder="client-secret-from-provider"
+                  className={inputCls}
+                />
               </div>
-              {databaseType === 'postgresql' && (
-                <div>
-                  <label className="text-[11px] font-medium text-text-muted mb-1 block">Redis Host</label>
-                  <input
-                    value={redisHost}
-                    onChange={e => setRedisHost(e.target.value)}
-                    placeholder="redis://redis:6379"
-                    className={inputCls}
-                  />
-                </div>
-              )}
             </div>
-          )}
+          </>
+        )}
 
-          {error && (
-            <p className="text-xs text-status-error flex items-center gap-1">
-              <AlertCircle size={12} /> {error}
-            </p>
-          )}
-        </div>
+        {/* Provider-specific: Keycloak/Custom CA */}
+        {provider === 'custom_oidc' && (
+          <div>
+            <label className="text-[11px] font-medium text-text-muted mb-1 block">Issuer CA Secret</label>
+            <input
+              value={customIssuerCaSecret}
+              onChange={e => setCustomIssuerCaSecret(e.target.value)}
+              placeholder="namespace/secret-name"
+              className={inputCls}
+            />
+          </div>
+        )}
 
-        {/* Footer */}
-        <div className="flex justify-end gap-2 px-5 py-4 border-t border-border-subtle bg-bg-raised">
-          <button onClick={onClose} className={btnGhost}>Cancel</button>
-          <button onClick={submit} disabled={saving || !hostname.trim()} className={btnPrimary}>
-            {saving
-              ? <><RefreshCw size={11} className="animate-spin" /> Deploying…</>
-              : <><Play size={11} /> Deploy Provider</>
-            }
-          </button>
-        </div>
+        {/* Provider-specific: Authelia database */}
+        {provider === 'authelia' && (
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[11px] font-medium text-text-muted mb-1 block">Database</label>
+              <select value={databaseType} onChange={e => setDatabaseType(e.target.value)} className={inputCls}>
+                <option value="sqlite">SQLite</option>
+                <option value="postgresql">PostgreSQL</option>
+              </select>
+            </div>
+            {databaseType === 'postgresql' && (
+              <div>
+                <label className="text-[11px] font-medium text-text-muted mb-1 block">Redis Host</label>
+                <input
+                  value={redisHost}
+                  onChange={e => setRedisHost(e.target.value)}
+                  placeholder="redis://redis:6379"
+                  className={inputCls}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {error && (
+          <p className="text-xs text-status-error flex items-center gap-1">
+            <AlertCircle size={12} /> {error}
+          </p>
+        )}
       </div>
-    </div>
+
+      {/* Footer */}
+      <div className="flex justify-end gap-2 px-5 py-4 border-t border-border-subtle bg-bg-raised">
+        <button onClick={onClose} className={btnGhost}>Cancel</button>
+        <button onClick={submit} disabled={saving || !hostname.trim()} className={btnPrimary}>
+          {saving
+            ? <><RefreshCw size={11} className="animate-spin" /> Deploying…</>
+            : <><Play size={11} /> Deploy Provider</>
+          }
+        </button>
+      </div>
+    </Dialog>
   )
 }
 
@@ -721,45 +721,47 @@ function MiddlewareBootstrapPanel({ pointId }: { pointId: string }) {
         const Icon = getNovaIcon((selectedNova.config as any)?.icon)
         const setupNote = (selectedNova.config as any)?.setupNote as string | undefined
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setModal(null)}>
-            <div className="w-full max-w-md bg-[#1e1e2e] border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
-              <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
-                <div className="flex items-center gap-3">
-                  <Icon size={18} className="text-accent" />
-                  <div>
-                    <h2 className="text-sm font-semibold text-text-primary">Deploy {selectedNova.displayName}</h2>
-                    <p className="text-[11px] text-text-muted">{selectedNova.description}</p>
-                  </div>
+          <Dialog
+            onClose={() => setModal(null)}
+            label={`Deploy ${selectedNova.displayName}`}
+            className="w-full max-w-md bg-[#1e1e2e] border border-border-subtle rounded-xl shadow-2xl"
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+              <div className="flex items-center gap-3">
+                <Icon size={18} className="text-accent" />
+                <div>
+                  <h2 className="text-sm font-semibold text-text-primary">Deploy {selectedNova.displayName}</h2>
+                  <p className="text-[11px] text-text-muted">{selectedNova.description}</p>
                 </div>
-                <button onClick={() => setModal(null)} className="text-text-muted hover:text-text-primary"><X size={16} /></button>
               </div>
-              <div className="px-5 py-4 space-y-3">
-                <p className="text-xs text-text-muted">
-                  This will deploy <strong>{selectedNova.displayName}</strong> into your cluster via the associated environment.
-                  All config is managed through ORION playbooks.
-                </p>
-                {setupNote && (
-                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-                    <p className="text-[11px] font-medium text-amber-400 mb-1">Post-install steps</p>
-                    <pre className="text-[10px] text-amber-300/80 whitespace-pre-wrap font-mono">{setupNote}</pre>
-                  </div>
-                )}
-                <div className="flex gap-2">
-                  <button onClick={() => setModal(null)} className={btnGhost}>Cancel</button>
-                  <button
-                    onClick={() => { runBootstrap(modal) }}
-                    disabled={running !== null}
-                    className={btnPrimary}
-                  >
-                    {running === modal
-                      ? <><RefreshCw size={11} className="animate-spin" /> Deploying…</>
-                      : <><Play size={11} /> Deploy</>
-                    }
-                  </button>
+              <button onClick={() => setModal(null)} className="text-text-muted hover:text-text-primary"><X size={16} /></button>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-xs text-text-muted">
+                This will deploy <strong>{selectedNova.displayName}</strong> into your cluster via the associated environment.
+                All config is managed through ORION playbooks.
+              </p>
+              {setupNote && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+                  <p className="text-[11px] font-medium text-amber-400 mb-1">Post-install steps</p>
+                  <pre className="text-[10px] text-amber-300/80 whitespace-pre-wrap font-mono">{setupNote}</pre>
                 </div>
+              )}
+              <div className="flex gap-2">
+                <button onClick={() => setModal(null)} className={btnGhost}>Cancel</button>
+                <button
+                  onClick={() => { runBootstrap(modal) }}
+                  disabled={running !== null}
+                  className={btnPrimary}
+                >
+                  {running === modal
+                    ? <><RefreshCw size={11} className="animate-spin" /> Deploying…</>
+                    : <><Play size={11} /> Deploy</>
+                  }
+                </button>
               </div>
             </div>
-          </div>
+          </Dialog>
         )
       })()}
     </>
@@ -1462,43 +1464,45 @@ function DnsRecordModal({ domain, initial, suggestedIp, onSave, onClose }: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-md bg-[#1e1e2e] border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
-          <h2 className="text-sm font-semibold text-text-primary">{editing ? 'Edit DNS Record' : 'Add DNS Record'}</h2>
-          <button onClick={onClose} className="text-text-muted hover:text-text-primary"><X size={15} /></button>
-        </div>
-        <div className="px-5 py-4 space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1">IP Address</label>
-            <input value={ip} onChange={e => setIp(e.target.value)} placeholder="e.g. 10.2.2.30" autoFocus className={inputCls} />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1">Hostnames</label>
-            <input
-              value={hostnames}
-              onChange={e => setHostnames(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && save()}
-              placeholder={`*.${domain.name}, app.${domain.name}`}
-              className={inputCls}
-            />
-            <p className="text-[11px] text-text-muted mt-1">Comma or space separated. Use <code className="font-mono">*.{domain.name}</code> for wildcard.</p>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1">Comment <span className="text-text-muted font-normal">(optional)</span></label>
-            <input value={comment} onChange={e => setComment(e.target.value)} placeholder="e.g. Wildcard for all internal services" className={inputCls} />
-          </div>
-          {err && <p className="text-xs text-status-error">{err}</p>}
-        </div>
-        <div className="flex justify-end gap-2 px-5 py-3 border-t border-border-subtle">
-          <button onClick={onClose} className={btnGhost}>Cancel</button>
-          <button onClick={save} disabled={saving} className={btnPrimary}>
-            {saving ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
-            {editing ? 'Save changes' : 'Add record'}
-          </button>
-        </div>
+    <Dialog
+      onClose={onClose}
+      label={editing ? 'Edit DNS record' : 'Add DNS record'}
+      className="w-full max-w-md bg-[#1e1e2e] border border-border-subtle rounded-xl shadow-2xl"
+    >
+      <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+        <h2 className="text-sm font-semibold text-text-primary">{editing ? 'Edit DNS Record' : 'Add DNS Record'}</h2>
+        <button onClick={onClose} className="text-text-muted hover:text-text-primary"><X size={15} /></button>
       </div>
-    </div>
+      <div className="px-5 py-4 space-y-4">
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1">IP Address</label>
+          <input value={ip} onChange={e => setIp(e.target.value)} placeholder="e.g. 10.2.2.30" autoFocus className={inputCls} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1">Hostnames</label>
+          <input
+            value={hostnames}
+            onChange={e => setHostnames(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && save()}
+            placeholder={`*.${domain.name}, app.${domain.name}`}
+            className={inputCls}
+          />
+          <p className="text-[11px] text-text-muted mt-1">Comma or space separated. Use <code className="font-mono">*.{domain.name}</code> for wildcard.</p>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1">Comment <span className="text-text-muted font-normal">(optional)</span></label>
+          <input value={comment} onChange={e => setComment(e.target.value)} placeholder="e.g. Wildcard for all internal services" className={inputCls} />
+        </div>
+        {err && <p className="text-xs text-status-error">{err}</p>}
+      </div>
+      <div className="flex justify-end gap-2 px-5 py-3 border-t border-border-subtle">
+        <button onClick={onClose} className={btnGhost}>Cancel</button>
+        <button onClick={save} disabled={saving} className={btnPrimary}>
+          {saving ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
+          {editing ? 'Save changes' : 'Add record'}
+        </button>
+      </div>
+    </Dialog>
   )
 }
 

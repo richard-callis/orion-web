@@ -5,6 +5,7 @@ import {
   MessageSquare, Wrench, Bot, Play, RotateCcw, ChevronDown, ChevronUp,
   Clock, Terminal, Sparkles, Eye, X, Copy, Check,
 } from 'lucide-react'
+import { Dialog } from '@/components/ui/Dialog'
 
 interface TraceEntry {
   id: string
@@ -97,31 +98,30 @@ function FullContextModal({ context, onClose }: { context: string; onClose: () =
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div
-        className="w-full max-w-3xl max-h-[85vh] bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
-          <span className="text-sm font-semibold text-text-primary">Full Context Sent to LLM</span>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={handleCopy}
-              className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
-              title="Copy to clipboard"
-            >
-              {copied ? <Check size={14} className="text-status-healthy" /> : <Copy size={14} />}
-            </button>
-            <button onClick={onClose} className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors">
-              <X size={16} />
-            </button>
-          </div>
+    <Dialog
+      onClose={onClose}
+      label="Full context sent to LLM"
+      className="w-full max-w-3xl max-h-[85vh] bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col"
+    >
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+        <span className="text-sm font-semibold text-text-primary">Full Context Sent to LLM</span>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleCopy}
+            className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
+            title="Copy to clipboard"
+          >
+            {copied ? <Check size={14} className="text-status-healthy" /> : <Copy size={14} />}
+          </button>
+          <button onClick={onClose} className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors">
+            <X size={16} />
+          </button>
         </div>
-        <pre className="flex-1 overflow-auto p-4 text-[11px] leading-relaxed text-text-secondary font-mono whitespace-pre-wrap">
-          {context}
-        </pre>
       </div>
-    </div>
+      <pre className="flex-1 overflow-auto p-4 text-[11px] leading-relaxed text-text-secondary font-mono whitespace-pre-wrap">
+        {context}
+      </pre>
+    </Dialog>
   )
 }
 

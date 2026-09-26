@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { Plus, Trash2, Check, X, RefreshCw, Lock, AlertTriangle, Star } from 'lucide-react'
+import { Dialog } from '@/components/ui/Dialog'
 
 interface ExternalModel {
   id: string
@@ -145,304 +146,292 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
     onDeleted(model.id)
   }
 
-  // Close on backdrop click
-  const handleBackdrop = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) onClose()
-  }
-
-  // Close on Escape
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [onClose])
-
   const connectionOk = model ? health?.externalModels?.[`ext:${model.id}`] : undefined
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={handleBackdrop}
+    <Dialog
+      onClose={onClose}
+      label={isNew ? 'Add external model' : 'Edit model'}
+      className="relative w-full max-w-lg mx-4 rounded-xl border border-border-subtle bg-bg-card shadow-2xl"
+      overlayClassName="p-0"
     >
-      <div className="relative w-full max-w-lg mx-4 rounded-xl border border-border-subtle bg-bg-card shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
-          <div>
-            <h2 className="text-sm font-semibold text-text-primary">
-              {isNew ? 'Add External Model' : 'Edit Model'}
-            </h2>
-            {!isNew && (
-              <div className="flex items-center gap-2 mt-1">
-                <span className="text-xs text-text-muted">{PROVIDER_LABELS[model!.provider] ?? model!.provider}</span>
-                <span className="text-text-muted">·</span>
-                <StatusBadge ok={connectionOk} />
-              </div>
-            )}
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded text-text-muted hover:text-text-primary transition-colors">
-            <X size={15} />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="px-5 py-4 space-y-4">
-          {error && (
-            <div className="flex items-start gap-2 rounded border border-status-error/40 bg-status-error/10 px-3 py-2 text-xs text-status-error">
-              <AlertTriangle size={13} className="mt-0.5 flex-shrink-0" />
-              {error}
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+        <div>
+          <h2 className="text-sm font-semibold text-text-primary">
+            {isNew ? 'Add External Model' : 'Edit Model'}
+          </h2>
+          {!isNew && (
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-xs text-text-muted">{PROVIDER_LABELS[model!.provider] ?? model!.provider}</span>
+              <span className="text-text-muted">·</span>
+              <StatusBadge ok={connectionOk} />
             </div>
           )}
+        </div>
+        <button onClick={onClose} className="p-1.5 rounded text-text-muted hover:text-text-primary transition-colors">
+          <X size={15} />
+        </button>
+      </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <FormField label="Display Name">
-              <input
-                value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                placeholder="My GPT-4o"
-                className={inputCls}
-                autoFocus
-              />
-            </FormField>
-            <FormField label="Provider">
-              <select value={form.provider} onChange={e => handleProviderChange(e.target.value)} className={inputCls}>
-                {Object.entries(PROVIDER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-              </select>
-            </FormField>
-            <FormField label="Base URL">
-              <input
-                value={form.baseUrl}
-                onChange={e => setForm(f => ({ ...f, baseUrl: e.target.value }))}
-                placeholder="https://api.openai.com/v1"
-                className={inputCls}
-              />
-            </FormField>
-            <FormField label="Model ID">
-              <input
-                value={form.modelId}
-                onChange={e => setForm(f => ({ ...f, modelId: e.target.value }))}
-                placeholder="gpt-4o"
-                className={inputCls}
-              />
-            </FormField>
-            {form.provider !== 'ollama' && (
-              <FormField label="API Key" className="col-span-2">
-                <input
-                  type="password"
-                  value={form.apiKey}
-                  onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))}
-                  placeholder={!isNew ? 'Leave blank to keep existing key' : 'sk-...'}
-                  className={inputCls}
-                  autoComplete="off"
-                />
-              </FormField>
-            )}
-            <FormField label="Timeout (seconds)">
-              <input
-                type="number"
-                min={10}
-                max={3600}
-                value={form.timeoutSecs}
-                onChange={e => setForm(f => ({ ...f, timeoutSecs: Math.max(10, parseInt(e.target.value) || 120) }))}
-                className={inputCls}
-              />
-            </FormField>
-            <FormField label="Output Token Limit (blank = unlimited)">
-              <input
-                type="number"
-                min={1}
-                value={form.maxTokens ?? ''}
-                onChange={e => setForm(f => ({ ...f, maxTokens: e.target.value ? Math.max(1, parseInt(e.target.value)) : null }))}
-                placeholder="unlimited"
-                className={inputCls}
-              />
-            </FormField>
-            <FormField label="Context Limit Override (blank = auto-detect)">
-              <input
-                type="number"
-                min={1}
-                value={form.contextSize ?? ''}
-                onChange={e => setForm(f => ({ ...f, contextSize: e.target.value ? Math.max(1, parseInt(e.target.value)) : null }))}
-                placeholder="auto-detect"
-                className={inputCls}
-              />
-            </FormField>
-            <FormField label="Temperature (blank = model default)">
-              <input
-                type="number"
-                min={0}
-                max={2}
-                step={0.05}
-                value={form.temperature ?? ''}
-                onChange={e => {
-                  const v = parseFloat(e.target.value)
-                  setForm(f => ({ ...f, temperature: e.target.value === '' ? null : Math.min(2, Math.max(0, isNaN(v) ? 0 : v)) }))
-                }}
-                placeholder="model default"
-                className={inputCls}
-              />
-            </FormField>
-            <FormField label="Top-P (blank = model default)">
-              <input
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                value={form.topP ?? ''}
-                onChange={e => {
-                  const v = parseFloat(e.target.value)
-                  setForm(f => ({ ...f, topP: e.target.value === '' ? null : Math.min(1, Math.max(0, isNaN(v) ? 1 : v)) }))
-                }}
-                placeholder="model default"
-                className={inputCls}
-              />
-            </FormField>
-            <FormField label="Min-P — Ollama only (blank = off)">
-              <input
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                value={form.minP ?? ''}
-                onChange={e => {
-                  const v = parseFloat(e.target.value)
-                  setForm(f => ({ ...f, minP: e.target.value === '' ? null : Math.min(1, Math.max(0, isNaN(v) ? 0 : v)) }))
-                }}
-                placeholder="off"
-                className={inputCls}
-              />
-            </FormField>
-            <FormField label="Repeat Penalty — Ollama only (blank = off)">
-              <input
-                type="number"
-                min={1}
-                max={2}
-                step={0.05}
-                value={form.repeatPenalty ?? ''}
-                onChange={e => {
-                  const v = parseFloat(e.target.value)
-                  setForm(f => ({ ...f, repeatPenalty: e.target.value === '' ? null : Math.min(2, Math.max(1, isNaN(v) ? 1 : v)) }))
-                }}
-                placeholder="off"
-                className={inputCls}
-              />
-            </FormField>
-            <FormField label="Seed (blank = random)">
-              <input
-                type="number"
-                min={0}
-                value={form.seed ?? ''}
-                onChange={e => {
-                  const v = parseInt(e.target.value)
-                  setForm(f => ({ ...f, seed: e.target.value === '' ? null : (isNaN(v) ? null : Math.max(0, v)) }))
-                }}
-                placeholder="random"
-                className={inputCls}
-              />
-            </FormField>
+      {/* Body */}
+      <div className="px-5 py-4 space-y-4">
+        {error && (
+          <div className="flex items-start gap-2 rounded border border-status-error/40 bg-status-error/10 px-3 py-2 text-xs text-status-error">
+            <AlertTriangle size={13} className="mt-0.5 flex-shrink-0" />
+            {error}
           </div>
+        )}
 
-          {/* Pricing & self-hosted */}
-          <div className="rounded-lg border border-border-subtle bg-bg-raised/50 px-4 py-3 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium text-text-primary">Self-hosted model</p>
-                <p className="text-[11px] text-text-muted mt-0.5">
-                  {form.selfHosted
-                    ? 'Token cost shows estimated savings vs. cloud equivalent'
-                    : 'Token cost tracks actual API spend'}
-                </p>
-              </div>
-              <button
-                onClick={() => setForm(f => ({ ...f, selfHosted: !f.selfHosted }))}
-                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${form.selfHosted ? 'bg-accent' : 'bg-bg-raised border border-border-subtle'}`}
-              >
-                <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${form.selfHosted ? 'translate-x-4' : 'translate-x-0.5'}`} />
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label={form.selfHosted ? 'Cloud equivalent input $/1M tokens' : 'Input price $/1M tokens'}>
-                <input
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  value={form.inputPricePer1M ?? ''}
-                  onChange={e => setForm(f => ({ ...f, inputPricePer1M: e.target.value ? Math.max(0, parseFloat(e.target.value)) : null }))}
-                  placeholder="e.g. 3.00"
-                  className={inputCls}
-                />
-              </FormField>
-              <FormField label={form.selfHosted ? 'Cloud equivalent output $/1M tokens' : 'Output price $/1M tokens'}>
-                <input
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  value={form.outputPricePer1M ?? ''}
-                  onChange={e => setForm(f => ({ ...f, outputPricePer1M: e.target.value ? Math.max(0, parseFloat(e.target.value)) : null }))}
-                  placeholder="e.g. 15.00"
-                  className={inputCls}
-                />
-              </FormField>
-            </div>
-          </div>
+        <div className="grid grid-cols-2 gap-4">
+          <FormField label="Display Name">
+            <input
+              value={form.name}
+              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              placeholder="My GPT-4o"
+              className={inputCls}
+              autoFocus
+            />
+          </FormField>
+          <FormField label="Provider">
+            <select value={form.provider} onChange={e => handleProviderChange(e.target.value)} className={inputCls}>
+              {Object.entries(PROVIDER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </FormField>
+          <FormField label="Base URL">
+            <input
+              value={form.baseUrl}
+              onChange={e => setForm(f => ({ ...f, baseUrl: e.target.value }))}
+              placeholder="https://api.openai.com/v1"
+              className={inputCls}
+            />
+          </FormField>
+          <FormField label="Model ID">
+            <input
+              value={form.modelId}
+              onChange={e => setForm(f => ({ ...f, modelId: e.target.value }))}
+              placeholder="gpt-4o"
+              className={inputCls}
+            />
+          </FormField>
+          {form.provider !== 'ollama' && (
+            <FormField label="API Key" className="col-span-2">
+              <input
+                type="password"
+                value={form.apiKey}
+                onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))}
+                placeholder={!isNew ? 'Leave blank to keep existing key' : 'sk-...'}
+                className={inputCls}
+                autoComplete="off"
+              />
+            </FormField>
+          )}
+          <FormField label="Timeout (seconds)">
+            <input
+              type="number"
+              min={10}
+              max={3600}
+              value={form.timeoutSecs}
+              onChange={e => setForm(f => ({ ...f, timeoutSecs: Math.max(10, parseInt(e.target.value) || 120) }))}
+              className={inputCls}
+            />
+          </FormField>
+          <FormField label="Output Token Limit (blank = unlimited)">
+            <input
+              type="number"
+              min={1}
+              value={form.maxTokens ?? ''}
+              onChange={e => setForm(f => ({ ...f, maxTokens: e.target.value ? Math.max(1, parseInt(e.target.value)) : null }))}
+              placeholder="unlimited"
+              className={inputCls}
+            />
+          </FormField>
+          <FormField label="Context Limit Override (blank = auto-detect)">
+            <input
+              type="number"
+              min={1}
+              value={form.contextSize ?? ''}
+              onChange={e => setForm(f => ({ ...f, contextSize: e.target.value ? Math.max(1, parseInt(e.target.value)) : null }))}
+              placeholder="auto-detect"
+              className={inputCls}
+            />
+          </FormField>
+          <FormField label="Temperature (blank = model default)">
+            <input
+              type="number"
+              min={0}
+              max={2}
+              step={0.05}
+              value={form.temperature ?? ''}
+              onChange={e => {
+                const v = parseFloat(e.target.value)
+                setForm(f => ({ ...f, temperature: e.target.value === '' ? null : Math.min(2, Math.max(0, isNaN(v) ? 0 : v)) }))
+              }}
+              placeholder="model default"
+              className={inputCls}
+            />
+          </FormField>
+          <FormField label="Top-P (blank = model default)">
+            <input
+              type="number"
+              min={0}
+              max={1}
+              step={0.05}
+              value={form.topP ?? ''}
+              onChange={e => {
+                const v = parseFloat(e.target.value)
+                setForm(f => ({ ...f, topP: e.target.value === '' ? null : Math.min(1, Math.max(0, isNaN(v) ? 1 : v)) }))
+              }}
+              placeholder="model default"
+              className={inputCls}
+            />
+          </FormField>
+          <FormField label="Min-P — Ollama only (blank = off)">
+            <input
+              type="number"
+              min={0}
+              max={1}
+              step={0.05}
+              value={form.minP ?? ''}
+              onChange={e => {
+                const v = parseFloat(e.target.value)
+                setForm(f => ({ ...f, minP: e.target.value === '' ? null : Math.min(1, Math.max(0, isNaN(v) ? 0 : v)) }))
+              }}
+              placeholder="off"
+              className={inputCls}
+            />
+          </FormField>
+          <FormField label="Repeat Penalty — Ollama only (blank = off)">
+            <input
+              type="number"
+              min={1}
+              max={2}
+              step={0.05}
+              value={form.repeatPenalty ?? ''}
+              onChange={e => {
+                const v = parseFloat(e.target.value)
+                setForm(f => ({ ...f, repeatPenalty: e.target.value === '' ? null : Math.min(2, Math.max(1, isNaN(v) ? 1 : v)) }))
+              }}
+              placeholder="off"
+              className={inputCls}
+            />
+          </FormField>
+          <FormField label="Seed (blank = random)">
+            <input
+              type="number"
+              min={0}
+              value={form.seed ?? ''}
+              onChange={e => {
+                const v = parseInt(e.target.value)
+                setForm(f => ({ ...f, seed: e.target.value === '' ? null : (isNaN(v) ? null : Math.max(0, v)) }))
+              }}
+              placeholder="random"
+              className={inputCls}
+            />
+          </FormField>
+        </div>
 
-          <div className="flex items-center gap-2">
+        {/* Pricing & self-hosted */}
+        <div className="rounded-lg border border-border-subtle bg-bg-raised/50 px-4 py-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium text-text-primary">Self-hosted model</p>
+              <p className="text-[11px] text-text-muted mt-0.5">
+                {form.selfHosted
+                  ? 'Token cost shows estimated savings vs. cloud equivalent'
+                  : 'Token cost tracks actual API spend'}
+              </p>
+            </div>
             <button
-              onClick={() => setForm(f => ({ ...f, enabled: !f.enabled }))}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${form.enabled ? 'bg-accent' : 'bg-bg-raised border border-border-subtle'}`}
+              onClick={() => setForm(f => ({ ...f, selfHosted: !f.selfHosted }))}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${form.selfHosted ? 'bg-accent' : 'bg-bg-raised border border-border-subtle'}`}
             >
-              <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${form.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${form.selfHosted ? 'translate-x-4' : 'translate-x-0.5'}`} />
             </button>
-            <span className="text-xs text-text-secondary">Enabled</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label={form.selfHosted ? 'Cloud equivalent input $/1M tokens' : 'Input price $/1M tokens'}>
+              <input
+                type="number"
+                min={0}
+                step={0.01}
+                value={form.inputPricePer1M ?? ''}
+                onChange={e => setForm(f => ({ ...f, inputPricePer1M: e.target.value ? Math.max(0, parseFloat(e.target.value)) : null }))}
+                placeholder="e.g. 3.00"
+                className={inputCls}
+              />
+            </FormField>
+            <FormField label={form.selfHosted ? 'Cloud equivalent output $/1M tokens' : 'Output price $/1M tokens'}>
+              <input
+                type="number"
+                min={0}
+                step={0.01}
+                value={form.outputPricePer1M ?? ''}
+                onChange={e => setForm(f => ({ ...f, outputPricePer1M: e.target.value ? Math.max(0, parseFloat(e.target.value)) : null }))}
+                placeholder="e.g. 15.00"
+                className={inputCls}
+              />
+            </FormField>
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between px-5 py-4 border-t border-border-subtle">
-          {/* Delete section */}
-          <div>
-            {!isNew && !confirmDelete && (
-              <button
-                onClick={() => setConfirmDelete(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs text-status-error hover:bg-status-error/10 transition-colors"
-              >
-                <Trash2 size={12} /> Delete
-              </button>
-            )}
-            {confirmDelete && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-text-muted">Sure?</span>
-                <button
-                  onClick={handleDelete}
-                  disabled={deleting}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded bg-status-error text-white text-xs font-medium hover:bg-status-error/90 transition-colors disabled:opacity-50"
-                >
-                  {deleting ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} />}
-                  {deleting ? 'Deleting…' : 'Yes, delete'}
-                </button>
-                <button onClick={() => setConfirmDelete(false)} className="text-xs text-text-muted hover:text-text-secondary">
-                  Cancel
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Save / Cancel */}
-          <div className="flex items-center gap-2">
-            <button onClick={onClose} className="px-4 py-1.5 rounded border border-border-subtle text-sm text-text-secondary hover:text-text-primary transition-colors">
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="flex items-center gap-2 px-4 py-1.5 rounded bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
-            >
-              {saving ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
-              {saving ? 'Saving…' : 'Save'}
-            </button>
-          </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setForm(f => ({ ...f, enabled: !f.enabled }))}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${form.enabled ? 'bg-accent' : 'bg-bg-raised border border-border-subtle'}`}
+          >
+            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${form.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+          </button>
+          <span className="text-xs text-text-secondary">Enabled</span>
         </div>
       </div>
-    </div>
+
+      {/* Footer */}
+      <div className="flex items-center justify-between px-5 py-4 border-t border-border-subtle">
+        {/* Delete section */}
+        <div>
+          {!isNew && !confirmDelete && (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs text-status-error hover:bg-status-error/10 transition-colors"
+            >
+              <Trash2 size={12} /> Delete
+            </button>
+          )}
+          {confirmDelete && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-muted">Sure?</span>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex items-center gap-1 px-3 py-1.5 rounded bg-status-error text-white text-xs font-medium hover:bg-status-error/90 transition-colors disabled:opacity-50"
+              >
+                {deleting ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                {deleting ? 'Deleting…' : 'Yes, delete'}
+              </button>
+              <button onClick={() => setConfirmDelete(false)} className="text-xs text-text-muted hover:text-text-secondary">
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Save / Cancel */}
+        <div className="flex items-center gap-2">
+          <button onClick={onClose} className="px-4 py-1.5 rounded border border-border-subtle text-sm text-text-secondary hover:text-text-primary transition-colors">
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-2 px-4 py-1.5 rounded bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
+          >
+            {saving ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </Dialog>
   )
 }
 

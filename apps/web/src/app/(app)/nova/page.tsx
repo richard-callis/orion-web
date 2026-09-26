@@ -5,6 +5,7 @@ import {
   ChevronDown, Tag, Calendar, Sparkles,
 } from 'lucide-react'
 import type { Nova, NovaCategory, NovaConfig, NovaType } from '@/lib/nebula'
+import { Dialog } from '@/components/ui/Dialog'
 
 const CATEGORY_COLORS: Record<NovaCategory, string> = {
   Identity: 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
@@ -328,130 +329,134 @@ function NovaFormModal({ initial, onClose, onSave }: {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="w-full max-w-2xl bg-bg-card border border-border-subtle rounded-lg shadow-xl max-h-[90vh] overflow-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
-          <h3 className="text-sm font-semibold text-text-primary">
-            {initial ? 'Edit Nova' : 'New Nova Definition'}
-          </h3>
-          <button onClick={onClose} className="text-text-muted hover:text-text-primary">
-            <X size={16} />
-          </button>
-        </div>
-
-        {/* Form */}
-        <div className="p-4 space-y-4">
-          {/* Name */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-[10px] font-medium text-text-muted mb-1">Name (ID)</label>
-              <input
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder="my-service"
-                className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent font-mono"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-medium text-text-muted mb-1">Display Name</label>
-              <input
-                value={displayName}
-                onChange={e => setDisplayName(e.target.value)}
-                placeholder="My Service"
-                className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
-              />
-            </div>
-          </div>
-
-          {/* Description */}
-          <div>
-            <label className="block text-[10px] font-medium text-text-muted mb-1">Description</label>
-            <input
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              placeholder="What does this service do?"
-              className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
-            />
-          </div>
-
-          {/* Category and Type */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-[10px] font-medium text-text-muted mb-1">Category</label>
-              <select
-                value={category}
-                onChange={e => setCategory(e.target.value as NovaCategory)}
-                className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
-              >
-                {['Identity', 'Storage', 'Monitoring', 'DevTools', 'Agent', 'Other'].map(cat => (
-                  <option key={cat} value={cat}>{cat}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-medium text-text-muted mb-1">Type</label>
-              <select
-                value={type}
-                onChange={e => setType(e.target.value as NovaType)}
-                className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
-              >
-                <option value="service">Service</option>
-                <option value="agent">Agent</option>
-                <option value="content">Content</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Tags */}
-          <div>
-            <label className="block text-[10px] font-medium text-text-muted mb-1">
-              Tags <span className="text-text-muted">(comma separated)</span>
-            </label>
-            <input
-              value={tags}
-              onChange={e => setTags(e.target.value)}
-              placeholder="monitoring, grafana, metrics"
-              className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
-            />
-          </div>
-
-          {/* Config JSON */}
-          <div>
-            <label className="block text-[10px] font-medium text-text-muted mb-1">Config (JSON)</label>
-            <textarea
-              value={configStr}
-              onChange={e => setConfigStr(e.target.value)}
-              rows={12}
-              className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent font-mono resize-none"
-            />
-          </div>
-
-          {/* Error */}
-          {error && (
-            <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded p-2">
-              {error}
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border-subtle flex-shrink-0">
-          <button
-            onClick={onClose}
-            className="px-3 py-1.5 text-xs rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={saving}
-            className="px-3 py-1.5 text-xs rounded bg-accent/15 text-accent hover:bg-accent/25 transition-colors disabled:opacity-50"
-          >
-            {saving ? 'Saving...' : initial ? 'Update' : 'Create'}
-          </button>
-        </div>
+    <Dialog
+      onClose={onClose}
+      label={initial ? 'Edit Nova' : 'New Nova'}
+      className="w-full max-w-2xl bg-bg-card border border-border-subtle rounded-lg shadow-xl max-h-[90vh] overflow-auto"
+      overlayClassName="p-0 backdrop-blur-none"
+      closeOnBackdrop={false}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+        <h3 className="text-sm font-semibold text-text-primary">
+          {initial ? 'Edit Nova' : 'New Nova Definition'}
+        </h3>
+        <button onClick={onClose} className="text-text-muted hover:text-text-primary">
+          <X size={16} />
+        </button>
       </div>
-    </div>
+
+      {/* Form */}
+      <div className="p-4 space-y-4">
+        {/* Name */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-[10px] font-medium text-text-muted mb-1">Name (ID)</label>
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="my-service"
+              className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent font-mono"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-medium text-text-muted mb-1">Display Name</label>
+            <input
+              value={displayName}
+              onChange={e => setDisplayName(e.target.value)}
+              placeholder="My Service"
+              className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+            />
+          </div>
+        </div>
+
+        {/* Description */}
+        <div>
+          <label className="block text-[10px] font-medium text-text-muted mb-1">Description</label>
+          <input
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            placeholder="What does this service do?"
+            className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+          />
+        </div>
+
+        {/* Category and Type */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-[10px] font-medium text-text-muted mb-1">Category</label>
+            <select
+              value={category}
+              onChange={e => setCategory(e.target.value as NovaCategory)}
+              className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+            >
+              {['Identity', 'Storage', 'Monitoring', 'DevTools', 'Agent', 'Other'].map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-medium text-text-muted mb-1">Type</label>
+            <select
+              value={type}
+              onChange={e => setType(e.target.value as NovaType)}
+              className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+            >
+              <option value="service">Service</option>
+              <option value="agent">Agent</option>
+              <option value="content">Content</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Tags */}
+        <div>
+          <label className="block text-[10px] font-medium text-text-muted mb-1">
+            Tags <span className="text-text-muted">(comma separated)</span>
+          </label>
+          <input
+            value={tags}
+            onChange={e => setTags(e.target.value)}
+            placeholder="monitoring, grafana, metrics"
+            className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+          />
+        </div>
+
+        {/* Config JSON */}
+        <div>
+          <label className="block text-[10px] font-medium text-text-muted mb-1">Config (JSON)</label>
+          <textarea
+            value={configStr}
+            onChange={e => setConfigStr(e.target.value)}
+            rows={12}
+            className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent font-mono resize-none"
+          />
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded p-2">
+            {error}
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border-subtle flex-shrink-0">
+        <button
+          onClick={onClose}
+          className="px-3 py-1.5 text-xs rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={handleSubmit}
+          disabled={saving}
+          className="px-3 py-1.5 text-xs rounded bg-accent/15 text-accent hover:bg-accent/25 transition-colors disabled:opacity-50"
+        >
+          {saving ? 'Saving...' : initial ? 'Update' : 'Create'}
+        </button>
+      </div>
+    </Dialog>
   )
 }

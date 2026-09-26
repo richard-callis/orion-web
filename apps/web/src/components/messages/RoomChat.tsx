@@ -8,6 +8,7 @@ import {
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
+import { Dialog } from '@/components/ui/Dialog'
 import 'highlight.js/styles/github-dark.css'
 
 /** Render message content with @mention highlighting */
@@ -871,82 +872,84 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
 
       {/* Invite Modal */}
       {showInvite && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowInvite(false)}>
-          <div className="w-full max-w-md bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-60 md:max-h-96" onClick={e => e.stopPropagation()}>
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
-              <span className="text-sm font-semibold text-text-primary">Add Member</span>
-              <button onClick={() => setShowInvite(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
-            </div>
-
-            {inviteError && (
-              <div className="px-4 py-2 border-b border-status-error/30 bg-status-error/10 flex items-center gap-2 flex-shrink-0">
-                <span className="text-xs text-status-error flex-1">{inviteError}</span>
-                <button onClick={() => setInviteError(null)} className="text-status-error hover:text-status-error/60"><X size={14} /></button>
-              </div>
-            )}
-
-            {/* Search */}
-            <div className="px-3 py-2 border-b border-border-subtle flex-shrink-0">
-              <input
-                value={inviteSearch}
-                onChange={e => setInviteSearch(e.target.value)}
-                placeholder="Search..."
-                className="w-full px-3 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
-              />
-            </div>
-
-            {/* Tabs */}
-            <div className="flex border-b border-border-subtle flex-shrink-0">
-              <button
-                onClick={() => setInviteTab('agents')}
-                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${inviteTab === 'agents' ? 'text-accent border-b-2 border-accent' : 'text-text-muted hover:text-text-primary'}`}
-              >
-                Agents ({inviteAgents.length})
-              </button>
-              <button
-                onClick={() => setInviteTab('users')}
-                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${inviteTab === 'users' ? 'text-accent border-b-2 border-accent' : 'text-text-muted hover:text-text-primary'}`}
-              >
-                Users ({inviteUsers.length})
-              </button>
-            </div>
-
-            {/* List */}
-            <div className="flex-1 overflow-y-auto">
-              {inviteLoading ? (
-                <div className="flex items-center justify-center py-8"><Loader2 size={16} className="animate-spin text-text-muted" /></div>
-              ) : (inviteTab === 'agents' ? filteredAgents : filteredUsers).length === 0 ? (
-                <div className="text-center text-text-muted text-xs py-8">
-                  {inviteSearch ? 'No results' : 'No available options'}
-                </div>
-              ) : (
-                (inviteTab === 'agents' ? filteredAgents : filteredUsers).map(option => (
-                  <button
-                    key={option.id}
-                    onClick={() => handleInvite(option)}
-                    disabled={isInviting === option.id}
-                    className="w-full flex items-center gap-2 px-4 py-2 text-xs text-left text-text-secondary hover:bg-bg-raised hover:text-text-primary transition-colors disabled:opacity-50"
-                  >
-                    {inviteTab === 'agents' ? (
-                      <Bot size={13} className="text-accent flex-shrink-0" />
-                    ) : (
-                      <UserIcon size={13} className="text-text-muted flex-shrink-0" />
-                    )}
-                    <span className="flex-1 truncate">
-                      {option.name}{option.username ? ` (${option.username})` : ''}
-                    </span>
-                    {isInviting === option.id ? (
-                      <Loader2 size={12} className="animate-spin text-text-muted" />
-                    ) : (
-                      <Plus size={12} className="text-text-muted" />
-                    )}
-                  </button>
-                ))
-              )}
-            </div>
+        <Dialog
+          onClose={() => setShowInvite(false)}
+          label="Add member"
+          className="w-full max-w-md bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-60 md:max-h-96"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+            <span className="text-sm font-semibold text-text-primary">Add Member</span>
+            <button onClick={() => setShowInvite(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
           </div>
-        </div>
+
+          {inviteError && (
+            <div className="px-4 py-2 border-b border-status-error/30 bg-status-error/10 flex items-center gap-2 flex-shrink-0">
+              <span className="text-xs text-status-error flex-1">{inviteError}</span>
+              <button onClick={() => setInviteError(null)} className="text-status-error hover:text-status-error/60"><X size={14} /></button>
+            </div>
+          )}
+
+          {/* Search */}
+          <div className="px-3 py-2 border-b border-border-subtle flex-shrink-0">
+            <input
+              value={inviteSearch}
+              onChange={e => setInviteSearch(e.target.value)}
+              placeholder="Search..."
+              className="w-full px-3 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+            />
+          </div>
+
+          {/* Tabs */}
+          <div className="flex border-b border-border-subtle flex-shrink-0">
+            <button
+              onClick={() => setInviteTab('agents')}
+              className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${inviteTab === 'agents' ? 'text-accent border-b-2 border-accent' : 'text-text-muted hover:text-text-primary'}`}
+            >
+              Agents ({inviteAgents.length})
+            </button>
+            <button
+              onClick={() => setInviteTab('users')}
+              className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${inviteTab === 'users' ? 'text-accent border-b-2 border-accent' : 'text-text-muted hover:text-text-primary'}`}
+            >
+              Users ({inviteUsers.length})
+            </button>
+          </div>
+
+          {/* List */}
+          <div className="flex-1 overflow-y-auto">
+            {inviteLoading ? (
+              <div className="flex items-center justify-center py-8"><Loader2 size={16} className="animate-spin text-text-muted" /></div>
+            ) : (inviteTab === 'agents' ? filteredAgents : filteredUsers).length === 0 ? (
+              <div className="text-center text-text-muted text-xs py-8">
+                {inviteSearch ? 'No results' : 'No available options'}
+              </div>
+            ) : (
+              (inviteTab === 'agents' ? filteredAgents : filteredUsers).map(option => (
+                <button
+                  key={option.id}
+                  onClick={() => handleInvite(option)}
+                  disabled={isInviting === option.id}
+                  className="w-full flex items-center gap-2 px-4 py-2 text-xs text-left text-text-secondary hover:bg-bg-raised hover:text-text-primary transition-colors disabled:opacity-50"
+                >
+                  {inviteTab === 'agents' ? (
+                    <Bot size={13} className="text-accent flex-shrink-0" />
+                  ) : (
+                    <UserIcon size={13} className="text-text-muted flex-shrink-0" />
+                  )}
+                  <span className="flex-1 truncate">
+                    {option.name}{option.username ? ` (${option.username})` : ''}
+                  </span>
+                  {isInviting === option.id ? (
+                    <Loader2 size={12} className="animate-spin text-text-muted" />
+                  ) : (
+                    <Plus size={12} className="text-text-muted" />
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        </Dialog>
       )}
 
       {/* Plan saved toast */}
@@ -965,22 +968,24 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
 
       {/* Leave Room Confirmation */}
       {showLeaveConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowLeaveConfirm(false)}>
-          <div className="w-full max-w-sm bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="p-4">
-              <h3 className="text-sm font-semibold text-text-primary mb-2">Leave Room</h3>
-              <p className="text-xs text-text-muted mb-4">You will leave this chat room. You can rejoin later if invited.</p>
-              <div className="flex justify-end gap-2">
-                <button onClick={() => setShowLeaveConfirm(false)} className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
-                  Cancel
-                </button>
-                <button onClick={handleLeave} className="px-3 py-1.5 text-xs rounded bg-status-error text-white hover:bg-status-error/80 transition-colors">
-                  Leave
-                </button>
-              </div>
+        <Dialog
+          onClose={() => setShowLeaveConfirm(false)}
+          label="Leave room"
+          className="w-full max-w-sm bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden"
+        >
+          <div className="p-4">
+            <h3 className="text-sm font-semibold text-text-primary mb-2">Leave Room</h3>
+            <p className="text-xs text-text-muted mb-4">You will leave this chat room. You can rejoin later if invited.</p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowLeaveConfirm(false)} className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+                Cancel
+              </button>
+              <button onClick={handleLeave} className="px-3 py-1.5 text-xs rounded bg-status-error text-white hover:bg-status-error/80 transition-colors">
+                Leave
+              </button>
             </div>
           </div>
-        </div>
+        </Dialog>
       )}
     </div>
   )

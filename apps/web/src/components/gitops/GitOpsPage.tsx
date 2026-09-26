@@ -7,6 +7,7 @@ import {
 import { useRouter } from 'next/navigation'
 import { KpiCard } from '@/components/dashboard/KpiCard'
 import { ClusterPreflightFlow } from '@/components/environments/ClusterPreflightFlow'
+import { Dialog } from '@/components/ui/Dialog'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -298,91 +299,95 @@ function BootstrapModal({
   const canClose = isRemoteDocker || done || !kubeconfigReady
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-black/70 via-black/50 to-bg-sidebar/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-2xl bg-bg-card border border-border-subtle rounded-xl shadow-2xl flex flex-col max-h-[80vh]">
+    <Dialog
+      onClose={() => { if (canClose) onClose() }}
+      label={headerTitle}
+      className="w-full max-w-2xl bg-bg-card border border-border-subtle rounded-xl shadow-2xl flex flex-col max-h-[80vh]"
+      overlayClassName="bg-transparent bg-gradient-to-br from-black/70 via-black/50 to-bg-sidebar/60"
+      closeOnBackdrop={false}
+    >
 
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
-          <div className="flex items-center gap-2">
-            <Rocket size={16} className="text-accent" />
-            <span className="text-sm font-semibold text-text-primary">{headerTitle}</span>
-            {streaming && <RefreshCw size={13} className="animate-spin text-text-muted ml-1" />}
-          </div>
-          <div className="flex items-center gap-2">
-            {/* Ask Agent button — always available */}
-            {!streaming && (
-              <button
-                onClick={askAgentToDeploy}
-                disabled={creatingTask}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-border-subtle bg-bg-raised text-text-secondary hover:text-accent hover:border-accent/40 transition-colors disabled:opacity-40"
-                title="Ask an AI agent to handle this"
-              >
-                <Bot size={13} />
-                {creatingTask ? 'Opening…' : 'Ask Agent'}
-              </button>
-            )}
-            {canClose && (
-              <button onClick={onClose} className="p-1.5 rounded hover:bg-bg-raised text-text-muted hover:text-text-primary transition-colors">
-                <X size={16} />
-              </button>
-            )}
-          </div>
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+        <div className="flex items-center gap-2">
+          <Rocket size={16} className="text-accent" />
+          <span className="text-sm font-semibold text-text-primary">{headerTitle}</span>
+          {streaming && <RefreshCw size={13} className="animate-spin text-text-muted ml-1" />}
         </div>
-
-        {/* ── Remote Docker: copy-paste command ── */}
-        {isRemoteDocker && (
-          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-            <p className="text-sm text-text-secondary">
-              Run this on <span className="text-text-primary font-medium">{envName}</span>. The gateway will connect back to ORION automatically.
-            </p>
-            {dockerLoading && (
-              <div className="flex items-center gap-2 text-text-muted text-sm">
-                <RefreshCw size={13} className="animate-spin" /> Generating command…
-              </div>
-            )}
-            {dockerError && <p className="text-sm text-status-error">{dockerError}</p>}
-            {dockerCmd && (
-              <>
-                <div className="relative">
-                  <pre className="text-xs font-mono bg-black border border-border-subtle text-green-400 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap break-all">{dockerCmd}</pre>
-                  <button
-                    onClick={copyDockerCmd}
-                    className="absolute top-2 right-2 p-1.5 rounded bg-bg-raised border border-border-subtle text-text-muted hover:text-text-primary transition-colors"
-                    title="Copy"
-                  >
-                    {copied ? <Check size={13} className="text-status-healthy" /> : <Copy size={13} />}
-                  </button>
-                </div>
-                <p className="text-xs text-text-muted">Gateway appears connected in ORION within ~30 seconds.</p>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* ── Localhost: auto-deploy log ── */}
-        {isLocalhost && <LogPanel />}
-
-        {/* ── Cluster: preflight → auto-detect credentials → bootstrap log ── */}
-        {isCluster && !kubeconfigReady && (
-          <div className="flex-1 overflow-y-auto px-4 py-3">
-            <ClusterPreflightFlow
-              envId={envId}
-              onReady={() => setKubeconfigReady(true)}
-            />
-          </div>
-        )}
-        {isCluster && kubeconfigReady && <LogPanel />}
-
-        {/* Footer — cluster bootstrap done */}
-        {isCluster && done && (
-          <div className="px-5 py-3 border-t border-border-subtle flex justify-end">
-            <button onClick={onClose} className="px-4 py-2 text-sm rounded bg-accent text-white hover:bg-accent/80 transition-colors">
-              Close
+        <div className="flex items-center gap-2">
+          {/* Ask Agent button — always available */}
+          {!streaming && (
+            <button
+              onClick={askAgentToDeploy}
+              disabled={creatingTask}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-border-subtle bg-bg-raised text-text-secondary hover:text-accent hover:border-accent/40 transition-colors disabled:opacity-40"
+              title="Ask an AI agent to handle this"
+            >
+              <Bot size={13} />
+              {creatingTask ? 'Opening…' : 'Ask Agent'}
             </button>
-          </div>
-        )}
+          )}
+          {canClose && (
+            <button onClick={onClose} className="p-1.5 rounded hover:bg-bg-raised text-text-muted hover:text-text-primary transition-colors">
+              <X size={16} />
+            </button>
+          )}
+        </div>
       </div>
-    </div>
+
+      {/* ── Remote Docker: copy-paste command ── */}
+      {isRemoteDocker && (
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+          <p className="text-sm text-text-secondary">
+            Run this on <span className="text-text-primary font-medium">{envName}</span>. The gateway will connect back to ORION automatically.
+          </p>
+          {dockerLoading && (
+            <div className="flex items-center gap-2 text-text-muted text-sm">
+              <RefreshCw size={13} className="animate-spin" /> Generating command…
+            </div>
+          )}
+          {dockerError && <p className="text-sm text-status-error">{dockerError}</p>}
+          {dockerCmd && (
+            <>
+              <div className="relative">
+                <pre className="text-xs font-mono bg-black border border-border-subtle text-green-400 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap break-all">{dockerCmd}</pre>
+                <button
+                  onClick={copyDockerCmd}
+                  className="absolute top-2 right-2 p-1.5 rounded bg-bg-raised border border-border-subtle text-text-muted hover:text-text-primary transition-colors"
+                  title="Copy"
+                >
+                  {copied ? <Check size={13} className="text-status-healthy" /> : <Copy size={13} />}
+                </button>
+              </div>
+              <p className="text-xs text-text-muted">Gateway appears connected in ORION within ~30 seconds.</p>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Localhost: auto-deploy log ── */}
+      {isLocalhost && <LogPanel />}
+
+      {/* ── Cluster: preflight → auto-detect credentials → bootstrap log ── */}
+      {isCluster && !kubeconfigReady && (
+        <div className="flex-1 overflow-y-auto px-4 py-3">
+          <ClusterPreflightFlow
+            envId={envId}
+            onReady={() => setKubeconfigReady(true)}
+          />
+        </div>
+      )}
+      {isCluster && kubeconfigReady && <LogPanel />}
+
+      {/* Footer — cluster bootstrap done */}
+      {isCluster && done && (
+        <div className="px-5 py-3 border-t border-border-subtle flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded bg-accent text-white hover:bg-accent/80 transition-colors">
+            Close
+          </button>
+        </div>
+      )}
+    </Dialog>
   )
 }
 
