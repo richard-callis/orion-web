@@ -120,6 +120,12 @@ export const ollamaRunner: AgentRunner = {
 
         // Handle tool calls
         if (assistantMsg.tool_calls?.length) {
+          // Surface any text the model wrote alongside its tool calls (typically
+          // the <plan>) BEFORE the tool_call events, so the consumer's plan gate
+          // can see it. Each tool_call below is yielded before that tool runs.
+          if (assistantMsg.content) {
+            yield { type: 'text', content: assistantMsg.content }
+          }
           for (const toolCall of assistantMsg.tool_calls) {
             const fn = toolCall.function
             yield { type: 'tool_call', tool: fn.name, args: fn.arguments }
