@@ -454,7 +454,7 @@
 |---|---|---|---|
 | noteId | String | `@id @default(cuid())` |  |
 | note | → Note | `@relation(fields: [noteId], references: [id], onDelete: Cascade)` |  |
-| embedding | String | `@db.Text` | pgvector native vector(768) column (see comment above); JSON-array shape only applies pre-migration-7 |
+| embedding | Unsupported("vector(768)") |  | written/read via raw SQL only — see comment above |
 | dimension | Int |  | 1536 (OpenAI) or 768 (Ollama nomic) |
 | modelRef | String? |  | which model generated this embedding (ext:xxx ID) |
 | version | Int | `@default(1)` | bump when re-embedding |
@@ -1345,7 +1345,7 @@
 |---|---|---|---|
 | nebulaId | String | `@id` |  |
 | nebula | → NebulaInstance | `@relation(fields: [nebulaId], references: [id], onDelete: Cascade)` |  |
-| embedding | String | `@db.Text` | pgvector native vector(768) at the DB level — see NoteEmbedding note on schema drift |
+| embedding | Unsupported("vector(768)") |  | written/read via raw SQL only |
 | dimension | Int |  | 1536 (OpenAI) or 768 (Ollama nomic) |
 | modelRef | String? |  | which model generated this embedding (ext:xxx ID) |
 | version | Int | `@default(1)` | bump when re-embedding |

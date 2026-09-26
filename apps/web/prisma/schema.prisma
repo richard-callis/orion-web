@@ -440,27 +440,18 @@ model Note {
 
 // ── Knowledge Graph: Note Embeddings (pgvector) ────────────────────────────────
 // Each note gets a vector embedding of its title + content.
-// Column is a native pgvector `vector(768)` at the DB level (migration
-// 7_note_embeddings_hnsw_index converts it from the original JSON-text
-// column) — kept as String here because Prisma has no native vector type;
-// all reads/writes to this column go through raw SQL ($queryRaw/$executeRaw).
-// Uses pgvector's <=> (cosine distance) operator for similarity search, to
-// match the HNSW index's `vector_cosine_ops`.
-// vectorSearch() filters by modelRef so vectors from different embedding
-// models are never compared against each other.
-//
-// SCHEMA DRIFT WARNING: because the column is declared String but is
-// vector(768) in the database, `prisma migrate dev` / `prisma db push` would
-// generate `ALTER COLUMN "embedding" SET DATA TYPE TEXT` and destroy the HNSW
-// index. Never use them against a real database; write migrations by hand
-// (see prisma/MIGRATIONS.md). The CI drift check allowlists this difference.
-// Switching to Unsupported("vector(768)") needs embeddings.ts upserts moved to
-// $executeRaw first (Prisma disallows create/upsert on required Unsupported fields).
-
+// The column is a native pgvector `vector(768)`, declared Unsupported because
+// Prisma has no vector type. Prisma therefore omits it from the generated
+// client: every read/write of `embedding` goes through raw SQL
+// ($queryRaw/$executeRaw with a parameterized `${vec}::vector` literal) in
+// lib/embeddings.ts. Similarity search uses pgvector's <=> (cosine distance)
+// operator to match the HNSW index's `vector_cosine_ops`, and vectorSearch()
+// filters by modelRef so vectors from different embedding models are never
+// compared against each other.
 model NoteEmbedding {
   noteId    String   @id @default(cuid())
   note      Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
-  embedding String   @db.Text // pgvector native vector(768) column (see comment above); JSON-array shape only applies pre-migration-7
+  embedding Unsupported("vector(768)") // written/read via raw SQL only — see comment above
   dimension Int // 1536 (OpenAI) or 768 (Ollama nomic)
   modelRef  String? // which model generated this embedding (ext:xxx ID)
   version   Int      @default(1) // bump when re-embedding
@@ -1516,13 +1507,13 @@ model NebulaInstance {
 // patterns) for semantic trigger matching — a complement to the existing
 // exact substring match on triggerPatterns, so a message that describes the
 // same situation in different words still surfaces the skill.
-// Mirrors NoteEmbedding's pattern: declared as text here, the migration
-// converts the column to a native pgvector `vector(768)` type with an HNSW
-// index for cosine similarity search (see vectorSearch/skillVectorSearch).
+// Mirrors NoteEmbedding: a native pgvector `vector(768)` column with an HNSW
+// index for cosine similarity search, read/written via raw SQL only
+// (see storeSkillEmbedding/skillVectorSearch in lib/embeddings.ts).
 model NebulaEmbedding {
   nebulaId  String         @id
   nebula    NebulaInstance @relation(fields: [nebulaId], references: [id], onDelete: Cascade)
-  embedding String         @db.Text // pgvector native vector(768) at the DB level — see NoteEmbedding note on schema drift
+  embedding Unsupported("vector(768)") // written/read via raw SQL only
   dimension Int // 1536 (OpenAI) or 768 (Ollama nomic)
   modelRef  String? // which model generated this embedding (ext:xxx ID)
   version   Int            @default(1) // bump when re-embedding

@@ -16,7 +16,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const queryRawCalls: Array<{ strings: TemplateStringsArray; values: unknown[] }> = []
-const upsertCalls: Array<{ update: Record<string, unknown>; create: Record<string, unknown> }> = []
+const executeRawCalls: Array<{ strings: TemplateStringsArray; values: unknown[] }> = []
 let externalModelFindMany: () => Promise<unknown[]> = async () => []
 
 vi.mock('./db', () => ({
@@ -24,13 +24,10 @@ vi.mock('./db', () => ({
     externalModel: {
       findMany: vi.fn(() => externalModelFindMany()),
     },
-    noteEmbedding: {
-      upsert: vi.fn(({ update, create }: { update: Record<string, unknown>; create: Record<string, unknown> }) => {
-        upsertCalls.push({ update, create })
-        return Promise.resolve({})
-      }),
-      findUnique: vi.fn(() => Promise.resolve(null)),
-    },
+    $executeRaw: vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
+      executeRawCalls.push({ strings, values })
+      return Promise.resolve(1)
+    }),
     $queryRaw: vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
       queryRawCalls.push({ strings, values })
       return Promise.resolve([])
@@ -49,6 +46,8 @@ vi.mock('./sanitize-context', () => ({
 import {
   generateEmbedding,
   storeEmbedding,
+  storeSkillEmbedding,
+  computeSemanticEdges,
   vectorSearch,
   hybridSearch,
   mapHybridRows,
@@ -58,7 +57,7 @@ import {
 
 beforeEach(() => {
   queryRawCalls.length = 0
-  upsertCalls.length = 0
+  executeRawCalls.length = 0
   externalModelFindMany = async () => []
   vi.restoreAllMocks()
 })
@@ -109,12 +108,45 @@ describe('storeEmbedding — loud failure on invalid vectors', () => {
       .rejects.toThrow()
     await expect(storeEmbedding('note-1', [1, NaN, 3], 'nomic-embed-text'))
       .rejects.toThrow()
-    expect(upsertCalls.length).toBe(0)
+    expect(executeRawCalls.length).toBe(0)
   })
 
   it('accepts a well-formed numeric vector', async () => {
     await storeEmbedding('note-1', [0.1, 0.2, 0.3], 'nomic-embed-text')
-    expect(upsertCalls.length).toBe(1)
+    expect(executeRawCalls.length).toBe(1)
+  })
+
+  it('upserts via raw SQL with the vector bound as a ::vector parameter, never interpolated', async () => {
+    await storeEmbedding('note-1', [0.1, 0.2, 0.3], 'nomic-embed-text')
+    const { strings, values } = executeRawCalls[0]
+    const sql = strings.join('$?')
+    expect(sql).toMatch(/INSERT INTO "note_embeddings"/)
+    expect(sql).toMatch(/\$\?::vector/)
+    expect(sql).toMatch(/ON CONFLICT \("noteId"\) DO UPDATE/)
+    expect(sql).toMatch(/"version"\s*=\s*"note_embeddings"\."version" \+ 1/)
+    expect(sql).not.toContain('0.1')
+    expect(values).toEqual(['note-1', '[0.1,0.2,0.3]', 3, 'nomic-embed-text'])
+  })
+})
+
+describe('storeSkillEmbedding', () => {
+  it('rejects malformed vectors and upserts valid ones into nebula_embeddings via ::vector', async () => {
+    await expect(storeSkillEmbedding('neb-1', [1, Infinity], 'nomic-embed-text')).rejects.toThrow()
+    expect(executeRawCalls.length).toBe(0)
+    await storeSkillEmbedding('neb-1', [0.5, 0.25], 'nomic-embed-text')
+    const sql = executeRawCalls[0].strings.join('$?')
+    expect(sql).toMatch(/INSERT INTO "nebula_embeddings"/)
+    expect(sql).toMatch(/\$\?::vector/)
+    expect(executeRawCalls[0].values).toEqual(['neb-1', '[0.5,0.25]', 2, 'nomic-embed-text'])
+  })
+})
+
+describe('computeSemanticEdges', () => {
+  it('reads the target vector via raw SQL and returns early when the note has no embedding', async () => {
+    await computeSemanticEdges('note-x')
+    expect(queryRawCalls.length).toBe(1)
+    expect(queryRawCalls[0].strings.join('$?')).toMatch(/SELECT "embedding"::text AS "embedding", "modelRef"\s+FROM "note_embeddings"/)
+    expect(queryRawCalls[0].values).toEqual(['note-x'])
   })
 })
 

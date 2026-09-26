@@ -149,6 +149,13 @@ export const openaiRunner: AgentRunner = {
         if (assistantMsg.tool_calls?.length) {
           const toolCalls = assistantMsg.tool_calls
 
+          // Surface any text the model wrote alongside its tool calls (typically
+          // the <plan>) BEFORE the tool_call events, so the consumer's plan gate
+          // can see it. Previously this content was never yielded at all.
+          if (assistantMsg.content) {
+            yield { type: 'text', content: assistantMsg.content }
+          }
+
           // Helper: execute a single tool call and return { toolCall, result }
           const executeToolCall = async (toolCall: typeof toolCalls[number]): Promise<{ toolCall: typeof toolCalls[number]; result: string }> => {
             const fn = toolCall.function
@@ -201,10 +208,16 @@ export const openaiRunner: AgentRunner = {
           const parallelCalls = toolCalls.filter(tc => isParallelSafe(tc.function.name))
           const sequentialCalls = toolCalls.filter(tc => !isParallelSafe(tc.function.name))
 
-          // Run parallel-safe tools concurrently
+          // Announce every parallel-safe call BEFORE any of them executes. The
+          // consumer (worker plan gate) stops iterating the generator when it
+          // must pause for approval, so if it stops on any of these yields none
+          // of the batch runs. Results are then yielded in the same order, which
+          // keeps the worker's FIFO tool_call → tool_result pairing intact.
+          for (const toolCall of parallelCalls) {
+            yield { type: 'tool_call', tool: toolCall.function.name, args: toolCall.function.arguments }
+          }
           const parallelResults = await Promise.all(parallelCalls.map(tc => executeToolCall(tc)))
           for (const { toolCall, result } of parallelResults) {
-            yield { type: 'tool_call', tool: toolCall.function.name, args: toolCall.function.arguments }
             yield { type: 'tool_result', tool: toolCall.function.name, result }
             messages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
           }

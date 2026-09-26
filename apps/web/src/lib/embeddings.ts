@@ -182,6 +182,15 @@ function buildEmbeddingText(note: { title: string; content: string }): string {
 
 // ── Storage ──────────────────────────────────────────────────────────────────
 
+/**
+ * Format a validated vector as a pgvector text literal ('[0.1,0.2,...]').
+ * Always bound as a query parameter and cast with `::vector` — never
+ * interpolated into SQL text.
+ */
+export function toVectorLiteral(vector: number[]): string {
+  return `[${vector.join(',')}]`
+}
+
 /** Upsert an embedding for a note (replaces previous version). */
 export async function storeEmbedding(
   noteId: string,
@@ -197,22 +206,19 @@ export async function storeEmbedding(
       `${Array.isArray(vector) ? `length=${vector.length}` : typeof vector}`,
     )
   }
-  await prisma.noteEmbedding.upsert({
-    where: { noteId },
-    update: {
-      embedding: JSON.stringify(vector),
-      dimension: vector.length,
-      modelRef,
-      version: { increment: 1 },
-      updatedAt: new Date(),
-    },
-    create: {
-      noteId,
-      embedding: JSON.stringify(vector),
-      dimension: vector.length,
-      modelRef,
-    },
-  })
+  // `embedding` is Unsupported("vector(768)") in schema.prisma, so the Prisma
+  // client can't write it — upsert via raw SQL with a parameterized literal.
+  const vecStr = toVectorLiteral(vector)
+  await prisma.$executeRaw`
+    INSERT INTO "note_embeddings" ("noteId", "embedding", "dimension", "modelRef", "version", "createdAt", "updatedAt")
+    VALUES (${noteId}, ${vecStr}::vector, ${vector.length}, ${modelRef}, 1, NOW(), NOW())
+    ON CONFLICT ("noteId") DO UPDATE SET
+      "embedding" = EXCLUDED."embedding",
+      "dimension" = EXCLUDED."dimension",
+      "modelRef"  = EXCLUDED."modelRef",
+      "version"   = "note_embeddings"."version" + 1,
+      "updatedAt" = NOW()
+  `
 }
 
 /**
@@ -352,7 +358,7 @@ export async function vectorSearch(
     score: number
   }>
 > {
-  const vecStr = `[${queryVector.join(',')}]`
+  const vecStr = toVectorLiteral(queryVector)
   const ownerFilter = ownerFilterSql(callerId, 'n')
 
   const results = await prisma.$queryRaw<unknown[]>`
@@ -494,7 +500,7 @@ export async function hybridSearch(
     return { modelRef: null, hits: mapHybridRows(rows) }
   }
 
-  const vecStr = `[${embedding.vector.join(',')}]`
+  const vecStr = toVectorLiteral(embedding.vector)
 
   const rows = await prisma.$queryRaw<unknown[]>`
     WITH vec_top AS (
@@ -567,22 +573,17 @@ export async function storeSkillEmbedding(
       `${Array.isArray(vector) ? `length=${vector.length}` : typeof vector}`,
     )
   }
-  await prisma.nebulaEmbedding.upsert({
-    where: { nebulaId },
-    update: {
-      embedding: JSON.stringify(vector),
-      dimension: vector.length,
-      modelRef,
-      version: { increment: 1 },
-      updatedAt: new Date(),
-    },
-    create: {
-      nebulaId,
-      embedding: JSON.stringify(vector),
-      dimension: vector.length,
-      modelRef,
-    },
-  })
+  const vecStr = toVectorLiteral(vector)
+  await prisma.$executeRaw`
+    INSERT INTO "nebula_embeddings" ("nebulaId", "embedding", "dimension", "modelRef", "version", "createdAt", "updatedAt")
+    VALUES (${nebulaId}, ${vecStr}::vector, ${vector.length}, ${modelRef}, 1, NOW(), NOW())
+    ON CONFLICT ("nebulaId") DO UPDATE SET
+      "embedding" = EXCLUDED."embedding",
+      "dimension" = EXCLUDED."dimension",
+      "modelRef"  = EXCLUDED."modelRef",
+      "version"   = "nebula_embeddings"."version" + 1,
+      "updatedAt" = NOW()
+  `
 }
 
 /**
@@ -619,7 +620,7 @@ export async function skillVectorSearch(
   environmentId: string,
   limit: number = 3,
 ): Promise<Array<{ nebulaId: string; score: number }>> {
-  const vecStr = `[${queryVector.join(',')}]`
+  const vecStr = toVectorLiteral(queryVector)
 
   // Mirrors vectorSearch: `<=>` (cosine distance) to match the
   // vector_cosine_ops HNSW index, ORDER BY on the indexed distance
@@ -657,7 +658,14 @@ export async function computeSemanticEdges(
   noteId: string,
   topN: number = 5,
 ): Promise<void> {
-  const target = await prisma.noteEmbedding.findUnique({ where: { noteId } })
+  // Read the target vector back as pgvector's text form ('[0.1,0.2,...]') so it
+  // can be re-bound as a parameter — keeping the ORDER BY on
+  // `embedding <=> $param::vector` lets the HNSW index serve the search.
+  const [target] = await prisma.$queryRaw<Array<{ embedding: string; modelRef: string | null }>>`
+    SELECT "embedding"::text AS "embedding", "modelRef"
+    FROM "note_embeddings"
+    WHERE "noteId" = ${noteId}
+  `
   if (!target) return
 
   const vecStr = target.embedding
