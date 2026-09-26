@@ -9,7 +9,6 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { Dialog } from '@/components/ui/Dialog'
-import 'highlight.js/styles/github-dark.css'
 
 /** Render message content with @mention highlighting */
 function MessageContent({ content }: { content: string }) {
