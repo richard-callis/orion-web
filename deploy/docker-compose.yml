@@ -1,5 +1,10 @@
 # Shared by the orion (web) and orion-worker services — same image, same config.
 x-orion-env: &orion-env
+    # Remote gateway manifests pin the same gateway image this host runs (lib/gateway-image.ts).
+    GITHUB_ORG: ${GITHUB_ORG}
+    ORION_GATEWAY_IMAGE_TAG: ${ORION_GATEWAY_VERSION:-${ORION_VERSION:-latest}}
+    # Set to /health before rolling back to a gateway image older than /readyz.
+    GATEWAY_READINESS_PATH: ${GATEWAY_READINESS_PATH:-}
     DATABASE_URL: postgresql://orion:${POSTGRES_PASSWORD}@postgres:5432/orion
     NEXTAUTH_URL: https://${ORION_DOMAIN:-orion.khalis.corp}
     NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
@@ -460,27 +465,42 @@ services:
           cpus: '1'
           memory: 512M
 
+  # ── MinIO data dir ownership — the source-built image runs as uid 1000 ─────────
+  # The old upstream image ran as root, so data written by it is root-owned.
+  # Hand it to the minio user once; a no-op when everything is already 1000.
+  minio-init-perms:
+    image: alpine:3.24.2
+    restart: "no"
+    command: ["sh", "-c", "if find /data ! -user 1000 -print -quit | grep -q .; then chown -R 1000:1000 /data; fi; echo 'minio data dir ready'"]
+    volumes:
+      - minio-data:/data
+
   # ── MinIO (S3-compatible object storage for audit log archival — SOC2 [L-001]) ──
   minio:
-    # MinIO no longer publishes images to Docker Hub or Quay (the minio/minio and
-    # minio/mc repositories return "repository does not exist"), so this is
-    # pinned to the digest already present on existing hosts and never pulled.
-    # Fresh installs cannot pull it — see docs/archive/ note / decision needed on
-    # a replacement image (source build, community rebuild, or another S3 store).
-    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
-    pull_policy: missing
+    # MinIO no longer publishes images, so ORION builds it from source
+    # (deploy/minio/Dockerfile, pinned release + commit) and CI pushes it to
+    # GHCR (.github/workflows/build-minio.yml). If the image isn't in the
+    # registry yet, `compose pull` skips it and `compose up` builds it here.
+    image: ghcr.io/${GITHUB_ORG}/orion-minio:${ORION_MINIO_VERSION:-RELEASE.2025-09-07T16-13-09Z}
+    build:
+      context: ./minio
+      dockerfile: Dockerfile
     restart: unless-stopped
+    depends_on:
+      minio-init-perms:
+        condition: service_completed_successfully
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
-    command: server /data --console-address ":9001"
+    command: ["server", "/data", "--console-address", ":9001"]
     volumes:
       - minio-data:/data
     ports:
       - "127.0.0.1:9000:9000"    # S3 API — localhost only (SOC2)
       - "127.0.0.1:9001:9001"    # Web console — localhost only (SOC2)
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # busybox wget ships in the image; there is no curl.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -495,15 +515,17 @@ services:
 
   # ── MinIO init container — creates orion-audit-logs bucket on startup ────────
   minio-init:
-    image: minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
-    pull_policy: missing
+    image: ghcr.io/${GITHUB_ORG}/orion-mc:${ORION_MC_VERSION:-RELEASE.2025-08-13T08-35-41Z}
+    build:
+      context: ./minio
+      dockerfile: Dockerfile.mc
     restart: "no"
     depends_on:
       minio:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      /usr/bin/mc config host add myminio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
+      /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
       /usr/bin/mc mb myminio/orion-audit-logs --ignore-existing;
       /usr/bin/mc version enable myminio/orion-audit-logs;
       echo 'MinIO bucket orion-audit-logs initialized with versioning';
