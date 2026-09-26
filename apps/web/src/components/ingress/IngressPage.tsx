@@ -1842,6 +1842,9 @@ export function IngressPage() {
   const [domains, setDomains]           = useState<Domain[]>([])
   const [environments, setEnvironments] = useState<Env[]>([])
   const [loading, setLoading]           = useState(true)
+  // True once the first load finished. Refreshes keep the list mounted so
+  // expanded panels and half-filled forms survive.
+  const [loaded, setLoaded]             = useState(false)
   const [error, setError]               = useState<string | null>(null)
   const [selectedId, setSelectedId]     = useState<string | null>(null)
 
@@ -1856,15 +1859,16 @@ export function IngressPage() {
       const [d, e] = await Promise.all([dRes.json(), eRes.json()])
       setDomains(d)
       setEnvironments(e)
-      if (d.length > 0 && !selectedId) setSelectedId(d[0].id)
+      setSelectedId(prev => prev ?? (d.length > 0 ? d[0].id : null))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unknown error')
     } finally {
       setLoading(false)
+      setLoaded(true)
     }
-  }, [selectedId])
+  }, [])
 
-  useEffect(() => { load() }, [])   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [load])
 
   const totalRoutes    = domains.reduce((s, d) => s + d.ingressPoints.reduce((ss, p) => ss + p.routes.length, 0), 0)
   const disabledRoutes = domains.reduce((s, d) => s + d.ingressPoints.reduce((ss, p) => ss + p.routes.filter(r => !r.enabled).length, 0), 0)
@@ -1884,7 +1888,7 @@ export function IngressPage() {
         </button>
       </div>
 
-      {!loading && domains.length > 0 && (
+      {loaded && domains.length > 0 && (
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-xs text-text-muted px-2.5 py-1 rounded-full border border-border-subtle bg-bg-raised">
             {domains.length} domain{domains.length !== 1 ? 's' : ''}
@@ -1906,13 +1910,13 @@ export function IngressPage() {
         </div>
       )}
 
-      {loading && (
+      {!loaded && (
         <div className="flex items-center gap-2 text-text-muted text-sm py-8 justify-center">
           <RefreshCw size={14} className="animate-spin" /> Loading…
         </div>
       )}
 
-      {!loading && domains.length === 0 && (
+      {loaded && domains.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 gap-3 text-text-muted">
           <Globe size={40} className="opacity-30" />
           <p className="text-sm font-medium text-text-secondary">No domains defined yet</p>
@@ -1920,7 +1924,7 @@ export function IngressPage() {
         </div>
       )}
 
-      {!loading && (
+      {loaded && (
         <div className="space-y-3">
           {domains.map(d => (
             <DomainPanel
