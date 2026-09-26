@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireServiceAuth, requireWriteAccess } from '@/lib/auth'
 import { parseCron, nextRun, minCronIntervalSeconds } from '@/lib/cron'
+import { isSystemAgent } from '@/lib/scheduled-task-access'
 
 export async function GET(req: NextRequest) {
-  await requireServiceAuth(req)
+  try {
+    await requireServiceAuth(req)
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
   const tasks = await prisma.scheduledTask.findMany({
     orderBy: { createdAt: 'desc' },
@@ -15,7 +20,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  await requireServiceAuth(req)
+  // SOC2 [H4]: schedules spawn agent tasks on a timer — human sessions with write
+  // access only (no readonly users, no gateway token), and the creator owns the row.
+  let caller
+  try {
+    caller = await requireWriteAccess()
+  } catch (e) {
+    const status = e instanceof Error && e.message === 'Forbidden' ? 403 : 401
+    return NextResponse.json({ error: status === 403 ? 'Forbidden' : 'Unauthorized' }, { status })
+  }
 
   let body: unknown
   try {
@@ -48,8 +61,19 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const agent = await prisma.agent.findUnique({ where: { id: agentId }, select: { id: true } })
+  const agent = await prisma.agent.findUnique({ where: { id: agentId }, select: { id: true, createdBy: true } })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
+
+  // Non-admins may only schedule work for agents they can see (their own or shared),
+  // and never for privileged system agents.
+  if (caller.role !== 'admin') {
+    if (agent.createdBy && agent.createdBy !== caller.id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+    if (await isSystemAgent(agentId)) {
+      return NextResponse.json({ error: 'Only admins can schedule tasks for system agents' }, { status: 403 })
+    }
+  }
 
   const initialNextRun = nextRun(cronExpr)
 
@@ -62,6 +86,7 @@ export async function POST(req: NextRequest) {
       taskDesc: typeof taskDesc === 'string' ? taskDesc : null,
       enabled:  enabled !== false,
       nextRunAt: initialNextRun,
+      createdBy: caller.id,
     },
     include: { agent: { select: { id: true, name: true } } },
   })
