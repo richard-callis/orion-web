@@ -9,14 +9,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions, requireServiceAuth, type AppUser } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { triggerRoomAgentReplies } from '@/lib/room-agents'
-
-async function getRoomMembership(roomId: string, userId: string | undefined) {
-  const member = await prisma.chatRoomMember.findFirst({
-    where: { roomId, userId },
-    select: { userId: true, agentId: true },
-  })
-  return { userId: member?.userId ?? userId, agentId: member?.agentId ?? null }
-}
+import { getRoomMember } from '@/lib/room-access'
 
 // GET /api/chatrooms/[id]/messages
 export async function GET(
@@ -30,8 +23,9 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const { id } = await params
-  const membership = await getRoomMembership(id, session.user.id)
-  if (!membership.userId && !membership.agentId) {
+  // The previous helper returned `member?.userId ?? userId`, which is always truthy
+  // for a logged-in caller — so this check never denied anyone. Require a real row.
+  if (!(await getRoomMember(id, session.user.id))) {
     return NextResponse.json({ error: 'Not a member of this room' }, { status: 403 })
   }
 
@@ -89,12 +83,12 @@ export async function POST(
   let memberUserId: string | undefined
   let agentId: string | null = null
   if (!isService) {
-    const membership = await getRoomMembership(id, userId)
-    memberUserId = membership.userId
-    agentId = membership.agentId
-    if (!memberUserId && !agentId) {
+    const member = userId ? await getRoomMember(id, userId) : null
+    if (!member) {
       return NextResponse.json({ error: 'Not a member of this room' }, { status: 403 })
     }
+    memberUserId = member.userId ?? userId
+    agentId = member.agentId
   }
 
   const content = String(body.content ?? '')

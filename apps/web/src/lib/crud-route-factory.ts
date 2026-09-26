@@ -49,7 +49,19 @@ export function makeCrudRoutes(config: {
     },
 
     POST: async (req: NextRequest) => {
-      const caller: Caller = needsAuth ? await requireServiceAuth(req) : null
+      let caller: Caller = null
+      if (needsAuth) {
+        try {
+          caller = await requireServiceAuth(req)
+        } catch {
+          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+        }
+        // SOC2 [M5]: session callers need write access — readonly users could
+        // previously create notes/bugs/epics through every factory-built route.
+        if (caller && caller.role === 'readonly') {
+          return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+        }
+      }
       const result = await parseBodyOrError(req, config.createSchema)
       if ('error' in result) return result.error
 

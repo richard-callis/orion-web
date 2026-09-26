@@ -9,6 +9,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { constantTimeCompare } from '@/lib/security/webhook-auth'
 
 export interface K8sIngressRule {
   host: string
@@ -28,7 +29,8 @@ export async function POST(
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const expectedToken = env.gatewayToken
-  if (!expectedToken || auth !== `Bearer ${expectedToken}`) {
+  // SOC2 [M2]: constant-time comparison (was `!==`, a timing oracle on the token)
+  if (!expectedToken || !constantTimeCompare(auth ?? '', `Bearer ${expectedToken}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

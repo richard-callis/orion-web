@@ -8,6 +8,8 @@
  * - read / write tier tools: allowed by default
  * - destructive tier tools: require an explicit ToolExecutionGrant (keyed by agentId)
  * - ToolAgentRestriction: if any restriction rows exist for this tool+agent, block
+ * - untrusted tasks (metadata.untrusted, e.g. webhook-created): every tool except
+ *   registry read-tier tools requires an explicit ToolExecutionGrant (SOC2 [M3])
  *
  * SOC2 [A-003]: Permission denials are returned to the LLM as a tool result
  * rather than a silent failure so the outcome is observable in the audit trail.
@@ -26,6 +28,94 @@ async function resolveEnvironmentForAgent(agentId: string): Promise<string | nul
   return envLink?.environmentId ?? null
 }
 
+// ── Helper: untrusted task context (SOC2 [M3]) ───────────────────────────────
+
+function isUntrustedMetadata(metadata: unknown): boolean {
+  return !!metadata && typeof metadata === 'object' && (metadata as Record<string, unknown>).untrusted === true
+}
+
+/**
+ * True when the call originates from a task whose content came from outside
+ * (webhook payloads, commit messages). With a taskId we check that task; the MCP
+ * path (Claude runners) only knows the agent, so fall back to "this agent is
+ * currently working an untrusted task" — conservative, since a prompt-injected run
+ * reaches its tools through that agent's MCP token.
+ */
+async function isUntrustedTaskContext(agentId: string | null, taskId?: string | null): Promise<boolean> {
+  if (taskId) {
+    const task = await prisma.task.findUnique({ where: { id: taskId }, select: { metadata: true } })
+    return isUntrustedMetadata(task?.metadata)
+  }
+  if (agentId) {
+    const task = await prisma.task.findFirst({
+      where: {
+        assignedAgent: agentId,
+        status: 'in_progress',
+        metadata: { path: ['untrusted'], equals: true },
+      },
+      select: { id: true },
+    })
+    return !!task
+  }
+  return false
+}
+
+// ── Helper: one-time grants ───────────────────────────────────────────────────
+
+/**
+ * Consume a one-time ToolExecutionGrant for (agent, env, tool) if one exists;
+ * otherwise file a ToolApprovalRequest (once) so an admin can grant it.
+ */
+async function consumeGrantOrRequest(
+  toolName: string,
+  agentId: string,
+  environmentId: string,
+  requestReason: string,
+): Promise<boolean> {
+  const grant = await prisma.toolExecutionGrant.findFirst({
+    where: {
+      userId:        agentId,       // agentId stored in userId field for agent grants
+      environmentId,
+      toolName,
+      usedAt:    null,
+      expiresAt: { gt: new Date() },
+    },
+  })
+
+  if (grant) {
+    // Consume the one-time grant
+    await prisma.toolExecutionGrant.update({
+      where: { id: grant.id },
+      data:  { usedAt: new Date() },
+    })
+    return true
+  }
+
+  // No grant — create an approval request if one doesn't already exist
+  const existing = await prisma.toolApprovalRequest.findFirst({
+    where: {
+      userId:        agentId,
+      environmentId,
+      toolName,
+      status:        'pending',
+    },
+  })
+
+  if (!existing) {
+    await prisma.toolApprovalRequest.create({
+      data: {
+        conversationId: `task-agent:${agentId}`,
+        userId:        agentId,
+        environmentId,
+        toolName,
+        reason: requestReason,
+      },
+    }).catch(() => {})
+  }
+
+  return false
+}
+
 // ── Main permission check ─────────────────────────────────────────────────────
 
 /**
@@ -35,6 +125,8 @@ async function resolveEnvironmentForAgent(agentId: string): Promise<string | nul
  * @param agentId       - Agent ID from TaskRunContext (required for restriction checks)
  * @param environmentId - Environment ID (resolved from agentId if null)
  * @param userTier      - Optional user tier (used on the chat path only — ignored here)
+ * @param opts.taskId   - Task being run, when known (runner paths). Used for the
+ *                        untrusted-task gate; without it the agent's in-progress tasks are checked.
  *
  * @returns { allowed: true } or { allowed: false, reason: string }
  */
@@ -43,6 +135,7 @@ export async function checkToolPermission(
   agentId: string | null,
   environmentId: string | null,
   _userTier?: string,  // unused on task path — kept for API symmetry
+  opts?: { taskId?: string | null },
 ): Promise<{ allowed: boolean; reason?: string }> {
   // Resolve environmentId from agent link if not provided
   let resolvedEnvId = environmentId
@@ -142,8 +235,30 @@ export async function checkToolPermission(
     }
   }
 
-  // ── Tier check from unified tool registry ────────────────────────────────
+  // ── Untrusted task gate (SOC2 [M3]) ─────────────────────────────────────
+  // Webhook-created tasks carry attacker-influenced text. Only registry read-tier
+  // tools run freely; every write/destructive registry tool and every gateway tool
+  // (gateway tools carry no tier metadata) needs a one-time admin grant.
   const def = getToolDefinition(toolName)
+  if ((!def || def.tier !== 'read') && await isUntrustedTaskContext(agentId, opts?.taskId)) {
+    if (!agentId || !resolvedEnvId) {
+      return {
+        allowed: false,
+        reason: `\`${toolName}\` cannot run from an untrusted (externally triggered) task without an agent and environment context to check for an admin grant.`,
+      }
+    }
+    const granted = await consumeGrantOrRequest(
+      toolName, agentId, resolvedEnvId,
+      `Agent "${agentId}" is working an untrusted (webhook-triggered) task and requested \`${toolName}\`.`,
+    )
+    if (granted) return { allowed: true }
+    return {
+      allowed: false,
+      reason: `\`${toolName}\` requires admin approval because this task was created from an external trigger (untrusted input). An approval request has been filed — use read-only tools until an admin grants access.`,
+    }
+  }
+
+  // ── Tier check from unified tool registry ────────────────────────────────
   if (!def) {
     // Tool not in management registry — it's a gateway tool; allowed if restriction check passed
     return { allowed: true }
@@ -162,46 +277,11 @@ export async function checkToolPermission(
       }
     }
 
-    const grant = await prisma.toolExecutionGrant.findFirst({
-      where: {
-        userId:        agentId,       // agentId stored in userId field for agent grants
-        environmentId: resolvedEnvId,
-        toolName,
-        usedAt:    null,
-        expiresAt: { gt: new Date() },
-      },
-    })
-
-    if (grant) {
-      // Consume the one-time grant
-      await prisma.toolExecutionGrant.update({
-        where: { id: grant.id },
-        data:  { usedAt: new Date() },
-      })
-      return { allowed: true }
-    }
-
-    // No grant — create an approval request if one doesn't already exist
-    const existing = await prisma.toolApprovalRequest.findFirst({
-      where: {
-        userId:        agentId,
-        environmentId: resolvedEnvId,
-        toolName,
-        status:        'pending',
-      },
-    })
-
-    if (!existing) {
-      await prisma.toolApprovalRequest.create({
-        data: {
-          conversationId: `task-agent:${agentId}`,
-          userId:        agentId,
-          environmentId: resolvedEnvId,
-          toolName,
-          reason: `Task agent "${agentId}" requires destructive tool access. Call orion_request_tool_grant to request explicit authorization.`,
-        },
-      }).catch(() => {})
-    }
+    const granted = await consumeGrantOrRequest(
+      toolName, agentId, resolvedEnvId,
+      `Task agent "${agentId}" requires destructive tool access. Call orion_request_tool_grant to request explicit authorization.`,
+    )
+    if (granted) return { allowed: true }
 
     return {
       allowed: false,

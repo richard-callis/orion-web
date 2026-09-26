@@ -139,6 +139,8 @@ export const ollamaRunner: AgentRunner = {
               fn.name,
               ctx.agentId ?? null,
               ctx.environmentId ?? null,
+              undefined,
+              { taskId: ctx.taskId },
             )
             if (!permission.allowed) {
               result = `Permission denied for tool '${fn.name}': ${permission.reason ?? 'Tool not permitted for this agent'}. Contact an admin to grant access.`

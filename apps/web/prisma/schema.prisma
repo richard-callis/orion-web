@@ -1982,11 +1982,13 @@ model ScheduledTask {
   lastRunAt   DateTime?
   nextRunAt   DateTime?
   lastTaskId  String?
+  createdBy   String? // User.id of the owner; null = legacy row (admin-only to modify)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   @@index([agentId])
   @@index([nextRunAt, enabled])
+  @@index([createdBy])
 }
 
 // ── Webhook Triggers ───────────────────────────────────────────────────────────

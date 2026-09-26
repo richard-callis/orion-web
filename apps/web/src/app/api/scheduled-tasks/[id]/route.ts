@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth, assertCanModify } from '@/lib/auth'
-import { parseCron, nextRun } from '@/lib/cron'
+import { requireServiceAuth, getCurrentUser } from '@/lib/auth'
+import { parseCron, nextRun, minCronIntervalSeconds } from '@/lib/cron'
+import { canManageSchedule } from '@/lib/scheduled-task-access'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const caller = await requireServiceAuth(req)
-  const isService = caller === null
+  try {
+    await requireServiceAuth(req)
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
   const task = await prisma.scheduledTask.findUnique({
     where: { id: (await params).id },
@@ -13,17 +17,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   })
 
   if (!task) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  await assertCanModify(caller, isService, '')
   return NextResponse.json(task)
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const caller = await requireServiceAuth(req)
-  const isService = caller === null
+  // SOC2 [H4]: only the schedule's owner or an admin (human session) may change it.
+  const caller = await getCurrentUser()
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const existing = await prisma.scheduledTask.findUnique({ where: { id: (await params).id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  await assertCanModify(caller, isService, '')
+  if (!canManageSchedule(caller, existing.createdBy)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   let body: unknown
   try {
@@ -37,6 +43,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const newCronExpr = typeof cronExpr === 'string' ? cronExpr : existing.cronExpr
   if (typeof cronExpr === 'string' && !parseCron(cronExpr)) {
     return NextResponse.json({ error: `Invalid cron expression: "${cronExpr}"` }, { status: 400 })
+  }
+  // SOC2 [M-009]: same minimum interval as creation — PUT previously skipped it.
+  if (typeof cronExpr === 'string' && minCronIntervalSeconds(cronExpr) < 300) {
+    return NextResponse.json({ error: 'Cron expression fires too frequently (minimum interval is 5 minutes)' }, { status: 400 })
   }
 
   const cronChanged = typeof cronExpr === 'string' && cronExpr !== existing.cronExpr
@@ -58,13 +68,15 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   return NextResponse.json(updated)
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const caller = await requireServiceAuth(req)
-  const isService = caller === null
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const caller = await getCurrentUser()
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const existing = await prisma.scheduledTask.findUnique({ where: { id: (await params).id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  await assertCanModify(caller, isService, '')
+  if (!canManageSchedule(caller, existing.createdBy)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   await prisma.scheduledTask.delete({ where: { id: (await params).id } })
   return NextResponse.json({ ok: true })

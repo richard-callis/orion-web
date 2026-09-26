@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireServiceAuth, isExecutorServiceCall } from '@/lib/auth'
 
 export async function POST(req: NextRequest) {
-  try { await requireServiceAuth(req) } catch { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  // SOC2 [C2]: only the executor service may create execution records. Sessions and
+  // the gateway token are rejected — a user-created pending row could otherwise be
+  // self-approved and then run by the executor.
+  if (!isExecutorServiceCall(req)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   try {
     const body = await req.json()
 
@@ -26,13 +31,27 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Check if execution already exists (idempotent — same executionId returns existing row)
+    // New records always start pending; decisions are recorded via the review endpoint.
+    if (status !== 'pending') {
+      return NextResponse.json({ error: 'New executions must have status "pending"' }, { status: 400 })
+    }
+
+    // Idempotent retry: the same executionId returns the existing row ONLY while it is
+    // still freshly pending. Re-submitting an executionId that was already reviewed or
+    // run is a replay — returning the old row (e.g. reviewDecision: 'approved') would
+    // make the executor run the command again.
     const existing = await prisma.toolExecution.findUnique({
       where: { executionId },
     })
 
     if (existing) {
-      return NextResponse.json(existing, { status: 200 })
+      if (existing.status === 'pending' && !existing.reviewDecision) {
+        return NextResponse.json(existing, { status: 200 })
+      }
+      return NextResponse.json(
+        { error: 'Execution already exists and is no longer pending' },
+        { status: 409 }
+      )
     }
 
     // Create new execution record

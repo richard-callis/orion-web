@@ -252,31 +252,49 @@ export async function getRedisStatus(): Promise<{
 // ─── IP extraction for rate limiting ─────────────────────────────────────────
 
 /**
+ * Number of trusted reverse-proxy hops in front of ORION (TRUSTED_PROXY_COUNT,
+ * default 1 = Traefik). 0 means ORION is reached directly and x-forwarded-for is
+ * entirely client-controlled. Invalid values fall back to 1.
+ */
+export function getTrustedProxyCount(): number {
+  const raw = process.env.TRUSTED_PROXY_COUNT
+  if (raw === undefined || raw.trim() === '') return 1
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) && n >= 0 ? n : 1
+}
+
+/**
  * SOC2: [M-006] Extract the real client IP for rate limiting.
  *
  * Next.js only sets req.ip in the Edge runtime. In self-hosted Node.js
- * deployments req.ip is always undefined, so we read x-forwarded-for first.
+ * deployments req.ip is always undefined, so we read x-forwarded-for.
  *
- * SOC2: [H-002] TRUSTED_PROXY_COUNT (default 1) controls how many proxy hops
- * to strip from the right of the x-forwarded-for list. Taking the Nth-from-right
- * value prevents IP spoofing via attacker-controlled leftmost entries: a client
- * cannot forge the IP that our own trusted proxy appended.
+ * SOC2: [H-002] Each trusted proxy APPENDS the address of the peer it received
+ * the connection from (Next.js itself only sets x-forwarded-for when absent). So
+ * with N trusted proxies the client address is the Nth entry from the right, and
+ * everything to its left was supplied by the client and cannot be trusted:
  *
- * Example with TRUSTED_PROXY_COUNT=1 and header "1.2.3.4, 10.0.0.1":
- *   - rightmost entry (10.0.0.1) was set by our proxy → strip it
- *   - next entry (1.2.3.4) is the real client IP
+ *   TRUSTED_PROXY_COUNT=1, header "6.6.6.6, 1.2.3.4"
+ *     - "1.2.3.4" was appended by Traefik (the real client)
+ *     - "6.6.6.6" was sent by the client (spoofed) → ignored
  *
- * Falls back to req.ip (Edge runtime) then 'unknown'.
+ * The previous implementation took index len - N - 1, i.e. the spoofable entry,
+ * and `parseInt(...) || 1` made TRUSTED_PROXY_COUNT=0 impossible to set.
+ *
+ * With TRUSTED_PROXY_COUNT=0 the header is ignored entirely. Falls back to req.ip
+ * (Edge runtime) then 'unknown'.
  */
 export function getClientIpForRateLimit(req: import('next/server').NextRequest): string {
+  const trustedProxyCount = getTrustedProxyCount()
   const forwarded = req.headers.get('x-forwarded-for')
-  if (forwarded) {
+  if (forwarded && trustedProxyCount > 0) {
     const ips = forwarded.split(',').map((s) => s.trim()).filter(Boolean)
-    const trustedProxyCount = Math.max(0, parseInt(process.env.TRUSTED_PROXY_COUNT ?? '1', 10) || 1)
-    // The real client IP is at index: len - trustedProxyCount - 1
-    // Clamp to index 0 to handle misconfigured shorter lists
-    const idx = Math.max(0, ips.length - trustedProxyCount - 1)
-    return ips[idx] ?? 'unknown'
+    if (ips.length > 0) {
+      // Fewer entries than trusted hops means a misconfigured count; the leftmost
+      // entry is then the best (proxy-supplied) value available.
+      const idx = Math.max(0, ips.length - trustedProxyCount)
+      return ips[idx]
+    }
   }
   return (req as any).ip ?? 'unknown'
 }
