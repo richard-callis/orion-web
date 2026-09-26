@@ -67,6 +67,18 @@ interface RoomDetail {
   activeGoal?: { id: string; text: string; status: string; createdAt: string } | null
 }
 
+/**
+ * Combine a freshly fetched page of messages with what is already on screen.
+ * Messages that arrived over SSE while the request was in flight are kept,
+ * and duplicates (same id) are dropped.
+ */
+function mergeMessages(fetched: RoomMessage[], current: RoomMessage[]): RoomMessage[] {
+  const seen = new Set(fetched.map(m => m.id))
+  const lastFetchedAt = fetched.length ? fetched[fetched.length - 1].createdAt : ''
+  const newer = current.filter(m => !seen.has(m.id) && m.createdAt >= lastFetchedAt)
+  return newer.length ? [...fetched, ...newer] : fetched
+}
+
 interface InviteOption {
   id: string
   name: string
@@ -244,6 +256,12 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
+  // Latest roomId, used to discard responses for a room the user already left.
+  const roomIdRef = useRef(roomId)
+  roomIdRef.current = roomId
+  const messageLimitRef = useRef(messageLimit)
+  messageLimitRef.current = messageLimit
+  const planTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
 
   // Derive all mentionable members from loaded room data
   const mentionableMembers = (room?.members ?? []).map(m => ({
@@ -283,15 +301,34 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   }
 
   const loadRoom = useCallback(async (limit?: number) => {
+    const requestedRoom = roomId
     try {
-      const res = await fetch(`/api/chatrooms/${roomId}?messages=${limit ?? messageLimit}`)
+      const res = await fetch(`/api/chatrooms/${requestedRoom}?messages=${limit ?? messageLimitRef.current}`)
       if (!res.ok) throw new Error(`Request failed: ${res.status}`)
-      const detail = await res.json()
-      setRoom(detail)
+      const detail: RoomDetail & { tokenCount?: number; tokenLimit?: number | null } = await res.json()
+      if (roomIdRef.current !== requestedRoom) return
+      setRoom(prev => (
+        prev && prev.id === detail.id
+          ? { ...detail, messages: mergeMessages(detail.messages ?? [], prev.messages ?? []) }
+          : detail
+      ))
       setTokenState({ count: detail.tokenCount ?? 0, limit: detail.tokenLimit ?? null })
     } catch { /* ignore */ }
-    setLoading(false)
-  }, [roomId, messageLimit])
+    if (roomIdRef.current === requestedRoom) setLoading(false)
+  }, [roomId])
+
+  // Switching rooms: clear the previous room so its data never shows under the new id.
+  useEffect(() => {
+    setRoom(null)
+    setLoading(true)
+    setMessageLimit(100)
+    setTypingAgents([])
+  }, [roomId])
+
+  useEffect(() => {
+    const timers = planTimersRef.current
+    return () => { timers.forEach(clearTimeout) }
+  }, [])
 
   const loadMore = useCallback(() => {
     const next = messageLimit + 100
@@ -299,7 +336,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     loadRoom(next)
   }, [messageLimit, loadRoom])
 
-  useEffect(() => { loadRoom() }, [loadRoom])
+  useEffect(() => { loadRoom(100) }, [loadRoom])
 
   // Debounce scroll to avoid performance issues with rapid message arrivals
   useEffect(() => {
@@ -312,6 +349,8 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   // Subscribe to real-time messages via SSE and poll typing state
   useEffect(() => {
     let active = true
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let hasConnected = false
 
     // SSE subscription for real-time messages
     const connectSSE = () => {
@@ -324,9 +363,10 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
         try {
           const message = JSON.parse(event.data)
 
-          // Skip the initial "connected" message
+          // On (re)connect, reload so messages sent while disconnected appear.
           if (message.type === 'connected') {
-            console.log('[RoomChat] SSE connected for room', roomId)
+            if (hasConnected) loadRoom()
+            hasConnected = true
             return
           }
 
@@ -337,10 +377,12 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
 
           // Update room with new message
           setRoom((prev) => {
-            if (!prev) return prev
+            if (!prev || prev.id !== roomId) return prev
+            if (message.id && prev.messages?.some(m => m.id === message.id)) return prev
             const newMessages = [...(prev.messages || []), message]
-            // Keep only the last 200 messages in DOM to avoid performance issues
-            const trimmedMessages = newMessages.length > 200 ? newMessages.slice(-200) : newMessages
+            // Keep the DOM bounded, but never below what the user explicitly loaded
+            const cap = Math.max(200, messageLimitRef.current)
+            const trimmedMessages = newMessages.length > cap ? newMessages.slice(-cap) : newMessages
             return {
               ...prev,
               messages: trimmedMessages,
@@ -362,11 +404,10 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       })
 
       es.addEventListener('error', () => {
-        console.warn('[RoomChat] SSE connection error, falling back to polling')
         es.close()
         if (active) {
-          // Reconnect after delay if still active
-          setTimeout(connectSSE, 5000)
+          // Reconnect after a delay; the 'connected' handler reloads missed messages.
+          reconnectTimer = setTimeout(connectSSE, 5000)
         }
       })
 
@@ -376,9 +417,10 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       eventSourceRef.current = es
     }
 
-    // Typing state polling (every 2s)
+    // Typing state polling (every 2s). The stream does not carry typing
+    // events, so poll — but only while the tab is visible.
     const pollTyping = async () => {
-      if (!active) return
+      if (!active || document.visibilityState === 'hidden') return
       try {
         const res = await fetch(`/api/chatrooms/${roomId}/typing`)
         if (res.ok) {
@@ -394,12 +436,13 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     return () => {
       active = false
       clearInterval(typingInterval)
+      if (reconnectTimer) clearTimeout(reconnectTimer)
       if (eventSourceRef.current) {
         eventSourceRef.current.close()
         eventSourceRef.current = null
       }
     }
-  }, [roomId])
+  }, [roomId, loadRoom])
 
   const saveAsPlan = useCallback(async (msgId: string, content: string) => {
     if (!room) return
@@ -427,8 +470,10 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     if (!patchRes.ok) return
     setSavedPlanMsgId(msgId)
     setPlanToast({ msgId, prevPlan })
-    setTimeout(() => setSavedPlanMsgId(null), 3000)
-    setTimeout(() => setPlanToast(null), 5000)
+    planTimersRef.current.push(
+      setTimeout(() => setSavedPlanMsgId(null), 3000),
+      setTimeout(() => setPlanToast(null), 5000),
+    )
   }, [room])
 
   const undoPlan = useCallback(async () => {

@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Plus, Trash2, Pencil, X, RefreshCw, Check,
@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { ClusterPreflightFlow } from './ClusterPreflightFlow'
 import { DriftStatusBadge } from './DriftStatusBadge'
+import { useToast } from '@/components/ui/Toast'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -81,7 +82,7 @@ const DEFAULT_INPUT_SCHEMA = `{
 interface EnvForm { name: string; type: string; description: string; gatewayUrl: string; gatewayToken: string; kubeconfig: string; nodeIp: string; talosConfig: string; federationRole: string; federationToken: string; spokeUrl: string; hubUrl: string }
 const EMPTY_ENV: EnvForm = { name: '', type: 'cluster', description: '', gatewayUrl: '', gatewayToken: '', kubeconfig: '', nodeIp: '', talosConfig: '', federationRole: 'standalone', federationToken: '', spokeUrl: '', hubUrl: '' }
 
-// ─── Wrench form ────────────────────────────────────────────────────────────────
+// ─── Tool form ────────────────────────────────────────────────────────────────
 
 interface ToolForm { name: string; description: string; inputSchema: string; execType: string; execConfig: string }
 const EMPTY_TOOL: ToolForm = { name: '', description: '', inputSchema: DEFAULT_INPUT_SCHEMA, execType: 'shell', execConfig: '' }
@@ -91,9 +92,13 @@ const EMPTY_TOOL: ToolForm = { name: '', description: '', inputSchema: DEFAULT_I
 export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments: Environment[] }) {
   const [environments, setEnvironments] = useState<Environment[]>(initialEnvironments)
   const [selected, setSelected]         = useState<Environment | null>(initialEnvironments[0] ?? null)
+  // Latest selected id — async loaders compare against it to drop stale responses.
+  const selectedIdRef = useRef<string | null>(selected?.id ?? null)
+  selectedIdRef.current = selected?.id ?? null
+  const toast = useToast()
   const [tab, setTab]                   = useState<'tools' | 'agents' | 'groups' | 'access'>('tools')
 
-  // ── Wrench groups state ────────────────────────────────────────────────────────
+  // ── Tool groups state ────────────────────────────────────────────────────────
   interface ToolGroup {
     id: string; name: string; description: string | null; minimumTier: string; environmentId: string
     tools: { toolId: string; tool: McpTool }[]
@@ -164,10 +169,10 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   // Pending tool approval state
   const [approvingTool, setApprovingTool] = useState<string | null>(null)
 
-  // Wrench detail modal (click to inspect / toggle enable)
+  // Tool detail modal (click to inspect / toggle enable)
   const [toolDetailModal, setToolDetailModal] = useState<McpTool | null>(null)
 
-  // Wrench CRUD state
+  // Tool CRUD state
   const [toolModal, setToolModal]   = useState<'create' | 'edit' | null>(null)
   const [toolTarget, setToolTarget] = useState<McpTool | null>(null)
   const [toolForm, setToolForm]     = useState<ToolForm>(EMPTY_TOOL)
@@ -385,15 +390,15 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
   const deleteEnv = async () => {
     if (!selected) return
-    const res = await fetch(`/api/environments/${selected.id}`, { method: 'DELETE' })
-    if (!res.ok) return
+    const res = await fetch(`/api/environments/${selected.id}`, { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) { toast.error(`Failed to delete environment${res ? ` (${res.status})` : ''}`); return }
     const remaining = environments.filter(e => e.id !== selected.id)
     setEnvironments(remaining)
     setSelected(remaining[0] ?? null)
     setEnvModal(null)
   }
 
-  // ── Wrench modals ───────────────────────────────────────────────────────────────
+  // ── Tool modals ───────────────────────────────────────────────────────────────
 
   const openCreateTool = () => { setToolTarget(null); setToolForm(EMPTY_TOOL); setToolError(null); setToolModal('create') }
   const openEditTool = (t: McpTool) => {
@@ -445,8 +450,9 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
   const deleteTool = async (toolId: string) => {
     if (!selected) return
-    await fetch(`/api/environments/${selected.id}/tools/${toolId}`, { method: 'DELETE' })
+    const res = await fetch(`/api/environments/${selected.id}/tools/${toolId}`, { method: 'DELETE' }).catch(() => null)
     setConfirmDeleteTool(null)
+    if (!res?.ok) { toast.error(`Failed to delete tool${res ? ` (${res.status})` : ''}`); return }
     syncSelected({ ...selected, tools: selected.tools.filter(t => t.id !== toolId) })
   }
 
@@ -471,12 +477,14 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
     }
   }
 
-  // ── Wrench groups ───────────────────────────────────────────────────────────────
+  // ── Tool groups ───────────────────────────────────────────────────────────────
 
   const loadToolGroups = useCallback(async () => {
     if (!selected) return
-    const r = await fetch(`/api/tool-groups?environmentId=${selected.id}`)
+    const envId = selected.id
+    const r = await fetch(`/api/tool-groups?environmentId=${envId}`)
     const data = r.ok ? await r.json() : []
+    if (selectedIdRef.current !== envId) return
     setToolGroups(data)
     setToolGroupsLoaded(true)
   }, [selected])
@@ -485,44 +493,50 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
     if (tab === 'groups' && selected && !toolGroupsLoaded) loadToolGroups()
   }, [tab, selected, toolGroupsLoaded, loadToolGroups])
 
-  useEffect(() => { setToolGroupsLoaded(false) }, [selected?.id])
+  useEffect(() => { setToolGroupsLoaded(false); setToolGroups([]) }, [selected?.id])
 
   const saveTg = async () => {
     if (!selected || !tgForm.name.trim()) return
     setTgSaving(true)
     try {
+      let res: Response | null = null
       if (tgModal === 'create') {
-        await fetch('/api/tool-groups', {
+        res = await fetch('/api/tool-groups', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: tgForm.name.trim(), description: tgForm.description.trim() || null, minimumTier: tgForm.minimumTier, environmentId: selected.id }),
         })
       } else if (tgTarget) {
-        await fetch(`/api/tool-groups/${tgTarget.id}`, {
+        res = await fetch(`/api/tool-groups/${tgTarget.id}`, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: tgForm.name.trim(), description: tgForm.description.trim() || null, minimumTier: tgForm.minimumTier }),
         })
       }
+      if (res && !res.ok) { toast.error(`Failed to save tool group (${res.status})`); return }
       await loadToolGroups()
       setTgModal(null)
-    } finally { setTgSaving(false) }
+    } catch { toast.error('Failed to save tool group') }
+    finally { setTgSaving(false) }
   }
 
   const deleteTg = async (id: string) => {
-    await fetch(`/api/tool-groups/${id}`, { method: 'DELETE' })
-    setToolGroups(prev => prev.filter(g => g.id !== id))
+    const res = await fetch(`/api/tool-groups/${id}`, { method: 'DELETE' }).catch(() => null)
     setConfirmDeleteTg(null)
+    if (!res?.ok) { toast.error(`Failed to delete tool group${res ? ` (${res.status})` : ''}`); return }
+    setToolGroups(prev => prev.filter(g => g.id !== id))
   }
 
   const addToolToGroup = async (tgId: string, toolId: string) => {
-    await fetch(`/api/tool-groups/${tgId}/tools`, {
+    const res = await fetch(`/api/tool-groups/${tgId}/tools`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toolId }),
-    })
+    }).catch(() => null)
+    if (!res?.ok) toast.error(`Failed to add tool to group${res ? ` (${res.status})` : ''}`)
     await loadToolGroups()
     setTgAddingTool(null)
   }
 
   const removeToolFromGroup = async (tgId: string, toolId: string) => {
-    await fetch(`/api/tool-groups/${tgId}/tools?toolId=${toolId}`, { method: 'DELETE' })
+    const res = await fetch(`/api/tool-groups/${tgId}/tools?toolId=${toolId}`, { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) toast.error(`Failed to remove tool from group${res ? ` (${res.status})` : ''}`)
     await loadToolGroups()
   }
 
@@ -543,7 +557,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
       const res = await fetch(`/api/environments/${selected.id}/agents`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentId }),
       })
-      if (!res.ok) return
+      if (!res.ok) { toast.error(`Failed to link agent (${res.status})`); return }
       const link = await res.json() as { id: string; agentId: string; agent: AllAgent }
       setEnvironments(prev => prev.map(e =>
         e.id === selected.id ? { ...e, agents: [...e.agents, { id: link.id, agentId: link.agentId, agent: link.agent }] } : e
@@ -556,7 +570,8 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
   const unlinkAgent = async (agentId: string) => {
     if (!selected) return
-    await fetch(`/api/environments/${selected.id}/agents/${agentId}`, { method: 'DELETE' })
+    const res = await fetch(`/api/environments/${selected.id}/agents/${agentId}`, { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) { toast.error(`Failed to unlink agent${res ? ` (${res.status})` : ''}`); return }
     setEnvironments(prev => prev.map(e =>
       e.id === selected.id ? { ...e, agents: e.agents.filter(a => a.agentId !== agentId) } : e
     ))
@@ -565,14 +580,16 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
   const loadUserTiers = useCallback(async () => {
     if (!selected) return
+    const envId = selected.id
     const [tiersRes, usersRes] = await Promise.all([
-      fetch(`/api/environments/${selected.id}/user-tiers`),
+      fetch(`/api/environments/${envId}/user-tiers`),
       fetch('/api/admin/users'),
     ])
     const [tiersData, usersData] = [
       tiersRes.ok ? await tiersRes.json() : [],
       usersRes.ok ? await usersRes.json() : [],
     ]
+    if (selectedIdRef.current !== envId) return
     setUserTiers(tiersData)
     setAllUsers(usersData)
     setTiersLoaded(true)
@@ -586,22 +603,24 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
     if (tab === 'access' && selected && !tiersLoaded) loadUserTiers()
   }, [tab, selected, tiersLoaded, loadUserTiers])
 
-  useEffect(() => { setTiersLoaded(false) }, [selected?.id])
+  useEffect(() => { setTiersLoaded(false); setUserTiers([]) }, [selected?.id])
 
   const setUserTier = async (userId: string, tier: string) => {
     if (!selected) return
     setAssigningTier({ userId, tier })
     try {
-      await fetch(`/api/environments/${selected.id}/user-tiers`, {
+      const res = await fetch(`/api/environments/${selected.id}/user-tiers`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId, tier }),
-      })
+      }).catch(() => null)
+      if (!res?.ok) toast.error(`Failed to update access tier${res ? ` (${res.status})` : ''}`)
       await loadUserTiers()
     } finally { setAssigningTier(null) }
   }
 
   const removeUserTier = async (userId: string) => {
     if (!selected) return
-    await fetch(`/api/environments/${selected.id}/user-tiers?userId=${userId}`, { method: 'DELETE' })
+    const res = await fetch(`/api/environments/${selected.id}/user-tiers?userId=${userId}`, { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) { toast.error(`Failed to remove access tier${res ? ` (${res.status})` : ''}`); return }
     setUserTiers(prev => prev.filter(t => t.userId !== userId))
   }
 
@@ -750,7 +769,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                 }`}>
                 {t === 'tools'   ? `Tools (${selected.tools.length})` :
                  t === 'agents'  ? `Agents (${selected.agents.length})` :
-                 t === 'groups'  ? 'Wrench Groups' :
+                 t === 'groups'  ? 'Tool Groups' :
                  'Access'}
               </button>
             ))}
@@ -812,7 +831,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                   </p>
                   <button onClick={openCreateTool}
                     className="flex items-center gap-2 px-3 py-1.5 rounded bg-accent text-white text-xs font-medium hover:bg-accent/90 transition-colors">
-                    <Plus size={12} /> Add Wrench
+                    <Plus size={12} /> Add Tool
                   </button>
                 </div>
 
@@ -960,7 +979,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
               <div className="space-y-4 max-w-3xl">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-text-primary">Wrench Groups</p>
+                    <p className="text-sm font-medium text-text-primary">Tool Groups</p>
                     <p className="text-xs text-text-muted mt-0.5">Group tools together and set a minimum user tier required to run them</p>
                   </div>
                   <button onClick={() => { setTgForm({ name: '', description: '', minimumTier: 'viewer' }); setTgTarget(null); setTgModal('create') }}
@@ -1554,13 +1573,13 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
         document.body
       )}
 
-      {/* ── Wrench modal ── */}
+      {/* ── Tool modal ── */}
       {toolModalOpen && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setToolModal(null)}>
           <div className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
               <h2 className="text-sm font-semibold text-text-primary">
-                {toolModal === 'create' ? 'New Wrench' : `Edit · ${toolTarget?.name}`}
+                {toolModal === 'create' ? 'New Tool' : `Edit · ${toolTarget?.name}`}
               </h2>
               <button onClick={() => setToolModal(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
             </div>
@@ -1595,7 +1614,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
               )}
 
               <div>
-                <label className={labelCls}>Wrench Name * <span className="text-text-muted">(snake_case, e.g. run_script)</span></label>
+                <label className={labelCls}>Tool Name * <span className="text-text-muted">(snake_case, e.g. run_script)</span></label>
                 <input value={toolForm.name} onChange={e => setToolForm(f => ({ ...f, name: e.target.value }))}
                   placeholder="run_script" className={`${inputCls} font-mono`} autoFocus />
               </div>
@@ -1646,12 +1665,12 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
         document.body
       )}
 
-      {/* ── Wrench group modal ── */}
+      {/* ── Tool group modal ── */}
       {tgModal !== null && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setTgModal(null)}>
           <div className="w-full max-w-sm bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
-              <h2 className="text-sm font-semibold text-text-primary">{tgModal === 'create' ? 'New Wrench Group' : `Edit · ${tgTarget?.name}`}</h2>
+              <h2 className="text-sm font-semibold text-text-primary">{tgModal === 'create' ? 'New Tool Group' : `Edit · ${tgTarget?.name}`}</h2>
               <button onClick={() => setTgModal(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
             </div>
             <div className="p-5 space-y-3">
@@ -1685,7 +1704,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
         document.body
       )}
 
-      {/* ── Wrench detail modal ── */}
+      {/* ── Tool detail modal ── */}
       {toolDetailModal && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setToolDetailModal(null)}>
           <div className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -1713,8 +1732,8 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                   <p className="text-xs font-medium text-text-primary">Enabled</p>
                   <p className="text-[11px] text-text-muted mt-0.5">
                     {toolDetailModal.enabled
-                      ? 'Wrench is active and available to the AI'
-                      : 'Wrench is disabled — AI cannot call it'}
+                      ? 'Tool is active and available to the AI'
+                      : 'Tool is disabled — AI cannot call it'}
                   </p>
                 </div>
                 <button
