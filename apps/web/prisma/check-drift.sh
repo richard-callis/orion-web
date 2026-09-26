@@ -31,8 +31,6 @@ ALLOWED=(
   'DROP INDEX "nebula_embeddings_embedding_hnsw_idx";'        # pgvector HNSW
   'DROP INDEX "note_embeddings_embedding_hnsw_idx";'          # pgvector HNSW
   'ALTER TABLE "Note" ALTER COLUMN "searchVector" DROP DEFAULT;'  # GENERATED ALWAYS column
-  'ALTER TABLE "nebula_embeddings" ALTER COLUMN "embedding" SET DATA TYPE TEXT;'  # vector(768) declared as String
-  'ALTER TABLE "note_embeddings" ALTER COLUMN "embedding" SET DATA TYPE TEXT;'    # vector(768) declared as String
   'DROP TABLE "_orion_baseline";'                             # fresh-install marker
 )
 
