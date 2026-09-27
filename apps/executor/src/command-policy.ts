@@ -257,6 +257,7 @@ export function checkAutoCommand(argv: string[]): PolicyResult {
   // '__proto__' etc. to Object.prototype members and pass them as rules.
   const rule = AUTO_RULES.get(bin)
   if (!rule) return { ok: false, reason: `'${bin}' is not on the auto allowlist` }
+  if (typeof rule !== 'function') return { ok: false, reason: `'${bin}' rule is invalid` }
   const verdict = rule(args)
   if (verdict.reason) return { ok: false, reason: verdict.reason }
   return checkPaths(args, verdict.recursive ?? false)
