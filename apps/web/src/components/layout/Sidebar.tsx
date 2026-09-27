@@ -44,10 +44,10 @@ export function Sidebar() {
             : 'text-text-secondary hover:bg-bg-raised hover:text-text-primary'
         }`}
       >
-        <Icon size={18} className="flex-shrink-0" />
+        <Icon size={18} className="shrink-0" />
         {!collapsed && <span className="truncate flex-1">{label}</span>}
         {badge ? (
-          <span className={`flex-shrink-0 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center bg-orange-500 text-white ${collapsed ? 'absolute ml-3 -mt-3' : ''}`}>
+          <span className={`shrink-0 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center bg-orange-500 text-white ${collapsed ? 'absolute ml-3 -mt-3' : ''}`}>
             {badge}
           </span>
         ) : null}
@@ -56,7 +56,7 @@ export function Sidebar() {
   }
 
   return (
-    <aside className={`hidden md:flex flex-col bg-bg-sidebar border-r border-border-subtle transition-all duration-200 flex-shrink-0 ${collapsed ? 'w-16' : 'w-56'}`}>
+    <aside className={`hidden md:flex flex-col bg-bg-sidebar border-r border-border-subtle transition-all duration-200 shrink-0 ${collapsed ? 'w-16' : 'w-56'}`}>
       {/* Nav */}
       <nav className="flex-1 py-2 overflow-y-auto">
         {nav.map(item => <NavLink key={item.href} {...item} badge={item.href === '/security' ? (unackCount || undefined) : undefined} />)}
@@ -70,7 +70,7 @@ export function Sidebar() {
       {/* Collapse toggle at bottom */}
       <button
         onClick={() => setCollapsed(c => !c)}
-        className={`flex items-center py-2.5 text-xs text-text-muted hover:text-text-secondary hover:bg-bg-raised transition-colors flex-shrink-0 border-t border-border-subtle ${
+        className={`flex items-center py-2.5 text-xs text-text-muted hover:text-text-secondary hover:bg-bg-raised transition-colors shrink-0 border-t border-border-subtle ${
           collapsed ? 'justify-center px-0' : 'gap-2 px-4'
         }`}
         title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}

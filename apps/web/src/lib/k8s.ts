@@ -15,14 +15,13 @@ try {
   console.warn('[k8s] No kubeconfig found — Kubernetes features disabled')
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const coreApi: any   = kc.makeApiClient(k8s.CoreV1Api)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const appsApi: any   = kc.makeApiClient(k8s.AppsV1Api)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const networkApi: any = kc.makeApiClient(k8s.NetworkingV1Api)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const customApi: any = kc.makeApiClient(k8s.CustomObjectsApi)
+// Typed on purpose: these were `any`, which hid call sites still using the
+// pre-1.0 positional-argument API (and `.body` responses) after the client
+// moved to object parameters — they failed at runtime and were swallowed.
+export const coreApi    = kc.makeApiClient(k8s.CoreV1Api)
+export const appsApi    = kc.makeApiClient(k8s.AppsV1Api)
+export const networkApi = kc.makeApiClient(k8s.NetworkingV1Api)
+export const customApi  = kc.makeApiClient(k8s.CustomObjectsApi)
 export const kubeConfig = kc
 
 // ── In-memory cluster state cache ────────────────────────────────────────────
@@ -252,8 +251,8 @@ export async function refreshCache() {
       coreApi.listPodForAllNamespaces(),
       coreApi.listNode(),
     ])
-    cache.pods = ((podRes.body?.items ?? podRes.items ?? []) as k8s.V1Pod[]).map(parsePod).filter(p => p.name)
-    cache.nodes = ((nodeRes.body?.items ?? nodeRes.items ?? []) as k8s.V1Node[]).map(parseNode).filter(n => n.name)
+    cache.pods = (podRes.items ?? []).map(parsePod).filter(p => p.name)
+    cache.nodes = (nodeRes.items ?? []).map(parseNode).filter(n => n.name)
     cache.lastUpdated = new Date()
   } catch (err) {
     console.error('Cache refresh error:', err)

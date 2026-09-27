@@ -42,7 +42,7 @@ export function OverviewTab({ envId }: { envId: string }) {
 
       {error && (
         <div role="alert" className="flex items-start gap-2 rounded-lg border border-status-error/30 bg-status-error/10 px-4 py-3 text-sm text-status-error">
-          <ServerCrash size={14} className="mt-0.5 flex-shrink-0" aria-hidden />
+          <ServerCrash size={14} className="mt-0.5 shrink-0" aria-hidden />
           <span className="whitespace-pre-wrap">{describe(error)}</span>
         </div>
       )}

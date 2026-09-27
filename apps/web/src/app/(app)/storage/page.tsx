@@ -22,11 +22,10 @@ interface LonghornVolume {
 
 async function getLonghornVolumes(): Promise<LonghornVolume[]> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res = await customApi.listNamespacedCustomObject(
-      'longhorn.io', 'v1beta2', 'kube-system', 'volumes'
-    ) as any
-    return res.body?.items ?? res.items ?? []
+    const res = await customApi.listNamespacedCustomObject({
+      group: 'longhorn.io', version: 'v1beta2', namespace: 'kube-system', plural: 'volumes',
+    }) as { items?: LonghornVolume[] }
+    return res.items ?? []
   } catch {
     return []
   }

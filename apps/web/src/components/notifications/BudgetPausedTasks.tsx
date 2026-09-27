@@ -35,11 +35,11 @@ export function BudgetPausedTasks() {
 
             {/* Header */}
             <div className="flex items-center gap-2 px-3 py-2 border-b border-yellow-500/40 bg-yellow-500/5">
-              <Coins size={12} className="text-yellow-400 flex-shrink-0" />
+              <Coins size={12} className="text-yellow-400 shrink-0" />
               <span className="text-xs font-semibold text-yellow-400 flex-1 truncate">Token budget exceeded</span>
               <button
                 onClick={() => dismiss(task.id)}
-                className="p-0.5 rounded text-text-muted hover:text-text-primary transition-colors">
+                className="p-0.5 rounded-sm text-text-muted hover:text-text-primary transition-colors">
                 <X size={12} />
               </button>
             </div>
@@ -57,7 +57,7 @@ export function BudgetPausedTasks() {
             <div className="flex items-center justify-end px-3 py-2 border-t border-border-subtle bg-bg-card">
               <button
                 onClick={() => dismiss(task.id)}
-                className="px-2.5 py-1.5 rounded text-xs font-medium text-text-muted border border-border-subtle hover:bg-bg-raised transition-colors">
+                className="px-2.5 py-1.5 rounded-sm text-xs font-medium text-text-muted border border-border-subtle hover:bg-bg-raised transition-colors">
                 Dismiss
               </button>
             </div>

@@ -90,7 +90,7 @@ export default function AlertDetailPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <button aria-label="Back" onClick={() => router.back()} className="p-1 rounded text-text-muted hover:text-text-primary transition-colors">
+          <button aria-label="Back" onClick={() => router.back()} className="p-1 rounded-sm text-text-muted hover:text-text-primary transition-colors">
             <ArrowLeft size={16} />
           </button>
           <Icon size={18} className={sourceColors[event.source] || 'text-text-muted'} />
@@ -114,8 +114,8 @@ export default function AlertDetailPage() {
       <div className="bg-bg-surface border border-border-subtle rounded-xl p-4 space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
           <SeverityBadge severity={event.severity} showLabel />
-          <span className="text-xs text-text-muted px-2 py-0.5 rounded bg-bg-raised font-mono">{event.type}</span>
-          <span className="text-xs text-text-muted px-2 py-0.5 rounded bg-bg-raised">{event.source}</span>
+          <span className="text-xs text-text-muted px-2 py-0.5 rounded-sm bg-bg-raised font-mono">{event.type}</span>
+          <span className="text-xs text-text-muted px-2 py-0.5 rounded-sm bg-bg-raised">{event.source}</span>
           {event.acknowledged && (
             <span className="text-xs text-status-success flex items-center gap-1">
               <CheckCircle2 size={12} /> Acknowledged

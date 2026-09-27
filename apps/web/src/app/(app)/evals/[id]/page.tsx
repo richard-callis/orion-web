@@ -171,7 +171,7 @@ export default function EvalSuiteDetailPage() {
         </div>
         <button
           onClick={() => setShowRunForm(true)}
-          className="flex items-center gap-2 px-3 py-1.5 bg-accent text-white rounded text-sm hover:bg-accent/80 transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 bg-accent text-white rounded-sm text-sm hover:bg-accent/80 transition-colors"
         >
           <Play size={14} />
           Run Benchmark
@@ -183,7 +183,7 @@ export default function EvalSuiteDetailPage() {
         <div className="mb-6 p-4 bg-bg-card border border-border-subtle rounded-lg">
           <h2 className="text-sm font-medium text-text-primary mb-3">Run Benchmark</h2>
           <select
-            className="w-full px-3 py-2 bg-bg-raised border border-border-subtle rounded text-sm text-text-primary focus:outline-none focus:border-accent mb-3"
+            className="w-full px-3 py-2 bg-bg-raised border border-border-subtle rounded-sm text-sm text-text-primary focus:outline-hidden focus:border-accent mb-3"
             value={runAgentId || defaultAgentId}
             onChange={e => setRunAgentId(e.target.value)}
           >
@@ -196,13 +196,13 @@ export default function EvalSuiteDetailPage() {
             <button
               onClick={triggerRun}
               disabled={running || !(runAgentId || defaultAgentId)}
-              className="px-3 py-1.5 bg-accent text-white rounded text-sm hover:bg-accent/80 disabled:opacity-50 transition-colors"
+              className="px-3 py-1.5 bg-accent text-white rounded-sm text-sm hover:bg-accent/80 disabled:opacity-50 transition-colors"
             >
               {running ? 'Starting...' : 'Start Run'}
             </button>
             <button
               onClick={() => setShowRunForm(false)}
-              className="px-3 py-1.5 bg-bg-raised text-text-secondary rounded text-sm hover:bg-bg-hover transition-colors"
+              className="px-3 py-1.5 bg-bg-raised text-text-secondary rounded-sm text-sm hover:bg-bg-hover transition-colors"
             >
               Cancel
             </button>
@@ -218,7 +218,7 @@ export default function EvalSuiteDetailPage() {
           </h2>
           <button
             onClick={() => setShowNewCase(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-bg-raised text-text-secondary border border-border-subtle rounded hover:bg-bg-hover transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-bg-raised text-text-secondary border border-border-subtle rounded-sm hover:bg-bg-hover transition-colors"
           >
             <Plus size={13} />
             Add Case
@@ -230,20 +230,20 @@ export default function EvalSuiteDetailPage() {
             <h3 className="text-sm font-medium text-text-primary mb-3">New Test Case</h3>
             <div className="space-y-2">
               <input
-                className="w-full px-3 py-2 bg-bg-raised border border-border-subtle rounded text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                className="w-full px-3 py-2 bg-bg-raised border border-border-subtle rounded-sm text-sm text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent"
                 placeholder="Case title *"
                 value={newCase.title}
                 onChange={e => setNewCase(v => ({ ...v, title: e.target.value }))}
               />
               <textarea
-                className="w-full px-3 py-2 bg-bg-raised border border-border-subtle rounded text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none"
+                className="w-full px-3 py-2 bg-bg-raised border border-border-subtle rounded-sm text-sm text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent resize-none"
                 placeholder="Prompt to send to agent *"
                 rows={3}
                 value={newCase.prompt}
                 onChange={e => setNewCase(v => ({ ...v, prompt: e.target.value }))}
               />
               <textarea
-                className="w-full px-3 py-2 bg-bg-raised border border-border-subtle rounded text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none"
+                className="w-full px-3 py-2 bg-bg-raised border border-border-subtle rounded-sm text-sm text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent resize-none"
                 placeholder="Expected output (optional, used by llm_judge)"
                 rows={2}
                 value={newCase.expectedOutput}
@@ -251,7 +251,7 @@ export default function EvalSuiteDetailPage() {
               />
               <div className="flex gap-2">
                 <select
-                  className="px-3 py-2 bg-bg-raised border border-border-subtle rounded text-sm text-text-primary focus:outline-none focus:border-accent"
+                  className="px-3 py-2 bg-bg-raised border border-border-subtle rounded-sm text-sm text-text-primary focus:outline-hidden focus:border-accent"
                   value={newCase.assertionType}
                   onChange={e => setNewCase(v => ({ ...v, assertionType: e.target.value as AssertionDef['type'] }))}
                 >
@@ -261,7 +261,7 @@ export default function EvalSuiteDetailPage() {
                   <option value="llm_judge">llm_judge</option>
                 </select>
                 <input
-                  className="flex-1 px-3 py-2 bg-bg-raised border border-border-subtle rounded text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                  className="flex-1 px-3 py-2 bg-bg-raised border border-border-subtle rounded-sm text-sm text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent"
                   placeholder="Assertion value *"
                   value={newCase.assertionValue}
                   onChange={e => setNewCase(v => ({ ...v, assertionValue: e.target.value }))}
@@ -272,13 +272,13 @@ export default function EvalSuiteDetailPage() {
               <button
                 onClick={addCase}
                 disabled={addingCase || !newCase.title || !newCase.prompt || !newCase.assertionValue}
-                className="px-3 py-1.5 bg-accent text-white rounded text-sm hover:bg-accent/80 disabled:opacity-50 transition-colors"
+                className="px-3 py-1.5 bg-accent text-white rounded-sm text-sm hover:bg-accent/80 disabled:opacity-50 transition-colors"
               >
                 {addingCase ? 'Adding...' : 'Add Case'}
               </button>
               <button
                 onClick={() => setShowNewCase(false)}
-                className="px-3 py-1.5 bg-bg-raised text-text-secondary rounded text-sm hover:bg-bg-hover transition-colors"
+                className="px-3 py-1.5 bg-bg-raised text-text-secondary rounded-sm text-sm hover:bg-bg-hover transition-colors"
               >
                 Cancel
               </button>
@@ -305,7 +305,7 @@ export default function EvalSuiteDetailPage() {
                         {assertions.map((a, i) => (
                           <span
                             key={i}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${ASSERTION_TYPE_COLORS[a.type] ?? 'bg-bg-raised text-text-muted'}`}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium ${ASSERTION_TYPE_COLORS[a.type] ?? 'bg-bg-raised text-text-muted'}`}
                           >
                             {a.type}
                             <span className="opacity-70 max-w-[120px] truncate">{a.value}</span>

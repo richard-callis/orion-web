@@ -36,7 +36,7 @@ export async function postSetup<T = Record<string, unknown>>(url: string, body: 
 export function ErrorBanner({ message }: { message: string }) {
   return (
     <div role="alert" className="flex items-start gap-2 text-xs text-status-error bg-status-error/10 border border-status-error/20 rounded-lg px-3 py-2.5">
-      <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+      <AlertTriangle size={14} className="shrink-0 mt-0.5" />
       <span>{message}</span>
     </div>
   )
@@ -99,7 +99,7 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
     setTimeout(() => setCopied(false), 2000)
   }
   return (
-    <IconButton label={copied ? 'Copied' : label} onClick={copy} className="flex-shrink-0">
+    <IconButton label={copied ? 'Copied' : label} onClick={copy} className="shrink-0">
       {copied ? <Check size={12} className="text-status-success" /> : <Copy size={12} />}
     </IconButton>
   )
@@ -141,7 +141,7 @@ export function RadioCard({ name, checked, onChange, className, children }: { na
       checked ? 'border-accent bg-accent/5' : 'border-border-subtle hover:border-text-muted',
       className,
     )}>
-      <input type="radio" name={name} checked={checked} onChange={onChange} className="accent-accent flex-shrink-0" />
+      <input type="radio" name={name} checked={checked} onChange={onChange} className="accent-accent shrink-0" />
       {children}
     </label>
   )

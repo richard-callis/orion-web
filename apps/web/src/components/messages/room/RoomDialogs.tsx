@@ -63,19 +63,19 @@ export function InviteMemberDialog({ roomId, onClose, onInvited }: InviteProps) 
       label="Add member"
       className="w-full max-w-md bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-60 md:max-h-96"
     >
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
         <span className="text-sm font-semibold text-text-primary">Add Member</span>
         <IconButton label="Close" onClick={onClose}><X size={16} /></IconButton>
       </div>
 
       {error && (
-        <div role="alert" className="px-4 py-2 border-b border-status-error/30 bg-status-error/10 flex items-center gap-2 flex-shrink-0">
+        <div role="alert" className="px-4 py-2 border-b border-status-error/30 bg-status-error/10 flex items-center gap-2 shrink-0">
           <span className="text-xs text-status-error flex-1">{error}</span>
           <IconButton label="Dismiss error" onClick={() => setError(null)} className="p-0 text-status-error hover:text-status-error/60"><X size={14} /></IconButton>
         </div>
       )}
 
-      <div className="px-3 py-2 border-b border-border-subtle flex-shrink-0">
+      <div className="px-3 py-2 border-b border-border-subtle shrink-0">
         <Input
           aria-label="Search members"
           value={search}
@@ -85,7 +85,7 @@ export function InviteMemberDialog({ roomId, onClose, onInvited }: InviteProps) 
         />
       </div>
 
-      <div role="tablist" aria-label="Member type" className="flex border-b border-border-subtle flex-shrink-0">
+      <div role="tablist" aria-label="Member type" className="flex border-b border-border-subtle shrink-0">
         {tabButton('agents', `Agents (${agents.length})`)}
         {tabButton('users', `Users (${users.length})`)}
       </div>
@@ -106,8 +106,8 @@ export function InviteMemberDialog({ roomId, onClose, onInvited }: InviteProps) 
               className="w-full flex items-center gap-2 px-4 py-2 text-xs text-left text-text-secondary hover:bg-bg-raised hover:text-text-primary transition-colors disabled:opacity-50"
             >
               {tab === 'agents'
-                ? <Bot size={13} className="text-accent flex-shrink-0" />
-                : <UserIcon size={13} className="text-text-muted flex-shrink-0" />}
+                ? <Bot size={13} className="text-accent shrink-0" />
+                : <UserIcon size={13} className="text-text-muted shrink-0" />}
               <span className="flex-1 truncate">
                 {option.name}{option.username ? ` (${option.username})` : ''}
               </span>

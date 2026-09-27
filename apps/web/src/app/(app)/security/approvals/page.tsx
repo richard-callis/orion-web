@@ -70,11 +70,11 @@ export default function SecurityApprovalsPage() {
         </div>
         <div className="flex items-center gap-2">
           <select aria-label="Filter approvals" value={filter} onChange={e => setFilter(e.target.value as 'pending' | 'all')}
-            className="px-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none">
+            className="px-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded-sm text-text-primary focus:outline-hidden">
             <option value="pending">Pending only</option>
             <option value="all">All</option>
           </select>
-          <button onClick={load} aria-label="Refresh approvals" className="p-1.5 rounded text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
+          <button onClick={load} aria-label="Refresh approvals" className="p-1.5 rounded-sm text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
             <RefreshCw size={13} className={isValidating ? 'animate-spin' : ''} />
           </button>
         </div>
@@ -112,7 +112,7 @@ export default function SecurityApprovalsPage() {
                     <div className="flex items-center gap-2">
                       <AlertTriangle size={14} className="text-status-warning shrink-0" />
                       <code className="text-sm font-medium text-accent">{getActionLabel(a.actionType)}</code>
-                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-orange-400/15 text-orange-400">
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-sm bg-orange-400/15 text-orange-400">
                         {a.tier}
                       </span>
                     </div>
@@ -124,7 +124,7 @@ export default function SecurityApprovalsPage() {
 
                     {/* Incident context */}
                     {a.incident && (
-                      <div className="text-xs bg-bg-raised rounded p-2 border border-border-subtle">
+                      <div className="text-xs bg-bg-raised rounded-sm p-2 border border-border-subtle">
                         <div className="text-text-muted mb-0.5">Related incident:</div>
                         <div className="text-text-primary font-medium">
                           {a.incident.summary || 'Untitled incident'}
@@ -139,7 +139,7 @@ export default function SecurityApprovalsPage() {
 
                     {/* Payload preview */}
                     {a.payload !== null && typeof a.payload === 'object' && (
-                      <pre className="text-[11px] font-mono bg-bg-raised rounded px-2 py-1.5 text-text-secondary border border-border-subtle overflow-x-auto">
+                      <pre className="text-[11px] font-mono bg-bg-raised rounded-sm px-2 py-1.5 text-text-secondary border border-border-subtle overflow-x-auto">
                         {JSON.stringify(a.payload, null, 2).slice(0, 300)}
                         {JSON.stringify(a.payload, null, 2).length > 300 ? '...' : ''}
                       </pre>
@@ -154,19 +154,19 @@ export default function SecurityApprovalsPage() {
                     value={note[a.id] ?? ''}
                     onChange={e => setNote(prev => ({ ...prev, [a.id]: e.target.value }))}
                     placeholder="Optional note to propose..."
-                    className="w-full px-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors"
+                    className="w-full px-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-accent transition-colors"
                   />
                   <button
                     onClick={() => act(a.id, 'deny')}
                     disabled={acting === a.id}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium text-status-error border border-status-error/30 hover:bg-status-error/10 transition-colors disabled:opacity-50 shrink-0"
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-sm text-xs font-medium text-status-error border border-status-error/30 hover:bg-status-error/10 transition-colors disabled:opacity-50 shrink-0"
                   >
                     <XCircle size={12} /> Deny
                   </button>
                   <button
                     onClick={() => act(a.id, 'approve')}
                     disabled={acting === a.id}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium bg-status-healthy/15 text-status-healthy border border-status-healthy/30 hover:bg-status-healthy/25 transition-colors disabled:opacity-50 shrink-0"
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-sm text-xs font-medium bg-status-healthy/15 text-status-healthy border border-status-healthy/30 hover:bg-status-healthy/25 transition-colors disabled:opacity-50 shrink-0"
                   >
                     {acting === a.id ? (
                       <RefreshCw size={12} className="animate-spin" />

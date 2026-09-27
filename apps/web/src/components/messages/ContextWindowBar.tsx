@@ -19,7 +19,7 @@ export default function ContextWindowBar({ tokenCount, tokenLimit, onCompact, co
   if (!tokenLimit) {
     if (!tokenCount) return null
     return (
-      <span className="text-[10px] text-text-muted tabular-nums flex-shrink-0">
+      <span className="text-[10px] text-text-muted tabular-nums shrink-0">
         {fmt(tokenCount)} tokens
       </span>
     )
@@ -35,7 +35,7 @@ export default function ContextWindowBar({ tokenCount, tokenLimit, onCompact, co
 
   return (
     <div
-      className="flex items-center gap-1.5 flex-shrink-0"
+      className="flex items-center gap-1.5 shrink-0"
       title={`${fmt(tokenCount)} / ${fmt(tokenLimit)} tokens (${pct}%)\nRemaining: ${fmt(remaining)}\nAuto-compacts at 90%`}
     >
       <div className="w-16 h-1.5 rounded-full bg-bg-raised overflow-hidden">
@@ -51,7 +51,7 @@ export default function ContextWindowBar({ tokenCount, tokenLimit, onCompact, co
         <button
           onClick={onCompact}
           disabled={compacting}
-          className="text-[10px] px-1.5 py-0.5 rounded bg-bg-raised text-text-muted hover:text-text-primary hover:bg-bg-sidebar transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+          className="text-[10px] px-1.5 py-0.5 rounded-sm bg-bg-raised text-text-muted hover:text-text-primary hover:bg-bg-sidebar transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
           title="Compact conversation history"
         >
           {compacting && <Loader2 size={10} className="animate-spin" />}

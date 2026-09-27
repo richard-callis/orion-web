@@ -168,22 +168,22 @@ function PromptCard({
         onClick={onToggle}
         className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-bg-raised transition-colors"
       >
-        {expanded ? <ChevronDown size={14} className="text-text-muted flex-shrink-0" /> : <ChevronRight size={14} className="text-text-muted flex-shrink-0" />}
+        {expanded ? <ChevronDown size={14} className="text-text-muted shrink-0" /> : <ChevronRight size={14} className="text-text-muted shrink-0" />}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-text-primary">{prompt.name}</span>
             {!prompt.isDefault && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/15 text-accent font-medium">modified</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-accent/15 text-accent font-medium">modified</span>
             )}
             {dirty && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-400 font-medium">unsaved</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-orange-500/15 text-orange-400 font-medium">unsaved</span>
             )}
           </div>
           {!expanded && (
             <p className="text-xs text-text-muted truncate mt-0.5">{prompt.description}</p>
           )}
         </div>
-        <span className="text-[10px] text-text-muted font-mono flex-shrink-0">{prompt.key}</span>
+        <span className="text-[10px] text-text-muted font-mono shrink-0">{prompt.key}</span>
       </button>
 
       {/* Expanded body */}
@@ -192,13 +192,13 @@ function PromptCard({
           {/* Description + variables */}
           <div className="px-4 py-3 bg-bg-raised border-b border-border-subtle">
             <div className="flex items-start gap-2">
-              <Info size={13} className="text-text-muted flex-shrink-0 mt-0.5" />
+              <Info size={13} className="text-text-muted shrink-0 mt-0.5" />
               <p className="text-xs text-text-secondary">{prompt.description}</p>
             </div>
             {prompt.variables && prompt.variables.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-2">
                 {prompt.variables.map(v => (
-                  <span key={v.name} className="inline-flex items-center gap-1 text-[11px] bg-bg-card border border-border-subtle rounded px-2 py-0.5" title={v.description}>
+                  <span key={v.name} className="inline-flex items-center gap-1 text-[11px] bg-bg-card border border-border-subtle rounded-sm px-2 py-0.5" title={v.description}>
                     <code className="text-accent">{v.name}</code>
                     <span className="text-text-muted">— {v.description}</span>
                   </span>
@@ -213,14 +213,14 @@ function PromptCard({
               value={draft}
               onChange={e => onChange(e.target.value)}
               rows={Math.min(30, Math.max(8, draft.split('\n').length + 2))}
-              className="w-full px-3 py-2 text-xs font-mono bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none focus:border-accent transition-colors resize-y"
+              className="w-full px-3 py-2 text-xs font-mono bg-bg-raised border border-border-subtle rounded-sm text-text-primary focus:outline-hidden focus:border-accent transition-colors resize-y"
               spellCheck={false}
             />
           </div>
 
           {/* Error */}
           {error && (
-            <div className="mx-4 mb-3 rounded border border-status-error/40 bg-status-error/10 px-3 py-2 text-xs text-status-error">
+            <div className="mx-4 mb-3 rounded-sm border border-status-error/40 bg-status-error/10 px-3 py-2 text-xs text-status-error">
               {error}
             </div>
           )}
@@ -231,7 +231,7 @@ function PromptCard({
               <button
                 onClick={onSave}
                 disabled={saving || !dirty}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-xs font-medium hover:bg-accent/90 transition-colors disabled:opacity-40"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm bg-accent text-white text-xs font-medium hover:bg-accent/90 transition-colors disabled:opacity-40"
               >
                 {saving ? <RefreshCw size={12} className="animate-spin" /> : <Save size={12} />}
                 {saving ? 'Saving…' : 'Save'}
@@ -242,7 +242,7 @@ function PromptCard({
               <button
                 onClick={onReset}
                 disabled={resetting}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-border-subtle text-text-muted text-xs hover:text-text-primary hover:border-border-visible transition-colors disabled:opacity-40"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-border-subtle text-text-muted text-xs hover:text-text-primary hover:border-border-visible transition-colors disabled:opacity-40"
               >
                 {resetting ? <RefreshCw size={12} className="animate-spin" /> : <RotateCcw size={12} />}
                 Reset to default

@@ -26,11 +26,11 @@ export function ToolDetailModal({ tool, onClose, onToggle, onEdit }: {
         title={
           <span className="flex items-center gap-2 min-w-0">
             <span className="font-mono truncate">{tool.name}</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-raised text-text-muted border border-border-subtle flex-shrink-0 font-normal">
+            <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-bg-raised text-text-muted border border-border-subtle shrink-0 font-normal">
               {EXEC_TYPE_LABELS[tool.execType] ?? tool.execType}
             </span>
             {tool.builtIn && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/20 flex-shrink-0 font-normal">built-in</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-accent/10 text-accent border border-accent/20 shrink-0 font-normal">built-in</span>
             )}
           </span>
         }
@@ -51,7 +51,7 @@ export function ToolDetailModal({ tool, onClose, onToggle, onEdit }: {
             aria-checked={tool.enabled}
             aria-label={tool.enabled ? `Disable ${tool.name}` : `Enable ${tool.name}`}
             onClick={() => onToggle(tool)}
-            className={`flex-shrink-0 transition-colors ${tool.enabled ? 'text-status-healthy' : 'text-text-muted'}`}>
+            className={`shrink-0 transition-colors ${tool.enabled ? 'text-status-healthy' : 'text-text-muted'}`}>
             {tool.enabled ? <ToggleRight size={28} aria-hidden /> : <ToggleLeft size={28} aria-hidden />}
           </button>
         </div>
@@ -62,7 +62,7 @@ export function ToolDetailModal({ tool, onClose, onToggle, onEdit }: {
             <div className="space-y-1.5">
               {Object.entries(props).map(([k, v]) => (
                 <div key={k} className="flex items-start gap-2 text-xs">
-                  <code className="px-1.5 py-0.5 rounded bg-bg-raised text-accent font-mono text-[11px] flex-shrink-0">{k}</code>
+                  <code className="px-1.5 py-0.5 rounded-sm bg-bg-raised text-accent font-mono text-[11px] shrink-0">{k}</code>
                   <span className="text-text-muted">{v.type ?? 'string'}{v.description ? ` — ${v.description}` : ''}</span>
                 </div>
               ))}
@@ -73,7 +73,7 @@ export function ToolDetailModal({ tool, onClose, onToggle, onEdit }: {
         {cfg && Object.keys(cfg).length > 0 && (
           <div>
             <p className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1.5">Command</p>
-            <code className="block text-[11px] bg-bg-raised rounded px-3 py-2 text-text-secondary font-mono whitespace-pre-wrap break-all border border-border-subtle">
+            <code className="block text-[11px] bg-bg-raised rounded-sm px-3 py-2 text-text-secondary font-mono whitespace-pre-wrap break-all border border-border-subtle">
               {command}
             </code>
           </div>

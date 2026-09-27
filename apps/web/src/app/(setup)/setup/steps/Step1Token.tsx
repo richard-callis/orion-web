@@ -28,7 +28,7 @@ export function Step1Token({ onNext }: { onNext: () => void }) {
       <div>
         <h2 className="text-base font-semibold text-text-primary mb-1">Enter setup token</h2>
         <p className="text-xs text-text-muted">
-          Run <code className="bg-bg-raised px-1 py-0.5 rounded text-[11px]">docker compose logs orion | grep SETUP_TOKEN</code> to find your token.
+          Run <code className="bg-bg-raised px-1 py-0.5 rounded-sm text-[11px]">docker compose logs orion | grep SETUP_TOKEN</code> to find your token.
         </p>
       </div>
 
