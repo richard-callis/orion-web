@@ -2,7 +2,7 @@
 import { ChevronRight, Lock } from 'lucide-react'
 import type { Agent, Task } from '@/types/tasks'
 import { KanbanBoard } from '../ui/KanbanBoard'
-import { agentInitials } from './TeamDetailPanel'
+import { agentInitials } from './team/agent-form'
 import { AGENT_COLORS, priorityConfig, statusConfig } from './task-config'
 
 interface Props {
