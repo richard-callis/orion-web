@@ -51,7 +51,7 @@ async function handleTotpLogin(username: string, password: string, code?: string
     },
   })
 
-  let rawSecret: string | null | undefined = null
+  let rawSecret: string | null | undefined
   if (user?.totpSecretEncrypted) {
     try { rawSecret = decryptStrict(user.totpSecretEncrypted, 'totpSecretEncrypted') } catch { return NextResponse.json({ error: 'MFA not enabled for this account' }, { status: 403 }) }
   } else {
@@ -169,7 +169,7 @@ async function handleRecoveryLogin(username: string, password: string, code?: st
   }
 
   // Verify recovery code — prefer encrypted field
-  let rawCodes: string | null = null
+  let rawCodes: string | null
   if (user.totpRecoveryCodesEncrypted) {
     try { rawCodes = decryptStrict(user.totpRecoveryCodesEncrypted, 'totpRecoveryCodesEncrypted') } catch { return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 }) }
   } else {

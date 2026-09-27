@@ -114,7 +114,7 @@ export async function callWithModel(modelId: string, prompt: string): Promise<LL
       timeoutMs: isOllama ? 90_000 : (extModel.timeoutSecs ?? 120) * 1000,
     })
   } catch (e) {
-    if (e instanceof ProviderHttpError) throw new Error(`${isOllama ? 'Ollama' : 'External model'} HTTP ${e.status}`)
+    if (e instanceof ProviderHttpError) throw new Error(`${isOllama ? 'Ollama' : 'External model'} HTTP ${e.status}`, { cause: e })
     throw e
   }
   return {

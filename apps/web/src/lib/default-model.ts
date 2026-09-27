@@ -74,7 +74,7 @@ export async function callDefaultModel(prompt: string): Promise<string> {
     if (e instanceof ProviderHttpError) {
       throw new Error(isOllama
         ? `Ollama returned HTTP ${e.status}`
-        : `Model API returned HTTP ${e.status}: ${e.body.slice(0, 200)}`)
+        : `Model API returned HTTP ${e.status}: ${e.body.slice(0, 200)}`, { cause: e })
     }
     throw e
   }
