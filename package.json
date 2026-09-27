@@ -21,7 +21,7 @@
     "test:e2e": "playwright test -c e2e/playwright.config.mjs"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.5",
+    "@eslint/js": "^10.0.1",
     "@next/eslint-plugin-next": "^15.5.26",
     "@playwright/test": "^1.63.0",
     "eslint": "^10.11.0",
