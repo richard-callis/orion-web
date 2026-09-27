@@ -10,7 +10,6 @@ export const dynamic = 'force-dynamic'
 // updated, so anything beyond these limits is the long tail of old items.
 const MAX_TASKS = 2000
 const MAX_BUGS = 500
-const MAX_PLANNING_CONVERSATIONS = 200
 
 // Explicit field lists: this data is serialized into the page, so it must
 // never include secrets (User.passwordHash / TOTP / tokens, Agent.mcpToken).
@@ -26,7 +25,7 @@ function toAgent(a: AgentRow): Agent {
 }
 
 export default async function TasksPageRoute() {
-  const [tasksRaw, epicsRaw, agentsRaw, usersRaw, convosRaw, bugsRaw] = await Promise.all([
+  const [tasksRaw, epicsRaw, agentsRaw, usersRaw, bugsRaw] = await Promise.all([
     prisma.task.findMany({
       orderBy: { updatedAt: 'desc' },
       take: MAX_TASKS,
@@ -38,13 +37,6 @@ export default async function TasksPageRoute() {
     }),
     prisma.agent.findMany({ orderBy: { name: 'asc' }, select: AGENT_SELECT }),
     prisma.user.findMany({ where: { active: true }, orderBy: { name: 'asc' }, select: USER_SELECT }),
-    // Planning conversations: only those with a planTarget in metadata
-    prisma.conversation.findMany({
-      where: { archivedAt: null, metadata: { path: ['planTarget'], not: Prisma.AnyNull } },
-      select: { id: true, title: true, metadata: true, updatedAt: true },
-      orderBy: { updatedAt: 'desc' },
-      take: MAX_PLANNING_CONVERSATIONS,
-    }),
     prisma.bug.findMany({
       orderBy: { updatedAt: 'desc' },
       take: MAX_BUGS,
@@ -73,13 +65,6 @@ export default async function TasksPageRoute() {
     })),
   }))
 
-  const planningConvos = convosRaw.map(c => ({
-    id: c.id,
-    title: c.title,
-    metadata: c.metadata as { planTarget: { type: string; id: string } },
-    updatedAt: c.updatedAt.toISOString(),
-  }))
-
   const bugs: Bug[] = bugsRaw.map(b => ({
     ...b,
     createdAt: b.createdAt.toISOString(),
@@ -93,7 +78,6 @@ export default async function TasksPageRoute() {
         initialEpics={epics}
         initialAgents={agentsRaw.map(toAgent)}
         initialUsers={usersRaw}
-        initialPlanningConvos={planningConvos}
         initialBugs={bugs}
       />
     </Suspense>

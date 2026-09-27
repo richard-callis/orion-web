@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
+import useSWR from 'swr'
 import { MessageSquare, ChevronRight, ChevronLeft } from 'lucide-react'
 
 interface AppModel {
@@ -20,15 +21,13 @@ const PROVIDER_LABELS: Record<string, string> = {
   custom:    'Custom',
 }
 
+const NO_MODELS: AppModel[] = []
+
 export function PlanWithAIButton({ onSelect }: { onSelect: (modelId: string) => void }) {
   const [open, setOpen]                       = useState(false)
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null)
-  const [models, setModels]                   = useState<AppModel[]>([])
+  const { data: models = NO_MODELS } = useSWR<AppModel[]>('/api/models', { revalidateOnFocus: false })
   const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    fetch('/api/models').then(r => r.json()).then(setModels).catch((e) => console.error("[fetch]", e))
-  }, [])
 
   useEffect(() => {
     if (!open) setSelectedProvider(null)

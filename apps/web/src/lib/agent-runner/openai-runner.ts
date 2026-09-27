@@ -1,317 +1,83 @@
-import type { AgentRunner, AgentEvent, TaskRunContext, GatewayTool } from './types'
-import { GatewayClient } from './gateway-client'
-import { agentActor } from '../gateway-headers'
-import { runSignal, describeRunnerError, throwIfAborted } from './abort'
-import { getPrompt, interpolate } from '@/lib/system-prompts'
-import { validateToolArgs } from '@/lib/tool-registry'
-import { checkToolPermission } from '@/lib/tool-permissions'
-
-interface OpenAIMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
-  tool_call_id?: string
-  tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>
-}
-
-interface OpenAIResponse {
-  choices: Array<{
-    message: {
-      role: 'assistant'
-      content?: string
-      tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>
-    }
-  }>
-  usage?: { prompt_tokens: number; completion_tokens: number }
-}
-
-// ── Context window trimming ───────────────────────────────────────────────────
-
-const MAX_HISTORY_MESSAGES = 40
-const KEEP_FIRST_MESSAGES = 2
-const KEEP_LAST_MESSAGES = 20
-
-function trimConversationHistory(messages: OpenAIMessage[]): OpenAIMessage[] {
-  if (messages.length <= MAX_HISTORY_MESSAGES) return messages
-  const first = messages.slice(0, KEEP_FIRST_MESSAGES)
-  const last = messages.slice(-KEEP_LAST_MESSAGES)
-  const dropped = messages.length - KEEP_FIRST_MESSAGES - KEEP_LAST_MESSAGES
-  const notice: OpenAIMessage = {
-    role: 'system',
-    content: `[${dropped} earlier messages trimmed to stay within context limits. Task is still in progress.]`,
-  }
-  return [...first, notice, ...last]
-}
-
-// ── Parallel-safe tool set ────────────────────────────────────────────────────
-
-function isParallelSafe(toolName: string): boolean {
-  const PARALLEL_SAFE = new Set([
-    'orion_list_agents', 'orion_list_tasks', 'orion_get_task_events',
-    'orion_list_rooms', 'orion_cluster_health', 'orion_get_environment',
-    'knowledge_search', 'knowledge_graph', 'knowledge_related', 'knowledge_backlinks',
-  ])
-  return PARALLEL_SAFE.has(toolName)
-}
+import type { AgentRunner, AgentEvent, TaskRunContext } from './types'
+import { createOpenAIProvider } from './engine/providers/openai'
+import { runTask } from './task-loop'
 
 /**
- * OpenAI runner — full function-calling loop using OpenAI's /v1/chat/completions.
- * Supports llama.cpp and other OpenAI-compatible providers.
+ * OpenAI runner — task runs against /v1/chat/completions (OpenAI, llama.cpp,
+ * vLLM and other OpenAI-compatible providers) on the shared engine.
  */
 export const openaiRunner: AgentRunner = {
   async *run(ctx: TaskRunContext): AsyncGenerator<AgentEvent> {
-    // Resolve OpenAI config
-    const { baseUrl, apiKey, modelId, timeoutSecs, maxTokens } = await resolveOpenAIConfig(ctx.modelId)
-
-    // Fetch tools from gateway (if connected)
-    let gatewayTools: GatewayTool[] = []
-    let gateway: GatewayClient | null = null
-    if (ctx.gateway) {
-      gateway = new GatewayClient(ctx.gateway.url, ctx.gateway.token, agentActor(ctx.agentId))
-      try {
-        gatewayTools = await gateway.listTools(ctx.signal)
-      } catch (err) {
-        yield { type: 'text', content: `⚠ Could not reach gateway: ${err instanceof Error ? err.message : err}\nProceeding without tools.\n` }
-      }
-    }
-
-    const mgmtToolDefs = (ctx.managementTools?.definitions ?? []).map(t => ({
-      type: 'function',
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.inputSchema,
-      },
-    }))
-
-    // Plan-only turns get no tools at all — the model can only describe what it would do.
-    const openaiToolDefs = ctx.planOnly ? [] : [
-      ...mgmtToolDefs,
-      ...gatewayTools.map(t => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.inputSchema,
-        },
-      })),
-    ]
-
-    const taskTemplate = await getPrompt('system.task-execution')
-    const taskPrompt = interpolate(taskTemplate, {
-      taskTitle:       ctx.taskTitle,
-      taskDescription: ctx.taskDescription ? `Description: ${ctx.taskDescription}` : '',
-      taskPlan:        ctx.taskPlan ? `\nImplementation plan:\n${ctx.taskPlan}` : '',
+    const cfg = await resolveOpenAIConfig(ctx.modelId)
+    const provider = createOpenAIProvider({
+      url: `${cfg.baseUrl}/v1/chat/completions`,
+      apiKey: cfg.apiKey,
+      model: cfg.modelId,
+      stream: false,
+      timeoutMs: cfg.timeoutSecs * 1000,
+      ...(cfg.maxTokens !== null && { extraBody: { max_tokens: cfg.maxTokens } }),
+      httpErrorMessage: (status, body) => `OpenAI ${status}: ${body}`,
     })
-
-    const messages: OpenAIMessage[] = [
-      { role: 'system', content: ctx.systemPrompt },
-      { role: 'user', content: taskPrompt },
-    ]
-
-    const MAX_TURNS = 20
-    let turns = 0
-    let totalInputTokens = 0
-    let totalOutputTokens = 0
-    let checkpointStep = 0 // 1-based, incremented on each tool_result
-
-    try {
-      while (turns < MAX_TURNS) {
-        turns++
-        throwIfAborted(ctx.signal)
-        const trimmedMessages = trimConversationHistory(messages)
-        const res = await fetch(`${baseUrl}/v1/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {})
-          },
-          body: JSON.stringify({
-            model: modelId,
-            messages: trimmedMessages,
-            stream: false,
-            ...(maxTokens !== null && { max_tokens: maxTokens }),
-            ...(openaiToolDefs.length > 0 && { tools: openaiToolDefs }),
-          }),
-          signal: runSignal(ctx.signal, timeoutSecs * 1000),
-        })
-
-        if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`)
-        const data = await res.json() as OpenAIResponse
-        if (data.usage) {
-          totalInputTokens  += data.usage.prompt_tokens
-          totalOutputTokens += data.usage.completion_tokens
-        }
-        const assistantMsg = data.choices[0].message
-
-        messages.push({ ...assistantMsg, content: assistantMsg.content ?? '' })
-
-        // Handle tool calls
-        if (assistantMsg.tool_calls?.length) {
-          const toolCalls = assistantMsg.tool_calls
-
-          // Surface any text the model wrote alongside its tool calls (typically
-          // the <plan>) BEFORE the tool_call events, so the consumer's plan gate
-          // can see it. Previously this content was never yielded at all.
-          if (assistantMsg.content) {
-            yield { type: 'text', content: assistantMsg.content }
-          }
-
-          // Helper: execute a single tool call and return { toolCall, result }
-          const executeToolCall = async (toolCall: typeof toolCalls[number]): Promise<{ toolCall: typeof toolCalls[number]; result: string }> => {
-            const fn = toolCall.function
-            const argsRaw = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments)
-
-            checkpointStep++
-            const checkpoint = ctx.checkpoints?.get(checkpointStep)
-            if (checkpoint && checkpoint.toolName === fn.name) {
-              return { toolCall, result: `[Replayed from checkpoint step ${checkpointStep}]\n${checkpoint.result}` }
-            }
-
-            // Validate arguments before executing
-            let parsedArgs: unknown
-            try { parsedArgs = JSON.parse(argsRaw || '{}') } catch { parsedArgs = {} }
-            const validation = validateToolArgs(fn.name, parsedArgs)
-            if (!validation.valid) {
-              return { toolCall, result: `Tool validation failed for ${fn.name}: ${validation.errors.join(', ')}. Check the tool schema and retry with correct arguments.` }
-            }
-
-            // Permission check — must pass before any tool execution
-            const permission = await checkToolPermission(
-              fn.name,
-              ctx.agentId ?? null,
-              ctx.environmentId ?? null,
-              undefined,
-              { taskId: ctx.taskId },
-            )
-            if (!permission.allowed) {
-              return { toolCall, result: `Permission denied for tool '${fn.name}': ${permission.reason ?? 'Tool not permitted for this agent'}. Contact an admin to grant access.` }
-            }
-
-            let result: string
-            if (ctx.managementTools && ctx.managementTools.definitions.some(d => d.name === fn.name)) {
-              result = await ctx.managementTools.execute(fn.name, argsRaw)
-            } else if (gateway) {
-              try {
-                const args = JSON.parse(argsRaw)
-                result = await gateway.executeTool(fn.name, args, ctx.signal)
-              } catch (err) {
-                result = `Error: ${err instanceof Error ? err.message : String(err)}`
-              }
-            } else {
-              result = 'No gateway connected — cannot execute tools'
-            }
-
-            return { toolCall, result }
-          }
-
-          // Separate parallel-safe from sequential tools
-          const parallelCalls = toolCalls.filter(tc => isParallelSafe(tc.function.name))
-          const sequentialCalls = toolCalls.filter(tc => !isParallelSafe(tc.function.name))
-
-          // Announce every parallel-safe call BEFORE any of them executes. The
-          // consumer (worker plan gate) stops iterating the generator when it
-          // must pause for approval, so if it stops on any of these yields none
-          // of the batch runs. Results are then yielded in the same order, which
-          // keeps the worker's FIFO tool_call → tool_result pairing intact.
-          for (const toolCall of parallelCalls) {
-            yield { type: 'tool_call', tool: toolCall.function.name, args: toolCall.function.arguments }
-          }
-          const parallelResults = await Promise.all(parallelCalls.map(tc => executeToolCall(tc)))
-          for (const { toolCall, result } of parallelResults) {
-            yield { type: 'tool_result', tool: toolCall.function.name, result }
-            messages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
-          }
-
-          // Run sequential tools one at a time
-          for (const toolCall of sequentialCalls) {
-            yield { type: 'tool_call', tool: toolCall.function.name, args: toolCall.function.arguments }
-            const { result } = await executeToolCall(toolCall)
-            yield { type: 'tool_result', tool: toolCall.function.name, result }
-            messages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
-          }
-
-          // Continue loop to get next assistant response
-          continue
-        }
-
-        // No tool calls — final response
-        if (assistantMsg.content) {
-          yield { type: 'text', content: assistantMsg.content }
-        }
-        break
-      }
-
-      if (turns >= MAX_TURNS) {
-        yield { type: 'text', content: '\n⚠ Reached maximum turns limit.' }
-      }
-
-      if (totalInputTokens > 0 || totalOutputTokens > 0) {
-        yield { type: 'usage', inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
-      }
-      yield { type: 'done' }
-    } catch (err) {
-      yield { type: 'error', error: describeRunnerError(err) }
-    }
+    yield* runTask(ctx, provider, { parallel: true })
   },
 }
 
-async function resolveOpenAIConfig(modelId: string): Promise<{ baseUrl: string; apiKey: string | undefined; modelId: string; timeoutSecs: number; maxTokens: number | null }> {
+interface OpenAIConfig {
+  baseUrl: string
+  apiKey: string | undefined
+  modelId: string
+  timeoutSecs: number
+  maxTokens: number | null
+}
+
+async function resolveOpenAIConfig(modelId: string): Promise<OpenAIConfig> {
   const { prisma } = await import('../db')
-  let model = null
 
-  if (modelId.startsWith('ext:')) {
-    const extId = modelId.slice('ext:'.length)
-    model = await prisma.externalModel.findUnique({ where: { id: extId } })
-  }
+  const model = modelId.startsWith('ext:')
+    ? await prisma.externalModel.findUnique({ where: { id: modelId.slice('ext:'.length) } })
+    : null
 
-  // ext:openai or ext:custom -> use configured endpoint
+  // ext:openai / ext:custom -> configured endpoint
   if (model && (model.provider === 'openai' || model.provider === 'custom')) {
     return {
       baseUrl: model.baseUrl,
       apiKey: model.apiKey || undefined,
       modelId: model.modelId,
       timeoutSecs: model.timeoutSecs ?? 120,
-      maxTokens: (model as any).maxTokens ?? null,
+      maxTokens: model.maxTokens ?? null,
     }
   }
 
-  // ext:anthropic -> use Anthropic's OpenAI-compatible endpoint
+  // ext:anthropic -> Anthropic's OpenAI-compatible endpoint
   if (model && model.provider === 'anthropic') {
     return {
       baseUrl: model.baseUrl,
       apiKey: model.apiKey || process.env.ANTHROPIC_API_KEY || undefined,
       modelId: model.modelId,
       timeoutSecs: model.timeoutSecs ?? 120,
-      maxTokens: (model as any).maxTokens ?? null,
+      maxTokens: model.maxTokens ?? null,
     }
   }
 
-  // ollama:* -> use local Ollama endpoint
+  // ollama:* -> local Ollama's OpenAI-compatible endpoint
   if (modelId.startsWith('ollama:')) {
-    const modelName = modelId.slice('ollama:'.length)
     return {
       baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
       apiKey: undefined,
-      modelId: modelName,
+      modelId: modelId.slice('ollama:'.length),
       timeoutSecs: 120,
       maxTokens: 8192,
     }
   }
 
-  // claude:* -> use Anthropic's OpenAI-compatible endpoint
+  // claude:* -> Anthropic's OpenAI-compatible endpoint
   if (modelId.startsWith('claude:')) {
     const modelName = modelId.slice('claude:'.length)
     const apiKey = process.env.ANTHROPIC_API_KEY
     if (!apiKey) {
       throw new Error(`ANTHROPIC_API_KEY environment variable is not set — cannot call Claude model "${modelName}". Set it in your deployment config.`)
     }
-    return {
-      baseUrl: 'https://api.anthropic.com',
-      apiKey,
-      modelId: modelName,
-      timeoutSecs: 120,
-      maxTokens: 8192,
-    }
+    return { baseUrl: 'https://api.anthropic.com', apiKey, modelId: modelName, timeoutSecs: 120, maxTokens: 8192 }
   }
 
   throw new Error(`No OpenAI-compatible model configured for ID: ${modelId}`)

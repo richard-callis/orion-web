@@ -1,5 +1,8 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
+import useSWR from 'swr'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 import { useParams } from 'next/navigation'
 import { Cpu, Package, Settings, Download, X, CheckCircle, Clock } from 'lucide-react'
 
@@ -43,78 +46,51 @@ const CATEGORY_COLORS: Record<string, string> = {
 export default function NebulaPage() {
   const { id } = useParams() as { id: string }
   const [activeTab, setActiveTab] = useState<Tab>('installed')
-  const [instances, setInstances] = useState<NebulaInstance[]>([])
-  const [loading, setLoading] = useState(true)
-  const [novaDefs, setNovaDefs] = useState<NovaDefinition[]>([])
-
-  const loadInstances = async () => {
-    try {
-      const res = await fetch(`/api/environments/${id}/nebula`)
-      const data = await res.json()
-      // GET /api/environments/[id]/nebula returns an array directly
-      setInstances(Array.isArray(data) ? data : (data.instances || []))
-    } catch { /* ignore */ }
-  }
-
-  const loadNovaDefs = async () => {
-    try {
-      const res = await fetch(`/api/environments/${id}/nebula/discovery`)
-      const data = await res.json()
-      // GET /api/environments/[id]/nebula/discovery returns { defaults, installed, active }
-      setNovaDefs(data.defaults || data.definitions || [])
-    } catch { /* ignore */ }
-  }
-
-  useEffect(() => {
-    loadInstances()
-    loadNovaDefs()
-  }, [id])
+  const toast = useToast()
+  const instancesKey = `/api/environments/${id}/nebula`
+  // GET /api/environments/[id]/nebula returns an array directly (older builds wrapped it)
+  const instancesQ = useSWR<NebulaInstance[] | { instances?: NebulaInstance[] }>(instancesKey)
+  const instances = Array.isArray(instancesQ.data) ? instancesQ.data : (instancesQ.data?.instances ?? [])
+  // GET /api/environments/[id]/nebula/discovery returns { defaults, installed, active }
+  const defsQ = useSWR<{ defaults?: NovaDefinition[]; definitions?: NovaDefinition[] }>(`${instancesKey}/discovery`, { revalidateOnFocus: false })
+  const novaDefs = defsQ.data?.defaults ?? defsQ.data?.definitions ?? []
+  const loadInstances = () => instancesQ.mutate()
 
   const handleInstall = async (novaId: string, targetName?: string) => {
     try {
-      const res = await fetch(`/api/environments/${id}/nebula/install`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ novaId, name: targetName }),
-      })
-      if (!res.ok) throw new Error(await res.text())
-      loadInstances()
+      await apiFetch(`${instancesKey}/install`, { method: 'POST', body: { novaId, name: targetName } })
+      await loadInstances()
     } catch (err) {
-      console.error('Install failed:', err)
+      toast.error(`Install failed: ${errorMessage(err)}`)
     }
   }
 
   const handleUninstall = async (instanceId: string) => {
     try {
-      const res = await fetch(`/api/environments/${id}/nebula/${instanceId}/uninstall`, {
-        method: 'POST',
-      })
-      if (!res.ok) throw new Error(await res.text())
-      loadInstances()
+      await apiFetch(`${instancesKey}/${instanceId}/uninstall`, { method: 'POST' })
+      await loadInstances()
     } catch (err) {
-      console.error('Uninstall failed:', err)
+      toast.error(`Uninstall failed: ${errorMessage(err)}`)
     }
   }
 
   // Installed/active toggle — reuses the existing PUT /nebula/[name] route
   // (operator+/admin gated), which already whitelists `isInstalled` as an
   // updatable field. This is the review/approval surface for Dream-crafted
-  // skills, which now land with isInstalled:false pending human approval
-  // (see runSkillCrafting in dream.ts) — without this, a pending skill could
-  // only be activated via a direct API call, not from the UI.
+  // skills, which land with isInstalled:false pending human approval (see
+  // runSkillCrafting in dream.ts). Failures used to be console-only.
   const handleToggle = async (name: string, installed: boolean) => {
     try {
-      const res = await fetch(`/api/environments/${id}/nebula/${encodeURIComponent(name)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isInstalled: installed }),
-      })
-      if (!res.ok) throw new Error(await res.text())
-      setInstances(prev =>
-        prev.map(i => i.name === name ? { ...i, isInstalled: installed } : i)
+      await apiFetch(`${instancesKey}/${encodeURIComponent(name)}`, { method: 'PUT', body: { isInstalled: installed } })
+      await instancesQ.mutate(
+        prev => {
+          const list = Array.isArray(prev) ? prev : (prev?.instances ?? [])
+          return list.map(i => i.name === name ? { ...i, isInstalled: installed } : i)
+        },
+        { revalidate: false },
       )
     } catch (err) {
-      console.error('Toggle failed:', err)
+      toast.error(`Failed to ${installed ? 'enable' : 'disable'} ${name}: ${errorMessage(err)}`)
     }
   }
 
@@ -131,10 +107,10 @@ export default function NebulaPage() {
           <p className="text-xs text-text-muted ml-2">Manage skills and hooks</p>
         </div>
         <button
-          onClick={() => { loadInstances(); loadNovaDefs() }}
+          onClick={() => { void loadInstances(); void defsQ.mutate() }}
           className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
           title="Refresh"
-        >
+          aria-label="Refresh">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M23 4v6h-6M1 20v-6h6" />
             <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
@@ -419,6 +395,9 @@ function SettingsTab({
           {/* Installed/active toggle — approves a pending (e.g. Dream-crafted,
               isInstalled:false) skill or deactivates an installed one. */}
           <button
+            role="switch"
+            aria-checked={inst.isInstalled}
+            aria-label={`${inst.name} installed`}
             onClick={() => onToggle(inst.name, !inst.isInstalled)}
             title={inst.isInstalled ? 'Installed — click to deactivate' : 'Pending review — click to install'}
             className={`relative w-10 h-5 rounded-full transition-colors ${

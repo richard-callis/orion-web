@@ -1,204 +1,21 @@
-import type { AgentRunner, AgentEvent, TaskRunContext, GatewayTool } from './types'
-import { GatewayClient } from './gateway-client'
-import { agentActor } from '../gateway-headers'
-import { runSignal, describeRunnerError, throwIfAborted } from './abort'
-import { getPrompt, interpolate } from '@/lib/system-prompts'
-import { validateToolArgs } from '@/lib/tool-registry'
-import { checkToolPermission } from '@/lib/tool-permissions'
-
-interface OllamaMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
-  tool_calls?: Array<{ function: { name: string; arguments: string } }>
-}
-
-interface OllamaResponse {
-  message: OllamaMessage
-  done: boolean
-}
-
-// ── Context window trimming ───────────────────────────────────────────────────
-
-const MAX_HISTORY_MESSAGES = 40
-const KEEP_FIRST_MESSAGES = 2
-const KEEP_LAST_MESSAGES = 20
-
-function trimConversationHistory(messages: OllamaMessage[]): OllamaMessage[] {
-  if (messages.length <= MAX_HISTORY_MESSAGES) return messages
-  const first = messages.slice(0, KEEP_FIRST_MESSAGES)
-  const last = messages.slice(-KEEP_LAST_MESSAGES)
-  const dropped = messages.length - KEEP_FIRST_MESSAGES - KEEP_LAST_MESSAGES
-  const notice: OllamaMessage = {
-    role: 'system',
-    content: `[${dropped} earlier messages trimmed to stay within context limits. Task is still in progress.]`,
-  }
-  return [...first, notice, ...last]
-}
+import type { AgentRunner, AgentEvent, TaskRunContext } from './types'
+import { createOllamaProvider } from './engine/providers/ollama'
+import { runTask } from './task-loop'
 
 /**
- * Ollama runner — full function-calling loop using Ollama's /api/chat.
- * Fetches tool definitions from the gateway and handles tool call / result turns.
+ * Ollama runner — task runs against Ollama's native /api/chat on the shared
+ * engine. Tools run one at a time (no parallel batch).
  */
 export const ollamaRunner: AgentRunner = {
   async *run(ctx: TaskRunContext): AsyncGenerator<AgentEvent> {
-    // Resolve Ollama base URL and timeout
-    const { baseUrl: ollamaBaseUrl, timeoutSecs } = await resolveOllamaConfig(ctx.modelId)
-    const modelId = ctx.modelId.startsWith('ollama:') ? ctx.modelId.slice('ollama:'.length) : ctx.modelId
-
-    // Fetch tools from gateway (if connected)
-    let gatewayTools: GatewayTool[] = []
-    let gateway: GatewayClient | null = null
-    if (ctx.gateway) {
-      gateway = new GatewayClient(ctx.gateway.url, ctx.gateway.token, agentActor(ctx.agentId))
-      try {
-        gatewayTools = await gateway.listTools(ctx.signal)
-      } catch (err) {
-        yield { type: 'text', content: `⚠ Could not reach gateway: ${err instanceof Error ? err.message : err}\nProceeding without tools.\n` }
-      }
-    }
-
-    const mgmtToolDefs = (ctx.managementTools?.definitions ?? []).map(t => ({
-      type: 'function',
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.inputSchema,
-      },
-    }))
-
-    // Plan-only turns get no tools at all — the model can only describe what it would do.
-    const ollamaToolDefs = ctx.planOnly ? [] : [
-      ...mgmtToolDefs,
-      ...gatewayTools.map(t => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.inputSchema,
-        },
-      })),
-    ]
-
-    const taskTemplate = await getPrompt('system.task-execution')
-    const taskPrompt = interpolate(taskTemplate, {
-      taskTitle:       ctx.taskTitle,
-      taskDescription: ctx.taskDescription ? `Description: ${ctx.taskDescription}` : '',
-      taskPlan:        ctx.taskPlan ? `\nImplementation plan:\n${ctx.taskPlan}` : '',
+    const { baseUrl, timeoutSecs } = await resolveOllamaConfig(ctx.modelId)
+    const provider = createOllamaProvider({
+      baseUrl,
+      model: ctx.modelId.startsWith('ollama:') ? ctx.modelId.slice('ollama:'.length) : ctx.modelId,
+      stream: false,
+      timeoutMs: timeoutSecs * 1000,
     })
-
-    const messages: OllamaMessage[] = [
-      { role: 'system', content: ctx.systemPrompt },
-      { role: 'user', content: taskPrompt },
-    ]
-
-    const MAX_TURNS = 20
-    let turns = 0
-    let checkpointStep = 0 // 1-based, incremented on each tool_result
-
-    try {
-      while (turns < MAX_TURNS) {
-        turns++
-        throwIfAborted(ctx.signal)
-        const trimmedMessages = trimConversationHistory(messages)
-        const res = await fetch(`${ollamaBaseUrl}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: modelId,
-            messages: trimmedMessages,
-            stream: false,
-            ...(ollamaToolDefs.length > 0 && { tools: ollamaToolDefs }),
-          }),
-          signal: runSignal(ctx.signal, timeoutSecs * 1000),
-        })
-
-        if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`)
-        const data = await res.json() as OllamaResponse
-
-        const assistantMsg = data.message
-        messages.push(assistantMsg)
-
-        // Handle tool calls
-        if (assistantMsg.tool_calls?.length) {
-          // Surface any text the model wrote alongside its tool calls (typically
-          // the <plan>) BEFORE the tool_call events, so the consumer's plan gate
-          // can see it. Each tool_call below is yielded before that tool runs.
-          if (assistantMsg.content) {
-            yield { type: 'text', content: assistantMsg.content }
-          }
-          for (const toolCall of assistantMsg.tool_calls) {
-            const fn = toolCall.function
-            yield { type: 'tool_call', tool: fn.name, args: fn.arguments }
-
-            let result: string
-            const argsRaw = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments)
-
-            // Validate arguments before executing
-            let parsedArgs: unknown
-            try { parsedArgs = JSON.parse(argsRaw || '{}') } catch { parsedArgs = {} }
-            const validation = validateToolArgs(fn.name, parsedArgs)
-            if (!validation.valid) {
-              result = `Tool validation failed for ${fn.name}: ${validation.errors.join(', ')}. Check the tool schema and retry with correct arguments.`
-              yield { type: 'tool_result', tool: fn.name, result }
-              messages.push({ role: 'tool', content: result })
-              continue
-            }
-
-            // Permission check — must pass before any tool execution
-            const permission = await checkToolPermission(
-              fn.name,
-              ctx.agentId ?? null,
-              ctx.environmentId ?? null,
-              undefined,
-              { taskId: ctx.taskId },
-            )
-            if (!permission.allowed) {
-              result = `Permission denied for tool '${fn.name}': ${permission.reason ?? 'Tool not permitted for this agent'}. Contact an admin to grant access.`
-              yield { type: 'tool_result', tool: fn.name, result }
-              messages.push({ role: 'tool', content: result })
-              continue
-            }
-
-            checkpointStep++
-            const checkpoint = ctx.checkpoints?.get(checkpointStep)
-            if (checkpoint && checkpoint.toolName === fn.name) {
-              // Replay checkpointed result — skip re-executing the tool
-              result = `[Replayed from checkpoint step ${checkpointStep}]\n${checkpoint.result}`
-            } else if (ctx.managementTools && ctx.managementTools.definitions.some(d => d.name === fn.name)) {
-              result = await ctx.managementTools.execute(fn.name, argsRaw)
-            } else if (gateway) {
-              try {
-                const args = JSON.parse(argsRaw)
-                result = await gateway.executeTool(fn.name, args, ctx.signal)
-              } catch (err) {
-                result = `Error: ${err instanceof Error ? err.message : String(err)}`
-              }
-            } else {
-              result = 'No gateway connected — cannot execute tools'
-            }
-
-            yield { type: 'tool_result', tool: fn.name, result }
-            messages.push({ role: 'tool', content: result })
-          }
-          // Continue loop to get next assistant response
-          continue
-        }
-
-        // No tool calls — final response
-        if (assistantMsg.content) {
-          yield { type: 'text', content: assistantMsg.content }
-        }
-        break
-      }
-
-      if (turns >= MAX_TURNS) {
-        yield { type: 'text', content: '\n⚠ Reached maximum turns limit.' }
-      }
-
-      yield { type: 'done' }
-    } catch (err) {
-      yield { type: 'error', error: describeRunnerError(err) }
-    }
+    yield* runTask(ctx, provider, { parallel: false })
   },
 }
 
@@ -207,22 +24,17 @@ async function resolveOllamaConfig(modelId: string): Promise<{ baseUrl: string; 
   const { prisma } = await import('../db')
 
   let model = null
-
   if (modelId.startsWith('ext:')) {
-    const extId = modelId.slice('ext:'.length)
-    model = await prisma.externalModel.findUnique({ where: { id: extId } })
+    model = await prisma.externalModel.findUnique({ where: { id: modelId.slice('ext:'.length) } })
   } else if (modelId.startsWith('ollama:')) {
-    const name = modelId.slice('ollama:'.length)
     model = await prisma.externalModel.findFirst({
-      where: { provider: 'ollama', modelId: name, enabled: true },
+      where: { provider: 'ollama', modelId: modelId.slice('ollama:'.length), enabled: true },
     })
   }
-
   if (!model) {
     model = await prisma.externalModel.findFirst({ where: { provider: 'ollama', enabled: true } })
   }
 
   if (!model?.baseUrl) throw new Error('No Ollama model configured — add one in Admin → Models')
-
   return { baseUrl: model.baseUrl, timeoutSecs: model.timeoutSecs ?? 120 }
 }

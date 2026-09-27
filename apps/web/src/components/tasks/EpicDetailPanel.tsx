@@ -5,6 +5,8 @@ import { Trash2, GitBranch, Plus, Loader2, MessageSquare, Rocket, CheckCircle2 }
 import type { Epic, Feature } from '@/types/tasks'
 import { PlanWithAIButton } from './PlanWithAIButton'
 import { DetailPanelShell } from '../ui/DetailPanelShell'
+import { useToast } from '../ui/Toast'
+import { apiFetch, errorMessage } from '@/lib/api'
 
 interface Props {
   epic: Epic
@@ -18,6 +20,7 @@ interface Props {
 
 export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, onNewFeature, onSelectFeature, onClose }: Props) {
   const router = useRouter()
+  const toast = useToast()
   const [title, setTitle]         = useState(epic.title)
   const [desc, setDesc]           = useState(epic.description ?? '')
   const [plan, setPlan]           = useState(epic.plan ?? '')
@@ -34,10 +37,10 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
   const handleApproveAll = async () => {
     setApproving(true)
     try {
-      const r = await fetch(`/api/epics/${epic.id}/approve-plan`, { method: 'POST' })
-      if (r.ok) setJustApproved(true)
+      await apiFetch(`/api/epics/${epic.id}/approve-plan`, { method: 'POST' })
+      setJustApproved(true)
     } catch (e) {
-      console.error('[approve-epic]', e)
+      toast.error(`Failed to approve plans: ${errorMessage(e)}`)
     } finally {
       setApproving(false)
     }
@@ -51,27 +54,24 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
     setStatus(epic.status)
     setEpicPlanningRoom(null)
 
+    let cancelled = false
     // Fetch fresh data — plan may have been saved from the chat screen
-    fetch(`/api/epics/${epic.id}`)
-      .then(r => r.ok ? r.json() : null)
+    apiFetch<Epic>(`/api/epics/${epic.id}`)
       .then(fresh => {
-        if (!fresh) return
-        if (fresh.plan !== epic.plan) {
-          setPlan(fresh.plan ?? '')
-          onUpdate({ plan: fresh.plan ?? null }).catch((e) => console.error("[fetch]", e))
-        }
+        if (cancelled || fresh.plan === epic.plan) return
+        setPlan(fresh.plan ?? '')
+        void onUpdate({ plan: fresh.plan ?? null })
       })
-      .catch((e) => console.error("[fetch]", e))
+      .catch(() => { /* keep the data we were given */ })
 
     // Check if there is an existing planning room for this epic
-    fetch(`/api/chatrooms?epicId=${epic.id}&type=planning`)
-      .then(r => r.ok ? r.json() : null)
+    apiFetch<{ rooms?: Array<{ id: string }> }>(`/api/chatrooms?epicId=${epic.id}&type=planning`)
       .then(data => {
-        if (data?.rooms?.length) {
-          setEpicPlanningRoom({ id: data.rooms[0].id })
-        }
+        if (!cancelled && data.rooms?.length) setEpicPlanningRoom({ id: data.rooms[0].id })
       })
-      .catch((e) => console.error("[fetch]", e))
+      .catch(() => { /* no existing room */ })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when a different epic is shown
   }, [epic.id])
 
   const save = () => onUpdate({ title, description: desc || null, plan: plan || null, status })
@@ -116,8 +116,8 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
       }
     >
       <div>
-        <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title</label>
-        <input
+        <label htmlFor="epic-title" className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title</label>
+        <input id="epic-title"
           value={title}
           onChange={e => setTitle(e.target.value)}
           onBlur={save}
@@ -126,8 +126,8 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
       </div>
 
       <div>
-        <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Status</label>
-        <select
+        <label htmlFor="epic-status" className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Status</label>
+        <select id="epic-status"
           value={status}
           onChange={e => { setStatus(e.target.value); onUpdate({ status: e.target.value }) }}
           className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
@@ -139,8 +139,8 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
       </div>
 
       <div>
-        <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
-        <textarea
+        <label htmlFor="epic-your-description" className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
+        <textarea id="epic-your-description"
           value={desc}
           onChange={e => setDesc(e.target.value)}
           onBlur={save}
@@ -151,8 +151,8 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
       </div>
 
       <div>
-        <label className="text-[10px] text-accent uppercase tracking-wide mb-1 block">Claude&apos;s Plan</label>
-        <textarea
+        <label htmlFor="epic-claude-s-plan" className="text-[10px] text-accent uppercase tracking-wide mb-1 block">Claude&apos;s Plan</label>
+        <textarea id="epic-claude-s-plan"
           value={plan}
           onChange={e => setPlan(e.target.value)}
           onBlur={save}
@@ -164,7 +164,7 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
 
       <div>
         <div className="flex items-center justify-between mb-2">
-          <label className="text-[10px] text-text-muted uppercase tracking-wide">Features ({epic.features.length})</label>
+          <span className="text-[10px] text-text-muted uppercase tracking-wide">Features ({epic.features.length})</span>
           <button onClick={onNewFeature} className="flex items-center gap-1 text-[10px] text-accent hover:text-accent/80">
             <Plus size={10} /> Add
           </button>

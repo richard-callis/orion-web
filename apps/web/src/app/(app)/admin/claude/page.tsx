@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
+import { apiFetch, ApiError } from '@/lib/api'
 import { CheckCircle, XCircle, AlertCircle, RefreshCw, LogIn, ClipboardPaste, Send, X, FlaskConical } from 'lucide-react'
 
 interface CredStatus {
@@ -42,26 +43,26 @@ export default function ClaudeOAuthPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const loadStatus = async () => {
-    const res = await fetch('/api/admin/claude/status').catch(() => null)
-    if (res?.ok) setStatus(await res.json())
+    try { setStatus(await apiFetch<CredStatus>('/api/admin/claude/status')) } catch { /* keep last status */ }
   }
 
   const runProbe = async () => {
     setProbing(true)
     setProbe(null)
-    const res = await fetch('/api/admin/claude/probe').catch(() => null)
-    if (res?.ok) setProbe(await res.json())
-    else setProbe({ ok: false, error: 'Service unreachable' })
+    try {
+      setProbe(await apiFetch<ProbeResult>('/api/admin/claude/probe'))
+    } catch {
+      setProbe({ ok: false, error: 'Service unreachable' })
+    }
     setProbing(false)
   }
 
   // On mount: load status AND resume any in-progress login (survives page refresh)
   useEffect(() => {
     loadStatus()
-    fetch('/api/admin/claude/oauth?action=poll')
-      .then(r => r.ok ? r.json() : null)
-      .then((data: PollData | null) => {
-        if (data && data.status !== 'idle' && data.status !== 'done' && data.status !== 'error') {
+    apiFetch<PollData>('/api/admin/claude/oauth?action=poll')
+      .then(data => {
+        if (data.status !== 'idle' && data.status !== 'done' && data.status !== 'error') {
           setPoll(data)
         }
       })
@@ -82,13 +83,11 @@ export default function ClaudeOAuthPage() {
     }
     if (pollRef.current) return
     pollRef.current = setInterval(async () => {
-      const res = await fetch('/api/admin/claude/oauth?action=poll').catch(() => null)
-      if (res?.ok) {
-        const data: PollData = await res.json()
-        setPoll(data)
-        if (typeof data.output === 'string' && /invalid code/i.test(data.output)) {
-          setCodeErr('Invalid code. Make sure you copied the full authorization code.')
-        }
+      let data: PollData
+      try { data = await apiFetch<PollData>('/api/admin/claude/oauth?action=poll') } catch { return }
+      setPoll(data)
+      if (typeof data.output === 'string' && /invalid code/i.test(data.output)) {
+        setCodeErr('Invalid code. Make sure you copied the full authorization code.')
       }
     }, 1500)
     return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null } }
@@ -100,35 +99,35 @@ export default function ClaudeOAuthPage() {
     setPoll(null)
     setCode('')
     setCodeErr(null)
-    const res = await fetch('/api/admin/claude/oauth?action=login', { method: 'POST' }).catch(() => null)
-    if (!res || !res.ok) {
-      if (res?.status === 429) {
-        setSvcErr('Too many requests — please wait a moment and try again.')
-      } else if (!res) {
+    try {
+      setPoll(await apiFetch<PollData>('/api/admin/claude/oauth?action=login', { method: 'POST' }))
+    } catch (e) {
+      if (!(e instanceof ApiError)) {
         setSvcErr('Claude Code service is not reachable. Make sure orion-claude is running.')
+      } else if (e.status === 429) {
+        setSvcErr('Too many requests — please wait a moment and try again.')
       } else {
-        const detail = await res.json().catch(() => null) as { error?: string } | null
-        setSvcErr(detail?.error ?? `Failed to start login (HTTP ${res.status}).`)
+        const detail = (e.body as { error?: string } | null)?.error
+        setSvcErr(detail ?? `Failed to start login (HTTP ${e.status}).`)
       }
+    } finally {
       setStarting(false)
-      return
     }
-    const data: PollData = await res.json()
-    setPoll(data)
-    setStarting(false)
   }
 
   const submitCode = async () => {
     if (!code.trim()) return
     setSending(true)
     setCodeErr(null)
-    const res = await fetch('/api/admin/claude/oauth?action=code', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ code: code.trim() }),
-    }).catch(() => null)
-    const data = await res?.json().catch(() => null)
-    if (res?.ok && data && !data.error) {
+    let data: (PollData & { error?: string }) | null = null
+    let ok = false
+    try {
+      data = await apiFetch<PollData & { error?: string }>('/api/admin/claude/oauth?action=code', { method: 'POST', body: { code: code.trim() } })
+      ok = true
+    } catch (e) {
+      data = e instanceof ApiError ? e.body as (PollData & { error?: string }) | null : null
+    }
+    if (ok && data && !data.error) {
       setCode('')
       if (typeof data.output === 'string' && /invalid code/i.test(data.output)) {
         setCodeErr('Invalid code. Make sure you copied the full authorization code.')
@@ -141,7 +140,7 @@ export default function ClaudeOAuthPage() {
   }
 
   const cancelLogin = async () => {
-    await fetch('/api/admin/claude/oauth?action=cancel', { method: 'POST' }).catch((e) => console.error("[fetch]", e))
+    await apiFetch('/api/admin/claude/oauth?action=cancel', { method: 'POST' }).catch(() => { /* the session times out on its own */ })
     setPoll(null)
     setCode('')
   }
@@ -149,15 +148,15 @@ export default function ClaudeOAuthPage() {
   const savePaste = async () => {
     setPasteErr(null)
     setPasteBusy(true)
-    const res = await fetch('/api/admin/claude/credentials', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ credentials: pasteVal }),
-    }).catch(() => null)
-    if (!res || !res.ok) {
-      const d = await res?.json().catch(() => ({}))
+    let saved = false
+    try {
+      await apiFetch('/api/admin/claude/credentials', { method: 'POST', body: { credentials: pasteVal } })
+      saved = true
+    } catch (e) {
+      const d = e instanceof ApiError ? e.body as { error?: string } | null : null
       setPasteErr(d?.error ?? 'Failed to save')
-    } else {
+    }
+    if (saved) {
       setPasteDone(true)
       setPasteVal('')
       setTimeout(() => setPasteDone(false), 3000)
@@ -205,7 +204,7 @@ export default function ClaudeOAuthPage() {
               <p className="text-xs text-text-muted mt-0.5">{status.reason}</p>
             )}
           </div>
-          <button onClick={loadStatus} className="text-text-muted hover:text-text-primary transition-colors" title="Refresh credentials status">
+          <button aria-label="Refresh credentials status" onClick={loadStatus} className="text-text-muted hover:text-text-primary transition-colors" title="Refresh credentials status">
             <RefreshCw size={13} />
           </button>
         </div>

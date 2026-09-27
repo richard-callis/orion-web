@@ -1,6 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
+import useSWR from 'swr'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 import { ShieldAlert, CheckCircle, XCircle, Clock, RefreshCw, AlertTriangle, Loader2 } from 'lucide-react'
 
 interface Approval {
@@ -20,35 +23,29 @@ interface Approval {
 }
 
 export default function SecurityApprovalsPage() {
-  const [approvals, setApprovals] = useState<Approval[]>([])
-  const [loading, setLoading] = useState(true)
+  const toast = useToast()
+  const { data, isLoading: loading, isValidating, error, mutate } = useSWR<{ pending?: Approval[] }>('/api/monitoring/security/approvals')
+  const approvals = data?.pending ?? []
   const [acting, setActing] = useState<string | null>(null)
   const [note, setNote] = useState<Record<string, string>>({})
   const [filter, setFilter] = useState<'pending' | 'all'>('pending')
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/monitoring/security/approvals')
-      const data = await res.json()
-      setApprovals(data.pending ?? [])
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { load() }, [load])
+  const load = () => { void mutate() }
 
   const act = async (id: string, action: 'approve' | 'deny') => {
     setActing(id)
     try {
-      await fetch(`/api/monitoring/security/approvals/${id}`, {
+      await apiFetch(`/api/monitoring/security/approvals/${id}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, note: note[id] ?? '' }),
+        body: { action, note: note[id] ?? '' },
       })
-      await load()
-    } finally { setActing(null) }
+      toast.success(action === 'approve' ? 'Action approved' : 'Action denied')
+    } catch (e) {
+      // A failed approve/deny used to be silent — the card just stayed put
+      toast.error(`Failed to ${action}: ${errorMessage(e)}`)
+    } finally {
+      await mutate()
+      setActing(null)
+    }
   }
 
   const getActionLabel = (actionType: string) => {
@@ -72,16 +69,20 @@ export default function SecurityApprovalsPage() {
           <h1 className="text-lg font-semibold text-text-primary">Security Action Approvals</h1>
         </div>
         <div className="flex items-center gap-2">
-          <select value={filter} onChange={e => setFilter(e.target.value as 'pending' | 'all')}
+          <select aria-label="Filter approvals" value={filter} onChange={e => setFilter(e.target.value as 'pending' | 'all')}
             className="px-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none">
             <option value="pending">Pending only</option>
             <option value="all">All</option>
           </select>
-          <button onClick={load} className="p-1.5 rounded text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
-            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+          <button onClick={load} aria-label="Refresh approvals" className="p-1.5 rounded text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
+            <RefreshCw size={13} className={isValidating ? 'animate-spin' : ''} />
           </button>
         </div>
       </div>
+
+      {error && !data && (
+        <p role="alert" className="text-sm text-status-error">Failed to load approvals: {errorMessage(error)}</p>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center h-32">
@@ -137,7 +138,7 @@ export default function SecurityApprovalsPage() {
                     )}
 
                     {/* Payload preview */}
-                    {(a.payload as any) && typeof (a.payload as any) === 'object' && (
+                    {a.payload !== null && typeof a.payload === 'object' && (
                       <pre className="text-[11px] font-mono bg-bg-raised rounded px-2 py-1.5 text-text-secondary border border-border-subtle overflow-x-auto">
                         {JSON.stringify(a.payload, null, 2).slice(0, 300)}
                         {JSON.stringify(a.payload, null, 2).length > 300 ? '...' : ''}
@@ -149,6 +150,7 @@ export default function SecurityApprovalsPage() {
                 {/* Action buttons */}
                 <div className="flex items-center gap-2 pt-1">
                   <input
+                    aria-label="Approval note"
                     value={note[a.id] ?? ''}
                     onChange={e => setNote(prev => ({ ...prev, [a.id]: e.target.value }))}
                     placeholder="Optional note to propose..."

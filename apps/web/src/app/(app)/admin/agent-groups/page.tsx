@@ -1,6 +1,10 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
+import useSWR from 'swr'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 import { UsersRound, Plus, Trash2, X, RefreshCw, Check, Bot, Layers, ChevronDown, ChevronRight, Shield } from 'lucide-react'
+import { Input } from '@/components/ui/Input'
 
 interface Agent {
   id: string
@@ -40,15 +44,19 @@ const TIER_COLORS: Record<string, string> = {
   admin:    'bg-orange-500/15 text-orange-400',
 }
 
-const inputCls = 'w-full px-3 py-1.5 text-sm bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors'
-const labelCls = 'block text-xs font-medium text-text-muted mb-1'
+
+const NO_GROUPS: AgentGroup[] = []
+const NO_AGENTS: Agent[] = []
+const NO_TOOL_GROUPS: ToolGroup[] = []
 
 export default function AgentGroupsPage() {
-  const [groups, setGroups]           = useState<AgentGroup[]>([])
-  const [allAgents, setAllAgents]     = useState<Agent[]>([])
-  const [allToolGroups, setAllToolGroups] = useState<ToolGroup[]>([])
-  const [loading, setLoading]         = useState(true)
-  const [selected, setSelected]       = useState<AgentGroup | null>(null)
+  const toast = useToast()
+  const { data: groups = NO_GROUPS, isLoading: loading, isValidating, mutate: mutateGroups } = useSWR<AgentGroup[]>('/api/agent-groups')
+  const { data: allAgents = NO_AGENTS } = useSWR<Agent[]>('/api/agents', { revalidateOnFocus: false })
+  const { data: allToolGroups = NO_TOOL_GROUPS } = useSWR<ToolGroup[]>('/api/tool-groups', { revalidateOnFocus: false })
+  // Selection is by id, so a reload always shows the fresh copy of the group.
+  const [selectedId, setSelectedId]   = useState<string | null>(null)
+  const selected = groups.find(g => g.id === selectedId) ?? null
   const [expanded, setExpanded]       = useState<Set<string>>(new Set())
 
   // Create group form
@@ -68,92 +76,67 @@ export default function AgentGroupsPage() {
   const [addingTool, setAddingTool]   = useState(false)
   const [toolSearch, setToolSearch]   = useState('')
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const [grpData, agentData, tgData] = await Promise.all([
-        fetch('/api/agent-groups').then(r => r.json()),
-        fetch('/api/agents').then(r => r.json()),
-        fetch('/api/tool-groups').then(r => r.json()),
-      ])
-      setGroups(grpData)
-      setAllAgents(agentData)
-      setAllToolGroups(tgData)
-      // Refresh selected if still present
-      if (selected) {
-        const fresh = grpData.find((g: AgentGroup) => g.id === selected.id)
-        setSelected(fresh ?? null)
-      }
-    } finally {
-      setLoading(false)
-    }
-  }, [selected])
+  const load = () => { void mutateGroups() }
 
-  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  /** Run a mutation then reload the groups; failures are toasted. */
+  const act = async (what: string, fn: () => Promise<unknown>): Promise<boolean> => {
+    try {
+      await fn()
+      await mutateGroups()
+      return true
+    } catch (e) {
+      toast.error(`Failed to ${what}: ${errorMessage(e)}`)
+      return false
+    }
+  }
 
   const createGroup = async () => {
     if (!createName.trim()) return
     setCreating(true)
     try {
-      const res = await fetch('/api/agent-groups', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: createName.trim(), description: createDesc.trim() || null }),
+      const grp = await apiFetch<AgentGroup>('/api/agent-groups', {
+        method: 'POST', body: { name: createName.trim(), description: createDesc.trim() || null },
       })
-      const grp: AgentGroup = await res.json()
-      setGroups(prev => [...prev, grp].sort((a, b) => a.name.localeCompare(b.name)))
-      setSelected(grp)
+      await mutateGroups(prev => [...(prev ?? []), grp].sort((a, b) => a.name.localeCompare(b.name)), { revalidate: false })
+      setSelectedId(grp.id)
       setShowCreate(false)
       setCreateName('')
       setCreateDesc('')
+    } catch (e) {
+      toast.error(`Failed to create group: ${errorMessage(e)}`)
     } finally {
       setCreating(false)
     }
   }
 
   const deleteGroup = async (id: string) => {
-    const res = await fetch(`/api/agent-groups/${id}`, { method: 'DELETE' })
-    if (res.ok) {
-      setGroups(prev => prev.filter(g => g.id !== id))
-      if (selected?.id === id) setSelected(null)
-    }
+    await act('delete group', () => apiFetch(`/api/agent-groups/${id}`, { method: 'DELETE' }))
+    if (selectedId === id) setSelectedId(null)
     setConfirmDelete(null)
   }
 
   const addMember = async (agentId: string) => {
     if (!selected) return
-    await fetch(`/api/agent-groups/${selected.id}/members`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentId }),
-    })
-    await load()
+    await act('add member', () => apiFetch(`/api/agent-groups/${selected.id}/members`, { method: 'POST', body: { agentId } }))
     setAddingMember(false)
     setMemberSearch('')
   }
 
   const removeMember = async (agentId: string) => {
     if (!selected) return
-    await fetch(`/api/agent-groups/${selected.id}/members?agentId=${agentId}`, { method: 'DELETE' })
-    await load()
+    await act('remove member', () => apiFetch(`/api/agent-groups/${selected.id}/members?agentId=${agentId}`, { method: 'DELETE' }))
   }
 
   const addToolAccess = async (toolGroupId: string) => {
     if (!selected) return
-    await fetch(`/api/agent-groups/${selected.id}/tool-access`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ toolGroupId }),
-    })
-    await load()
+    await act('grant tool access', () => apiFetch(`/api/agent-groups/${selected.id}/tool-access`, { method: 'POST', body: { toolGroupId } }))
     setAddingTool(false)
     setToolSearch('')
   }
 
   const removeToolAccess = async (toolGroupId: string) => {
     if (!selected) return
-    await fetch(`/api/agent-groups/${selected.id}/tool-access?toolGroupId=${toolGroupId}`, { method: 'DELETE' })
-    await load()
+    await act('revoke tool access', () => apiFetch(`/api/agent-groups/${selected.id}/tool-access?toolGroupId=${toolGroupId}`, { method: 'DELETE' }))
   }
 
   const toggleExpand = (id: string) =>
@@ -183,8 +166,8 @@ export default function AgentGroupsPage() {
             <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Agent Groups</span>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={load} className="p-1 rounded text-text-muted hover:text-text-primary transition-colors" title="Refresh">
-              <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+            <button aria-label="Refresh" onClick={load} className="p-1 rounded text-text-muted hover:text-text-primary transition-colors" title="Refresh">
+              <RefreshCw size={12} className={isValidating ? 'animate-spin' : ''} />
             </button>
             <button onClick={() => setShowCreate(true)} className="p-1 rounded text-text-muted hover:text-accent hover:bg-bg-raised transition-colors" title="New group">
               <Plus size={14} />
@@ -194,19 +177,21 @@ export default function AgentGroupsPage() {
 
         {showCreate && (
           <div className="p-3 border-b border-border-subtle space-y-2 bg-bg-card">
-            <input
+            <Input
               value={createName}
               onChange={e => setCreateName(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') createGroup(); if (e.key === 'Escape') setShowCreate(false) }}
               placeholder="Group name"
-              className={inputCls}
+              aria-label="Group name"
+              className="py-1.5"
               autoFocus
             />
-            <input
+            <Input
               value={createDesc}
               onChange={e => setCreateDesc(e.target.value)}
               placeholder="Description (optional)"
-              className={inputCls}
+              aria-label="Group description"
+              className="py-1.5"
             />
             <div className="flex gap-2">
               <button onClick={createGroup} disabled={creating || !createName.trim()}
@@ -225,7 +210,7 @@ export default function AgentGroupsPage() {
           {groups.map(g => (
             <div key={g.id} className="group">
               <button
-                onClick={() => setSelected(g.id === selected?.id ? null : g)}
+                onClick={() => setSelectedId(g.id === selectedId ? null : g.id)}
                 className={`w-full text-left rounded-lg px-3 py-2.5 transition-colors ${
                   selected?.id === g.id
                     ? 'bg-accent/15 text-accent'
@@ -290,11 +275,12 @@ export default function AgentGroupsPage() {
 
             {addingMember && (
               <div className="rounded-lg border border-border-subtle bg-bg-card p-3 space-y-2">
-                <input
+                <Input
                   value={memberSearch}
                   onChange={e => setMemberSearch(e.target.value)}
                   placeholder="Search agents…"
-                  className={inputCls}
+              aria-label="Search agents"
+                  className="py-1.5"
                   autoFocus
                 />
                 <div className="max-h-48 overflow-y-auto space-y-1">
@@ -362,11 +348,12 @@ export default function AgentGroupsPage() {
 
             {addingTool && (
               <div className="rounded-lg border border-border-subtle bg-bg-card p-3 space-y-2">
-                <input
+                <Input
                   value={toolSearch}
                   onChange={e => setToolSearch(e.target.value)}
                   placeholder="Search tool groups…"
-                  className={inputCls}
+              aria-label="Search tool groups"
+                  className="py-1.5"
                   autoFocus
                 />
                 <div className="max-h-48 overflow-y-auto space-y-1">

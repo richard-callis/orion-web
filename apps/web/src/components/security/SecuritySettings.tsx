@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import useSWR from 'swr'
+import { apiFetch, errorMessage } from '@/lib/api'
 import { Shield, CheckCircle2, XCircle, Loader2, RefreshCw, Save, Database, Zap, Server } from 'lucide-react'
 
 const sources = [
@@ -14,99 +16,97 @@ const sources = [
 type K8sEnv = { id: string; name: string; monitoringConfig: { stack?: string } | null }
 type JobStatus = 'queued' | 'running' | 'completed' | 'failed'
 type BackgroundJob = { id: string; status: JobStatus; logs: string[]; completedAt: string | null }
+type Rule = { id: string; name: string; ruleType: string; severity: number; enabled: boolean }
+
+/** Run `clear` `ms` after `value` becomes truthy; cancels on change/unmount. */
+function useTimedClear(value: unknown, clear: () => void, ms: number) {
+  const clearRef = useRef(clear)
+  clearRef.current = clear
+  useEffect(() => {
+    if (!value) return
+    const t = setTimeout(() => clearRef.current(), ms)
+    return () => clearTimeout(t)
+  }, [value, ms])
+}
 
 export default function SecuritySettings() {
-  const [config, setConfig] = useState<Record<string, string>>({})
+  const cfgQ = useSWR<{ config?: Record<string, string> }>('/api/monitoring/security/config', { revalidateOnFocus: false })
+  const rulesQ = useSWR<{ rules?: Rule[] }>('/api/monitoring/security/seed-rules', { revalidateOnFocus: false })
+  const envsQ = useSWR<Array<K8sEnv & { type: string }>>('/api/environments', { revalidateOnFocus: false })
+
+  // Unsaved edits layered over the stored config
+  const [edits, setEdits] = useState<Record<string, string>>({})
+  const config: Record<string, string> = { ...(cfgQ.data?.config ?? {}), ...edits }
+  const rules = rulesQ.data?.rules ?? []
+  const k8sEnvs = (envsQ.data ?? []).filter(e => e.type === 'cluster')
+
   const [testing, setTesting] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [results, setResults] = useState<Record<string, 'ok' | 'error' | null>>({})
-  const [rules, setRules] = useState<{ id: string; name: string; ruleType: string; severity: number; enabled: boolean }[]>([])
   const [seedingRules, setSeedingRules] = useState(false)
-  const [seedRulesMsg, setSeedRulesMsg] = useState<string | null>(null)
+  const [seedRulesMsg, setSeedRulesMsg] = useState<{ text: string; ok: boolean } | null>(null)
   const [seedingDemo, setSeedingDemo] = useState(false)
-  const [seedDemoMsg, setSeedDemoMsg] = useState<string | null>(null)
+  const [seedDemoMsg, setSeedDemoMsg] = useState<{ text: string; ok: boolean } | null>(null)
 
-  const [k8sEnvs, setK8sEnvs] = useState<K8sEnv[]>([])
-  const [selectedEnvId, setSelectedEnvId] = useState<string>('')
+  const [pickedEnvId, setSelectedEnvId] = useState<string>('')
+  const selectedEnvId = pickedEnvId || k8sEnvs[0]?.id || ''
   const [deployStack, setDeployStack] = useState<'basic' | 'full'>('basic')
-  const [deploying, setDeploying] = useState(false)
+  const [starting, setStarting] = useState(false)
   const [deployJobId, setDeployJobId] = useState<string | null>(null)
-  const [deployJob, setDeployJob] = useState<BackgroundJob | null>(null)
   const [deployError, setDeployError] = useState<string | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const logsEndRef = useRef<HTMLDivElement | null>(null)
+  const logsRef = useRef<HTMLPreElement | null>(null)
+
+  // Poll the deploy job until it finishes (SWR pauses while the tab is hidden)
+  const { data: deployJob } = useSWR<BackgroundJob>(deployJobId ? `/api/jobs/${deployJobId}` : null, {
+    refreshInterval: job => (job && (job.status === 'completed' || job.status === 'failed')) ? 0 : 3000,
+    shouldRetryOnError: false,
+  })
+  const jobDone = deployJob?.status === 'completed' || deployJob?.status === 'failed'
+  const deploying = starting || (!!deployJobId && !jobDone)
 
   useEffect(() => {
-    async function load() {
-      try {
-        const [cfgRes, rulesRes, envRes] = await Promise.all([
-          fetch('/api/monitoring/security/config'),
-          fetch('/api/monitoring/security/seed-rules'),
-          fetch('/api/environments'),
-        ])
-        const cfgData = await cfgRes.json()
-        setConfig(cfgData.config ?? {})
-        const rulesData = await rulesRes.json()
-        setRules(rulesData.rules ?? [])
-        const envData = await envRes.json() as K8sEnv[]
-        const k8s = (Array.isArray(envData) ? envData : envData).filter((e: any) => e.type === 'cluster')
-        setK8sEnvs(k8s)
-        if (k8s.length > 0) setSelectedEnvId(k8s[0].id)
-      } catch {}
-    }
-    load()
-  }, [])
+    if (deployJob?.status === 'completed') void envsQ.mutate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deployJob?.status])
 
   useEffect(() => {
-    if (logsEndRef.current) logsEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    const el = logsRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [deployJob?.logs])
 
-  useEffect(() => {
-    if (!deployJobId) return
-    pollRef.current = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/jobs/${deployJobId}`)
-        if (res.status === 404) { clearInterval(pollRef.current!); return }
-        const job: BackgroundJob = await res.json()
-        setDeployJob(job)
-        if (job.status === 'completed' || job.status === 'failed') {
-          clearInterval(pollRef.current!)
-          setDeploying(false)
-          if (job.status === 'completed') {
-            setK8sEnvs(prev => prev.map(e => e.id === selectedEnvId ? { ...e, monitoringConfig: { stack: deployStack } } : e))
-          }
-        }
-      } catch {}
-    }, 3000)
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [deployJobId, selectedEnvId, deployStack])
+  // Clear transient messages; timers are cancelled on unmount or re-trigger
+  useTimedClear(saved, () => setSaved(false), 3000)
+  useTimedClear(seedRulesMsg, () => setSeedRulesMsg(null), 4000)
+  useTimedClear(seedDemoMsg, () => setSeedDemoMsg(null), 5000)
+
+  const setConfig = (fn: (prev: Record<string, string>) => Record<string, string>) =>
+    setEdits(prev => fn({ ...(cfgQ.data?.config ?? {}), ...prev }))
 
   async function testConnection(key: string) {
     setTesting(key)
     try {
-      const res = await fetch(`/api/monitoring/security/connections/test?key=${key}`)
-      const data = await res.json()
-      setResults(prev => ({ ...prev, [key]: data.ok ? 'ok' as const : 'error' as const }))
+      const data = await apiFetch<{ ok?: boolean }>(`/api/monitoring/security/connections/test?key=${encodeURIComponent(key)}`)
+      setResults(prev => ({ ...prev, [key]: data?.ok ? 'ok' as const : 'error' as const }))
     } catch {
       setResults(prev => ({ ...prev, [key]: 'error' as const }))
+    } finally {
+      setTesting(null)
     }
-    setTesting(null)
   }
 
   async function saveConfig() {
     setSaving(true)
     setSaved(false)
+    setSaveError(null)
     try {
-      const res = await fetch('/api/monitoring/security/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
-      })
-      if (res.ok) {
-        setSaved(true)
-        setTimeout(() => setSaved(false), 3000)
-      }
+      await apiFetch('/api/monitoring/security/config', { method: 'PUT', body: config })
+      await cfgQ.mutate({ config }, { revalidate: true })
+      setEdits({})
+      setSaved(true)
+    } catch (e) {
+      setSaveError(`Failed to save: ${errorMessage(e)}`)
     } finally {
       setSaving(false)
     }
@@ -116,44 +116,31 @@ export default function SecuritySettings() {
     setSeedingRules(true)
     setSeedRulesMsg(null)
     try {
-      const res = await fetch('/api/monitoring/security/seed-rules', { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok) { setSeedRulesMsg(data.error ?? 'Failed to seed rules'); return }
-      setSeedRulesMsg(`Seeded ${data.seeded} correlation rules`)
-      // Reload the full rule list with all fields
-      const r2 = await fetch('/api/monitoring/security/seed-rules')
-      const d2 = await r2.json()
-      setRules(d2.rules ?? [])
-    } catch {
-      setSeedRulesMsg('Failed to seed rules')
+      const data = await apiFetch<{ seeded?: number }>('/api/monitoring/security/seed-rules', { method: 'POST' })
+      setSeedRulesMsg({ text: `Seeded ${data?.seeded ?? 0} correlation rules`, ok: true })
+      await rulesQ.mutate()
+    } catch (e) {
+      setSeedRulesMsg({ text: errorMessage(e, 'Failed to seed rules'), ok: false })
     } finally {
       setSeedingRules(false)
-      setTimeout(() => setSeedRulesMsg(null), 4000)
     }
   }
 
   async function deployMonitoring() {
     if (!selectedEnvId) return
-    setDeploying(true)
+    setStarting(true)
     setDeployError(null)
-    setDeployJob(null)
     setDeployJobId(null)
     try {
-      const res = await fetch(`/api/environments/${selectedEnvId}/monitoring/deploy`, {
+      const data = await apiFetch<{ jobId: string }>(`/api/environments/${selectedEnvId}/monitoring/deploy`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stack: deployStack }),
+        body: { stack: deployStack },
       })
-      const data = await res.json()
-      if (!res.ok) {
-        setDeployError(data.error ?? 'Deployment failed')
-        setDeploying(false)
-        return
-      }
       setDeployJobId(data.jobId)
-    } catch {
-      setDeployError('Failed to start deployment')
-      setDeploying(false)
+    } catch (e) {
+      setDeployError(errorMessage(e, 'Failed to start deployment'))
+    } finally {
+      setStarting(false)
     }
   }
 
@@ -161,15 +148,12 @@ export default function SecuritySettings() {
     setSeedingDemo(true)
     setSeedDemoMsg(null)
     try {
-      const res = await fetch('/api/monitoring/security/demo-events', { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok) { setSeedDemoMsg(data.error ?? 'Failed to inject demo events'); return }
-      setSeedDemoMsg(data.message ?? 'Demo events injected')
-    } catch {
-      setSeedDemoMsg('Failed to inject demo events')
+      const data = await apiFetch<{ message?: string }>('/api/monitoring/security/demo-events', { method: 'POST' })
+      setSeedDemoMsg({ text: data?.message ?? 'Demo events injected', ok: true })
+    } catch (e) {
+      setSeedDemoMsg({ text: errorMessage(e, 'Failed to inject demo events'), ok: false })
     } finally {
       setSeedingDemo(false)
-      setTimeout(() => setSeedDemoMsg(null), 5000)
     }
   }
 
@@ -205,6 +189,7 @@ export default function SecuritySettings() {
               </div>
               <input
                 type="text"
+                aria-label={`${source.name} URL`}
                 value={config[source.key] || source.default}
                 onChange={e => setConfig(prev => ({ ...prev, [source.key]: e.target.value }))}
                 className="w-full px-3 py-1.5 text-xs bg-bg-surface border border-border-subtle rounded-md font-mono text-text-primary focus:outline-none focus:border-accent"
@@ -223,7 +208,8 @@ export default function SecuritySettings() {
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
             Save Configuration
           </button>
-          {saved && <span className="text-xs text-status-healthy flex items-center gap-1"><CheckCircle2 size={12} /> Saved</span>}
+          {saved && <span role="status" className="text-xs text-status-healthy flex items-center gap-1"><CheckCircle2 size={12} aria-hidden /> Saved</span>}
+          {saveError && <span role="alert" className="text-xs text-status-error">{saveError}</span>}
         </div>
       </div>
 
@@ -250,7 +236,7 @@ export default function SecuritySettings() {
         </div>
 
         {seedRulesMsg && (
-          <div className="text-xs text-status-healthy mb-2">{seedRulesMsg}</div>
+          <div role="status" className={`text-xs mb-2 ${seedRulesMsg.ok ? 'text-status-healthy' : 'text-status-error'}`}>{seedRulesMsg.text}</div>
         )}
 
         {rules.length > 0 ? (
@@ -291,7 +277,7 @@ export default function SecuritySettings() {
           </button>
         </div>
         {seedDemoMsg && (
-          <div className="text-xs text-status-healthy mt-1">{seedDemoMsg}</div>
+          <div role="status" className={`text-xs mt-1 ${seedDemoMsg.ok ? 'text-status-healthy' : 'text-status-error'}`}>{seedDemoMsg.text}</div>
         )}
         <p className="text-[11px] text-text-muted mt-1">
           Injects brute-force, port scan, K8s warnings, anomalies, and a malware signal. Run the correlator after to generate incidents.
@@ -314,8 +300,9 @@ export default function SecuritySettings() {
         ) : (
           <div className="space-y-3">
             <div>
-              <label className="text-xs text-text-muted mb-1 block">Environment</label>
+              <label htmlFor="monitoring-env" className="text-xs text-text-muted mb-1 block">Environment</label>
               <select
+                id="monitoring-env"
                 value={selectedEnvId}
                 onChange={e => setSelectedEnvId(e.target.value)}
                 disabled={deploying}
@@ -369,9 +356,8 @@ export default function SecuritySettings() {
                   {(deployJob.status === 'running' || deployJob.status === 'queued') && <Loader2 size={12} className="animate-spin text-accent" />}
                   <span className="text-xs text-text-muted capitalize">{deployJob.status}</span>
                 </div>
-                <pre className="bg-bg-surface border border-border-subtle rounded-lg p-3 text-[10px] text-text-muted font-mono max-h-48 overflow-y-auto whitespace-pre-wrap">
+                <pre ref={logsRef} role="log" className="bg-bg-surface border border-border-subtle rounded-lg p-3 text-[10px] text-text-muted font-mono max-h-48 overflow-y-auto whitespace-pre-wrap">
                   {deployJob.logs.join('\n')}
-                  <div ref={logsEndRef} />
                 </pre>
               </div>
             )}

@@ -1,7 +1,8 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
+import useSWR from 'swr'
 import { useParams } from 'next/navigation'
-import { Cpu, Filter, ChevronDown, ChevronUp, Zap, CheckCircle, AlertTriangle } from 'lucide-react'
+import { Filter, ChevronDown, ChevronUp, Zap, CheckCircle, AlertTriangle } from 'lucide-react'
 
 interface EffectivenessEntry {
   name: string
@@ -13,26 +14,15 @@ interface EffectivenessEntry {
 
 export default function EffectivenessPage() {
   const { id } = useParams() as { id: string }
-  const [entries, setEntries] = useState<EffectivenessEntry[]>([])
-  const [loading, setLoading] = useState(true)
+  // Auto-refresh every 30s (paused while the tab is hidden)
+  const { data, isLoading: loading, mutate } =
+    useSWR<EffectivenessEntry[]>(`/api/environments/${id}/nebula/effectiveness`, { refreshInterval: 30_000 })
+  const entries = Array.isArray(data) ? data : []
+  const load = () => { void mutate() }
   const [filter, setFilter] = useState<string>('')
   const [sortField, setSortField] = useState<'name' | 'fireRate' | 'successRate' | 'needsTuning'>('needsTuning')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
-  const load = async () => {
-    try {
-      const res = await fetch(`/api/environments/${id}/nebula/effectiveness`)
-      const data = await res.json()
-      setEntries(Array.isArray(data) ? data : [])
-    } catch { /* ignore */ }
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    load()
-    const interval = setInterval(load, 30000) // Auto-refresh every 30s
-    return () => clearInterval(interval)
-  }, [id])
 
   const toggleSort = (field: typeof sortField) => {
     if (sortField === field) {
@@ -77,7 +67,7 @@ export default function EffectivenessPage() {
             onClick={load}
             className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
             title="Refresh"
-          >
+           aria-label="Refresh">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M23 4v6h-6M1 20v-6h6" />
               <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />

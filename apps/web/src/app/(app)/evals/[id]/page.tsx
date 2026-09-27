@@ -4,6 +4,9 @@ import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Play, Plus, Trash2, FlaskConical } from 'lucide-react'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { RunStatusBadge } from '@/components/ui/Badge'
+import { useToast } from '@/components/ui/Toast'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useAgents } from '@/hooks/useAgents'
 
 interface AssertionDef {
   type: 'contains_text' | 'not_contains_text' | 'regex_match' | 'llm_judge'
@@ -44,11 +47,6 @@ interface EvalSuite {
   runs: EvalRun[]
 }
 
-interface Agent {
-  id: string
-  name: string
-}
-
 const ASSERTION_TYPE_COLORS: Record<string, string> = {
   contains_text: 'bg-blue-500/20 text-blue-400',
   not_contains_text: 'bg-orange-500/20 text-orange-400',
@@ -61,7 +59,8 @@ export default function EvalSuiteDetailPage() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const [suite, setSuite] = useState<EvalSuite | null>(null)
-  const [agents, setAgents] = useState<Agent[]>([])
+  const { agents } = useAgents()
+  const toast = useToast()
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
   const [runAgentId, setRunAgentId] = useState('')
@@ -79,12 +78,9 @@ export default function EvalSuiteDetailPage() {
   const loadSuite = useCallback(async () => {
     setLoading(true)
     try {
-      const [sRes, aRes] = await Promise.all([
-        fetch(`/api/eval-suites/${params.id}`),
-        fetch('/api/agents'),
-      ])
-      if (sRes.ok) setSuite(await sRes.json())
-      if (aRes.ok) setAgents(await aRes.json())
+      setSuite(await apiFetch<EvalSuite>(`/api/eval-suites/${params.id}`))
+    } catch {
+      setSuite(null)
     } finally {
       setLoading(false)
     }
@@ -98,15 +94,11 @@ export default function EvalSuiteDetailPage() {
     if (!runAgentId) return
     setRunning(true)
     try {
-      const res = await fetch(`/api/eval-suites/${params.id}/run`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ agentId: runAgentId }),
-      })
-      if (res.ok) {
-        setShowRunForm(false)
-        await loadSuite()
-      }
+      await apiFetch(`/api/eval-suites/${params.id}/run`, { method: 'POST', body: { agentId: runAgentId } })
+      setShowRunForm(false)
+      await loadSuite()
+    } catch (e) {
+      toast.error(`Failed to start run: ${errorMessage(e)}`)
     } finally {
       setRunning(false)
     }
@@ -119,21 +111,20 @@ export default function EvalSuiteDetailPage() {
       const assertions: AssertionDef[] = [
         { type: newCase.assertionType, value: newCase.assertionValue },
       ]
-      const res = await fetch(`/api/eval-suites/${params.id}/cases`, {
+      await apiFetch(`/api/eval-suites/${params.id}/cases`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           title: newCase.title,
           prompt: newCase.prompt,
           expectedOutput: newCase.expectedOutput || undefined,
           assertions,
-        }),
+        },
       })
-      if (res.ok) {
-        setShowNewCase(false)
-        setNewCase({ title: '', prompt: '', expectedOutput: '', assertionType: 'contains_text', assertionValue: '' })
-        await loadSuite()
-      }
+      setShowNewCase(false)
+      setNewCase({ title: '', prompt: '', expectedOutput: '', assertionType: 'contains_text', assertionValue: '' })
+      await loadSuite()
+    } catch (e) {
+      toast.error(`Failed to add case: ${errorMessage(e)}`)
     } finally {
       setAddingCase(false)
     }
@@ -141,7 +132,11 @@ export default function EvalSuiteDetailPage() {
 
   async function deleteCase(caseId: string) {
     if (!(await confirmDialog({ title: 'Delete case?', message: 'Delete this eval case?', confirmLabel: 'Delete' }))) return
-    await fetch(`/api/eval-suites/${params.id}/cases/${caseId}`, { method: 'DELETE' })
+    try {
+      await apiFetch(`/api/eval-suites/${params.id}/cases/${caseId}`, { method: 'DELETE' })
+    } catch (e) {
+      toast.error(`Failed to delete case: ${errorMessage(e)}`)
+    }
     await loadSuite()
   }
 

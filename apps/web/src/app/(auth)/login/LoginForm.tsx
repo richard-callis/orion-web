@@ -4,6 +4,7 @@ import { useState, FormEvent } from 'react'
 import { signIn } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AlertTriangle, Loader2 } from 'lucide-react'
+import { Input } from '@/components/ui/Input'
 
 export default function LoginForm() {
   const router = useRouter()
@@ -40,7 +41,6 @@ export default function LoginForm() {
     }
   }
 
-  const inputCls = 'w-full px-3 py-2 text-sm bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none focus:border-accent'
 
   return (
     <div className="w-full max-w-sm space-y-6">
@@ -62,26 +62,26 @@ export default function LoginForm() {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-xs text-text-muted font-medium">Username</label>
-            <input
+            <label htmlFor="login-username" className="text-xs text-text-muted font-medium">Username</label>
+            <Input
+              id="login-username"
               type="text"
               autoComplete="username"
               value={username}
               onChange={e => setUsername(e.target.value)}
-              className={inputCls}
               required
               autoFocus
             />
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs text-text-muted font-medium">Password</label>
-            <input
+            <label htmlFor="login-password" className="text-xs text-text-muted font-medium">Password</label>
+            <Input
+              id="login-password"
               type="password"
               autoComplete="current-password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              className={inputCls}
               required
             />
           </div>

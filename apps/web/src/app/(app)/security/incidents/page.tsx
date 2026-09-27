@@ -1,6 +1,8 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
+import useSWR from 'swr'
+import { useDebounced } from '@/hooks/useDebounced'
 import Link from 'next/link'
 import { Shield, Loader2, RefreshCw, Search, XCircle, AlertTriangle, CheckCircle, Clock } from 'lucide-react'
 
@@ -18,26 +20,18 @@ interface Incident {
 }
 
 export default function IncidentsPage() {
-  const [incidents, setIncidents] = useState<Incident[]>([])
-  const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<string>('')
+  const [filter] = useState<string>('')
   const [statusFilter, setStatusFilter] = useState<string>('')
   const [search, setSearch] = useState('')
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const params = new URLSearchParams()
-      if (statusFilter) params.set('status', statusFilter)
-      if (search) params.set('search', search)
-      const data = await fetch(`/api/monitoring/security/incidents?${params}`).then(r => r.json())
-      setIncidents(data.incidents ?? [])
-    } finally {
-      setLoading(false)
-    }
-  }, [statusFilter, search])
-
-  useEffect(() => { load() }, [load])
+  // Keyed on the (debounced) query: no request per keystroke, and an older
+  // response can't overwrite a newer one.
+  const debouncedSearch = useDebounced(search.trim())
+  const params = new URLSearchParams()
+  if (statusFilter) params.set('status', statusFilter)
+  if (debouncedSearch) params.set('search', debouncedSearch)
+  const { data, isValidating: loading, mutate } = useSWR<{ incidents?: Incident[] }>(`/api/monitoring/security/incidents?${params}`)
+  const incidents = data?.incidents ?? []
+  const load = () => { void mutate() }
 
   const filtered = incidents.filter(inc => {
     if (filter && !inc.rootCauseSummary?.toLowerCase().includes(filter.toLowerCase())) return false
@@ -59,6 +53,7 @@ export default function IncidentsPage() {
           <div className="relative flex-1">
             <Search size={14} className="absolute left-2.5 top-2 text-text-muted" />
             <input
+              aria-label="Search incidents"
               value={search}
               onChange={e => setSearch(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && load()}
@@ -66,11 +61,11 @@ export default function IncidentsPage() {
               className="w-full pl-8 pr-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
             />
           </div>
-          <button onClick={load} className="p-1.5 rounded text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
+          <button onClick={load} aria-label="Refresh incidents" className="p-1.5 rounded text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+        <select aria-label="Status filter" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
           className="px-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none">
           <option value="">All statuses</option>
           <option value="open">Open</option>

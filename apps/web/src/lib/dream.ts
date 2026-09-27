@@ -38,6 +38,8 @@
 import { prisma } from './db'
 import { embedNote, computeSemanticEdges, embedSkill, hybridSearch } from './embeddings'
 import { estimateTokens } from './token-budget'
+import { completeOnce, claudeTarget, targetForExternalModel } from './agent-runner/engine/complete'
+import { ProviderHttpError } from './agent-runner/engine/types'
 import {
   type SkillSpec,
   validateSkillContent,
@@ -91,75 +93,36 @@ interface LLMCallResult {
   reasoning?: string
 }
 
-async function callWithModel(modelId: string, prompt: string): Promise<LLMCallResult> {
-  const CLAUDE_URL = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
-
-  if (modelId === 'claude' || modelId.startsWith('claude:')) {
-    const model = modelId.startsWith('claude:') ? modelId.slice('claude:'.length) : undefined
-    const res = await fetch(`${CLAUDE_URL}/run/collect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, ...(model ? { model } : {}), maxTurns: 1 }),
-      signal: AbortSignal.timeout(90_000),
-    })
-    if (!res.ok) throw new Error(`orion-claude HTTP ${res.status}`)
-    const json = await res.json() as {
-      text?: string
-      usage?: { inputTokens?: number; outputTokens?: number }
-      inputTokens?: number
-      outputTokens?: number
-    }
-    const text = json.text ?? ''
-    // orion-claude sidecar doesn't reliably surface usage on /run/collect — use
-    // it if present, otherwise fall back to a length-based estimate. Input
-    // tokens are estimated from the prompt since the sidecar never echoes it.
-    const inputTokens  = json.usage?.inputTokens  ?? json.inputTokens  ?? estimateTokens(prompt)
-    const outputTokens = json.usage?.outputTokens ?? json.outputTokens ?? estimateTokens(text)
-    return { text, inputTokens, outputTokens }
+/** @internal exported for the engine characterization tests */
+export async function callWithModel(modelId: string, prompt: string): Promise<LLMCallResult> {
+  const claude = claudeTarget(modelId)
+  if (claude) {
+    const r = await completeOnce(claude, prompt, { timeoutMs: 90_000 })
+    // The sidecar doesn't reliably report usage — fall back to a length-based
+    // estimate (input from the prompt, since the sidecar never echoes it).
+    return { text: r.text, inputTokens: r.inputTokens ?? estimateTokens(prompt), outputTokens: r.outputTokens ?? estimateTokens(r.text) }
   }
 
   // External model (OpenAI-compatible or Ollama)
   const extModel = await prisma.externalModel.findUnique({ where: { id: modelId } })
   if (!extModel) throw new Error(`dream.model '${modelId}' not found`)
 
-  if (extModel.provider === 'ollama') {
-    const res = await fetch(`${extModel.baseUrl}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: extModel.modelId, prompt, stream: false }),
-      signal: AbortSignal.timeout(90_000),
+  const isOllama = extModel.provider === 'ollama'
+  let r
+  try {
+    r = await completeOnce(targetForExternalModel(extModel), prompt, {
+      timeoutMs: isOllama ? 90_000 : (extModel.timeoutSecs ?? 120) * 1000,
     })
-    if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`)
-    const data = await res.json() as { response?: string; prompt_eval_count?: number; eval_count?: number }
-    const text = data.response?.trim() ?? ''
-    const inputTokens  = data.prompt_eval_count ?? estimateTokens(prompt)
-    const outputTokens = data.eval_count ?? estimateTokens(text)
-    return { text, inputTokens, outputTokens }
+  } catch (e) {
+    if (e instanceof ProviderHttpError) throw new Error(`${isOllama ? 'Ollama' : 'External model'} HTTP ${e.status}`)
+    throw e
   }
-
-  // OpenAI-compatible
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (extModel.apiKey) headers['Authorization'] = `Bearer ${extModel.apiKey}`
-  const res = await fetch(`${extModel.baseUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      model: extModel.modelId,
-      stream: false,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-    signal: AbortSignal.timeout((extModel.timeoutSecs ?? 120) * 1000),
-  })
-  if (!res.ok) throw new Error(`External model HTTP ${res.status}`)
-  const data = await res.json() as {
-    choices?: Array<{ message: { content: string; reasoning_content?: string } }>
-    usage?: { prompt_tokens?: number; completion_tokens?: number }
+  return {
+    text: r.text,
+    inputTokens: r.inputTokens ?? estimateTokens(prompt),
+    outputTokens: r.outputTokens ?? estimateTokens(r.text),
+    ...(r.reasoning && { reasoning: r.reasoning }),
   }
-  const text = data.choices?.[0]?.message?.content?.trim() ?? ''
-  const reasoning = data.choices?.[0]?.message?.reasoning_content?.trim() || undefined
-  const inputTokens  = data.usage?.prompt_tokens     ?? estimateTokens(prompt)
-  const outputTokens = data.usage?.completion_tokens ?? estimateTokens(text)
-  return { text, inputTokens, outputTokens, reasoning }
 }
 
 // Cache only positive hits — a miss (e.g. queried before ensureSystemAgents()

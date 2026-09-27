@@ -1,11 +1,14 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
+import useSWR from 'swr'
+import { ApiError, apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 import { useParams, useRouter } from 'next/navigation'
 import {
-  Loader2, ArrowLeft, AlertTriangle, Shield, Clock, FileText,
+  Loader2, ArrowLeft, Clock, FileText,
   Eye, Link as LinkIcon, Edit3, Plus, Trash2, CheckCircle,
-  AlertOctagon, Tag, Layers
+  Tag, Layers
 } from 'lucide-react'
 import Link from 'next/link'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
@@ -64,41 +67,36 @@ export default function InvestigationDetailPage() {
   const params = useParams()
   const router = useRouter()
   const investigationId = params.id as string
-  const [investigation, setInvestigation] = useState<Investigation | null>(null)
-  const [loading, setLoading] = useState(true)
+  const toast = useToast()
+  const key = `/api/monitoring/security/investigations/${investigationId}`
+  const { data, error: loadError, isLoading: loading, mutate } =
+    useSWR<{ investigation?: Investigation } | Investigation>(key, { shouldRetryOnError: false })
+  const investigation: Investigation | null = data ? (('investigation' in data && data.investigation) ? data.investigation : data as Investigation) : null
   const [activeTab, setActiveTab] = useState<'overview' | 'observables' | 'notes' | 'timeline'>('overview')
   const [noteContent, setNoteContent] = useState('')
   const [savingNote, setSavingNote] = useState(false)
   const [updatingStatus, setUpdatingStatus] = useState(false)
-  const [newStatus, setNewStatus] = useState('')
+  // null = no pending change; the select shows the stored status
+  const [pickedStatus, setNewStatus] = useState<string | null>(null)
+  const newStatus = pickedStatus ?? investigation?.status ?? 'open'
+  const load = () => mutate()
 
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/monitoring/security/investigations/${investigationId}`)
-      if (!res.ok) { router.push('/security/investigations'); return }
-      const data = await res.json()
-      setInvestigation(data.investigation ?? data)
-      setNewStatus(data.investigation?.status ?? data?.status ?? 'open')
-    } catch {
-      router.push('/security/investigations')
-    } finally {
-      setLoading(false)
-    }
-  }, [investigationId, router])
-
-  useEffect(() => { load() }, [load])
+  // A missing investigation goes back to the list (as before); other errors
+  // show a retry instead of silently redirecting.
+  const notFound = loadError instanceof ApiError && loadError.status === 404
+  useEffect(() => {
+    if (notFound) router.push('/security/investigations')
+  }, [notFound, router])
 
   const addNote = async () => {
     if (!noteContent.trim()) return
     setSavingNote(true)
     try {
-      await fetch(`/api/monitoring/security/investigations/${investigationId}/notes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: noteContent }),
-      })
+      await apiFetch(`${key}/notes`, { method: 'POST', body: { content: noteContent } })
       setNoteContent('')
-      load()
+      await load()
+    } catch (e) {
+      toast.error(`Failed to add note: ${errorMessage(e)}`)
     } finally {
       setSavingNote(false)
     }
@@ -107,12 +105,11 @@ export default function InvestigationDetailPage() {
   const updateStatus = async () => {
     setUpdatingStatus(true)
     try {
-      await fetch(`/api/monitoring/security/investigations/${investigationId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      })
-      load()
+      await apiFetch(key, { method: 'PATCH', body: { status: newStatus } })
+      setNewStatus(null)
+      await load()
+    } catch (e) {
+      toast.error(`Failed to update status: ${errorMessage(e)}`)
     } finally {
       setUpdatingStatus(false)
     }
@@ -121,11 +118,11 @@ export default function InvestigationDetailPage() {
   const deleteObservable = async (obsId: string) => {
     if (!(await confirmDialog({ title: 'Delete observable?', message: 'Delete this observable?', confirmLabel: 'Delete' }))) return
     try {
-      await fetch(`/api/monitoring/security/investigations/${investigationId}/observables/${obsId}`, {
-        method: 'DELETE',
-      })
-      load()
-    } catch {}
+      await apiFetch(`${key}/observables/${obsId}`, { method: 'DELETE' })
+      await load()
+    } catch (e) {
+      toast.error(`Failed to delete observable: ${errorMessage(e)}`)
+    }
   }
 
   if (loading) {
@@ -137,6 +134,16 @@ export default function InvestigationDetailPage() {
   }
 
   if (!investigation) {
+    if (loadError && !notFound) {
+      return (
+        <div role="alert" className="p-6 text-center space-y-3">
+          <p className="text-sm text-status-error">Failed to load investigation: {errorMessage(loadError)}</p>
+          <button onClick={() => load()} className="text-xs px-3 py-1.5 rounded border border-border-subtle bg-bg-raised text-text-primary hover:border-accent transition-colors">
+            Retry
+          </button>
+        </div>
+      )
+    }
     return (
       <div className="p-6 text-center text-text-muted">Investigation not found</div>
     )
@@ -153,7 +160,7 @@ export default function InvestigationDetailPage() {
     <div className="p-6 max-w-6xl space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <button onClick={() => router.back()} className="p-1.5 rounded hover:bg-bg-raised text-text-muted transition-colors">
+        <button aria-label="Back" onClick={() => router.back()} className="p-1.5 rounded hover:bg-bg-raised text-text-muted transition-colors">
           <ArrowLeft size={16} />
         </button>
         <div className="flex-1">
@@ -222,6 +229,7 @@ export default function InvestigationDetailPage() {
         {/* Status update controls */}
         <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border-subtle">
           <select
+            aria-label="Investigation status"
             value={newStatus}
             onChange={e => setNewStatus(e.target.value)}
             className="px-2 py-1 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none"
@@ -363,7 +371,7 @@ export default function InvestigationDetailPage() {
                     <td className="px-4 py-2 text-text-muted">{obs.confidence}%</td>
                     <td className="px-4 py-2 text-text-muted">{new Date(obs.firstSeen).toLocaleDateString()}</td>
                     <td className="px-4 py-2">
-                      <button onClick={() => deleteObservable(obs.id)} className="text-text-muted hover:text-status-error transition-colors">
+                      <button aria-label={`Delete observable ${obs.displayValue || obs.value}`} onClick={() => deleteObservable(obs.id)} className="text-text-muted hover:text-status-error transition-colors">
                         <Trash2 size={12} />
                       </button>
                     </td>

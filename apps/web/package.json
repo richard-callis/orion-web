@@ -11,7 +11,8 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate deploy",
-    "test": "vitest run"
+    "test": "vitest run",
+    "gen:prompts": "node scripts/gen-prompts.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-code": "^1.0.0",

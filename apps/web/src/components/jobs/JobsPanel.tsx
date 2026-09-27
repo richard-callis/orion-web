@@ -8,6 +8,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { IconButton } from '@/components/ui/Button'
 import { RunStatusBadge } from '@/components/ui/Badge'
 import { useToast } from '@/components/ui/Toast'
+import { apiFetch, errorMessage } from '@/lib/api'
 
 interface BackgroundJob {
   id: string
@@ -75,16 +76,11 @@ function JobModal({ jobId, onClose, onArchive, onDelete }: {
     if (!job) return
     setBusy(true)
     try {
-      const res = await fetch(`/api/jobs/${job.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ archived: true }),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      await apiFetch(`/api/jobs/${job.id}`, { method: 'PATCH', body: { archived: true } })
       onArchive(job.id)
       onClose()
     } catch (e) {
-      toast.error(`Failed to archive job: ${e instanceof Error ? e.message : 'unknown error'}`)
+      toast.error(`Failed to archive job: ${errorMessage(e, 'unknown error')}`)
     } finally {
       setBusy(false)
     }
@@ -94,12 +90,11 @@ function JobModal({ jobId, onClose, onArchive, onDelete }: {
     if (!job) return
     setBusy(true)
     try {
-      const res = await fetch(`/api/jobs/${job.id}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      await apiFetch(`/api/jobs/${job.id}`, { method: 'DELETE' })
       onDelete(job.id)
       onClose()
     } catch (e) {
-      toast.error(`Failed to delete job: ${e instanceof Error ? e.message : 'unknown error'}`)
+      toast.error(`Failed to delete job: ${errorMessage(e, 'unknown error')}`)
     } finally {
       setBusy(false)
     }

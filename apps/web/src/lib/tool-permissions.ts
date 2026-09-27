@@ -1,15 +1,23 @@
 /**
- * Tool permission checks for the task runner path.
+ * Tool permission checks for agents (task runners, the MCP route, room agents).
+ * Human chat has its own policy in chat-tool-policy.ts.
  *
- * The interactive chat path has its own full permission logic in claude.ts that
- * checks user tiers, ToolGroup membership, and ToolAgentRestrictions. This module
- * provides a simpler version for task agents:
- *
- * - read / write tier tools: allowed by default
- * - destructive tier tools: require an explicit ToolExecutionGrant (keyed by agentId)
- * - ToolAgentRestriction: if any restriction rows exist for this tool+agent, block
+ * - archived agents may not run any tool
+ * - ToolAgentRestriction: if any restriction rows exist for this tool, only
+ *   those agents may run it
+ * - registry (ORION management) tools: read / write allowed; destructive needs
+ *   a one-time ToolExecutionGrant
+ * - gateway tools (kubectl_*, helm_*, custom tools): allowed — destructive ones
+ *   included — only when ALL of:
+ *     · the agent is active (not archived) and linked to the environment,
+ *     · the tool is enabled in the environment's tool policy (McpTool row,
+ *       enabled and status 'active'),
+ *     · an admin has granted it: the tool is in a tool group the agent's agent
+ *       group has access to (Admin → Agent Groups ↔ Environments → Tool Groups),
+ *     · it is inside the agent's own allowlist (contextConfig.allowedTools), if set.
+ *   The grant is the approval — no extra per-call grant for destructive tools.
  * - untrusted tasks (metadata.untrusted, e.g. webhook-created): every tool except
- *   registry read-tier tools requires an explicit ToolExecutionGrant (SOC2 [M3])
+ *   registry read-tier tools additionally requires a one-time ToolExecutionGrant (SOC2 [M3])
  *
  * SOC2 [A-003]: Permission denials are returned to the LLM as a tool result
  * rather than a silent failure so the outcome is observable in the audit trail.
@@ -26,6 +34,58 @@ async function resolveEnvironmentForAgent(agentId: string): Promise<string | nul
     select: { environmentId: true },
   })
   return envLink?.environmentId ?? null
+}
+
+// ── Helper: agent state ───────────────────────────────────────────────────────
+
+interface AgentState {
+  exists: boolean
+  archived: boolean
+  /** contextConfig.allowedTools, when the agent has a narrowed tool list. */
+  allowedTools: string[] | null
+  name: string
+}
+
+async function loadAgentState(agentId: string): Promise<AgentState> {
+  const agent = await prisma.agent.findUnique({ where: { id: agentId }, select: { name: true, metadata: true } })
+  if (!agent) return { exists: false, archived: false, allowedTools: null, name: agentId }
+  const meta = (agent.metadata && typeof agent.metadata === 'object' ? agent.metadata : {}) as Record<string, unknown>
+  const cc = (meta.contextConfig && typeof meta.contextConfig === 'object' ? meta.contextConfig : {}) as Record<string, unknown>
+  return {
+    exists: true,
+    archived: meta.archived === true,
+    allowedTools: Array.isArray(cc.allowedTools) ? cc.allowedTools.filter((t): t is string => typeof t === 'string') : null,
+    name: agent.name,
+  }
+}
+
+// ── Helper: gateway-tool grant (admin-configured) ─────────────────────────────
+
+const GRANT_HINT = 'An admin can grant it under Admin → Agent Groups (give one of this agent\'s groups access to a tool group that contains it; tool groups are managed under Environments → Tool Groups).'
+
+/** Returns a denial reason, or null when the agent may run this gateway tool. */
+async function checkGatewayToolGrant(
+  toolName: string,
+  agent: AgentState,
+  agentId: string,
+  environmentId: string,
+): Promise<string | null> {
+  const tool = await prisma.mcpTool.findFirst({
+    where: { environmentId, name: toolName },
+    select: { id: true, enabled: true, status: true },
+  })
+  if (!tool || !tool.enabled || tool.status !== 'active') {
+    return `\`${toolName}\` is not enabled in this environment's tool policy. An admin can enable it under Environments → Tools.`
+  }
+  const grant = await prisma.toolGroupTool.findFirst({
+    where: {
+      toolId: tool.id,
+      toolGroup: { environmentId, agentAccess: { some: { agentGroup: { members: { some: { agentId } } } } } },
+    },
+    select: { toolGroupId: true },
+  })
+  if (!grant) return `\`${toolName}\` has not been granted to agent "${agent.name}". ${GRANT_HINT}`
+  return null
 }
 
 // ── Helper: untrusted task context (SOC2 [M3]) ───────────────────────────────
@@ -143,6 +203,14 @@ export async function checkToolPermission(
     resolvedEnvId = await resolveEnvironmentForAgent(agentId)
   }
 
+  const def = getToolDefinition(toolName)
+  const agentState = agentId ? await loadAgentState(agentId) : null
+
+  // Archived agents may not act at all.
+  if (agentState?.archived) {
+    return { allowed: false, reason: `Agent "${agentState.name}" is archived and may not run tools.` }
+  }
+
   // ── ToolAgentRestriction check ────────────────────────────────────────────
   // Gateway tools (McpTool rows) may be restricted to specific agents.
   // If restriction rows exist and this agent is NOT in them, deny.
@@ -235,11 +303,25 @@ export async function checkToolPermission(
     }
   }
 
+  // ── Gateway tools: admin grant required (checked before the untrusted gate) ──
+  if (!def) {
+    if (!agentId || !agentState?.exists) {
+      return { allowed: false, reason: `\`${toolName}\` is a gateway tool and can only be run by a registered, active agent.` }
+    }
+    if (agentState.allowedTools && !agentState.allowedTools.includes(toolName)) {
+      return { allowed: false, reason: `\`${toolName}\` is outside agent "${agentState.name}"'s allowed tool list.` }
+    }
+    if (!resolvedEnvId) {
+      return { allowed: false, reason: `\`${toolName}\` is a gateway tool, but agent "${agentState.name}" is not linked to an environment.` }
+    }
+    const denial = await checkGatewayToolGrant(toolName, agentState, agentId, resolvedEnvId)
+    if (denial) return { allowed: false, reason: denial }
+  }
+
   // ── Untrusted task gate (SOC2 [M3]) ─────────────────────────────────────
   // Webhook-created tasks carry attacker-influenced text. Only registry read-tier
   // tools run freely; every write/destructive registry tool and every gateway tool
-  // (gateway tools carry no tier metadata) needs a one-time admin grant.
-  const def = getToolDefinition(toolName)
+  // (even a granted one) additionally needs a one-time admin approval.
   if ((!def || def.tier !== 'read') && await isUntrustedTaskContext(agentId, opts?.taskId)) {
     if (!agentId || !resolvedEnvId) {
       return {
@@ -260,7 +342,7 @@ export async function checkToolPermission(
 
   // ── Tier check from unified tool registry ────────────────────────────────
   if (!def) {
-    // Tool not in management registry — it's a gateway tool; allowed if restriction check passed
+    // Gateway tool granted to this agent (checked above) — the grant is the approval
     return { allowed: true }
   }
 

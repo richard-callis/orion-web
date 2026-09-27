@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Save, RotateCcw, RefreshCw, ChevronDown, ChevronRight, Info } from 'lucide-react'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { apiFetch } from '@/lib/api'
 
 interface PromptVariable { name: string; description: string }
 
@@ -38,8 +39,7 @@ export default function PromptsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/admin/prompts')
-      const data: Prompt[] = await res.json()
+      const data = await apiFetch<Prompt[]>('/api/admin/prompts')
       setPrompts(data)
       // Initialize drafts from current content
       const d: Record<string, string> = {}
@@ -63,12 +63,7 @@ export default function PromptsPage() {
     setSaving(s => ({ ...s, [key]: true }))
     setErrors(e => ({ ...e, [key]: '' }))
     try {
-      const res = await fetch(`/api/admin/prompts/${encodeURIComponent(key)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: drafts[key] }),
-      })
-      if (!res.ok) throw new Error('Save failed')
+      await apiFetch(`/api/admin/prompts/${encodeURIComponent(key)}`, { method: 'PUT', body: { content: drafts[key] } })
       setPrompts(ps => ps.map(p => p.key === key ? { ...p, content: drafts[key], isDefault: false } : p))
       setSaved(s => ({ ...s, [key]: true }))
       setTimeout(() => setSaved(s => ({ ...s, [key]: false })), 2500)
@@ -83,9 +78,7 @@ export default function PromptsPage() {
     if (!(await confirmDialog({ title: 'Reset prompt?', message: 'Reset this prompt to the factory default?', confirmLabel: 'Reset' }))) return
     setResetting(s => ({ ...s, [key]: true }))
     try {
-      const res = await fetch(`/api/admin/prompts/${encodeURIComponent(key)}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error('Reset failed')
-      const data = await res.json() as { content: string }
+      const data = await apiFetch<{ content: string }>(`/api/admin/prompts/${encodeURIComponent(key)}`, { method: 'DELETE' })
       setDrafts(d => ({ ...d, [key]: data.content }))
       setPrompts(ps => ps.map(p => p.key === key ? { ...p, content: data.content, isDefault: true } : p))
     } catch (e) {

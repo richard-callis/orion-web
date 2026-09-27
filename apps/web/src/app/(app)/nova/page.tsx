@@ -1,5 +1,9 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
+import useSWR from 'swr'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 import {
   Search, Bot, Server, Plus, Trash2, X, Edit2, Copy, RefreshCw,
   ChevronDown, Tag, Calendar, Sparkles,
@@ -24,8 +28,11 @@ const SOURCE_COLORS: Record<Nova['source'], string> = {
 }
 
 export default function NovaPage() {
-  const [novae, setNovae] = useState<Nova[]>([])
-  const [loading, setLoading] = useState(true)
+  const toast = useToast()
+  const confirm = useConfirm()
+  const { data, isLoading: loading, mutate } = useSWR<{ novae?: Nova[] }>('/api/novas')
+  const novae = data?.novae ?? []
+  const load = () => { void mutate() }
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState<string>('')
   const [source, setSource] = useState<string>('')
@@ -33,16 +40,6 @@ export default function NovaPage() {
   const [editing, setEditing] = useState<Nova | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
 
-  const load = async () => {
-    try {
-      const res = await fetch('/api/novas')
-      const data = await res.json()
-      setNovae(data.novae || [])
-    } catch { /* ignore */ }
-    setLoading(false)
-  }
-
-  useEffect(() => { load() }, [])
 
   const categories = Array.from(new Set(novae.map(n => n.category))) as NovaCategory[]
 
@@ -62,13 +59,14 @@ export default function NovaPage() {
 
   const handleDelete = async (nova: Nova) => {
     if (nova.source !== 'user-created') return
+    const ok = await confirm({ title: `Delete ${nova.displayName}?`, message: 'This removes the Nova definition. It cannot be undone.', confirmLabel: 'Delete' })
+    if (!ok) return
     setDeleting(nova.id)
     try {
-      const res = await fetch(`/api/novas/${nova.id}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error(await res.text())
-      setNovae(prev => prev.filter(n => n.id !== nova.id))
+      await apiFetch(`/api/novas/${nova.id}`, { method: 'DELETE' })
+      await mutate(prev => prev && { ...prev, novae: prev.novae?.filter(n => n.id !== nova.id) }, { revalidate: false })
     } catch (err) {
-      console.error('Failed to delete Nova:', err)
+      toast.error(`Failed to delete Nova: ${errorMessage(err)}`)
     } finally {
       setDeleting(null)
     }
@@ -139,7 +137,7 @@ export default function NovaPage() {
         >
           Clear
         </button>
-        <button
+        <button aria-label="Refresh"
           onClick={load}
           className="px-2 py-1.5 text-xs rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
         >
@@ -213,7 +211,7 @@ export default function NovaPage() {
                             onClick={() => handleEdit(nova)}
                             className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors"
                             title="Edit"
-                          >
+                           aria-label="Edit">
                             <Edit2 size={14} />
                           </button>
                           <button
@@ -221,7 +219,7 @@ export default function NovaPage() {
                             disabled={deleting === nova.id}
                             className="p-1 rounded text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
                             title="Delete"
-                          >
+                           aria-label="Delete">
                             {deleting === nova.id ? (
                               <RefreshCw size={14} className="animate-spin" />
                             ) : (
@@ -311,18 +309,10 @@ function NovaFormModal({ initial, onClose, onSave }: {
     const url = isEdit ? `/api/novas/${initial.id}` : '/api/novas'
 
     try {
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err.error || 'Request failed')
-      }
+      await apiFetch(url, { method, body })
       onSave()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
+      setError(errorMessage(err, 'Request failed'))
     } finally {
       setSaving(false)
     }
@@ -341,7 +331,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
         <h3 className="text-sm font-semibold text-text-primary">
           {initial ? 'Edit Nova' : 'New Nova Definition'}
         </h3>
-        <button onClick={onClose} className="text-text-muted hover:text-text-primary">
+        <button aria-label="Close" onClick={onClose} className="text-text-muted hover:text-text-primary">
           <X size={16} />
         </button>
       </div>
@@ -352,7 +342,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-[10px] font-medium text-text-muted mb-1">Name (ID)</label>
-            <input
+            <input aria-label="Name"
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="my-service"
@@ -361,7 +351,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
           </div>
           <div>
             <label className="block text-[10px] font-medium text-text-muted mb-1">Display Name</label>
-            <input
+            <input aria-label="Display Name"
               value={displayName}
               onChange={e => setDisplayName(e.target.value)}
               placeholder="My Service"
@@ -373,7 +363,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
         {/* Description */}
         <div>
           <label className="block text-[10px] font-medium text-text-muted mb-1">Description</label>
-          <input
+          <input aria-label="Description"
             value={description}
             onChange={e => setDescription(e.target.value)}
             placeholder="What does this service do?"
@@ -385,7 +375,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-[10px] font-medium text-text-muted mb-1">Category</label>
-            <select
+            <select aria-label="Category"
               value={category}
               onChange={e => setCategory(e.target.value as NovaCategory)}
               className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
@@ -397,7 +387,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
           </div>
           <div>
             <label className="block text-[10px] font-medium text-text-muted mb-1">Type</label>
-            <select
+            <select aria-label="Type"
               value={type}
               onChange={e => setType(e.target.value as NovaType)}
               className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
@@ -414,7 +404,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
           <label className="block text-[10px] font-medium text-text-muted mb-1">
             Tags <span className="text-text-muted">(comma separated)</span>
           </label>
-          <input
+          <input aria-label="Tags"
             value={tags}
             onChange={e => setTags(e.target.value)}
             placeholder="monitoring, grafana, metrics"
@@ -425,7 +415,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
         {/* Config JSON */}
         <div>
           <label className="block text-[10px] font-medium text-text-muted mb-1">Config (JSON)</label>
-          <textarea
+          <textarea aria-label="Config"
             value={configStr}
             onChange={e => setConfigStr(e.target.value)}
             rows={12}
