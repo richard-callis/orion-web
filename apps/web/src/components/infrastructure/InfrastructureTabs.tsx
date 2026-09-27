@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import useSWR from 'swr'
 import { Server, KeyRound, HardDrive, FileText, GitBranch, Bell, ServerCrash } from 'lucide-react'
 import { IngressPage } from '@/components/ingress/IngressPage'
 import { GitOpsPage } from '@/components/gitops/GitOpsPage'
@@ -12,7 +11,8 @@ import { SecretsTab } from './tabs/SecretsTab'
 import { BackupsTab } from './tabs/BackupsTab'
 import { LogsTab } from './tabs/LogsTab'
 import { AlertsTab } from './tabs/AlertsTab'
-import type { Environment, InfraTab } from './types'
+import { useClusterEnvironments } from './useClusterEnvironments'
+import type { InfraTab } from './types'
 
 export const tabs: { key: InfraTab; label: string; icon: typeof Server }[] = [
   { key: 'overview', label: 'Overview', icon: Server },
@@ -39,12 +39,7 @@ function EmptyState({ children }: { children: React.ReactNode }) {
 
 export function InfrastructureTabs() {
   const [activeTab, setActiveTab] = useState<InfraTab>('overview')
-  const [pickedEnvId, setPickedEnvId] = useState('')
-
-  const { data: allEnvs, isLoading: envsLoading } = useSWR<Environment[]>('/api/environments', { revalidateOnFocus: false })
-  const environments = (allEnvs ?? []).filter(e => e.type === 'cluster' && e.gatewayUrl)
-  // With exactly one cluster, select it automatically.
-  const envId = pickedEnvId || (environments.length === 1 ? environments[0].id : '')
+  const { environments, envId, setEnvId: setPickedEnvId, loading: envsLoading } = useClusterEnvironments()
 
   const showEnvSelector = ENV_TABS.includes(activeTab)
 

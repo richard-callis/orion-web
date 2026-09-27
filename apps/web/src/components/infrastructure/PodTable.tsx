@@ -1,5 +1,8 @@
 'use client'
 import { useState, useMemo, useEffect, useRef } from 'react'
+import useSWR from 'swr'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 import type { CachedPod } from '@/lib/k8s'
 import { Search, MessageSquare, ChevronDown } from 'lucide-react'
 import { useRouter } from 'next/navigation'
@@ -32,6 +35,7 @@ const PROVIDER_LABEL: Record<string, string> = {
 
 function DebugButton({ pod, models }: { pod: CachedPod; models: AppModel[] }) {
   const router = useRouter()
+  const toast = useToast()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -50,31 +54,30 @@ function DebugButton({ pod, models }: { pod: CachedPod; models: AppModel[] }) {
     setLoading(true)
     setOpen(false)
     try {
-      const tmplRes = await fetch('/api/admin/prompts/context.pod-debug')
+      // Non-admins can't read prompt templates — fall back to the built-in text
+      const template = await apiFetch<{ content: string }>('/api/admin/prompts/context.pod-debug').catch(() => null)
       const defaultCtx = `Debug pod \`${pod.name}\` in namespace \`${pod.namespace}\` on node \`${pod.node}\`.\n\nStatus: **${pod.status}**, Restarts: **${pod.restarts}**\n\nPlease check the logs and recent events to identify the issue.`
       let initialContext = defaultCtx
-      if (tmplRes.ok) {
-        const { content } = await tmplRes.json() as { content: string }
-        initialContext = content
+      if (template) {
+        initialContext = template.content
           .replace(/\{\{podName\}\}/g, pod.name)
           .replace(/\{\{namespace\}\}/g, pod.namespace)
           .replace(/\{\{node\}\}/g, pod.node)
           .replace(/\{\{status\}\}/g, pod.status)
           .replace(/\{\{restarts\}\}/g, String(pod.restarts))
       }
-      const r = await fetch('/api/chat/conversations', {
+      const convo = await apiFetch<{ id: string }>('/api/chat/conversations', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           title: `Debug: ${pod.name}`,
           initialContext,
           metadata: { debugChat: true },
           ...(modelId && { planModel: modelId }),
-        }),
+        },
       })
-      if (!r.ok) return
-      const convo = await r.json() as { id: string }
-      router.push(`/chat?conversation=${convo.id}`)
+      router.push(`/chat?conversation=${encodeURIComponent(convo.id)}`)
+    } catch (e) {
+      toast.error(`Could not start a debug chat: ${errorMessage(e)}`)
     } finally {
       setLoading(false)
     }
@@ -122,7 +125,7 @@ function DebugButton({ pod, models }: { pod: CachedPod; models: AppModel[] }) {
           disabled={loading}
           className="px-1 py-1 text-xs bg-accent/10 text-accent hover:bg-accent/20 transition-colors border-l border-accent/20 disabled:opacity-50"
           title="Choose AI model"
-        >
+         aria-label="Choose AI model">
           <ChevronDown size={11} />
         </button>
       </div>
@@ -154,11 +157,8 @@ export function PodTable({ pods, nodeFilter }: { pods: CachedPod[]; nodeFilter?:
   const [search, setSearch] = useState('')
   const [nsFilter, setNsFilter] = useState('all')
   const [sortBy, setSortBy] = useState<'name' | 'namespace' | 'node' | 'status' | 'restarts'>('namespace')
-  const [models, setModels] = useState<AppModel[]>([])
-
-  useEffect(() => {
-    fetch('/api/models').then(r => r.json()).then(setModels).catch((e) => console.error("[fetch]", e))
-  }, [])
+  // Shared SWR key with the status bar, so this is deduped rather than refetched
+  const { data: models = [] } = useSWR<AppModel[]>('/api/models')
 
   const namespaces = useMemo(() =>
     ['all', ...Array.from(new Set(pods.map(p => p.namespace))).sort()],

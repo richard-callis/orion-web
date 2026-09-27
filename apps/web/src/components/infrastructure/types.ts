@@ -1,14 +1,4 @@
-
-
 export type InfraTab = 'overview' | 'ingress' | 'storage' | 'secrets' | 'backups' | 'logs' | 'gitops' | 'alerts'
-
-export interface Environment {
-  id: string
-  name: string
-  type: string
-  status: string
-  gatewayUrl: string | null
-}
 
 // ── Storage tab ───────────────────────────────────────────────────────────────
 

@@ -3,6 +3,7 @@
 import { ExternalLink, Server, Container, GitBranch, Rocket } from 'lucide-react'
 import { ArgoCDSyncPanel } from './ArgoCDSyncPanel'
 import type { Environment } from './types'
+import { clickableProps } from '@/components/ui/clickable'
 
 export function EnvironmentCard({
   env,
@@ -26,7 +27,7 @@ export function EnvironmentCard({
 
   return (
     <div
-      onClick={() => onSelect(env.id)}
+      {...clickableProps(() => onSelect(env.id), { pressed: selected })}
       className={`bg-bg-surface border rounded-xl p-4 flex flex-col gap-3 cursor-pointer transition-colors ${
         selected
           ? 'border-accent ring-1 ring-accent/30'

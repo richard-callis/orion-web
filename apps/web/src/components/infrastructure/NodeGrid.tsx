@@ -1,6 +1,7 @@
 'use client'
 import type { CachedNode, NodeMetric } from '@/lib/k8s'
 import { Server } from 'lucide-react'
+import { clickableProps } from '@/components/ui/clickable'
 
 function roleColor(role: string[]) {
   if (role.includes('control-plane')) return 'text-accent border-accent/30 bg-accent/5'
@@ -87,7 +88,8 @@ export function NodeGrid({ nodes, metrics, selectedNode, onNodeClick }: Props) {
           return (
             <div
               key={node.name}
-              onClick={() => onNodeClick?.(node.name)}
+              {...clickableProps(() => onNodeClick?.(node.name), { pressed: isSelected })}
+              aria-label={`Filter pods by node ${node.name}`}
               className={`rounded-lg border p-3 transition-all cursor-pointer ${
                 isSelected
                   ? 'border-accent bg-accent/10 text-accent'

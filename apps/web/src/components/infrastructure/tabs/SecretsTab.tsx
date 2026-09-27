@@ -322,7 +322,7 @@ export function SecretsTab({ envId }: { envId: string }) {
               <span className="text-sm font-semibold text-text-primary">Update Secret Values</span>
               <span className="font-mono text-xs text-text-muted">· {editSecret.name}</span>
             </div>
-            <button onClick={() => setEditSecret(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
+            <button aria-label="Close" onClick={() => setEditSecret(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
           </div>
 
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
@@ -436,7 +436,7 @@ export function SecretsTab({ envId }: { envId: string }) {
               <KeyRound size={14} className="text-accent" />
               <span className="text-sm font-semibold text-text-primary">Add External Secret</span>
             </div>
-            <button onClick={() => setShowModal(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
+            <button aria-label="Close" onClick={() => setShowModal(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
           </div>
 
           {/* Modal body */}
@@ -544,7 +544,7 @@ export function SecretsTab({ envId }: { envId: string }) {
                       autoComplete="new-password" />
                     <input className={inputCls} placeholder={row.vaultKey || 'DB_PASSWORD'} value={row.k8sKey}
                       onChange={e => updateValueRow(i, 'k8sKey', e.target.value)} />
-                    <button onClick={() => removeValueRow(i)} disabled={secretValues.length === 1}
+                    <button aria-label="Remove row" onClick={() => removeValueRow(i)} disabled={secretValues.length === 1}
                       className="p-1 rounded text-text-muted hover:text-status-error transition-colors disabled:opacity-30">
                       <X size={12} />
                     </button>
