@@ -4,6 +4,8 @@ import { Plus, Trash2, ChevronRight, User, X } from 'lucide-react'
 import type { Bug, TaskUser } from '@/types/tasks'
 import { KanbanBoard } from '../ui/KanbanBoard'
 import { CreateEntityModal } from '../ui/CreateEntityModal'
+import { useToast } from '../ui/Toast'
+import { apiFetch, errorMessage } from '@/lib/api'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -47,6 +49,7 @@ interface CreateBugForm {
 }
 
 export function BugManager({ initialBugs, users }: Props) {
+  const toast = useToast()
   const [bugs, setBugs]         = useState<Bug[]>(initialBugs)
   const [selectedBug, setSelectedBug] = useState<Bug | null>(null)
   const [modal, setModal]       = useState(false)
@@ -83,38 +86,55 @@ export function BugManager({ initialBugs, users }: Props) {
 
   const byStatus = (s: BugStatus) => bugs.filter(b => b.status === s)
 
+  // Optimistic update/delete: roll back and toast if the server rejects it.
   const updateBug = async (id: string, patch: Partial<Bug>) => {
+    const original = bugs.find(b => b.id === id)
     setBugs(prev => prev.map(b => b.id === id ? { ...b, ...patch } : b))
-    if (selectedBug?.id === id) setSelectedBug(s => s ? { ...s, ...patch } : s)
-    await fetch(`/api/bugs/${id}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch((e) => console.error("[fetch]", e))
+    setSelectedBug(s => s?.id === id ? { ...s, ...patch } : s)
+    try {
+      await apiFetch(`/api/bugs/${id}`, { method: 'PUT', body: patch as Record<string, unknown> })
+    } catch (e) {
+      if (original) {
+        setBugs(prev => prev.map(b => b.id === id ? original : b))
+        setSelectedBug(s => s?.id === id ? original : s)
+      }
+      toast.error(`Failed to update bug: ${errorMessage(e)}`)
+    }
   }
 
   const deleteBug = async (id: string) => {
+    const index = bugs.findIndex(b => b.id === id)
+    const original = bugs[index]
     setBugs(prev => prev.filter(b => b.id !== id))
-    if (selectedBug?.id === id) {
-      setSelectedBug(null)
-  
+    setSelectedBug(s => s?.id === id ? null : s)
+    try {
+      await apiFetch(`/api/bugs/${id}`, { method: 'DELETE' })
+    } catch (e) {
+      if (original) setBugs(prev => prev.some(b => b.id === id) ? prev : [...prev.slice(0, index), original, ...prev.slice(index)])
+      toast.error(`Failed to delete bug: ${errorMessage(e)}`)
     }
-    await fetch(`/api/bugs/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
   }
 
   const createBug = async () => {
     if (!form.title.trim()) return
     setSaving(true)
-    const r = await fetch('/api/bugs', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title:       form.title,
-        description: form.description || null,
-        severity:    form.severity,
-        area:        form.area || null,
-        reportedBy:  'admin',
-      }),
-    })
-    if (!r.ok) { setSaving(false); setCreateError('Failed to create bug — please try again'); return }
-    const bug: Bug = await r.json()
+    let bug: Bug
+    try {
+      bug = await apiFetch<Bug>('/api/bugs', {
+        method: 'POST',
+        body: {
+          title:       form.title,
+          description: form.description || null,
+          severity:    form.severity,
+          area:        form.area || null,
+          reportedBy:  'admin',
+        },
+      })
+    } catch {
+      setSaving(false)
+      setCreateError('Failed to create bug — please try again')
+      return
+    }
     setBugs(prev => [bug, ...prev])
     setForm({ title: '', description: '', severity: 'medium', area: '' })
     setModal(false)

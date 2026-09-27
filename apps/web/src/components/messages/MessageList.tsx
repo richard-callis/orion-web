@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
+import { apiFetch, errorMessage } from '@/lib/api'
 
 // ── Conversation types ──────────────────────────────────────────
 interface Conversation {
@@ -147,8 +148,12 @@ export function MessageList({
 
   const removeConvo = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
-    const res = await fetch(`/api/chat/conversations/${id}`, { method: 'DELETE' })
-    if (!res.ok) return
+    try {
+      await apiFetch(`/api/chat/conversations/${id}`, { method: 'DELETE' })
+    } catch (err) {
+      toast.error(`Failed to delete conversation: ${errorMessage(err)}`)
+      return
+    }
     onDelete?.(`c_${id}`)
   }
 
@@ -161,12 +166,12 @@ export function MessageList({
 
   const commitEdit = async (id: string) => {
     const title = editValue.trim() || null
-    await fetch(`/api/chat/conversations/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title }),
-    })
-    onRename?.(id, title ?? '')
+    try {
+      await apiFetch(`/api/chat/conversations/${id}`, { method: 'PATCH', body: { title } })
+      onRename?.(id, title ?? '')
+    } catch (err) {
+      toast.error(`Failed to rename conversation: ${errorMessage(err)}`)
+    }
     setEditingId(null)
   }
 
@@ -232,9 +237,13 @@ export function MessageList({
     if (name && name !== currentRoom?.name) payload.name = name
     if (currentRoom && editRoomType !== currentRoom.type) payload.type = editRoomType
     if (Object.keys(payload).length > 0) {
-      await fetch(`/api/chatrooms/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      onRoomUpdate?.(id, payload)
-      if (payload.name) onRename?.(id, payload.name)
+      try {
+        await apiFetch(`/api/chatrooms/${id}`, { method: 'PATCH', body: payload })
+        onRoomUpdate?.(id, payload)
+        if (payload.name) onRename?.(id, payload.name)
+      } catch (err) {
+        toast.error(`Failed to update room: ${errorMessage(err)}`)
+      }
     }
     setEditingRoomId(null)
   }
@@ -242,8 +251,12 @@ export function MessageList({
   const deleteRoom = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
     if (!(await confirmDialog({ title: 'Delete chat room?', message: 'This deletes the room and all of its messages.', confirmLabel: 'Delete' }))) return
-    const res = await fetch(`/api/chatrooms/${id}`, { method: 'DELETE' }).catch(() => null)
-    if (!res?.ok) { toast.error(`Failed to delete chat room${res ? ` (${res.status})` : ''}`); return }
+    try {
+      await apiFetch(`/api/chatrooms/${id}`, { method: 'DELETE' })
+    } catch (err) {
+      toast.error(`Failed to delete chat room: ${errorMessage(err)}`)
+      return
+    }
     onDelete?.(`r_${id}`)
   }
 

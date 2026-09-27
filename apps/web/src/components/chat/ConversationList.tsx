@@ -1,5 +1,7 @@
 'use client'
 import { useRef, useState } from 'react'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 import { Plus, MessageSquare, Trash2, Pencil, Check, X, ChevronRight, ChevronDown, GitBranch, Layers, Bot, Bug } from 'lucide-react'
 
 interface Conversation {
@@ -57,6 +59,7 @@ interface Props {
 }
 
 export function ConversationList({ convos, planningConvos = [], agentConvos = [], debugConvos = [], epics = [], agents = [], onSelect, activeId, onDelete, onRename, onMobileSelect }: Props) {
+  const toast = useToast()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -107,8 +110,12 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
 
   const remove = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
-    await fetch(`/api/chat/conversations/${id}`, { method: 'DELETE' })
-    onDelete?.(id)
+    try {
+      await apiFetch(`/api/chat/conversations/${id}`, { method: 'DELETE' })
+      onDelete?.(id)
+    } catch (err) {
+      toast.error(`Failed to delete conversation: ${errorMessage(err)}`)
+    }
   }
 
   const startEdit = (e: React.MouseEvent, convo: Conversation) => {
@@ -120,12 +127,12 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
 
   const commitEdit = async (id: string) => {
     const title = editValue.trim() || null
-    await fetch(`/api/chat/conversations/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title }),
-    })
-    onRename?.(id, title ?? '')
+    try {
+      await apiFetch(`/api/chat/conversations/${id}`, { method: 'PATCH', body: { title } })
+      onRename?.(id, title ?? '')
+    } catch (err) {
+      toast.error(`Failed to rename conversation: ${errorMessage(err)}`)
+    }
     setEditingId(null)
   }
 

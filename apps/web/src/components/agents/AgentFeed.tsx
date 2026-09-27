@@ -1,5 +1,8 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
+import useSWR from 'swr'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 import { Bot, User, Bell, Terminal, Pause, Play } from 'lucide-react'
 
 interface AgentMsg {
@@ -19,7 +22,13 @@ const typeIcon = (type: string) => {
 }
 
 export function AgentFeed({ initialMessages, initialPaused = false }: { initialMessages: AgentMsg[]; initialPaused?: boolean }) {
-  const [messages, setMessages] = useState(initialMessages)
+  const toast = useToast()
+  // Poll for new messages every 10s (paused while the tab is hidden).
+  const { data: messages = initialMessages } = useSWR<AgentMsg[]>('/api/agents/messages?limit=50', {
+    fallbackData: initialMessages,
+    refreshInterval: 10_000,
+    revalidateOnMount: false,
+  })
   const [paused, setPaused] = useState(initialPaused)
   const [toggling, setToggling] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -28,26 +37,14 @@ export function AgentFeed({ initialMessages, initialPaused = false }: { initialM
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Poll for new messages every 10s
-  useEffect(() => {
-    const poll = () =>
-      fetch('/api/agents/messages?limit=50').then(r => r.json()).then(setMessages).catch((e) => console.error("[fetch]", e))
-    const t = setInterval(poll, 10_000)
-    return () => clearInterval(t)
-  }, [])
 
   const togglePause = async () => {
     setToggling(true)
     try {
-      const res = await fetch('/api/admin/watchers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paused: !paused }),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setPaused(data.paused)
-      }
+      const data = await apiFetch<{ paused: boolean }>('/api/admin/watchers', { method: 'POST', body: { paused: !paused } })
+      setPaused(data.paused)
+    } catch (e) {
+      toast.error(`Failed to ${paused ? 'resume' : 'pause'} watchers: ${errorMessage(e)}`)
     } finally {
       setToggling(false)
     }

@@ -1,5 +1,6 @@
 'use client'
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
+import useSWR from 'swr'
 import ForceGraph2D from 'react-force-graph-2d'
 import { Search, X, ArrowLeft } from 'lucide-react'
 import { useRouter } from 'next/navigation'
@@ -46,8 +47,8 @@ const WIKILINK_COLOR = '#475569'
 
 export function GraphView() {
   const router = useRouter()
-  const [data, setData] = useState<GraphData | null>(null)
-  const [loading, setLoading] = useState(true)
+  // Graph data loads once; the graph layout is expensive to recompute on refocus.
+  const { data = null, isLoading: loading } = useSWR<GraphData>('/api/notes/graph-data', { revalidateOnFocus: false })
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
   const [highlightedNodes, setHighlightedNodes] = useState<Set<string>>(new Set())
@@ -58,14 +59,6 @@ export function GraphView() {
   const fgRef = useRef<any>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Fetch graph data on mount
-  useEffect(() => {
-    fetch('/api/notes/graph-data')
-      .then(r => r.json())
-      .then(setData)
-      .catch(console.error)
-      .finally(() => setLoading(false))
-  }, [])
 
   // Filter nodes by search
   const filteredNodes = useMemo(() => {

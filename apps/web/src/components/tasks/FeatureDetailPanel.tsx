@@ -5,6 +5,8 @@ import { Trash2, Loader2, MessageSquare, CheckCircle2, Lock, Rocket } from 'luci
 import type { Feature } from '@/types/tasks'
 import { PlanWithAIButton } from './PlanWithAIButton'
 import { DetailPanelShell } from '../ui/DetailPanelShell'
+import { useToast } from '../ui/Toast'
+import { apiFetch, errorMessage } from '@/lib/api'
 
 interface Props {
   feature: Feature
@@ -17,6 +19,7 @@ interface Props {
 
 export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onPlanWithClaude, onClose }: Props) {
   const router = useRouter()
+  const toast = useToast()
   const [title, setTitle]           = useState(feature.title)
   const [desc, setDesc]             = useState(feature.description ?? '')
   const [plan, setPlan]             = useState(feature.plan ?? '')
@@ -40,11 +43,11 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
     setJustApproved(false)
     setTaskCount(feature._count?.tasks ?? 0)
     setDoneCount(0)
+    let cancelled = false
     // Fetch fresh data — plan may have been saved from the chat screen
-    fetch(`/api/features/${feature.id}`)
-      .then(r => r.ok ? r.json() : null)
+    apiFetch<Feature>(`/api/features/${feature.id}`)
       .then(fresh => {
-        if (!fresh) return
+        if (cancelled) return
         if (fresh.plan !== feature.plan) {
           setPlan(fresh.plan ?? '')
           onUpdate({ plan: fresh.plan ?? null }).catch((e) => console.error("[fetch]", e))
@@ -53,30 +56,29 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
         setApprovedBy(fresh.planApprovedBy ?? null)
         if (typeof fresh._count?.tasks === 'number') setTaskCount(fresh._count.tasks)
       })
-      .catch((e) => console.error("[fetch]", e))
+      .catch(() => { /* keep the data we were given */ })
     // Fetch task completion stats for the progress bar
-    fetch(`/api/tasks?featureId=${feature.id}`)
-      .then(r => r.ok ? r.json() : null)
-      .then((tasks: Array<{ status: string }> | null) => {
-        if (!Array.isArray(tasks)) return
+    apiFetch<Array<{ status: string }>>(`/api/tasks?featureId=${feature.id}`)
+      .then(tasks => {
+        if (cancelled || !Array.isArray(tasks)) return
         setTaskCount(tasks.length)
         setDoneCount(tasks.filter(t => t.status === 'done').length)
       })
-      .catch((e) => console.error("[fetch]", e))
+      .catch(() => { /* progress bar stays at the initial count */ })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when a different feature is shown
   }, [feature.id])
 
   const handleApprovePlan = async () => {
     setApproving(true)
     try {
-      const r = await fetch(`/api/features/${feature.id}/approve-plan`, { method: 'POST' })
-      if (r.ok) {
-        const now = new Date().toISOString()
-        setApprovedAt(now)
-        setJustApproved(true)
-        onUpdate({ planApprovedAt: now }).catch((e) => console.error('[approve]', e))
-      }
+      await apiFetch(`/api/features/${feature.id}/approve-plan`, { method: 'POST' })
+      const now = new Date().toISOString()
+      setApprovedAt(now)
+      setJustApproved(true)
+      void onUpdate({ planApprovedAt: now })
     } catch (e) {
-      console.error('[approve]', e)
+      toast.error(`Failed to approve plan: ${errorMessage(e)}`)
     } finally {
       setApproving(false)
     }
@@ -85,19 +87,19 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
   const handlePlanFeature = async () => {
     setCreatingRoom(true)
     try {
-      const r = await fetch('/api/chatrooms', {
+      const room = await apiFetch<{ id: string }>('/api/chatrooms', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           name: `\u25b8 FEAT \u00b7 ${feature.title}`,
           type: 'planning',
           featureId: feature.id,
           planTarget: { type: 'feature', id: feature.id },
-        }),
+        },
       })
-      const room = await r.json()
       router.push(`/messages?r=${room.id}`)
-    } catch { /* ignore */ }
+    } catch (e) {
+      toast.error(`Failed to open planning room: ${errorMessage(e)}`)
+    }
     setCreatingRoom(false)
   }
 

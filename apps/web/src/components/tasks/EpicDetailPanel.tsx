@@ -5,6 +5,8 @@ import { Trash2, GitBranch, Plus, Loader2, MessageSquare, Rocket, CheckCircle2 }
 import type { Epic, Feature } from '@/types/tasks'
 import { PlanWithAIButton } from './PlanWithAIButton'
 import { DetailPanelShell } from '../ui/DetailPanelShell'
+import { useToast } from '../ui/Toast'
+import { apiFetch, errorMessage } from '@/lib/api'
 
 interface Props {
   epic: Epic
@@ -18,6 +20,7 @@ interface Props {
 
 export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, onNewFeature, onSelectFeature, onClose }: Props) {
   const router = useRouter()
+  const toast = useToast()
   const [title, setTitle]         = useState(epic.title)
   const [desc, setDesc]           = useState(epic.description ?? '')
   const [plan, setPlan]           = useState(epic.plan ?? '')
@@ -34,10 +37,10 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
   const handleApproveAll = async () => {
     setApproving(true)
     try {
-      const r = await fetch(`/api/epics/${epic.id}/approve-plan`, { method: 'POST' })
-      if (r.ok) setJustApproved(true)
+      await apiFetch(`/api/epics/${epic.id}/approve-plan`, { method: 'POST' })
+      setJustApproved(true)
     } catch (e) {
-      console.error('[approve-epic]', e)
+      toast.error(`Failed to approve plans: ${errorMessage(e)}`)
     } finally {
       setApproving(false)
     }
@@ -51,27 +54,24 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
     setStatus(epic.status)
     setEpicPlanningRoom(null)
 
+    let cancelled = false
     // Fetch fresh data — plan may have been saved from the chat screen
-    fetch(`/api/epics/${epic.id}`)
-      .then(r => r.ok ? r.json() : null)
+    apiFetch<Epic>(`/api/epics/${epic.id}`)
       .then(fresh => {
-        if (!fresh) return
-        if (fresh.plan !== epic.plan) {
-          setPlan(fresh.plan ?? '')
-          onUpdate({ plan: fresh.plan ?? null }).catch((e) => console.error("[fetch]", e))
-        }
+        if (cancelled || fresh.plan === epic.plan) return
+        setPlan(fresh.plan ?? '')
+        void onUpdate({ plan: fresh.plan ?? null })
       })
-      .catch((e) => console.error("[fetch]", e))
+      .catch(() => { /* keep the data we were given */ })
 
     // Check if there is an existing planning room for this epic
-    fetch(`/api/chatrooms?epicId=${epic.id}&type=planning`)
-      .then(r => r.ok ? r.json() : null)
+    apiFetch<{ rooms?: Array<{ id: string }> }>(`/api/chatrooms?epicId=${epic.id}&type=planning`)
       .then(data => {
-        if (data?.rooms?.length) {
-          setEpicPlanningRoom({ id: data.rooms[0].id })
-        }
+        if (!cancelled && data.rooms?.length) setEpicPlanningRoom({ id: data.rooms[0].id })
       })
-      .catch((e) => console.error("[fetch]", e))
+      .catch(() => { /* no existing room */ })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when a different epic is shown
   }, [epic.id])
 
   const save = () => onUpdate({ title, description: desc || null, plan: plan || null, status })
