@@ -85,6 +85,8 @@ ENV SHELL=/bin/bash
 COPY --from=builder /app/apps/web/.next/standalone/apps/web ./
 COPY --from=builder /app/apps/web/.next/static ./.next/static
 COPY --from=builder /app/apps/web/prisma ./prisma
+# Prisma 7: migrate reads the datasource URL from prisma.config.mjs.
+COPY --from=builder /app/apps/web/prisma.config.mjs ./prisma.config.mjs
 
 # All node_modules from the (hoisted) workspace install: production deps plus
 # the prisma CLI used by entrypoint.sh and the generated Prisma client.
