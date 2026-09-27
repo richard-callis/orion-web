@@ -13,6 +13,7 @@ import { decryptJson, decryptJsonStrict } from '@/lib/encryption'
 import { GiteaGitProvider } from './gitea-provider'
 import { GitHubGitProvider } from './github-provider'
 import { GitLabGitProvider } from './gitlab-provider'
+export { GitProviderHttpError, isNotFound } from './errors'
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 

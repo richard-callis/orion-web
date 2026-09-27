@@ -6,6 +6,7 @@
  */
 
 import { createHmac, timingSafeEqual } from 'crypto'
+import { GitProviderHttpError } from './errors'
 import type {
   GitProvider,
   GitRepo,
@@ -49,7 +50,7 @@ export class GitHubGitProvider implements GitProvider {
     if (!res.ok) {
       let detail = ''
       try { detail = await res.text() } catch { /* ignore */ }
-      throw new Error(`GitHub ${init.method ?? 'GET'} ${path} → ${res.status}: ${detail}`)
+      throw new GitProviderHttpError(`GitHub ${init.method ?? 'GET'} ${path} → ${res.status}: ${detail}`, res.status)
     }
     return res.json() as Promise<T>
   }
