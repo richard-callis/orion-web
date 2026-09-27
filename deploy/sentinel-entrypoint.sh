@@ -30,6 +30,16 @@ cp /etc/redis-sentinel.conf /data/redis-sentinel.conf.tmp
 sed -i "s/redis-master/$REDIS_MASTER_IP/g" /data/redis-sentinel.conf.tmp
 
 echo "Updated sentinel config with resolved IP"
+
+# The master requires a password (requirepass). Without auth-pass the sentinels
+# could never authenticate, so they marked the master +sdown and never saw each
+# other or any replica. REDIS_PASSWORD is hex (bootstrap.sh), safe unquoted.
+if [ -n "${REDIS_PASSWORD:-}" ]; then
+  echo "sentinel auth-pass mymaster ${REDIS_PASSWORD}" >> /data/redis-sentinel.conf.tmp
+  echo "Configured sentinel auth for mymaster"
+else
+  echo "WARNING: REDIS_PASSWORD not set — sentinel cannot authenticate to the master"
+fi
 sleep 1
 
 echo "Starting sentinel..."
