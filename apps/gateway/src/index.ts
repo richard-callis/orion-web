@@ -31,7 +31,7 @@ import path from 'path'
 import { randomUUID, timingSafeEqual } from 'crypto'
 import { createRequire } from 'module'
 import type { Server as HttpServer } from 'http'
-import express, { type Request, type Response, type NextFunction, type RequestHandler } from 'express'
+import express, { type Request, type Response, type NextFunction } from 'express'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
@@ -521,11 +521,6 @@ function createMcpServer(): Server {
 const app = express()
 app.use(express.json({ limit: '5mb' }))
 
-/** Express 4 does not catch async handler rejections — route them to the error handler. */
-function asyncRoute(fn: (req: Request, res: Response) => Promise<void>): RequestHandler {
-  return (req, res, next) => { fn(req, res).catch(next) }
-}
-
 // Refuse new work while draining for shutdown (health endpoints stay up).
 app.use((req: Request, res: Response, next: NextFunction) => {
   if (shuttingDown && !['/health', '/livez', '/readyz'].includes(req.path)) {
@@ -592,7 +587,7 @@ app.get('/tools', requireAuth, (_req: Request, res: Response) => {
   })))
 })
 
-app.post('/tools/execute', requireAuth, asyncRoute(async (req: Request, res: Response) => {
+app.post('/tools/execute', requireAuth, async (req: Request, res: Response) => {
   const { name, arguments: args = {} } = (req.body ?? {}) as { name?: string; arguments?: Record<string, unknown> }
   if (typeof name !== 'string' || !name) { res.status(400).json({ error: 'name is required' }); return }
 
@@ -616,7 +611,7 @@ app.post('/tools/execute', requireAuth, asyncRoute(async (req: Request, res: Res
     } catch { /* ignored */ }
     res.status(500).json({ error: msg })
   }
-}))
+})
 
 // Self-update endpoint — triggers a rolling restart so the pod is replaced with the latest image
 app.post('/update', requireAuth, (_req: Request, res: Response) => {
@@ -652,7 +647,7 @@ app.post('/update', requireAuth, (_req: Request, res: Response) => {
 
 const sseSessions = new Map<string, { transport: SSEServerTransport; server: Server }>()
 
-app.post('/mcp', requireAuth, asyncRoute(async (req: Request, res: Response) => {
+app.post('/mcp', requireAuth, async (req: Request, res: Response) => {
   const server = createMcpServer()
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
   res.on('close', () => {
@@ -661,13 +656,13 @@ app.post('/mcp', requireAuth, asyncRoute(async (req: Request, res: Response) => 
   })
   await server.connect(transport)
   await transport.handleRequest(req, res, req.body)
-}))
+})
 
 app.delete('/mcp', requireAuth, (_req: Request, res: Response) => {
   res.status(405).json({ error: 'Stateless MCP endpoint — no session to delete' })
 })
 
-app.get('/mcp', requireAuth, asyncRoute(async (_req: Request, res: Response) => {
+app.get('/mcp', requireAuth, async (_req: Request, res: Response) => {
   const server = createMcpServer()
   const transport = new SSEServerTransport('/mcp/message', res)
   const sessionId = transport.sessionId
@@ -677,16 +672,17 @@ app.get('/mcp', requireAuth, asyncRoute(async (_req: Request, res: Response) => 
     void server.close().catch(() => {})
   })
   await server.connect(transport)
-}))
+})
 
-app.post('/mcp/message', requireAuth, asyncRoute(async (req: Request, res: Response) => {
+app.post('/mcp/message', requireAuth, async (req: Request, res: Response) => {
   const session = sseSessions.get(String(req.query.sessionId ?? ''))
   if (!session) { res.status(404).json({ error: 'Session not found' }); return }
   // express.json() has already consumed the body stream — hand the parsed body over.
   await session.transport.handlePostMessage(req, res, req.body)
-}))
+})
 
-// Error handler for asyncRoute rejections (must be registered last).
+// Error handler (must be registered last). Express 5 forwards rejected promises
+// from async handlers here natively.
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   logger.error({ err: errMsg(err) }, 'request failed')
   if (!res.headersSent) res.status(500).json({ error: 'Internal gateway error' })
