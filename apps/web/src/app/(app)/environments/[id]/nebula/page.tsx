@@ -100,7 +100,7 @@ export default function NebulaPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
         <div className="flex items-center gap-2">
           <Cpu size={18} className="text-accent" />
           <h1 className="text-sm font-semibold text-text-primary">Nebula</h1>
@@ -108,7 +108,7 @@ export default function NebulaPage() {
         </div>
         <button
           onClick={() => { void loadInstances(); void defsQ.mutate() }}
-          className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
+          className="p-1.5 rounded-sm text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
           title="Refresh"
           aria-label="Refresh">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -119,7 +119,7 @@ export default function NebulaPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 px-4 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center gap-1 px-4 border-b border-border-subtle shrink-0">
         {[
           { key: 'installed' as Tab, label: 'Installed', icon: Package, count: installedInstances.length },
           { key: 'catalog' as Tab, label: 'Catalog', icon: Download, count: availableDefs.length },
@@ -198,7 +198,7 @@ function InstalledTab({
           className="border border-border-subtle rounded-lg p-4 bg-bg-surface hover:border-accent/40 transition-colors"
         >
           <div className="flex items-center gap-2">
-            <div className={`p-2 rounded ${inst.category === 'skill' ? 'bg-green-500/20' : 'bg-orange-500/20'}`}>
+            <div className={`p-2 rounded-sm ${inst.category === 'skill' ? 'bg-green-500/20' : 'bg-orange-500/20'}`}>
               {inst.category === 'skill' ? (
                 <Package size={16} className="text-green-400" />
               ) : (
@@ -209,10 +209,10 @@ function InstalledTab({
               <div className="flex items-center gap-1.5">
                 <span className="text-xs font-medium text-text-primary truncate">{inst.name}</span>
                 {inst.isForked && (
-                  <span className="text-[9px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-400 font-medium">Fork</span>
+                  <span className="text-[9px] px-1 py-0.5 rounded-sm bg-purple-500/20 text-purple-400 font-medium">Fork</span>
                 )}
               </div>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded ${CATEGORY_COLORS[inst.category] || ''}`}>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-sm ${CATEGORY_COLORS[inst.category] || ''}`}>
                 {inst.category}
               </span>
             </div>
@@ -241,7 +241,7 @@ function InstalledTab({
             <div className="flex gap-1.5">
               <button
                 onClick={() => onUninstall(inst.id)}
-                className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded text-[11px] bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-sm text-[11px] bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
               >
                 <X size={11} />
                 Uninstall
@@ -286,13 +286,13 @@ function CatalogTab({
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search catalog..."
-            className="w-full px-3 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+            className="w-full px-3 py-1.5 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent"
           />
         </div>
         <select
           value={filter}
           onChange={e => setFilter(e.target.value)}
-          className="px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+          className="px-2 py-1.5 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
         >
           <option value="">All Categories</option>
           {categories.map(cat => (
@@ -309,7 +309,7 @@ function CatalogTab({
             className="border border-border-subtle rounded-lg p-4 bg-bg-surface hover:border-accent/40 transition-colors"
           >
             <div className="flex items-start gap-2.5">
-              <div className={`p-2 rounded ${def.category === 'skill' ? 'bg-green-500/20' : 'bg-orange-500/20'}`}>
+              <div className={`p-2 rounded-sm ${def.category === 'skill' ? 'bg-green-500/20' : 'bg-orange-500/20'}`}>
                 {def.category === 'skill' ? (
                   <Package size={16} className="text-green-400" />
                 ) : (
@@ -319,7 +319,7 @@ function CatalogTab({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs font-medium text-text-primary truncate">{def.title}</span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${CATEGORY_COLORS[def.category] || ''}`}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-sm ${CATEGORY_COLORS[def.category] || ''}`}>
                     {def.category}
                   </span>
                 </div>
@@ -331,7 +331,7 @@ function CatalogTab({
 
             <button
               onClick={() => onInstall(def.id, def.name)}
-              className="mt-3 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
+              className="mt-3 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-sm text-xs bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
             >
               <Download size={12} />
               Install
@@ -374,7 +374,7 @@ function SettingsTab({
           className="flex items-center justify-between px-4 py-3 border border-border-subtle rounded-lg bg-bg-surface"
         >
           <div className="flex items-center gap-3">
-            <div className={`p-2 rounded ${inst.category === 'skill' ? 'bg-green-500/20' : 'bg-orange-500/20'}`}>
+            <div className={`p-2 rounded-sm ${inst.category === 'skill' ? 'bg-green-500/20' : 'bg-orange-500/20'}`}>
               {inst.category === 'skill' ? (
                 <Package size={14} className="text-green-400" />
               ) : (
@@ -383,7 +383,7 @@ function SettingsTab({
             </div>
             <div>
               <div className="text-xs font-medium text-text-primary">{inst.name}</div>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded ${CATEGORY_COLORS[inst.category] || ''}`}>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-sm ${CATEGORY_COLORS[inst.category] || ''}`}>
                 {inst.category}
               </span>
               {inst.isForked && (

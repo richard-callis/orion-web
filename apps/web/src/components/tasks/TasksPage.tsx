@@ -113,19 +113,19 @@ export function TasksPage({ initialTasks, initialEpics, initialAgents, initialUs
     <div className="absolute inset-0 flex flex-col overflow-hidden">
 
       {/* Top: Tasks / Bugs / My Tasks tab bar */}
-      <div role="tablist" aria-label="Task views" className="flex items-center gap-1 px-4 pt-3 pb-0 border-b border-border-subtle bg-bg-sidebar flex-shrink-0">
+      <div role="tablist" aria-label="Task views" className="flex items-center gap-1 px-4 pt-3 pb-0 border-b border-border-subtle bg-bg-sidebar shrink-0">
         {viewTab('tasks', 'Tasks')}
         {viewTab('bugs', <>
           Bugs
           {openBugs > 0 && (
-            <span className="ml-1.5 px-1 py-0.5 text-[9px] rounded bg-status-error/20 text-status-error">{openBugs}</span>
+            <span className="ml-1.5 px-1 py-0.5 text-[9px] rounded-sm bg-status-error/20 text-status-error">{openBugs}</span>
           )}
         </>)}
         {viewTab('my-tasks', <>
           <User size={11} />
           My Tasks
           {myOpenTasks > 0 && (
-            <span className="px-1 py-0.5 text-[9px] rounded bg-accent/20 text-accent">{myOpenTasks}</span>
+            <span className="px-1 py-0.5 text-[9px] rounded-sm bg-accent/20 text-accent">{myOpenTasks}</span>
           )}
         </>, 'flex items-center gap-1.5')}
       </div>

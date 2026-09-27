@@ -181,7 +181,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
           busy={settingGoal}
           requireText
           tone="accent"
-          className="border-b border-border-subtle flex-shrink-0 bg-bg-raised"
+          className="border-b border-border-subtle shrink-0 bg-bg-raised"
           onSubmit={text => void setGoal(text)}
           onCancel={() => setShowSetGoal(false)}
         />
@@ -254,7 +254,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       {/* Plan saved toast (has an Undo action, so it stays local) */}
       {planToast && (
         <div role="status" className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-lg bg-bg-sidebar border border-border-visible shadow-xl text-xs text-text-primary">
-          <BookmarkCheck size={14} className="text-status-healthy flex-shrink-0" />
+          <BookmarkCheck size={14} className="text-status-healthy shrink-0" />
           <span>Plan saved</span>
           <button onClick={() => void undoPlan()} className="text-accent hover:text-accent/80 font-medium transition-colors">
             Undo

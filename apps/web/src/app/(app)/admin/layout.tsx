@@ -28,9 +28,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <div className="absolute inset-0 flex overflow-hidden">
       {/* Left sub-nav */}
-      <aside className="w-48 flex-shrink-0 bg-bg-sidebar border-r border-border-subtle flex flex-col">
-        <div className="px-4 py-3 border-b border-border-subtle flex items-center gap-2 flex-shrink-0">
-          <Settings size={15} className="text-accent flex-shrink-0" />
+      <aside className="w-48 shrink-0 bg-bg-sidebar border-r border-border-subtle flex flex-col">
+        <div className="px-4 py-3 border-b border-border-subtle flex items-center gap-2 shrink-0">
+          <Settings size={15} className="text-accent shrink-0" />
           <span className="text-sm font-semibold text-text-primary">Administration</span>
         </div>
         <nav className="flex-1 py-2 overflow-y-auto">
@@ -47,7 +47,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     : 'text-text-secondary hover:bg-bg-raised hover:text-text-primary'
                 }`}
               >
-                <Icon size={15} className="flex-shrink-0" />
+                <Icon size={15} className="shrink-0" />
                 <span className="truncate flex-1">{label}</span>
                 {badge > 0 && (
                   <span className="min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center bg-orange-500 text-white">

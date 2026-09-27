@@ -86,12 +86,12 @@ export function DomainDnsPanel({ domain, environments, ingressPointIp, onDomainC
       ) : (
         <>
           <div className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border ${hasWildcard ? 'border-status-healthy/30 bg-status-healthy/5 text-status-healthy' : 'border-status-warning/30 bg-status-warning/5 text-status-warning'}`}>
-            <DatabaseZap size={11} className="flex-shrink-0" />
+            <DatabaseZap size={11} className="shrink-0" />
             {hasWildcard ? <>Wildcard <code className="font-mono">*.{domain.name}</code> active</> : <>No wildcard — add <code className="font-mono">*.{domain.name}</code> pointing to your Traefik IP</>}
           </div>
           {domain.coreDnsStatus !== 'bootstrapped' && (
             <div className="flex items-center gap-2 text-xs px-2.5 py-2 rounded-lg border border-status-warning/30 bg-status-warning/5 text-status-warning">
-              <AlertCircle size={11} className="flex-shrink-0" />
+              <AlertCircle size={11} className="shrink-0" />
               CoreDNS not bootstrapped — records saved but not served yet.
             </div>
           )}
@@ -103,15 +103,15 @@ export function DomainDnsPanel({ domain, environments, ingressPointIp, onDomainC
             <div className="space-y-1.5">
               {records.map(rec => (
                 <div key={rec.id} className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors min-w-0 ${rec.enabled ? 'border-border-subtle bg-bg-surface hover:bg-bg-raised' : 'border-border-subtle/50 bg-bg-canvas opacity-60'}`}>
-                  <code className="text-[11px] font-mono text-accent w-28 flex-shrink-0">{rec.ip}</code>
+                  <code className="text-[11px] font-mono text-accent w-28 shrink-0">{rec.ip}</code>
                   <div className="flex-1 flex flex-wrap gap-1 min-w-0 overflow-hidden">
                     {rec.hostnames.map(h => (
-                      <span key={h} className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-border-subtle bg-bg-canvas text-text-secondary">{h}</span>
+                      <span key={h} className="text-[10px] font-mono px-1.5 py-0.5 rounded-sm border border-border-subtle bg-bg-canvas text-text-secondary">{h}</span>
                     ))}
                   </div>
                   {rec.comment && <span className="text-[10px] text-text-muted truncate max-w-[100px]">{rec.comment}</span>}
-                  <button aria-label={`Edit record ${rec.ip}`} onClick={() => setModal({ open: true, record: rec })} className="text-text-muted hover:text-text-primary transition-colors flex-shrink-0"><Pencil size={11} /></button>
-                  <button aria-label={`Delete record ${rec.ip}`} onClick={() => del(rec)} disabled={deleting === rec.id} className="text-text-muted hover:text-status-error transition-colors flex-shrink-0">
+                  <button aria-label={`Edit record ${rec.ip}`} onClick={() => setModal({ open: true, record: rec })} className="text-text-muted hover:text-text-primary transition-colors shrink-0"><Pencil size={11} /></button>
+                  <button aria-label={`Delete record ${rec.ip}`} onClick={() => del(rec)} disabled={deleting === rec.id} className="text-text-muted hover:text-status-error transition-colors shrink-0">
                     {deleting === rec.id ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} />}
                   </button>
                 </div>

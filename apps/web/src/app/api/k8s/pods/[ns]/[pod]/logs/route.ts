@@ -25,22 +25,11 @@ export async function GET(
   return createSSEStream((send, close) => {
     ;(async () => {
       try {
-        // v0.22: readNamespacedPodLog(name, ns, container, follow, insecureSkipTLS, limitBytes, pretty, previous, sinceSeconds, sinceTime, tailLines, timestamps)
-        const res = await coreApi.readNamespacedPodLog(
-          (await params).pod,
-          (await params).ns,
-          undefined,   // container
-          false,       // follow
-          undefined,   // insecureSkipTLSVerifyBackend
-          undefined,   // limitBytes
-          undefined,   // pretty
-          false,       // previous
-          undefined,   // sinceSeconds
-          undefined,   // sinceTime (Date)
-          200,         // tailLines
-          false        // timestamps
-        )
-        const text: string = typeof res === 'string' ? res : (res.body ?? '')
+        const { ns, pod } = await params
+        // client-node >= 1.0: object parameters; resolves to the log text.
+        const text = await coreApi.readNamespacedPodLog({
+          name: pod, namespace: ns, follow: false, previous: false, tailLines: 200, timestamps: false,
+        })
         for (const line of text.split('\n')) {
           if (line) send('message', redactSensitive(line))
         }

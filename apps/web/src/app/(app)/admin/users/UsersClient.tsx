@@ -73,7 +73,7 @@ export function UsersClient({ initialUsers }: { initialUsers: User[] }) {
       <div className="flex justify-end">
         <button
           onClick={() => setCreating(true)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 transition-colors"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 transition-colors"
         >
           <UserPlus size={13} /> Add user
         </button>
@@ -105,13 +105,13 @@ export function UsersClient({ initialUsers }: { initialUsers: User[] }) {
                       onChange={e => patch(u.id, { role: e.target.value })}
                       disabled={busy[u.id]}
                       aria-label={`Role for ${u.username}`}
-                      className="px-2 py-1 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none focus:border-accent transition-colors"
+                      className="px-2 py-1 text-xs bg-bg-raised border border-border-subtle rounded-sm text-text-primary focus:outline-hidden focus:border-accent transition-colors"
                     >
                       {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
                     </select>
                   </td>
                   <td className="px-4 py-3">
-                    <span className="text-xs px-2 py-0.5 rounded bg-bg-raised text-text-muted">{u.provider}</span>
+                    <span className="text-xs px-2 py-0.5 rounded-sm bg-bg-raised text-text-muted">{u.provider}</span>
                   </td>
                   <td className="px-4 py-3 text-text-muted text-xs">
                     {u.lastSeen ? new Date(u.lastSeen).toLocaleDateString() : 'Never'}
@@ -138,7 +138,7 @@ export function UsersClient({ initialUsers }: { initialUsers: User[] }) {
                         <button
                           onClick={() => setPwUser(u)}
                           disabled={busy[u.id]}
-                          className="p-1 rounded text-text-muted hover:text-accent transition-colors disabled:opacity-50"
+                          className="p-1 rounded-sm text-text-muted hover:text-accent transition-colors disabled:opacity-50"
                           title="Set password"
                           aria-label={`Set password for ${u.username}`}
                         >
@@ -148,7 +148,7 @@ export function UsersClient({ initialUsers }: { initialUsers: User[] }) {
                       <button
                         onClick={() => deleteUser(u)}
                         disabled={busy[u.id]}
-                        className="p-1 rounded text-text-muted hover:text-status-error transition-colors disabled:opacity-50"
+                        className="p-1 rounded-sm text-text-muted hover:text-status-error transition-colors disabled:opacity-50"
                         title="Delete user"
                         aria-label={`Delete ${u.username}`}
                       >
@@ -259,8 +259,8 @@ function CreateUserDialog({ onClose, onCreated }: { onClose: () => void; onCreat
         </label>
         {error && <p role="alert" className="text-xs text-status-error">{error}</p>}
         <div className="flex justify-end gap-2 pt-1">
-          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded text-xs border border-border-subtle text-text-muted hover:text-text-primary">Cancel</button>
-          <button type="submit" disabled={saving} className="px-4 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50">
+          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-sm text-xs border border-border-subtle text-text-muted hover:text-text-primary">Cancel</button>
+          <button type="submit" disabled={saving} className="px-4 py-1.5 rounded-sm text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50">
             {saving ? 'Creating…' : 'Create user'}
           </button>
         </div>
@@ -299,8 +299,8 @@ function SetPasswordDialog({ user, onClose, onSave }: { user: User; onClose: () 
         </label>
         {error && <p role="alert" className="text-xs text-status-error">{error}</p>}
         <div className="flex justify-end gap-2 pt-1">
-          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded text-xs border border-border-subtle text-text-muted hover:text-text-primary">Cancel</button>
-          <button type="submit" disabled={saving} className="px-4 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50">
+          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-sm text-xs border border-border-subtle text-text-muted hover:text-text-primary">Cancel</button>
+          <button type="submit" disabled={saving} className="px-4 py-1.5 rounded-sm text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50">
             {saving ? 'Saving…' : 'Set password'}
           </button>
         </div>

@@ -42,7 +42,7 @@ export function PRTable({ prs, showStatus }: { prs: GitOpsPR[]; showStatus?: boo
                 {pr.environment.name}
               </td>
               <td className="px-4 py-3 whitespace-nowrap">
-                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-bg-raised border border-border-subtle text-text-muted font-mono">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs bg-bg-raised border border-border-subtle text-text-muted font-mono">
                   {pr.operation}
                 </span>
               </td>
@@ -89,7 +89,7 @@ export function PRTable({ prs, showStatus }: { prs: GitOpsPR[]; showStatus?: boo
                   href={pr.prUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-border-subtle bg-bg-raised text-text-secondary hover:text-text-primary hover:border-accent transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-sm border border-border-subtle bg-bg-raised text-text-secondary hover:text-text-primary hover:border-accent transition-colors"
                 >
                   <ExternalLink size={11} />
                   View

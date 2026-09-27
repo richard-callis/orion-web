@@ -182,11 +182,11 @@ export default function ClaudeOAuthPage() {
           {!status ? (
             <RefreshCw size={16} className="text-text-muted animate-spin" />
           ) : status.valid ? (
-            <CheckCircle size={16} className="text-status-healthy flex-shrink-0" />
+            <CheckCircle size={16} className="text-status-healthy shrink-0" />
           ) : status.authenticated ? (
-            <AlertCircle size={16} className="text-status-warning flex-shrink-0" />
+            <AlertCircle size={16} className="text-status-warning shrink-0" />
           ) : (
-            <XCircle size={16} className="text-status-error flex-shrink-0" />
+            <XCircle size={16} className="text-status-error shrink-0" />
           )}
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-text-primary">
@@ -214,11 +214,11 @@ export default function ClaudeOAuthPage() {
           <div className="flex items-center gap-3 pt-1 border-t border-border-subtle">
             <div className="flex items-center gap-1.5 text-xs">
               {status.binaryAvailable === false ? (
-                <XCircle size={13} className="text-status-error flex-shrink-0" />
+                <XCircle size={13} className="text-status-error shrink-0" />
               ) : status.binaryAvailable ? (
-                <CheckCircle size={13} className="text-status-healthy flex-shrink-0" />
+                <CheckCircle size={13} className="text-status-healthy shrink-0" />
               ) : (
-                <AlertCircle size={13} className="text-text-muted flex-shrink-0" />
+                <AlertCircle size={13} className="text-text-muted shrink-0" />
               )}
               <span className="text-text-muted">
                 {status.binaryAvailable === false ? 'claude binary not found' : status.binaryAvailable ? 'claude binary OK' : 'binary unknown'}
@@ -239,7 +239,7 @@ export default function ClaudeOAuthPage() {
               <button
                 onClick={runProbe}
                 disabled={probing}
-                className="flex items-center gap-1.5 px-3 py-1 rounded text-xs border border-border-subtle text-text-secondary hover:text-text-primary hover:bg-bg-raised transition-colors disabled:opacity-50"
+                className="flex items-center gap-1.5 px-3 py-1 rounded-sm text-xs border border-border-subtle text-text-secondary hover:text-text-primary hover:bg-bg-raised transition-colors disabled:opacity-50"
                 title="Run a live end-to-end test — invokes the claude CLI with a minimal prompt"
               >
                 {probing ? <RefreshCw size={12} className="animate-spin" /> : <FlaskConical size={12} />}
@@ -271,13 +271,13 @@ export default function ClaudeOAuthPage() {
       {tab === 'oauth' && (
         <div className="space-y-4">
           <p className="text-sm text-text-secondary">
-            Starts <code className="text-xs bg-bg-raised px-1 py-0.5 rounded">claude login</code> inside
-            the <code className="text-xs bg-bg-raised px-1 py-0.5 rounded">orion-claude</code> service.
+            Starts <code className="text-xs bg-bg-raised px-1 py-0.5 rounded-sm">claude login</code> inside
+            the <code className="text-xs bg-bg-raised px-1 py-0.5 rounded-sm">orion-claude</code> service.
             Visit the URL that appears, then paste the authorization code back here.
           </p>
 
           {svcErr && (
-            <div className="rounded border border-status-error/40 bg-status-error/10 px-4 py-3 text-sm text-status-error">
+            <div className="rounded-sm border border-status-error/40 bg-status-error/10 px-4 py-3 text-sm text-status-error">
               {svcErr}
             </div>
           )}
@@ -286,7 +286,7 @@ export default function ClaudeOAuthPage() {
             <button
               onClick={startLogin}
               disabled={starting || !!isRunning}
-              className="flex items-center gap-2 px-4 py-2 rounded bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 rounded-sm bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
             >
               {starting ? <RefreshCw size={13} className="animate-spin" /> : <LogIn size={13} />}
               {starting ? 'Starting...' : isRunning ? 'Login in progress...' : 'Start Login'}
@@ -294,7 +294,7 @@ export default function ClaudeOAuthPage() {
             {isRunning && (
               <button
                 onClick={cancelLogin}
-                className="flex items-center gap-2 px-3 py-2 rounded border border-border-subtle text-sm text-text-secondary hover:text-text-primary transition-colors"
+                className="flex items-center gap-2 px-3 py-2 rounded-sm border border-border-subtle text-sm text-text-secondary hover:text-text-primary transition-colors"
               >
                 <X size={13} /> Cancel
               </button>
@@ -359,12 +359,12 @@ export default function ClaudeOAuthPage() {
                 onChange={e => setCode(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && !sending && submitCode()}
                 placeholder="Paste authorization code here…"
-                className="flex-1 px-3 py-2 text-sm bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors font-mono"
+                className="flex-1 px-3 py-2 text-sm bg-bg-raised border border-border-subtle rounded-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-accent transition-colors font-mono"
               />
               <button
                 onClick={submitCode}
                 disabled={!code.trim() || sending}
-                className="flex items-center gap-2 px-4 py-2 rounded bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
+                className="flex items-center gap-2 px-4 py-2 rounded-sm bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
               >
                 {sending ? <RefreshCw size={13} className="animate-spin" /> : <Send size={13} />}
                 Submit
@@ -378,7 +378,7 @@ export default function ClaudeOAuthPage() {
 
           {poll?.status === 'done' && (
             <div className="rounded-lg border border-status-healthy/30 bg-status-healthy/5 px-4 py-3 flex items-center gap-2">
-              <CheckCircle size={14} className="text-status-healthy flex-shrink-0" />
+              <CheckCircle size={14} className="text-status-healthy shrink-0" />
               <p className="text-sm text-status-healthy">Authentication complete. Claude Code is ready.</p>
             </div>
           )}
@@ -389,23 +389,23 @@ export default function ClaudeOAuthPage() {
       {tab === 'paste' && (
         <div className="space-y-4">
           <p className="text-sm text-text-secondary">
-            Run <code className="text-xs bg-bg-raised px-1 py-0.5 rounded">claude login</code> on any
+            Run <code className="text-xs bg-bg-raised px-1 py-0.5 rounded-sm">claude login</code> on any
             machine with Claude Code installed, then paste the contents of{' '}
-            <code className="text-xs bg-bg-raised px-1 py-0.5 rounded">~/.claude/.credentials.json</code>.
+            <code className="text-xs bg-bg-raised px-1 py-0.5 rounded-sm">~/.claude/.credentials.json</code>.
           </p>
           <textarea
             value={pasteVal}
             onChange={e => setPasteVal(e.target.value)}
             placeholder={'{\n  "claudeAiOauth": {\n    "accessToken": "...",\n    "expiresAt": 1234567890\n  }\n}'}
             rows={10}
-            className="w-full px-3 py-2 text-xs font-mono bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors resize-none"
+            className="w-full px-3 py-2 text-xs font-mono bg-bg-raised border border-border-subtle rounded-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-accent transition-colors resize-none"
           />
           {pasteErr && <p className="text-sm text-status-error">{pasteErr}</p>}
           <div className="flex items-center gap-3">
             <button
               onClick={savePaste}
               disabled={!pasteVal.trim() || pasteBusy}
-              className="flex items-center gap-2 px-4 py-2 rounded bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 rounded-sm bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
             >
               {pasteBusy ? <RefreshCw size={13} className="animate-spin" /> : <ClipboardPaste size={13} />}
               {pasteBusy ? 'Saving...' : 'Save Credentials'}

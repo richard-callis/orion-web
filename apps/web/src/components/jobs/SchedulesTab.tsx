@@ -38,7 +38,7 @@ export function SchedulesTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-text-muted">{schedules.length} schedule{schedules.length !== 1 ? 's' : ''}</p>
-        <button onClick={() => setShowForm(v => !v)} aria-expanded={showForm} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-accent text-white rounded hover:bg-accent/80 transition-colors">
+        <button onClick={() => setShowForm(v => !v)} aria-expanded={showForm} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-accent text-white rounded-sm hover:bg-accent/80 transition-colors">
           <Plus size={15} /> New Schedule
         </button>
       </div>
@@ -150,8 +150,8 @@ function NewScheduleForm({ agents, onCancel, onCreated }: { agents: Array<{ id: 
           <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer"><input type="checkbox" checked={form.enabled} onChange={e => setForm(f => ({ ...f, enabled: e.target.checked }))} className="accent-accent" />Enabled</label>
           {error && <span role="alert" className="text-xs text-red-400">{error}</span>}
           <div className="ml-auto flex gap-2">
-            <button type="button" onClick={onCancel} className="px-3 py-1.5 text-sm border border-border-subtle rounded text-text-secondary hover:bg-bg-raised">Cancel</button>
-            <button type="submit" disabled={saving} className="px-3 py-1.5 text-sm bg-accent text-white rounded hover:bg-accent/80 disabled:opacity-50">{saving ? 'Creating…' : 'Create'}</button>
+            <button type="button" onClick={onCancel} className="px-3 py-1.5 text-sm border border-border-subtle rounded-sm text-text-secondary hover:bg-bg-raised">Cancel</button>
+            <button type="submit" disabled={saving} className="px-3 py-1.5 text-sm bg-accent text-white rounded-sm hover:bg-accent/80 disabled:opacity-50">{saving ? 'Creating…' : 'Create'}</button>
           </div>
         </div>
       </form>

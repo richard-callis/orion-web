@@ -34,7 +34,7 @@ export function DependenciesTab({ task, tasks, onChange }: Props) {
           {deps.map(depId => {
             const dep = tasks.find(t => t.id === depId)
             return dep ? (
-              <div key={depId} className="flex items-center gap-1.5 text-[10px] text-text-muted bg-bg-card rounded px-2 py-1">
+              <div key={depId} className="flex items-center gap-1.5 text-[10px] text-text-muted bg-bg-card rounded-sm px-2 py-1">
                 {dep.status === 'done' ? <CheckCircle2 size={10} className="text-emerald-400" /> : <Lock size={10} className="text-amber-400" />}
                 <span className="flex-1 truncate">{dep.title}</span>
                 <span className="text-text-muted/60 mr-1">{dep.status}</span>
@@ -59,14 +59,14 @@ export function DependenciesTab({ task, tasks, onChange }: Props) {
         className={`${taskFieldClass} text-xs`}
       />
       {candidates.length > 0 && (
-        <div className="border border-border-subtle rounded mt-1 overflow-hidden">
+        <div className="border border-border-subtle rounded-sm mt-1 overflow-hidden">
           {candidates.map(t => (
             <button
               key={t.id}
               onClick={() => { onChange([...deps, t.id]); setSearch('') }}
               className="w-full text-left px-2.5 py-1.5 text-xs text-text-secondary hover:bg-accent/10 hover:text-text-primary flex items-center gap-2 transition-colors"
             >
-              <Plus size={9} className="text-accent flex-shrink-0" />
+              <Plus size={9} className="text-accent shrink-0" />
               <span className="truncate">{t.title}</span>
             </button>
           ))}

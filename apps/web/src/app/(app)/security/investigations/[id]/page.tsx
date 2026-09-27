@@ -138,7 +138,7 @@ export default function InvestigationDetailPage() {
       return (
         <div role="alert" className="p-6 text-center space-y-3">
           <p className="text-sm text-status-error">Failed to load investigation: {errorMessage(loadError)}</p>
-          <button onClick={() => load()} className="text-xs px-3 py-1.5 rounded border border-border-subtle bg-bg-raised text-text-primary hover:border-accent transition-colors">
+          <button onClick={() => load()} className="text-xs px-3 py-1.5 rounded-sm border border-border-subtle bg-bg-raised text-text-primary hover:border-accent transition-colors">
             Retry
           </button>
         </div>
@@ -160,7 +160,7 @@ export default function InvestigationDetailPage() {
     <div className="p-6 max-w-6xl space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <button aria-label="Back" onClick={() => router.back()} className="p-1.5 rounded hover:bg-bg-raised text-text-muted transition-colors">
+        <button aria-label="Back" onClick={() => router.back()} className="p-1.5 rounded-sm hover:bg-bg-raised text-text-muted transition-colors">
           <ArrowLeft size={16} />
         </button>
         <div className="flex-1">
@@ -232,7 +232,7 @@ export default function InvestigationDetailPage() {
             aria-label="Investigation status"
             value={newStatus}
             onChange={e => setNewStatus(e.target.value)}
-            className="px-2 py-1 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none"
+            className="px-2 py-1 text-xs bg-bg-raised border border-border-subtle rounded-sm text-text-primary focus:outline-hidden"
           >
             <option value="open">Open</option>
             <option value="active">Active</option>
@@ -243,7 +243,7 @@ export default function InvestigationDetailPage() {
           <button
             onClick={updateStatus}
             disabled={updatingStatus || newStatus === investigation.status}
-            className="px-3 py-1 text-xs bg-accent text-white rounded hover:bg-accent/90 disabled:opacity-50 transition-colors"
+            className="px-3 py-1 text-xs bg-accent text-white rounded-sm hover:bg-accent/90 disabled:opacity-50 transition-colors"
           >
             {updatingStatus ? <Loader2 size={12} className="animate-spin inline" /> : <Edit3 size={12} className="inline" />}{' '}
             Update
@@ -314,7 +314,7 @@ export default function InvestigationDetailPage() {
                   <div key={obs.id} className="flex items-center gap-3 px-4 py-2.5">
                     <span className="text-xs font-mono text-text-primary flex-1 truncate">{obs.displayValue || obs.value}</span>
                     <span className="text-[10px] text-text-muted">{obs.category}</span>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${verdictClass(obs.verdict)}`}>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm ${verdictClass(obs.verdict)}`}>
                       {obs.verdict}
                     </span>
                     <span className="text-[10px] text-text-muted">{obs.confidence}%</span>
@@ -364,7 +364,7 @@ export default function InvestigationDetailPage() {
                     <td className="px-4 py-2 text-text-muted">{obs.category}</td>
                     <td className="px-4 py-2 text-text-muted">{obs.role}</td>
                     <td className="px-4 py-2">
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${verdictClass(obs.verdict)}`}>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm ${verdictClass(obs.verdict)}`}>
                         {obs.verdict}
                       </span>
                     </td>
@@ -396,13 +396,13 @@ export default function InvestigationDetailPage() {
               onChange={e => setNoteContent(e.target.value)}
               placeholder="Add a note to this investigation..."
               rows={3}
-              className="w-full px-3 py-2 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent resize-none"
+              className="w-full px-3 py-2 text-xs bg-bg-raised border border-border-subtle rounded-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-accent resize-none"
             />
             <div className="flex justify-end mt-2">
               <button
                 onClick={addNote}
                 disabled={savingNote || !noteContent.trim()}
-                className="px-3 py-1.5 text-xs bg-accent text-white rounded hover:bg-accent/90 disabled:opacity-50 transition-colors flex items-center gap-1"
+                className="px-3 py-1.5 text-xs bg-accent text-white rounded-sm hover:bg-accent/90 disabled:opacity-50 transition-colors flex items-center gap-1"
               >
                 {savingNote ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
                 Add Note
@@ -458,7 +458,7 @@ export default function InvestigationDetailPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-text-primary">{entry.title}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-raised text-text-muted">{entry.eventType}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-bg-raised text-text-muted">{entry.eventType}</span>
                       {entry.source && (
                         <span className="text-[10px] text-text-muted">via {entry.source}</span>
                       )}

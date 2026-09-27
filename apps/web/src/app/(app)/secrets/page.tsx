@@ -5,8 +5,9 @@ export const dynamic = 'force-dynamic'
 export default async function SecretsPage() {
   let externalSecrets: Array<{ metadata: { name: string; namespace: string }; status?: { conditions?: Array<{ type: string; status: string; message?: string; lastTransitionTime?: string }> } }> = []
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res = await (customApi as any).listClusterCustomObject('external-secrets.io', 'v1beta1', 'externalsecrets') as { items: typeof externalSecrets }
+    const res = await customApi.listClusterCustomObject({
+      group: 'external-secrets.io', version: 'v1beta1', plural: 'externalsecrets',
+    }) as { items?: typeof externalSecrets }
     externalSecrets = res.items ?? []
   } catch {}
 

@@ -47,8 +47,8 @@ export function CreateTaskModal({ featureTitle, onClose, onCreate }: CreateTaskM
           placeholder="What needs to be done?"
           className={modalFieldClass} />
         {getRiskHints(`${form.title} ${form.description}`).map((hint, i) => (
-          <div key={i} className="flex items-start gap-1.5 mt-1.5 text-[10px] text-amber-400 bg-amber-400/10 rounded px-2 py-1.5">
-            <AlertTriangle size={10} className="flex-shrink-0 mt-0.5" />{hint}
+          <div key={i} className="flex items-start gap-1.5 mt-1.5 text-[10px] text-amber-400 bg-amber-400/10 rounded-sm px-2 py-1.5">
+            <AlertTriangle size={10} className="shrink-0 mt-0.5" />{hint}
           </div>
         ))}
       </div>

@@ -22,7 +22,7 @@ export function KanbanBoard<T>({ columns, columnWidth = 'w-52', columnBg = 'bg-b
       {columns.map(col => (
         <div
           key={col.key}
-          className={`flex-shrink-0 ${columnWidth} flex flex-col rounded-lg border border-border-subtle border-t-2 ${col.topBorderClass} ${columnBg} overflow-hidden`}
+          className={`shrink-0 ${columnWidth} flex flex-col rounded-lg border border-border-subtle border-t-2 ${col.topBorderClass} ${columnBg} overflow-hidden`}
         >
           <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle">
             <span className="text-xs font-medium text-text-secondary">{col.label}</span>

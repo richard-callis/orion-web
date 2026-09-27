@@ -142,9 +142,9 @@ function MessagesContent() {
   return (
     <div className="absolute inset-0 flex">
       {/* Sidebar - Message List */}
-      <div className={`${mobileShowList || !activeId?.startsWith('r_') ? 'flex' : 'hidden'} md:flex flex-col w-full md:w-56 lg:w-64 flex-shrink-0 border-r border-border-subtle bg-bg-sidebar`}>
+      <div className={`${mobileShowList || !activeId?.startsWith('r_') ? 'flex' : 'hidden'} md:flex flex-col w-full md:w-56 lg:w-64 shrink-0 border-r border-border-subtle bg-bg-sidebar`}>
         {/* View selector */}
-        <div className="flex items-center justify-between px-3 py-3 border-b border-border-subtle flex-shrink-0">
+        <div className="flex items-center justify-between px-3 py-3 border-b border-border-subtle shrink-0">
           <div className="flex items-center gap-2">
             <MessageSquare size={16} className="text-accent" />
             <span className="text-sm font-semibold text-text-primary">Messages</span>
@@ -152,11 +152,11 @@ function MessagesContent() {
           <div className="flex items-center gap-1">
             <button
               onClick={() => setView('ai')}
-              className={`px-2 py-0.5 rounded text-[10px] ${view === 'ai' ? 'bg-accent/20 text-accent' : 'text-text-muted hover:text-text-primary'}`}
+              className={`px-2 py-0.5 rounded-sm text-[10px] ${view === 'ai' ? 'bg-accent/20 text-accent' : 'text-text-muted hover:text-text-primary'}`}
             >AI</button>
             <button
               onClick={() => setView('rooms')}
-              className={`px-2 py-0.5 rounded text-[10px] ${view === 'rooms' ? 'bg-accent/20 text-accent' : 'text-text-muted hover:text-text-primary'}`}
+              className={`px-2 py-0.5 rounded-sm text-[10px] ${view === 'rooms' ? 'bg-accent/20 text-accent' : 'text-text-muted hover:text-text-primary'}`}
             >Rooms</button>
           </div>
         </div>

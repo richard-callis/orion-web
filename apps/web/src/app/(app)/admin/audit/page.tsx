@@ -89,7 +89,7 @@ export default async function AuditLogPage({
           <select
             name="action"
             defaultValue={actionFilter ?? ''}
-            className="text-xs px-2 py-1.5 rounded border border-border-subtle bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+            className="text-xs px-2 py-1.5 rounded-sm border border-border-subtle bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
           >
             <option value="">All actions</option>
             {allActions.map(a => (
@@ -100,11 +100,11 @@ export default async function AuditLogPage({
             name="user"
             defaultValue={userFilter ?? ''}
             placeholder="Username or email…"
-            className="text-xs px-2 py-1.5 rounded border border-border-subtle bg-bg-raised text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent w-44"
+            className="text-xs px-2 py-1.5 rounded-sm border border-border-subtle bg-bg-raised text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-accent w-44"
           />
           <button
             type="submit"
-            className="text-xs px-3 py-1.5 rounded border border-border-subtle bg-bg-raised text-text-primary hover:border-accent hover:text-accent transition-colors"
+            className="text-xs px-3 py-1.5 rounded-sm border border-border-subtle bg-bg-raised text-text-primary hover:border-accent hover:text-accent transition-colors"
           >
             Filter
           </button>
@@ -140,7 +140,7 @@ export default async function AuditLogPage({
                     {userMap[e.userId] ?? e.userId?.slice(0, 8) ?? '—'}
                   </td>
                   <td className="px-4 py-2.5 whitespace-nowrap">
-                    <span className={`text-xs px-2 py-0.5 rounded ${actionColor(e.action)}`}>
+                    <span className={`text-xs px-2 py-0.5 rounded-sm ${actionColor(e.action)}`}>
                       {ACTION_LABELS[e.action] ?? e.action}
                     </span>
                   </td>

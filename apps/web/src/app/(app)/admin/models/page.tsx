@@ -176,7 +176,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
             </div>
           )}
         </div>
-        <button aria-label="Close" onClick={onClose} className="p-1.5 rounded text-text-muted hover:text-text-primary transition-colors">
+        <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-sm text-text-muted hover:text-text-primary transition-colors">
           <X size={15} />
         </button>
       </div>
@@ -184,8 +184,8 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
       {/* Body */}
       <div className="px-5 py-4 space-y-4">
         {error && (
-          <div className="flex items-start gap-2 rounded border border-status-error/40 bg-status-error/10 px-3 py-2 text-xs text-status-error">
-            <AlertTriangle size={13} className="mt-0.5 flex-shrink-0" />
+          <div className="flex items-start gap-2 rounded-sm border border-status-error/40 bg-status-error/10 px-3 py-2 text-xs text-status-error">
+            <AlertTriangle size={13} className="mt-0.5 shrink-0" />
             {error}
           </div>
         )}
@@ -353,7 +353,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
               onClick={() => setForm(f => ({ ...f, selfHosted: !f.selfHosted }))}
               className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${form.selfHosted ? 'bg-accent' : 'bg-bg-raised border border-border-subtle'}`}
             >
-              <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${form.selfHosted ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${form.selfHosted ? 'translate-x-4' : 'translate-x-0.5'}`} />
             </button>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -387,7 +387,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
             onClick={() => setForm(f => ({ ...f, enabled: !f.enabled }))}
             className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${form.enabled ? 'bg-accent' : 'bg-bg-raised border border-border-subtle'}`}
           >
-            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${form.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${form.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
           </button>
           <span className="text-xs text-text-secondary">Enabled</span>
         </div>
@@ -400,7 +400,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
           {!isNew && !confirmDelete && (
             <button
               onClick={() => setConfirmDelete(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs text-status-error hover:bg-status-error/10 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-xs text-status-error hover:bg-status-error/10 transition-colors"
             >
               <Trash2 size={12} /> Delete
             </button>
@@ -411,7 +411,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
               <button
                 onClick={handleDelete}
                 disabled={deleting}
-                className="flex items-center gap-1 px-3 py-1.5 rounded bg-status-error text-white text-xs font-medium hover:bg-status-error/90 transition-colors disabled:opacity-50"
+                className="flex items-center gap-1 px-3 py-1.5 rounded-sm bg-status-error text-white text-xs font-medium hover:bg-status-error/90 transition-colors disabled:opacity-50"
               >
                 {deleting ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} />}
                 {deleting ? 'Deleting…' : 'Yes, delete'}
@@ -425,13 +425,13 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
 
         {/* Save / Cancel */}
         <div className="flex items-center gap-2">
-          <button onClick={onClose} className="px-4 py-1.5 rounded border border-border-subtle text-sm text-text-secondary hover:text-text-primary transition-colors">
+          <button onClick={onClose} className="px-4 py-1.5 rounded-sm border border-border-subtle text-sm text-text-secondary hover:text-text-primary transition-colors">
             Cancel
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-2 px-4 py-1.5 rounded bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-1.5 rounded-sm bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
           >
             {saving ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
             {saving ? 'Saving…' : 'Save'}
@@ -515,12 +515,12 @@ export default function ModelsPage() {
             const isDefault = defaultModelId === b.defaultModelId
             return (
               <div key={b.id} className="flex items-center gap-4 px-4 py-3">
-                <Lock size={13} className="text-text-muted flex-shrink-0" />
+                <Lock size={13} className="text-text-muted shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium text-text-primary">{b.name}</p>
                     {isDefault && (
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-accent/15 text-accent">Default</span>
+                      <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-semibold bg-accent/15 text-accent">Default</span>
                     )}
                   </div>
                   <p className="text-xs text-text-muted mt-0.5 truncate">{b.description}</p>
@@ -529,7 +529,7 @@ export default function ModelsPage() {
                 <button
                   onClick={e => setDefault(e, b.defaultModelId)}
                   title={isDefault ? 'Clear default' : 'Set as default'}
-                  className={`p-1 rounded transition-colors ${isDefault ? 'text-accent' : 'text-text-muted hover:text-accent'}`}
+                  className={`p-1 rounded-sm transition-colors ${isDefault ? 'text-accent' : 'text-text-muted hover:text-accent'}`}
                 >
                   {settingDefault === b.defaultModelId
                     ? <RefreshCw size={13} className="animate-spin" />
@@ -551,7 +551,7 @@ export default function ModelsPage() {
           <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wide">External</h2>
           <button
             onClick={() => setModal('add')}
-            className="flex items-center gap-2 px-3 py-1.5 rounded bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-sm bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors"
           >
             <Plus size={13} /> Add Model
           </button>
@@ -588,7 +588,7 @@ export default function ModelsPage() {
                         <button
                           onClick={e => setDefault(e, extId)}
                           title={isDefault ? 'Clear default' : 'Set as default'}
-                          className={`p-1 rounded transition-colors ${isDefault ? 'text-accent' : 'text-text-muted hover:text-accent'}`}
+                          className={`p-1 rounded-sm transition-colors ${isDefault ? 'text-accent' : 'text-text-muted hover:text-accent'}`}
                         >
                           {settingDefault === extId
                             ? <RefreshCw size={13} className="animate-spin" />
@@ -600,7 +600,7 @@ export default function ModelsPage() {
                         <div className="flex items-center gap-2">
                           <span className="text-text-primary font-medium">{m.name}</span>
                           {isDefault && (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-accent/15 text-accent">Default</span>
+                            <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-semibold bg-accent/15 text-accent">Default</span>
                           )}
                         </div>
                       </td>

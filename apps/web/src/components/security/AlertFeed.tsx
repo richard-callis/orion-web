@@ -212,7 +212,7 @@ function FilterBar({
               aria-label="Minimum severity"
               value={filters.minSeverity}
               onChange={e => onChange({ ...filters, minSeverity: Number(e.target.value) })}
-              className="appearance-none bg-bg-surface border border-border-subtle rounded px-2 py-0.5 pr-5 text-[11px] text-text-primary cursor-pointer hover:border-accent/40 transition-colors focus:outline-none focus:border-accent"
+              className="appearance-none bg-bg-surface border border-border-subtle rounded-sm px-2 py-0.5 pr-5 text-[11px] text-text-primary cursor-pointer hover:border-accent/40 transition-colors focus:outline-hidden focus:border-accent"
             >
               {SEV_OPTIONS.map(o => (
                 <option key={o.value} value={o.value}>{o.label}</option>
@@ -230,7 +230,7 @@ function FilterBar({
               aria-label="Acknowledgement status"
               value={filters.ackFilter}
               onChange={e => onChange({ ...filters, ackFilter: e.target.value as AckFilter })}
-              className="appearance-none bg-bg-surface border border-border-subtle rounded px-2 py-0.5 pr-5 text-[11px] text-text-primary cursor-pointer hover:border-accent/40 transition-colors focus:outline-none focus:border-accent"
+              className="appearance-none bg-bg-surface border border-border-subtle rounded-sm px-2 py-0.5 pr-5 text-[11px] text-text-primary cursor-pointer hover:border-accent/40 transition-colors focus:outline-hidden focus:border-accent"
             >
               {ACK_OPTIONS.map(o => (
                 <option key={o.value} value={o.value}>{o.label}</option>
@@ -275,7 +275,7 @@ function FilterBar({
         {isLive ? (
           <button
             onClick={switchToAbsolute}
-            className="px-2 py-0.5 rounded text-[11px] font-medium border border-border-subtle text-text-muted hover:text-text-primary hover:border-accent/40 transition-colors"
+            className="px-2 py-0.5 rounded-sm text-[11px] font-medium border border-border-subtle text-text-muted hover:text-text-primary hover:border-accent/40 transition-colors"
           >
             Absolute
           </button>
@@ -287,7 +287,7 @@ function FilterBar({
               aria-label="From"
               value={pendingFrom}
               onChange={e => setPendingFrom(e.target.value)}
-              className="bg-bg-surface border border-border-subtle rounded px-2 py-0.5 text-[11px] text-text-primary focus:outline-none focus:border-accent transition-colors"
+              className="bg-bg-surface border border-border-subtle rounded-sm px-2 py-0.5 text-[11px] text-text-primary focus:outline-hidden focus:border-accent transition-colors"
             />
             <span className="text-[10px] text-text-muted">→</span>
             <input
@@ -295,17 +295,17 @@ function FilterBar({
               aria-label="To"
               value={pendingTo}
               onChange={e => setPendingTo(e.target.value)}
-              className="bg-bg-surface border border-border-subtle rounded px-2 py-0.5 text-[11px] text-text-primary focus:outline-none focus:border-accent transition-colors"
+              className="bg-bg-surface border border-border-subtle rounded-sm px-2 py-0.5 text-[11px] text-text-primary focus:outline-hidden focus:border-accent transition-colors"
             />
             <button
               onClick={applyAbsolute}
-              className="px-2.5 py-0.5 rounded text-[11px] font-medium bg-accent text-white hover:bg-accent/90 transition-colors"
+              className="px-2.5 py-0.5 rounded-sm text-[11px] font-medium bg-accent text-white hover:bg-accent/90 transition-colors"
             >
               Apply
             </button>
             <button
               onClick={() => onChange({ ...filters, timeMode: 'quick' })}
-              className="px-2 py-0.5 rounded text-[11px] font-medium border border-border-subtle text-text-muted hover:text-text-primary hover:border-accent/40 transition-colors"
+              className="px-2 py-0.5 rounded-sm text-[11px] font-medium border border-border-subtle text-text-muted hover:text-text-primary hover:border-accent/40 transition-colors"
             >
               Live
             </button>
@@ -318,7 +318,7 @@ function FilterBar({
           disabled={loading}
           title="Refresh"
           aria-label="Refresh alerts"
-          className="ml-auto p-1 rounded text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+          className="ml-auto p-1 rounded-sm text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
         >
           <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
         </button>
@@ -453,7 +453,7 @@ export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: 
               <button
                 onClick={ackAll}
                 disabled={ackingAll}
-                className="flex items-center gap-1.5 text-xs text-text-secondary border border-border-subtle rounded px-2 py-1 hover:text-accent hover:border-accent/40 transition-colors disabled:opacity-50"
+                className="flex items-center gap-1.5 text-xs text-text-secondary border border-border-subtle rounded-sm px-2 py-1 hover:text-accent hover:border-accent/40 transition-colors disabled:opacity-50"
               >
                 <CheckCheck size={11} />
                 {ackingAll ? 'Clearing…' : 'Acknowledge All'}
@@ -492,7 +492,7 @@ export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: 
                   )}
                   className="mt-1 accent-accent"
                 />
-                <Icon size={14} className={`flex-shrink-0 mt-0.5 ${SOURCE_COLORS[alert.source] || 'text-text-muted'}`} />
+                <Icon size={14} className={`shrink-0 mt-0.5 ${SOURCE_COLORS[alert.source] || 'text-text-muted'}`} />
                 <Link href={`/security/alerts/${alert.id}`} className="flex-1 min-w-0 group">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-medium text-text-primary truncate group-hover:text-accent transition-colors">
