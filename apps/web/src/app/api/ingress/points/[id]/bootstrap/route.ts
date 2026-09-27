@@ -167,7 +167,7 @@ async function bootstrapIngressPoint(
 
     // Step 1: MetalLB
     await log('Step 1/4: Installing MetalLB...')
-    let metallbExists = false
+    let metallbExists: boolean
     try {
       await gatewayExec('kubectl_get', {
         resource: 'namespace', name: 'metallb-system',
@@ -198,7 +198,7 @@ async function bootstrapIngressPoint(
 
     // Step 2: cert-manager
     await log('Step 2/4: Installing cert-manager...')
-    let certManagerExists = false
+    let certManagerExists: boolean
     try {
       await gatewayExec('kubectl_get', {
         resource: 'namespace', name: 'cert-manager',
@@ -379,7 +379,7 @@ function makeLocalGx(kubeconfig: string) {
         ], { timeout: name === 'helm_upgrade_install' ? 600_000 : 30_000 })
         return result.stdout
       } catch (e) {
-        throw new Error(`helm failed: ${e instanceof Error ? e.message : String(e)}`)
+        throw new Error(`helm failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e })
       }
     }
 

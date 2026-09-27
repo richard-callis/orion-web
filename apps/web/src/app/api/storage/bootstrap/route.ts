@@ -186,7 +186,7 @@ async function checkAndFixIscsi(
     schematicId = await getTalosIscsiSchematic()
     await log(`  Factory schematic ID: ${schematicId}`)
   } catch (err) {
-    throw new Error(`Could not get Talos factory schematic: ${err instanceof Error ? err.message : String(err)}`)
+    throw new Error(`Could not get Talos factory schematic: ${err instanceof Error ? err.message : String(err)}`, { cause: err })
   }
 
   const upgradedNodes: string[] = []
@@ -393,7 +393,7 @@ async function bootstrapCeph(
   await log(`Bootstrapping Rook-Ceph in environment "${envName}"...`)
 
   await log('Step 1/5: Checking for existing Rook-Ceph installation...')
-  let exists = false
+  let exists: boolean
   try {
     await exec('kubectl_get', { resource: 'namespace', name: 'rook-ceph' })
     exists = true

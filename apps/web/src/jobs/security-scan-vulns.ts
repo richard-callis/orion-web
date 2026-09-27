@@ -78,7 +78,7 @@ export async function runDailyScan(
       results.push(await scanAcasHost(client, env.id, env.gatewayUrl!, kev, isInternetFacing, scanId))
     } else {
       // List running images via the existing kubectl/docker tools.
-      let images: string[] = []
+      let images: string[]
       try {
         images = await listRunningImages(client, env.type as 'cluster' | 'docker')
       } catch (err) {

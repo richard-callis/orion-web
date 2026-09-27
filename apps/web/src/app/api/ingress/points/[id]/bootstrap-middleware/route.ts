@@ -388,7 +388,7 @@ function makeKubectlRunner(kubeconfig: string): {
         const { stdout } = await exec('kubectl', ['apply', '-f', tmpPath, '--kubeconfig', `${tmpDir}/kubeconfig`], { timeout: 60_000 })
         return stdout
       } catch (e: unknown) {
-        throw new Error(`kubectl apply failed: ${e instanceof Error ? e.message : String(e)}`)
+        throw new Error(`kubectl apply failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e })
       }
     }
 
@@ -426,7 +426,7 @@ function makeKubectlRunner(kubeconfig: string): {
         const result = await exec('helm', cmd, { timeout: 600_000 })
         return result.stdout
       } catch (e: unknown) {
-        throw new Error(`helm failed: ${e instanceof Error ? e.message : String(e)}`)
+        throw new Error(`helm failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e })
       }
     }
 
@@ -456,7 +456,7 @@ function makeKubectlRunner(kubeconfig: string): {
       const { stdout } = await exec('kubectl', [cmd, ...positional, ...flags, '--kubeconfig', `${tmpDir}/kubeconfig`], { timeout: 30_000 })
       return stdout
     } catch (e: unknown) {
-      throw new Error(`kubectl ${cmd} failed: ${e instanceof Error ? e.message : String(e)}`)
+      throw new Error(`kubectl ${cmd} failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e })
     }
   }
 

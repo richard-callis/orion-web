@@ -170,7 +170,7 @@ async function scanEnvironment(env: {
   log(`Scanning environment "${env.name}" (${env.id})`)
 
   let findings: DriftFinding[] = []
-  let reportStatus = 'clean'
+  let reportStatus: string
 
   try {
     // ── Strategy 1: Use ArgoCD state cached in environment.metadata ────────────

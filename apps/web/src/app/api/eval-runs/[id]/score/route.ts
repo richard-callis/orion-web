@@ -28,7 +28,7 @@ async function scoreAssertion(
       return { ...assertion, passed, score: passed ? 1 : 0 }
     }
     case 'regex_match': {
-      let passed = false
+      let passed: boolean
       try {
         passed = new RegExp(assertion.value, 'i').test(out)
       } catch {
@@ -122,7 +122,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     // Parse assertions from the case
-    let assertions: AssertionDef[] = []
+    let assertions: AssertionDef[]
     try {
       assertions = JSON.parse(result.case.assertions) as AssertionDef[]
     } catch {

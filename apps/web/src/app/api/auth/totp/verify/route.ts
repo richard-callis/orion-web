@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     select: { totpSecret: true, totpSecretEncrypted: true, totpRecoveryCodes: true },
   })
 
-  let rawSecret: string | null | undefined = null
+  let rawSecret: string | null | undefined
   if (dbUser?.totpSecretEncrypted) {
     try { rawSecret = decryptStrict(dbUser.totpSecretEncrypted, 'totpSecretEncrypted') } catch { return NextResponse.json({ error: 'No pending TOTP setup. Call /api/auth/totp/generate first' }, { status: 400 }) }
   } else {

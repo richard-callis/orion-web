@@ -140,7 +140,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tri
   const triggerSecret = decrypt(trigger.secret)
 
   // Verify signature based on source
-  let verified = false
+  let verified: boolean
   const source = trigger.source
 
   if (source === 'github') {
@@ -178,7 +178,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tri
   }
 
   // Parse payload
-  let parsedBody: unknown = {}
+  let parsedBody: unknown
   try {
     parsedBody = JSON.parse(rawBody)
   } catch {

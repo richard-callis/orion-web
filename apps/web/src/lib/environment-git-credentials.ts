@@ -94,7 +94,7 @@ export async function getGatewayGitCredential(
 
   const existing = await prisma.environmentGitCredential.findUnique({ where: { environmentId: env.id } })
   if (existing) {
-    let secret: string | null = null
+    let secret: string | null
     try { secret = decrypt(existing.secret) } catch { secret = null }
     // Reuse only if it still decrypts, belongs to the current provider, and
     // points at the env's current repo. Otherwise replace it.
