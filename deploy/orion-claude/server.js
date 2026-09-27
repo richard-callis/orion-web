@@ -14,7 +14,12 @@
  *   POST /auth/cancel        — kill any running login process
  *   POST /auth/credentials   — store pasted credentials directly
  *   POST /run                — execute a query(), stream SDK events as NDJSON
- *   POST /run/collect        — execute a query(), return full text as JSON (for summarizer/review)
+ *   POST /run/collect        — execute a query(), return full text (+ usage) as JSON
+ *
+ * Run requests are structured for prompt caching (see prompt.js):
+ *   { system, context?, messages: [{role, content, name?}], transcript?: 'chat'|'room',
+ *     model?, maxTurns?, allowedTools?, agentId?, roomId?, mcpToken? }
+ * The legacy { prompt, systemPrompt } shape is still accepted.
  */
 
 const http       = require('http')
@@ -23,6 +28,7 @@ const os         = require('os')
 const path       = require('path')
 const pty        = require('node-pty')
 const { execFile, execFileSync } = require('child_process')
+const { resolvePrompt, toolArgs, mcpTokenFor, parseUsage } = require('./prompt')
 
 const PORT        = parseInt(process.env.PORT || '3100', 10)
 const CLAUDE_HOME = process.env.CLAUDE_HOME || '/root/.claude'
@@ -63,26 +69,6 @@ function sanitizeModel(model) {
   return trimmed
 }
 
-function sanitizeSystemPrompt(systemPrompt) {
-  if (typeof systemPrompt !== 'string') return null
-  // preserve behavior while preventing excessively large/unexpected values
-  return systemPrompt.slice(0, 20000)
-}
-
-// Linux ARG_MAX is typically 128KB. We reserve headroom for env vars and flags.
-// Prompts exceeding this cause execFile to fail with E2BIG (silently, due to unref).
-const PROMPT_CHAR_LIMIT = 80000
-
-function sanitizePrompt(prompt) {
-  const s = String(prompt || '')
-  if (s.length <= PROMPT_CHAR_LIMIT) return s
-  // Keep the tail (most recent messages) — the model needs recency more than deep history.
-  const truncated = s.slice(s.length - PROMPT_CHAR_LIMIT)
-  // Trim to a clean line boundary so we don't split mid-word.
-  const newline = truncated.indexOf('\n')
-  return newline > 0 ? truncated.slice(newline + 1) : truncated
-}
-
 function sanitizeMaxTurns(maxTurns, fallback = 20) {
   const n = Number(maxTurns)
   if (!Number.isFinite(n)) return fallback
@@ -98,7 +84,7 @@ function sanitizeMaxTurns(maxTurns, fallback = 20) {
  * only agentId; chat rooms supply both agentId and roomId.
  * Returns the temp dir path — caller must clean it up after execFile completes.
  */
-function writeMcpDir(agentId, roomId) {
+function writeMcpDir(agentId, roomId, token) {
   const params = new URLSearchParams({ agentId })
   if (roomId) params.set('roomId', roomId)
   const url = `${ORION_URL}/api/mcp?${params.toString()}`
@@ -107,7 +93,7 @@ function writeMcpDir(agentId, roomId) {
       orion: {
         type: 'http',
         url,
-        ...(MCP_TOKEN ? { headers: { 'x-mcp-token': MCP_TOKEN } } : {}),
+        ...(token ? { headers: { 'x-mcp-token': token } } : {}),
       },
     },
   }
@@ -116,24 +102,38 @@ function writeMcpDir(agentId, roomId) {
   return tmpDir
 }
 
+// Whether the installed CLI supports a flag (cached; checked lazily on first run).
+const _flagSupport = new Map()
+function cliSupports(flag) {
+  if (!_flagSupport.has(flag)) {
+    let help = ''
+    try { help = execFileSync('claude', ['--help'], { timeout: 5000, stdio: 'pipe' }).toString() } catch {}
+    _flagSupport.set(flag, help.includes(flag))
+  }
+  return _flagSupport.get(flag)
+}
+
 /**
  * Call the `claude` CLI as a subprocess — same approach as the Discord bot.
  * Strips ANTHROPIC_API_KEY and CLAUDECODE from env to force OAuth credential use.
  * When agentId is provided, writes a per-request .mcp.json so Claude can call
  * ORION tools natively via MCP. roomId is optional (chat rooms only).
+ * Resolves with the CLI's JSON stdout.
  */
-function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 120000, agentId, roomId } = {}) {
+function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 120000, agentId, roomId, allowedTools, mcpToken } = {}) {
   return new Promise((resolve, reject) => {
     const safeModel       = sanitizeModel(model)
-    const safeSystemPrompt = sanitizeSystemPrompt(systemPrompt)
     const useMcp          = !!agentId
     const safeMaxTurns    = sanitizeMaxTurns(maxTurns, useMcp ? 10 : 1)
 
-    const safePrompt = sanitizePrompt(prompt)
-    const args = ['-p', safePrompt, '--output-format', 'json']
-    if (safeModel)        args.push('--model', safeModel)
-    if (safeSystemPrompt) args.push('--append-system-prompt', safeSystemPrompt)
+    const args = ['-p', String(prompt || ''), '--output-format', 'json']
+    if (safeModel)    args.push('--model', safeModel)
+    if (systemPrompt) args.push('--append-system-prompt', systemPrompt)
     args.push('--max-turns', String(safeMaxTurns))
+    // Keep the system prompt identical across requests (MCP runs get a fresh temp cwd each time)
+    if (cliSupports('--exclude-dynamic-system-prompt-sections')) args.push('--exclude-dynamic-system-prompt-sections')
+    // Variadic --allowedTools goes last so it can't swallow other flags' values
+    args.push(...toolArgs(allowedTools))
 
     const env = Object.fromEntries(
       Object.entries(process.env).filter(([k]) => k !== 'ANTHROPIC_API_KEY' && k !== 'CLAUDECODE')
@@ -144,7 +144,7 @@ function runClaude(prompt, { systemPrompt, model, maxTurns = 20, timeout = 12000
     let cwd    = undefined
     if (useMcp) {
       try {
-        tmpDir = writeMcpDir(agentId, roomId)
+        tmpDir = writeMcpDir(agentId, roomId, mcpToken || MCP_TOKEN)
         cwd    = tmpDir
         console.log(`[orion-claude] MCP enabled — agent=${agentId}${roomId ? ` room=${roomId}` : ''} url=${ORION_URL}/api/mcp`)
       } catch (e) {
@@ -434,17 +434,20 @@ const server = http.createServer(async (req, res) => {
       })
 
       try {
-        const stdout = await runClaude(String(opts.prompt || ''), {
-          systemPrompt: opts.systemPrompt,
+        const { prompt, systemPrompt } = resolvePrompt(opts)
+        const stdout = await runClaude(prompt, {
+          systemPrompt,
           model:        opts.model,
           maxTurns:     opts.maxTurns ?? 20,
+          allowedTools: opts.allowedTools,
         })
         // Parse JSON output from claude --output-format json and re-emit as NDJSON events
         try {
           const parsed = JSON.parse(stdout)
           const text = parsed?.result ?? parsed?.text ?? stdout
+          const usage = parseUsage(parsed)
           res.write(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } }) + '\n')
-          res.write(JSON.stringify({ type: 'result', subtype: 'success', result: text }) + '\n')
+          res.write(JSON.stringify({ type: 'result', subtype: 'success', result: text, ...(usage && { usage }) }) + '\n')
         } catch {
           res.write(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: stdout }] } }) + '\n')
         }
@@ -464,20 +467,25 @@ const server = http.createServer(async (req, res) => {
 
       try {
         const useMcp = !!opts.agentId
-        const stdout = await runClaude(String(opts.prompt || ''), {
-          systemPrompt: opts.systemPrompt,
+        const { prompt, systemPrompt } = resolvePrompt(opts)
+        const stdout = await runClaude(prompt, {
+          systemPrompt,
           model:        opts.model,
           maxTurns:     opts.maxTurns ?? (useMcp ? 10 : 1),
           timeout:      useMcp ? 300000 : 120000,
           agentId:      opts.agentId,
           roomId:       opts.roomId,
+          allowedTools: opts.allowedTools,
+          mcpToken:     mcpTokenFor(opts, ''),
         })
         let text = stdout.trim()
+        let usage
         try {
           const parsed = JSON.parse(stdout)
           text = parsed?.result ?? parsed?.text ?? stdout.trim()
+          usage = parseUsage(parsed)
         } catch { /* plain text output */ }
-        return json(res, 200, { text })
+        return json(res, 200, { text, ...(usage && { usage }) })
       } catch (err) {
         return json(res, 500, { error: err instanceof Error ? err.message : String(err) })
       }

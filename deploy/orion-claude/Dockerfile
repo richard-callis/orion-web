@@ -12,7 +12,7 @@ RUN mkdir -p /root/.claude
 WORKDIR /app
 COPY package.json ./
 RUN npm install
-COPY server.js ./
+COPY server.js prompt.js ./
 
 EXPOSE 3100
 CMD ["node", "server.js"]
