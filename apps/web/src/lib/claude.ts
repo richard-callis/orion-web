@@ -2,7 +2,7 @@ import fs from 'fs'
 import { humanActor } from './gateway-headers'
 import { prisma } from './db'
 import { getPrompt, interpolate } from './system-prompts'
-import { hybridSearch, generateEmbedding, skillVectorSearch } from './embeddings'
+import { hybridSearch, generateEmbedding, skillVectorSearch, ownerFilterWhere } from './embeddings'
 import { MANAGEMENT_TOOL_DEFS, executeManagedTool } from './management-tools'
 import { validateToolArgs } from './tool-registry'
 import { getChatUserRole, canUseTools, filterToolsForRole, checkChatToolPermission } from './chat-tool-policy'
@@ -74,11 +74,31 @@ function buildFullContextSnapshot(
 // gap and remains a reasonable threshold post-fix.
 const SEMANTIC_SKILL_MATCH_MIN_SCORE = 0.55
 
+// Request-scoped cache of in-flight/completed embedding calls, keyed by the
+// exact (already-truncated) text passed to generateEmbedding. Callers that
+// process the same message text multiple times within one logical
+// request/turn (e.g. room-agents.ts replying with several agents to the same
+// triggering message) can share a cache instance across their
+// matchAndInjectSkills calls so the text is embedded at most once — never a
+// cross-request or cross-message cache, just de-duplication within a turn.
+export type SkillEmbedCache = Map<string, ReturnType<typeof generateEmbedding>>
+
+function getCachedEmbedding(text: string, cache?: SkillEmbedCache): ReturnType<typeof generateEmbedding> {
+  if (!cache) return generateEmbedding(text)
+  let pending = cache.get(text)
+  if (!pending) {
+    pending = generateEmbedding(text)
+    cache.set(text, pending)
+  }
+  return pending
+}
+
 export async function matchAndInjectSkills(
   environmentId: string,
   message: string,
   logSource: 'chat_match' | 'task_match' | 'room_match' = 'chat_match',
   contextId?: string,
+  embedCache?: SkillEmbedCache,
 ): Promise<{ injected: string; skillName: string | null }> {
   const skills = await prisma.nebulaInstance.findMany({
     where: { environmentId, category: 'skill', isInstalled: true },
@@ -106,8 +126,19 @@ export async function matchAndInjectSkills(
   // Skip entirely if this environment has no skills at all — no point paying
   // for an embedding-provider call on every turn when there's nothing to match.
   if (skills.length === 0) return { injected: '', skillName: null }
+  // Cheap pre-check: skip the embedding-provider call (real latency/cost, up
+  // to a 30s timeout) entirely when none of this environment's installed
+  // skills actually have a stored embedding to match against — a single
+  // indexed existence query beats paying for an API call with no chance of
+  // a hit. Net result is unchanged: previously an unmatched embedding call
+  // would just fall through to skillVectorSearch returning no rows.
+  const hasEmbeddedSkill = await prisma.nebulaEmbedding.findFirst({
+    where: { nebulaId: { in: skills.map(s => s.id) } },
+    select: { nebulaId: true },
+  })
+  if (!hasEmbeddedSkill) return { injected: '', skillName: null }
   try {
-    const embedResult = await generateEmbedding(message.slice(0, 2000))
+    const embedResult = await getCachedEmbedding(message.slice(0, 2000), embedCache)
     if (embedResult) {
       const [best] = await skillVectorSearch(embedResult.vector, embedResult.modelRef, environmentId, 1)
       if (best && best.score >= SEMANTIC_SKILL_MATCH_MIN_SCORE) {
@@ -536,7 +567,7 @@ async function* streamOllamaToolLoop(
             await recordTrace({ conversationId, step: inc(), type: 'tool_call', toolName: 'knowledge_graph', toolArgs: argsStr, modelUsed: model })
             yield { type: 'tool_call', tool: fn.name, input: argsStr }
             const toolStart = Date.now()
-            const result = await handleKnowledgeGraph(argsStr)
+            const result = await handleKnowledgeGraph(argsStr, userId)
             await recordTrace({ conversationId, step: inc(), type: 'tool_result', toolName: 'knowledge_graph', toolResult: result, durationMs: Date.now() - toolStart, modelUsed: model })
             yield { type: 'tool_result', tool: fn.name, output: result }
             messages.push({ role: 'tool', content: result })
@@ -1207,24 +1238,34 @@ async function handleKnowledgeSearch(argsRaw: string, userId?: string): Promise<
   }
 }
 
-async function handleKnowledgeGraph(argsRaw: string): Promise<string> {
+async function handleKnowledgeGraph(argsRaw: string, userId?: string): Promise<string> {
   try {
     const { threshold = 0.5, includeContent = false } = JSON.parse(argsRaw || '{}') as {
       threshold?: number; includeContent?: boolean
     }
 
-    const [notes, semanticEdges] = await Promise.all([
-      prisma.note.findMany({
-        select: { id: true, title: true, type: true, folder: true, content: true },
-        orderBy: { title: 'asc' },
-      }),
-      prisma.semanticConnection.findMany({
-        where: { score: { gte: threshold } },
-        select: { sourceNoteId: true, targetNoteId: true, score: true },
-        orderBy: { score: 'desc' },
-        take: 200,
-      }),
-    ])
+    // SOC2: mirror the notes API's ownership scoping — restrict to the
+    // calling user's own notes plus unowned/shared notes when this tool call
+    // is on behalf of a specific logged-in user. See ownerFilterWhere in
+    // lib/embeddings.ts.
+    const notes = await prisma.note.findMany({
+      where: ownerFilterWhere(userId),
+      select: { id: true, title: true, type: true, folder: true, content: true },
+      orderBy: { title: 'asc' },
+    })
+    const noteIds = notes.map(n => n.id)
+    // Scope semantic edges to notes the caller can actually see on both
+    // ends — otherwise an edge to/from an out-of-scope note would either
+    // leak that note's id or waste the `take: 200` budget on edges the
+    // caller can't use.
+    const semanticEdges = noteIds.length
+      ? await prisma.semanticConnection.findMany({
+          where: { score: { gte: threshold }, sourceNoteId: { in: noteIds }, targetNoteId: { in: noteIds } },
+          select: { sourceNoteId: true, targetNoteId: true, score: true },
+          orderBy: { score: 'desc' },
+          take: 200,
+        })
+      : []
 
     const noteById = new Map(notes.map((n: any) => [n.id, n]))
 
@@ -1602,7 +1643,7 @@ RULES FOR DOCKER COMPOSE FILES (critical — violations cause deployment failure
           // this dedicated (correctly per-user-scoped) handler entirely.
           result = await handleKnowledgeSearch(tc.argsRaw, userId)
         } else if (tc.name === 'knowledge_graph') {
-          result = await handleKnowledgeGraph(tc.argsRaw)
+          result = await handleKnowledgeGraph(tc.argsRaw, userId)
         } else if (MANAGEMENT_TOOL_DEFS.some(d => d.name === tc.name)) {
           // This is an ordinary per-user chat conversation (no autonomous Agent
           // acting), so pass the real user id via the dedicated `userId` param —

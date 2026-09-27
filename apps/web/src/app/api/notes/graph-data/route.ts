@@ -63,9 +63,13 @@ export async function GET(req: NextRequest) {
   // Semantic edges (new)
   let semanticLinks: Array<{ source: string; target: string; type: 'semantic'; score: number }> = []
   if (includeSemantic) {
+    // SOC2: scope edges to notes already in the (possibly caller-scoped)
+    // `notes` set above — otherwise an edge to/from a note the caller can't
+    // see would leak that note's id even though its title/content stay hidden.
+    const noteIds = notes.map((n: any) => n.id)
     const connections = await prisma.semanticConnection.findMany({
       select: { sourceNoteId: true, targetNoteId: true, score: true },
-      where: { score: { gte: threshold } },
+      where: { score: { gte: threshold }, sourceNoteId: { in: noteIds }, targetNoteId: { in: noteIds } },
       orderBy: { score: 'desc' },
       take: 5000,
     })
