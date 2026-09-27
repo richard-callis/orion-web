@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { checkAutoCommand } from '../src/command-policy'
+import { checkAutoCommand } from '../src/command-policy.js'
 
 describe('checkAutoCommand — allowlist lookup', () => {
   it.each(['constructor', 'toString', 'valueOf', '__proto__', 'hasOwnProperty'])(
