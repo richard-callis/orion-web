@@ -190,14 +190,14 @@ orion-web/
 │   └── host-agent/
 │       ├── falco/falco.yaml    # Falco runtime security config
 │       └── vector.toml         # Vector telemetry shipper config
-└── .github/workflows/          # Multi-arch builds (amd64 + arm64) → ghcr.io
+└── .github/workflows/          # Image builds (amd64; + arm64 on tags) → ghcr.io
 ```
 
 ---
 
 ## CI/CD
 
-Pushing to `main` triggers GitHub Actions that build multi-arch Docker images (`linux/amd64` + `linux/arm64`) and push to the GitHub Container Registry:
+Pushing to `main` triggers GitHub Actions that build `linux/amd64` Docker images and push them to the GitHub Container Registry. Version tags (`v*`) — or a manual run of a build workflow — also build `linux/arm64` for Raspberry Pi management nodes (arm64 runs under QEMU emulation on the x86 runner, so it's kept off the per-commit deploy path):
 
 - `ghcr.io/richard-callis/orion-web:latest`
 - `ghcr.io/richard-callis/orion-gateway:latest`
