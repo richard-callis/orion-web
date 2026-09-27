@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: '22'
+  NODE_VERSION: '26'  # matches the runtime images (node:26-alpine)
   PRISMA_HIDE_UPDATE_MESSAGE: '1'
   NEXT_TELEMETRY_DISABLED: '1'
 
