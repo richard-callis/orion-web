@@ -118,12 +118,12 @@ export async function deployBootstrapMonitoring(
   if (monitoringConfig?.stack && monitoringConfig.stack !== 'none') {
     emit({ type: 'step', message: `Deploying monitoring stack (${monitoringConfig.stack})...` })
 
-    // Deploy monitoring namespace
-    await runCommand(
-      'kubectl', ['create', 'namespace', 'monitoring', '--dry-run=client', '-o', 'yaml', '|', 'kubectl', 'apply', '-f', '-'],
-      kenv,
-      msg => emit({ type: 'log', message: msg }),
-    )
+    // Deploy monitoring namespace. This used to pass a shell pipeline
+    // (`... | kubectl apply -f -`) as argv to a shell-less spawn, so kubectl
+    // always rejected it and the whole bootstrap failed whenever a monitoring
+    // stack was configured. `create` fails harmlessly if it already exists —
+    // same as deployMonitoringStack().
+    await runQuiet('kubectl', ['create', 'namespace', 'monitoring'], kenv)
 
     if (monitoringConfig.stack === 'basic' || monitoringConfig.stack === 'full') {
       // Deploy VictoriaMetrics

@@ -29,25 +29,32 @@ export async function bootstrapCluster(
   }
   bootstrapInFlight.add(environmentId)
 
-  const env = await prisma.environment.findUnique({ where: { id: environmentId } })
-  if (!env) { bootstrapInFlight.delete(environmentId); throw new Error('Environment not found') }
-  console.log(`[bootstrap] Starting for environment ${environmentId} (${env.name}, type: ${env.type})`)
-
+  // The lock is released on every exit path — previously only the "not found"
+  // path released it, so after one bootstrap (success or failure) the same
+  // environment was refused with "already in progress" until a restart.
   try {
-    const envType = env.type ?? 'cluster'
+    const env = await prisma.environment.findUnique({ where: { id: environmentId } })
+    if (!env) throw new Error('Environment not found')
+    console.log(`[bootstrap] Starting for environment ${environmentId} (${env.name}, type: ${env.type})`)
 
-    if (envType === 'docker') {
-      return await bootstrapDockerEnvironment(env, emit)
-    } else if (envType === 'swarm') {
-      return await bootstrapSwarmEnvironment(env, emit)
-    } else {
-      // Default: K8s/Talos (requires kubeconfig)
-      if (!env.kubeconfig) throw new Error('No kubeconfig stored for this environment')
-      return await bootstrapK8sCluster(env, emit)
+    try {
+      const envType = env.type ?? 'cluster'
+
+      if (envType === 'docker') {
+        return await bootstrapDockerEnvironment(env, emit)
+      } else if (envType === 'swarm') {
+        return await bootstrapSwarmEnvironment(env, emit)
+      } else {
+        // Default: K8s/Talos (requires kubeconfig)
+        if (!env.kubeconfig) throw new Error('No kubeconfig stored for this environment')
+        return await bootstrapK8sCluster(env, emit)
+      }
+    } catch (err) {
+      console.error(`[bootstrap] Failed: ${err instanceof Error ? err.message : String(err)}`)
+      emit({ type: 'error', message: `Bootstrap failed: ${err instanceof Error ? err.message : String(err)}` })
+      throw err
     }
-  } catch (err) {
-    console.error(`[bootstrap] Failed: ${err instanceof Error ? err.message : String(err)}`)
-    emit({ type: 'error', message: `Bootstrap failed: ${err instanceof Error ? err.message : String(err)}` })
-    throw err
+  } finally {
+    bootstrapInFlight.delete(environmentId)
   }
 }
