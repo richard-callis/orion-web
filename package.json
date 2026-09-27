@@ -16,7 +16,7 @@
     "lint": "eslint apps",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc --noEmit -p apps/web && tsc --noEmit -p apps/gateway && tsc --noEmit -p apps/executor",
+    "typecheck": "node node_modules/typescript-native/bin/tsc --noEmit -p apps/web && node node_modules/typescript-native/bin/tsc --noEmit -p apps/gateway && node node_modules/typescript-native/bin/tsc --noEmit -p apps/executor/tsconfig.test.json",
     "test": "npm test --workspaces --if-present",
     "test:e2e": "playwright test -c e2e/playwright.config.mjs"
   },
@@ -28,6 +28,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.12.0",
     "prettier": "^3.9.9",
-    "typescript-eslint": "^8.70.1"
+    "typescript-eslint": "^8.70.1",
+    "typescript-native": "npm:typescript@^7.0.2"
   }
 }

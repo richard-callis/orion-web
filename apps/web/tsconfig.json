@@ -1,3 +1,8 @@
+// TypeScript versions: `typescript` stays on 5.9 in this workspace because
+// Next.js 15.5 (tsconfig `paths` loading + build-time type check) and
+// typescript-eslint need the TypeScript JS compiler API, which TypeScript 7
+// (native compiler) no longer ships. CI type-checks every project with
+// TypeScript 7 via the root `npm run typecheck` (the `typescript-native` alias).
 {
   "compilerOptions": {
     "target": "es2020",
@@ -13,7 +18,6 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
-    "downlevelIteration": true,
     "plugins": [{ "name": "next" }],
     "paths": { "@/*": ["./src/*"] }
   },

@@ -694,7 +694,7 @@ services:
   #
   # This is the shipper described in gigly-sniffing-parasol.md (PR2).
   vector:
-    # Custom image: timberio/vector:0.39.0-debian + docker CLI (no daemon).
+    # Custom image: timberio/vector:0.58.0-debian + docker CLI (no daemon).
     # The docker_lifecycle source `exec`s `docker events`; stock image has no
     # docker binary. See deploy/host-agent/Dockerfile.
     image: ghcr.io/${GITHUB_ORG}/orion-vector:${ORION_VECTOR_VERSION:-${ORION_VERSION:-latest}}
@@ -716,7 +716,6 @@ services:
       - "5514:5514/udp"
     environment:
       HOST_AGENT_WEBHOOK_SECRET: "${HOST_AGENT_WEBHOOK_SECRET:-}"
-      ORION_HOST_AGENT_WEBHOOK_URL: "http://orion:3000/api/monitoring/security/webhooks/host-agent"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/log/journal:/var/log/journal:ro
@@ -751,7 +750,7 @@ services:
   # fails. 0.40.0 makes pf_kernel optional — it is skipped when BTF type
   # is absent rather than aborting startup.
   falco:
-    image: falcosecurity/falco:0.40.0
+    image: falcosecurity/falco:0.45.0
     restart: unless-stopped
     privileged: true
     pid: host

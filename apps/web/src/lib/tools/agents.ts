@@ -51,7 +51,7 @@ const CreateAgentArgs = z.object({
   description: z.string().nullish(),
   persistent: z.boolean().nullish(),
   llm: z.string().nullish(),
-  metadata: z.record(z.unknown()).nullish(),
+  metadata: z.record(z.string(), z.unknown()).nullish(),
 })
 
 async function handleCreateAgent(args: unknown, ctx: ToolExecutionContext): Promise<string> {

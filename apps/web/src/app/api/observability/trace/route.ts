@@ -13,7 +13,7 @@ const CreateTraceSchema = z.object({
   step: z.number().int().min(0),
   type: z.string().min(1).max(64),
   toolName: z.string().max(128).optional(),
-  toolArgs: z.record(z.unknown()).optional(),
+  toolArgs: z.record(z.string(), z.unknown()).optional(),
   toolResult: z.unknown().optional(),
   content: z.string().optional(),
   skillName: z.string().max(128).optional(),
