@@ -53,6 +53,7 @@ import {
   hybridSearch,
   mapHybridRows,
   filterRelevantHits,
+  ownerFilterWhere,
   type HybridSearchHit,
 } from './embeddings'
 
@@ -246,6 +247,18 @@ describe('hybridSearch — RRF fusion of vector + full-text legs', () => {
 
     // vec_top must join Note to apply the predicate at all.
     expect(sql).toMatch(/FROM "note_embeddings" ne\s+JOIN "Note" n ON n\.id = ne\."noteId"/)
+  })
+})
+
+describe('ownerFilterWhere — Prisma Client query-builder equivalent of ownerFilterSql', () => {
+  it('returns an empty where clause for a trusted/unscoped caller (no callerId)', () => {
+    expect(ownerFilterWhere(undefined)).toEqual({})
+  })
+
+  it('restricts to the caller\'s own notes plus unowned/shared (createdBy: null) notes', () => {
+    expect(ownerFilterWhere('user-123')).toEqual({
+      OR: [{ createdBy: null }, { createdBy: 'user-123' }],
+    })
   })
 })
 
