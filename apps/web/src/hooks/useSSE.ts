@@ -95,3 +95,19 @@ export function useEventSource(
     }
   }, [url, event])
 }
+
+/**
+ * Convenience wrapper: subscribe to a GET SSE endpoint and receive parsed
+ * JSON payloads (raw string when the data isn't JSON). Disabled when
+ * `enabled` is false or `url` is null.
+ */
+export function useSSE<T = unknown>(
+  url: string | null,
+  { onEvent, enabled = true }: { onEvent: (data: T | string) => void; enabled?: boolean },
+) {
+  useEventSource(enabled ? url : null, raw => {
+    let parsed: T | string = raw
+    try { parsed = JSON.parse(raw) as T } catch { /* keep raw */ }
+    onEvent(parsed)
+  })
+}
