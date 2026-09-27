@@ -4,12 +4,28 @@ import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, UpdateUserSchema } from '@/lib/validate'
+import { Prisma } from '@prisma/client'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const admin = await requireAdmin()
+  let admin: Awaited<ReturnType<typeof requireAdmin>>
+  try { admin = await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   const result = await parseBodyOrError(req, UpdateUserSchema)
   if ('error' in result) return result.error
   const { data } = result
+  const targetId = (await params).id
+
+  // Lockout guard: never demote or deactivate the last active admin (incl. yourself).
+  if ((data.role !== undefined && data.role !== 'admin') || data.active === false) {
+    const target = await prisma.user.findUnique({ where: { id: targetId }, select: { role: true, active: true } })
+    if (target?.role === 'admin' && target.active) {
+      const activeAdmins = await prisma.user.count({ where: { role: 'admin', active: true } })
+      if (activeAdmins <= 1) {
+        return NextResponse.json({ error: 'Cannot demote or deactivate the last active admin — this would lock out all admin access' }, { status: 400 })
+      }
+    }
+  }
 
   const updateData: Record<string, unknown> = {}
   if (data.role   !== undefined) updateData.role   = data.role
@@ -19,16 +35,27 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (data.password !== undefined) updateData.passwordHash = await hash(data.password, 14)
   if (data.name !== undefined) updateData.name = data.name
 
-  const user = await prisma.user.update({
-    where: { id: (await params).id },
-    data: updateData,
-    select: {
-      id: true, username: true, email: true, name: true,
-      role: true, active: true, createdAt: true, lastSeen: true,
-      totpEnabled: true,
-      // explicitly exclude: passwordHash, totpSecret, totpSecretEncrypted, totpRecoveryCodes, totpRecoveryCodesEncrypted
-    },
-  })
+  let user
+  try {
+    user = await prisma.user.update({
+      where: { id: targetId },
+      data: updateData,
+      select: {
+        id: true, username: true, email: true, name: true, provider: true,
+        role: true, active: true, createdAt: true, lastSeen: true,
+        totpEnabled: true,
+        // explicitly exclude: passwordHash, totpSecret, totpSecretEncrypted, totpRecoveryCodes, totpRecoveryCodesEncrypted
+      },
+    })
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      return NextResponse.json({ error: 'Username or email is already in use' }, { status: 409 })
+    }
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    }
+    throw e
+  }
 
   // SOC2: [M-005] Log user update (non-blocking)
   const detail: Record<string, unknown> = {}
@@ -59,7 +86,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const admin = await requireAdmin()
+  let admin: Awaited<ReturnType<typeof requireAdmin>>
+  try { admin = await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
   // BLOCKER fix: prevent deleting the last admin or yourself, causing lockout.
   if ((await params).id === admin.id) {

@@ -25,7 +25,7 @@ export default async function UsersPage() {
       <div>
         <h1 className="text-lg font-semibold text-text-primary">User Management</h1>
         <p className="text-sm text-text-muted mt-0.5">
-          Users are automatically provisioned when they first authenticate via Authentik.
+          Add local users here. SSO users are provisioned automatically on their first login.
         </p>
       </div>
       <UsersClient initialUsers={users} />

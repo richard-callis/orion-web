@@ -6,6 +6,7 @@ import { requireAdmin } from '@/lib/auth'
 import { parseBodyOrError, CreateUserSchema } from '@/lib/validate'
 import { hash } from 'bcryptjs'
 import { logAudit } from '@/lib/audit'
+import { Prisma } from '@prisma/client'
 
 // Fields safe to return — never include passwordHash, totpSecret, totpRecoveryCodes
 const SAFE_USER_SELECT = {
@@ -15,7 +16,9 @@ const SAFE_USER_SELECT = {
 } as const
 
 export async function GET() {
-  await requireAdmin()
+  try { await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   const users = await prisma.user.findMany({
     orderBy: { createdAt: 'desc' },
     select: SAFE_USER_SELECT,
@@ -25,17 +28,28 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const admin = await requireAdmin()
+  let admin: Awaited<ReturnType<typeof requireAdmin>>
+  try { admin = await requireAdmin() } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   const result = await parseBodyOrError(req, CreateUserSchema)
   if ('error' in result) return result.error
   const { data } = result
 
   const passwordHash = await hash(data.password, 14)
 
-  const user = await prisma.user.create({
-    data: { username: data.username, email: data.email, passwordHash, name: data.name, role: data.role },
-    select: SAFE_USER_SELECT,
-  })
+  let user
+  try {
+    user = await prisma.user.create({
+      data: { username: data.username, email: data.email, passwordHash, name: data.name, role: data.role, provider: 'local' },
+      select: SAFE_USER_SELECT,
+    })
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      return NextResponse.json({ error: 'Username or email is already in use' }, { status: 409 })
+    }
+    throw e
+  }
 
   await logAudit({
     userId: admin.id,
