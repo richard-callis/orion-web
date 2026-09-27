@@ -15,7 +15,7 @@
     "gen:prompts": "node scripts/gen-prompts.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^1.0.0",
+    "@anthropic-ai/claude-code": "^2.1.282",
     "@anthropic-ai/sdk": "^0.128.0",
     "@aws-sdk/client-s3": "^3.1139.0",
     "@fontsource-variable/inter": "^5.3.0",
