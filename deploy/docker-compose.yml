@@ -545,13 +545,17 @@ services:
   redis-master:
     image: redis:8.10.0-alpine
     restart: unless-stopped
-    command: redis-server --appendonly yes --dir /data --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    command: redis-server --appendonly yes --dir /data --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set} --masterauth ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    environment:
+      # redis-cli reads this, so the healthcheck authenticates (an unauthenticated
+      # PING returns NOAUTH yet exits 0 — the old check always passed).
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
     volumes:
       - redis-master-data:/data
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -565,6 +569,33 @@ services:
           memory: 512M
 
   # ── Redis Sentinel 1 (port 26379) ──────────────────────────────────────────
+  # Replica of redis-master. Without one, Sentinel had nothing to promote, so
+  # "HA" could never fail over. Sentinels discover it automatically.
+  redis-replica:
+    image: redis:8.10.0-alpine
+    restart: unless-stopped
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    command: redis-server --appendonly yes --dir /data --replicaof redis-master 6379 --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set} --masterauth ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    volumes:
+      - redis-replica-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    labels:
+      traefik.enable: "false"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
   redis-sentinel-1:
     image: redis:8.10.0-alpine
     restart: unless-stopped
@@ -572,6 +603,8 @@ services:
       redis-master:
         condition: service_healthy
     entrypoint: /entrypoint.sh
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
     volumes:
       - ./sentinel-entrypoint.sh:/entrypoint.sh:ro
       - ./redis-sentinel-1.conf:/etc/redis-sentinel.conf:ro
@@ -579,7 +612,8 @@ services:
     ports:
       - "127.0.0.1:26379:26379"
     healthcheck:
-      test: ["CMD", "redis-cli", "-p", "26379", "sentinel", "masters"]
+      # Healthy only when this sentinel can reach the master and a quorum of peers.
+      test: ["CMD-SHELL", "redis-cli -p 26379 sentinel ckquorum mymaster | grep -q ^OK"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -600,6 +634,8 @@ services:
       redis-master:
         condition: service_healthy
     entrypoint: /entrypoint.sh
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
     volumes:
       - ./sentinel-entrypoint.sh:/entrypoint.sh:ro
       - ./redis-sentinel-2.conf:/etc/redis-sentinel.conf:ro
@@ -607,7 +643,8 @@ services:
     ports:
       - "127.0.0.1:26380:26380"
     healthcheck:
-      test: ["CMD", "redis-cli", "-p", "26380", "sentinel", "masters"]
+      # Healthy only when this sentinel can reach the master and a quorum of peers.
+      test: ["CMD-SHELL", "redis-cli -p 26380 sentinel ckquorum mymaster | grep -q ^OK"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -628,6 +665,8 @@ services:
       redis-master:
         condition: service_healthy
     entrypoint: /entrypoint.sh
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
     volumes:
       - ./sentinel-entrypoint.sh:/entrypoint.sh:ro
       - ./redis-sentinel-3.conf:/etc/redis-sentinel.conf:ro
@@ -635,7 +674,8 @@ services:
     ports:
       - "127.0.0.1:26381:26381"
     healthcheck:
-      test: ["CMD", "redis-cli", "-p", "26381", "sentinel", "masters"]
+      # Healthy only when this sentinel can reach the master and a quorum of peers.
+      test: ["CMD-SHELL", "redis-cli -p 26381 sentinel ckquorum mymaster | grep -q ^OK"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -912,6 +952,7 @@ volumes:
   gateway-creds:
   minio-data:
   redis-master-data:
+  redis-replica-data:
   redis-sentinel-1-data:
   redis-sentinel-2-data:
   redis-sentinel-3-data:
