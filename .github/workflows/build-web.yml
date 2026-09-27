@@ -3,17 +3,32 @@ name: Build ORION Web
 on:
   push:
     branches: [main]
+    tags: ['v*']
     paths:
       - 'apps/web/**'
       - 'package.json'
       - 'package-lock.json'
       - '.dockerignore'
       - '.github/workflows/build-web.yml'
+  # Version tags and manual runs also build arm64 (Raspberry Pi management
+  # nodes). Pushes to main build amd64 only: arm64 runs under QEMU emulation on
+  # the single x86 self-hosted runner and takes tens of minutes per image,
+  # which queued every deploy behind it.
   workflow_dispatch:
+    inputs:
+      multiarch:
+        description: 'Also build linux/arm64 (slow: QEMU emulation)'
+        type: boolean
+        default: true
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/orion-web
+
+# A newer push supersedes an in-flight build of an older commit.
+concurrency:
+  group: build-web-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -28,6 +43,7 @@ jobs:
 
       # arm64 (Raspberry Pi management nodes) is built under QEMU emulation.
       - name: Set up QEMU
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.multiarch)
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
 
       - name: Set up Docker Buildx
@@ -46,7 +62,7 @@ jobs:
           # Repo-root context so the workspace package-lock.json is enforced (npm ci).
           context: .
           file: apps/web/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.multiarch)) && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
