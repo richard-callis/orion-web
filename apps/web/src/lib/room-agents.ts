@@ -208,7 +208,8 @@ function buildChatMessages(history: HistoryEntry[], latestMessage: string): Chat
 /** Claude Code SDK — OAuth credentials, routed through orion-claude sidecar.
  *  When agentId + roomId are supplied, the sidecar writes a per-request .mcp.json
  *  so Claude can call ORION tools natively via MCP instead of going around the system. */
-async function callClaude(
+/** @internal exported for the engine characterization tests */
+export async function callClaude(
   agentName: string,
   agentBasePrompt: string,
   otherParticipants: string[],
@@ -366,7 +367,8 @@ function isFakeToolCall(text: string): boolean {
 }
 
 /** OpenAI-compatible /v1/chat/completions endpoint — supports tool calling */
-async function callOpenAIChat(
+/** @internal exported for the engine characterization tests */
+export async function callOpenAIChat(
   agentName: string,
   agentBasePrompt: string,
   otherParticipants: string[],

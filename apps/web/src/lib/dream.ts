@@ -91,7 +91,8 @@ interface LLMCallResult {
   reasoning?: string
 }
 
-async function callWithModel(modelId: string, prompt: string): Promise<LLMCallResult> {
+/** @internal exported for the engine characterization tests */
+export async function callWithModel(modelId: string, prompt: string): Promise<LLMCallResult> {
   const CLAUDE_URL = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
 
   if (modelId === 'claude' || modelId.startsWith('claude:')) {
