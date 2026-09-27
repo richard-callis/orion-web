@@ -295,8 +295,13 @@ async function runProviderDeploy(
 
 /**
  * Sync the overlay secret: create or update it with resolved values.
- * Handles __RS_<secret>_<key>__ placeholders left behind by renderProviderConfig()
- * after it rewrites {{ resolveSecret <secret> <key> }} templates.
+ * Handles opaque __RS_<index>__ tokens left behind by renderProviderConfig()
+ * after it rewrites {{ resolveSecret <secret> <key> }} templates. The name/key
+ * each token refers to is looked up from pc.resolveSecretRefs (a side-channel
+ * map keyed by token) rather than parsed out of the token string — parsing
+ * would be ambiguous if a secret key itself contains "__" (Kubernetes secret
+ * *names* can't contain "_" per DNS-1123, but keys can, e.g.
+ * AUTHENTIK_POSTGRESQL__PASSWORD).
  */
 export async function syncOverlaySecret(
   gx: (tool: string, args: Record<string, unknown>) => Promise<string>,
@@ -306,9 +311,10 @@ export async function syncOverlaySecret(
   ctx: { hostname: string; namespace: string; clusterIssuer: string; adminPassword: string; provider: string },
 ): Promise<void> {
   // By the time overlay.entries reach here, renderProviderConfig() has already
-  // rewritten `{{ resolveSecret <name> <key> }}` into the bare intermediate token
-  // `__RS_<name>_<key>__` (no surrounding `{{ }}`). Match that intermediate form.
-  const placeholderRe = /__RS_(.+?)_(.+?)__/g
+  // rewritten `{{ resolveSecret <name> <key> }}` into an opaque token like
+  // `__RS_0__`. Match that intermediate form; resolve name/key via resolveSecretRefs.
+  const placeholderRe = /__RS_\d+__/g
+  const refs = pc.resolveSecretRefs ?? {}
 
   // Step 1: Collect regular entries (with placeholders) and resolve targets
   const stringData: Record<string, string> = {}
@@ -324,33 +330,45 @@ export async function syncOverlaySecret(
     value = value.replace(/\{\{\s*provider\s*\}\}/g, ctx.provider)
     value = value.replace(/\{\{\s*namespace\s*\}\}/g, ctx.namespace)
 
-    // Collect __RS_<name>_<key>__ resolve targets (already placeholders at this point,
+    // Collect __RS_<index>__ resolve targets (already placeholders at this point,
     // nothing to replace here — just record what needs resolving from the cluster)
     for (const match of value.matchAll(placeholderRe)) {
-      const [ph, secretName, secretKey] = match
-      resolveTargets.push({ placeholder: ph, secretName, secretKey })
+      const token = match[0]
+      const ref = refs[token]
+      if (!ref) {
+        throw new Error(`Unable to resolve secret placeholder ${token} — no matching entry in resolveSecretRefs`)
+      }
+      resolveTargets.push({ placeholder: token, secretName: ref.name, secretKey: ref.key })
     }
 
     stringData[entry.key] = value
   }
 
-  // Step 2: Resolve all placeholders from cluster
+  // Step 2: Resolve all placeholders from cluster. Any failure to resolve —
+  // lookup error or a missing/empty value — fails loudly instead of silently
+  // leaving the literal placeholder token in the applied Secret.
   for (const target of resolveTargets) {
+    let data: string | undefined
     try {
       const result = await gx('kubectl_get', {
         resource: 'secret', name: target.secretName, namespace: ctx.namespace, output: 'json',
       })
-      const data = JSON.parse(result).data?.[target.secretKey]
-      if (data) {
-        const resolvedValue = Buffer.from(data, 'base64').toString('utf8')
-        // Replace placeholder in all stringData values (exact literal match — the
-        // placeholder has no surrounding {{ }} and needs no regex escaping beyond this).
-        for (const [key, val] of Object.entries(stringData)) {
-          stringData[key] = val.split(target.placeholder).join(resolvedValue)
-        }
-      }
-    } catch {
-      log(`  WARNING: Could not resolve secret ${target.secretName}.${target.secretKey}`)
+      data = JSON.parse(result).data?.[target.secretKey]
+    } catch (err) {
+      throw new Error(
+        `Unable to resolve secret placeholder for ${target.secretName}/${target.secretKey} — secret lookup failed: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+    if (!data) {
+      throw new Error(
+        `Unable to resolve secret placeholder for ${target.secretName}/${target.secretKey} — secret lookup returned no value`
+      )
+    }
+    const resolvedValue = Buffer.from(data, 'base64').toString('utf8')
+    // Replace placeholder in all stringData values (exact literal match — the
+    // placeholder has no surrounding {{ }} and needs no regex escaping beyond this).
+    for (const [key, val] of Object.entries(stringData)) {
+      stringData[key] = val.split(target.placeholder).join(resolvedValue)
     }
   }
 
