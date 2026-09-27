@@ -17,9 +17,9 @@
  * or human-chat paths even by name.
  */
 
-import { prisma } from './db'
-import { updateVaultSecret } from './vault'
-import { getOrFetch } from './system-cache'
+import { prisma } from '../db'
+import { updateVaultSecret } from '../vault'
+import { getOrFetch } from '../system-cache'
 import {
   registerTool,
   getAllTools,
@@ -27,7 +27,7 @@ import {
   executeRegisteredTool,
   type ToolDefinition,
   type ToolExecutionContext,
-} from './tool-registry'
+} from '../tool-registry' // (not ./registry: built-ins must register first)
 
 const TASK_STATUSES   = ['pending', 'in_progress', 'pending_validation', 'done', 'failed', 'blocked']
 const TASK_PRIORITIES = ['low', 'medium', 'high', 'critical']
