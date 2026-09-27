@@ -24,7 +24,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const raw = await req.json()
   const body = updateSchema.safeParse(raw)
   if (!body.success) {
-    return NextResponse.json({ error: body.error.errors }, { status: 400 })
+    return NextResponse.json({ error: body.error.issues }, { status: 400 })
   }
 
   const note = await prisma.investigationNote.findUnique({ where: { id: noteId } })

@@ -18,7 +18,7 @@ const createSchema = z.object({
   description: z.string().optional().nullable(),
   source: z.enum(['manual', 'warden', 'correlator', 'thehive']).default('manual'),
   isPinned: z.boolean().default(false),
-  payload: z.record(z.unknown()).optional().nullable(),
+  payload: z.record(z.string(), z.unknown()).optional().nullable(),
 })
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -28,7 +28,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const id = (await params).id
   const body = createSchema.safeParse(await req.json())
   if (!body.success) {
-    return NextResponse.json({ error: body.error.errors }, { status: 400 })
+    return NextResponse.json({ error: body.error.issues }, { status: 400 })
   }
 
   const investigation = await prisma.investigation.findUnique({ where: { id } })

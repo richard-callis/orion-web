@@ -76,7 +76,7 @@ export const CreateConversationSchema = z.object({
   agentTarget: z.object({ id: z.string().max(100), name: z.string().max(200) }).optional(),
   agentDraft: z.boolean().optional(),
   agentChat: z.object({ id: z.string().max(100), name: z.string().max(200) }).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 })
 
 // ── Environment Schemas ───────────────────────────────────────────────────────
@@ -91,9 +91,9 @@ export const CreateEnvironmentSchema = z.object({
   gatewayToken: z.string().max(1000).optional(),
   gitOwner: z.string().max(100).optional(),
   gitRepo: z.string().max(100).optional(),
-  policyConfig: z.record(z.unknown()).optional(),
+  policyConfig: z.record(z.string(), z.unknown()).optional(),
   kubeconfig: z.string().max(50000).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   // Federation fields
   federationRole:  z.enum(['hub', 'spoke', 'standalone']).nullable().optional(),
   federationToken: z.string().max(500).nullable().optional(),
@@ -188,14 +188,14 @@ export const CreateAgentSchema = z.object({
   name: z.string().min(1).max(200).regex(/^[^\x00-\x1f\x7f]+$/, 'Agent name must not contain control characters'),
   type: z.enum(['claude', 'ollama', 'human', 'custom']),
   role: z.string().max(100).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 })
 
 export const UpdateAgentSchema = z.object({
   name: z.string().min(1).max(200).regex(/^[^\x00-\x1f\x7f]+$/, 'Agent name must not contain control characters').optional(),
   type: z.enum(['claude', 'ollama', 'human', 'custom']).optional(),
   role: z.string().max(100).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   tokenBudgetDay: z.number().int().positive().nullable().optional(),
   tokenBudgetMonth: z.number().int().positive().nullable().optional(),
 })
@@ -267,13 +267,13 @@ export const UpdateEpicSchema = z.object({
 
 export const CreateToolApprovalSchema = z.object({
   toolName: z.string().min(1),
-  toolArgs: z.record(z.unknown()).optional(),
+  toolArgs: z.record(z.string(), z.unknown()).optional(),
   reason: z.string().max(500).optional(),
 })
 
 export const UpdateConversationSchema = z.object({
   title: z.string().max(500).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 })
 
 // ── Setup / Admin Schemas ──────────────────────────────────────────────────────
@@ -307,7 +307,7 @@ export const AgentMessageSchema = z.object({
   channel: z.enum(['default', 'private']).default('default'),
   messageType: z.enum(['text', 'task', 'followup']).default('text'),
   agentId: z.string().max(100).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 })
 
 // ── Environment Schemas ─────────────────────────────────────────────────────────
@@ -417,7 +417,7 @@ export const CreateSSOSchema = z.object({
   enabled: z.boolean().optional(),
   headerMode: z.boolean().optional(),
   issuerUrl: z.string().max(2000).optional(),
-  groupMapping: z.record(z.string().max(200)).refine(
+  groupMapping: z.record(z.string(), z.string().max(200)).refine(
     (val) => Object.keys(val).length <= 20,
     { message: 'Maximum 20 group mappings allowed' }
   ).optional(),
@@ -433,7 +433,7 @@ export const AgentSpawnSchema = z.object({
   type: AgentTypeEnum.default('claude'),
   role: z.string().max(200).nullable().optional(),
   description: z.string().max(500).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   startConversation: z.boolean().optional(),
 })
 

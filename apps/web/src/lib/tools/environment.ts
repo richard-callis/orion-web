@@ -59,7 +59,7 @@ export const orionGetEnvironmentTool: ToolDefinition = {
 
 const OrionPatchEnvironmentArgs = z.object({
   environment_id: z.string().nullish(),
-  body: z.record(z.unknown()).nullish(),
+  body: z.record(z.string(), z.unknown()).nullish(),
 })
 
 export const orionPatchEnvironmentTool: ToolDefinition = {
