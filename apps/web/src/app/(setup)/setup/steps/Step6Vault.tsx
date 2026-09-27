@@ -65,13 +65,13 @@ export function Step6Vault({ onComplete }: { onComplete: () => void }) {
             <div className="space-y-1.5">
               {vaultResult.keys.map((key, i) => (
                 <div key={i} className="flex items-center gap-2 font-mono text-[11px]">
-                  <span className="text-text-muted w-14 flex-shrink-0">Key {i + 1}:</span>
+                  <span className="text-text-muted w-14 shrink-0">Key {i + 1}:</span>
                   <span className="text-text-primary break-all flex-1">{key}</span>
                   <CopyButton value={key} label={`Copy unseal key ${i + 1}`} />
                 </div>
               ))}
               <div className="flex items-center gap-2 font-mono text-[11px] pt-2 border-t border-border-subtle">
-                <span className="text-text-muted w-14 flex-shrink-0">Root:</span>
+                <span className="text-text-muted w-14 shrink-0">Root:</span>
                 <span className="text-text-primary break-all flex-1">{vaultResult.rootToken}</span>
                 <CopyButton value={vaultResult.rootToken} label="Copy root token" />
               </div>

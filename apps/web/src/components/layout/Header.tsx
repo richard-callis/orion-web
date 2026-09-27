@@ -26,8 +26,8 @@ export function Header() {
     : session?.user?.email?.slice(0, 2).toUpperCase() ?? '?'
 
   return (
-    <header className="flex items-center px-4 py-3 border-b border-border-subtle bg-bg-sidebar flex-shrink-0">
-      <div className="w-7 h-7 rounded bg-accent flex items-center justify-center flex-shrink-0 mr-3">
+    <header className="flex items-center px-4 py-3 border-b border-border-subtle bg-bg-sidebar shrink-0">
+      <div className="w-7 h-7 rounded-sm bg-accent flex items-center justify-center shrink-0 mr-3">
         <span className="text-white font-bold text-xs">{appName.slice(0, 1).toUpperCase()}</span>
       </div>
       <span className="font-semibold text-text-primary">{appName}</span>

@@ -105,9 +105,9 @@ export function ChatComposer({ conversationId, environments, placeholder, stream
                 onMouseDown={e => { e.preventDefault(); selectMention(env) }}
                 className="w-full flex items-center gap-2 px-3 py-2 hover:bg-bg-raised text-left transition-colors"
               >
-                <Server size={13} className="text-text-muted flex-shrink-0" />
+                <Server size={13} className="text-text-muted shrink-0" />
                 <span className="text-sm text-text-primary truncate">{env.name}</span>
-                <span className="ml-auto text-xs text-text-muted flex-shrink-0">{env.type}</span>
+                <span className="ml-auto text-xs text-text-muted shrink-0">{env.type}</span>
               </button>
             ))}
           </div>
@@ -126,7 +126,7 @@ export function ChatComposer({ conversationId, environments, placeholder, stream
           <IconButton
             label="Stop generation"
             onClick={onStop}
-            className="p-2.5 rounded-lg bg-status-error/15 text-status-error hover:text-status-error hover:bg-status-error/30 flex-shrink-0"
+            className="p-2.5 rounded-lg bg-status-error/15 text-status-error hover:text-status-error hover:bg-status-error/30 shrink-0"
           >
             <Square size={18} />
           </IconButton>
@@ -135,7 +135,7 @@ export function ChatComposer({ conversationId, environments, placeholder, stream
             label="Send message"
             onClick={submit}
             disabled={!input.trim()}
-            className="p-2.5 rounded-lg bg-accent text-white hover:text-white hover:bg-accent/80 disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+            className="p-2.5 rounded-lg bg-accent text-white hover:text-white hover:bg-accent/80 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
           >
             <Send size={18} />
           </IconButton>

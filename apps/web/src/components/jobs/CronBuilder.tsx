@@ -31,7 +31,7 @@ export function describeCron(freq: FreqType, every: number, minute: number, hour
   }
 }
 
-const sel = 'px-2 py-1.5 text-sm bg-bg-base border border-border-subtle rounded text-text-primary focus:outline-none focus:border-accent'
+const sel = 'px-2 py-1.5 text-sm bg-bg-base border border-border-subtle rounded-sm text-text-primary focus:outline-hidden focus:border-accent'
 const num = sel + ' w-16 text-center'
 
 export function CronBuilder({ value, onChange }: { value: string; onChange: (cron: string) => void }) {
@@ -72,7 +72,7 @@ export function CronBuilder({ value, onChange }: { value: string; onChange: (cro
       {advanced ? (
         <input
           id={`${id}-cron`}
-          className="w-full px-3 py-1.5 text-sm bg-bg-base border border-border-subtle rounded text-text-primary font-mono focus:outline-none focus:border-accent"
+          className="w-full px-3 py-1.5 text-sm bg-bg-base border border-border-subtle rounded-sm text-text-primary font-mono focus:outline-hidden focus:border-accent"
           placeholder="0 9 * * 1"
           value={value}
           onChange={e => onChange(e.target.value)}
@@ -88,7 +88,7 @@ export function CronBuilder({ value, onChange }: { value: string; onChange: (cro
                 role="radio"
                 aria-checked={freq === f}
                 onClick={() => setFreq(f)}
-                className={`px-2.5 py-1 text-xs rounded transition-colors ${freq === f ? 'bg-accent text-white' : 'bg-bg-raised text-text-secondary hover:text-text-primary'}`}
+                className={`px-2.5 py-1 text-xs rounded-sm transition-colors ${freq === f ? 'bg-accent text-white' : 'bg-bg-raised text-text-secondary hover:text-text-primary'}`}
               >
                 {f.charAt(0).toUpperCase() + f.slice(1)}
               </button>

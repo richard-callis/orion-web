@@ -21,10 +21,10 @@ const CATEGORY_COLORS: Record<NovaCategory, string> = {
 }
 
 const SOURCE_COLORS: Record<Nova['source'], string> = {
-  'bundled': 'bg-blue-500/15 text-blue-300 text-[10px] px-1.5 py-0.5 rounded',
-  'remote': 'bg-purple-500/15 text-purple-300 text-[10px] px-1.5 py-0.5 rounded',
-  'user-created': 'bg-amber-500/15 text-amber-300 text-[10px] px-1.5 py-0.5 rounded',
-  'nebula': 'bg-violet-500/15 text-violet-300 text-[10px] px-1.5 py-0.5 rounded',
+  'bundled': 'bg-blue-500/15 text-blue-300 text-[10px] px-1.5 py-0.5 rounded-sm',
+  'remote': 'bg-purple-500/15 text-purple-300 text-[10px] px-1.5 py-0.5 rounded-sm',
+  'user-created': 'bg-amber-500/15 text-amber-300 text-[10px] px-1.5 py-0.5 rounded-sm',
+  'nebula': 'bg-violet-500/15 text-violet-300 text-[10px] px-1.5 py-0.5 rounded-sm',
 }
 
 export default function NovaPage() {
@@ -92,7 +92,7 @@ export default function NovaPage() {
         </div>
         <button
           onClick={() => { setEditing(null); setShowForm(true) }}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-xs bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
         >
           <Plus size={14} />
           New Nova
@@ -107,13 +107,13 @@ export default function NovaPage() {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search nova definitions..."
-            className="w-full pl-8 pr-3 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent"
           />
         </div>
         <select
           value={source}
           onChange={e => setSource(e.target.value)}
-          className="px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+          className="px-2 py-1.5 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
         >
           <option value="">All Sources</option>
           <option value="bundled">Bundled</option>
@@ -123,7 +123,7 @@ export default function NovaPage() {
         <select
           value={category}
           onChange={e => setCategory(e.target.value)}
-          className="px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+          className="px-2 py-1.5 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
         >
           <option value="">All Categories</option>
           {categories.map(cat => (
@@ -132,14 +132,14 @@ export default function NovaPage() {
         </select>
         <button
           onClick={() => { setSearch(''); setCategory(''); setSource(''); }}
-          className="px-2 py-1.5 text-xs rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
+          className="px-2 py-1.5 text-xs rounded-sm text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
           disabled={!search && !category && !source}
         >
           Clear
         </button>
         <button aria-label="Refresh"
           onClick={load}
-          className="px-2 py-1.5 text-xs rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
+          className="px-2 py-1.5 text-xs rounded-sm text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
         >
           <RefreshCw size={14} />
         </button>
@@ -186,7 +186,7 @@ export default function NovaPage() {
                     {nova.description || '—'}
                   </td>
                   <td className="px-3 py-3">
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] ${CATEGORY_COLORS[nova.category] || CATEGORY_COLORS.Other}`}>
+                    <span className={`px-1.5 py-0.5 rounded-sm text-[10px] ${CATEGORY_COLORS[nova.category] || CATEGORY_COLORS.Other}`}>
                       {nova.category}
                     </span>
                   </td>
@@ -196,7 +196,7 @@ export default function NovaPage() {
                   <td className="px-3 py-3">
                     <div className="flex flex-wrap gap-1">
                       {nova.tags?.slice(0, 3).map(tag => (
-                        <span key={tag} className="text-[9px] text-text-muted bg-bg-raised px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                        <span key={tag} className="text-[9px] text-text-muted bg-bg-raised px-1.5 py-0.5 rounded-sm flex items-center gap-0.5">
                           <Tag size={8} />
                           {tag}
                         </span>
@@ -209,7 +209,7 @@ export default function NovaPage() {
                         <>
                           <button
                             onClick={() => handleEdit(nova)}
-                            className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors"
+                            className="p-1 rounded-sm text-text-muted hover:text-accent hover:bg-accent/10 transition-colors"
                             title="Edit"
                            aria-label="Edit">
                             <Edit2 size={14} />
@@ -217,7 +217,7 @@ export default function NovaPage() {
                           <button
                             onClick={() => handleDelete(nova)}
                             disabled={deleting === nova.id}
-                            className="p-1 rounded text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                            className="p-1 rounded-sm text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
                             title="Delete"
                            aria-label="Delete">
                             {deleting === nova.id ? (
@@ -327,7 +327,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
       closeOnBackdrop={false}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
         <h3 className="text-sm font-semibold text-text-primary">
           {initial ? 'Edit Nova' : 'New Nova Definition'}
         </h3>
@@ -346,7 +346,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="my-service"
-              className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent font-mono"
+              className="w-full px-2 py-1.5 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent font-mono"
             />
           </div>
           <div>
@@ -355,7 +355,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
               value={displayName}
               onChange={e => setDisplayName(e.target.value)}
               placeholder="My Service"
-              className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+              className="w-full px-2 py-1.5 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent"
             />
           </div>
         </div>
@@ -367,7 +367,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
             value={description}
             onChange={e => setDescription(e.target.value)}
             placeholder="What does this service do?"
-            className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+            className="w-full px-2 py-1.5 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent"
           />
         </div>
 
@@ -378,7 +378,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
             <select aria-label="Category"
               value={category}
               onChange={e => setCategory(e.target.value as NovaCategory)}
-              className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+              className="w-full px-2 py-1.5 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
             >
               {['Identity', 'Storage', 'Monitoring', 'DevTools', 'Agent', 'Other'].map(cat => (
                 <option key={cat} value={cat}>{cat}</option>
@@ -390,7 +390,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
             <select aria-label="Type"
               value={type}
               onChange={e => setType(e.target.value as NovaType)}
-              className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+              className="w-full px-2 py-1.5 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
             >
               <option value="service">Service</option>
               <option value="agent">Agent</option>
@@ -408,7 +408,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
             value={tags}
             onChange={e => setTags(e.target.value)}
             placeholder="monitoring, grafana, metrics"
-            className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+            className="w-full px-2 py-1.5 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent"
           />
         </div>
 
@@ -419,30 +419,30 @@ function NovaFormModal({ initial, onClose, onSave }: {
             value={configStr}
             onChange={e => setConfigStr(e.target.value)}
             rows={12}
-            className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent font-mono resize-none"
+            className="w-full px-2 py-1.5 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent font-mono resize-none"
           />
         </div>
 
         {/* Error */}
         {error && (
-          <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded p-2">
+          <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-sm p-2">
             {error}
           </div>
         )}
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border-subtle flex-shrink-0">
+      <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border-subtle shrink-0">
         <button
           onClick={onClose}
-          className="px-3 py-1.5 text-xs rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
+          className="px-3 py-1.5 text-xs rounded-sm text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
         >
           Cancel
         </button>
         <button
           onClick={handleSubmit}
           disabled={saving}
-          className="px-3 py-1.5 text-xs rounded bg-accent/15 text-accent hover:bg-accent/25 transition-colors disabled:opacity-50"
+          className="px-3 py-1.5 text-xs rounded-sm bg-accent/15 text-accent hover:bg-accent/25 transition-colors disabled:opacity-50"
         >
           {saving ? 'Saving...' : initial ? 'Update' : 'Create'}
         </button>

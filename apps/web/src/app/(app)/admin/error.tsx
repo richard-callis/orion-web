@@ -27,7 +27,7 @@ export default function AdminError({
       </div>
       <button
         onClick={reset}
-        className="flex items-center gap-1.5 px-4 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary hover:border-accent hover:text-accent transition-colors"
+        className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary hover:border-accent hover:text-accent transition-colors"
       >
         <RefreshCw size={13} /> Try again
       </button>

@@ -97,7 +97,7 @@ function LogRow({ entry }: { entry: LogEntry }) {
         <span className="text-text-muted shrink-0 tabular-nums">{entry.ts}</span>
         <div className="flex flex-wrap gap-1 shrink-0">
           {Object.entries(entry.labels).map(([k, v]) => (
-            <span key={k} className={`px-1.5 py-px rounded border text-[10px] font-medium ${labelColor(k)}`}>
+            <span key={k} className={`px-1.5 py-px rounded-sm border text-[10px] font-medium ${labelColor(k)}`}>
               {k}=<span className="font-semibold">{v}</span>
             </span>
           ))}
@@ -108,7 +108,7 @@ function LogRow({ entry }: { entry: LogEntry }) {
       </div>
       {expanded && (
         <div className="px-9 pb-2 text-xs">
-          <pre className="bg-bg-card rounded p-2 text-text-secondary overflow-auto max-h-48 text-[11px] leading-4">
+          <pre className="bg-bg-card rounded-sm p-2 text-text-secondary overflow-auto max-h-48 text-[11px] leading-4">
             {entry.parsed
               ? JSON.stringify(entry.parsed, null, 2)
               : entry.raw}
@@ -225,7 +225,7 @@ export default function LogExplorer() {
             onChange={e => setQuery(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && run()}
             placeholder="{category=&quot;auth&quot;} |= &quot;failed&quot;"
-            className="flex-1 px-3 py-1.5 text-sm font-mono bg-transparent text-text-primary focus:outline-none placeholder:text-text-muted"
+            className="flex-1 px-3 py-1.5 text-sm font-mono bg-transparent text-text-primary focus:outline-hidden placeholder:text-text-muted"
           />
         </div>
 

@@ -53,7 +53,7 @@ export function TokenUsageSection({ agentId }: { agentId: string }) {
             {data.sparkline.map(s => (
               <div
                 key={s.date}
-                className="flex-1 bg-accent/50 rounded-sm"
+                className="flex-1 bg-accent/50 rounded-xs"
                 style={{ height: `${Math.max(s.tokens > 0 ? 15 : 0, (s.tokens / sparkMax) * 100)}%` }}
                 title={`${s.date}: ${s.tokens.toLocaleString()}`}
               />

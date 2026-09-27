@@ -38,15 +38,15 @@ export function EnvironmentCard({
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           {env.type === 'docker'
-            ? <Container size={16} className="text-text-muted flex-shrink-0" />
-            : <Server size={16} className="text-text-muted flex-shrink-0" />
+            ? <Container size={16} className="text-text-muted shrink-0" />
+            : <Server size={16} className="text-text-muted shrink-0" />
           }
           <span className="text-sm font-semibold text-text-primary truncate">{env.name}</span>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           {/* Status dot */}
           <span className="flex items-center gap-1.5 text-xs text-text-muted">
-            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot}`} />
+            <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
             {env.status ?? 'unknown'}
           </span>
         </div>
@@ -54,7 +54,7 @@ export function EnvironmentCard({
 
       {/* Gitea repo */}
       <div className="flex items-center gap-1.5 text-xs text-text-muted">
-        <GitBranch size={12} className="flex-shrink-0" />
+        <GitBranch size={12} className="shrink-0" />
         {hasRepo ? (
           <span className="font-mono">{env.gitOwner}/{env.gitRepo}</span>
         ) : (
@@ -97,7 +97,7 @@ export function EnvironmentCard({
         {!hasRepo && (
           <button
             onClick={() => onBootstrap(env.id, env.name, env.type, !!env.hasKubeconfig)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-accent/10 text-accent border border-accent/30 hover:bg-accent/20 transition-colors font-medium"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-sm bg-accent/10 text-accent border border-accent/30 hover:bg-accent/20 transition-colors font-medium"
           >
             <Rocket size={12} />
             Bootstrap

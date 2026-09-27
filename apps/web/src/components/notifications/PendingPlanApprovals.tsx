@@ -113,9 +113,9 @@ export function PendingPlanApprovals() {
 
             {/* Header */}
             <div className={`flex items-center gap-2 px-3 py-2 border-b ${riskBorder} bg-orange-500/5`}>
-              <Pause size={12} className={`${riskColor} flex-shrink-0`} />
+              <Pause size={12} className={`${riskColor} shrink-0`} />
               <span className={`text-xs font-semibold ${riskColor} flex-1 truncate`}>Agent paused for approval</span>
-              <button onClick={() => dismiss(task.id)} className="p-0.5 rounded text-text-muted hover:text-text-primary transition-colors">
+              <button onClick={() => dismiss(task.id)} className="p-0.5 rounded-sm text-text-muted hover:text-text-primary transition-colors">
                 <X size={12} />
               </button>
             </div>
@@ -160,7 +160,7 @@ export function PendingPlanApprovals() {
                           onClick={() => toggleStep(task.id, i)}
                           className={`w-full flex items-start gap-2 px-3 py-2 text-left transition-colors hover:bg-bg-sidebar
                             ${isBlocked ? 'bg-status-error/5' : ''}`}>
-                          <div className="mt-0.5 flex-shrink-0">
+                          <div className="mt-0.5 shrink-0">
                             {isBlocked
                               ? <ShieldOff size={12} className="text-status-error" />
                               : <ShieldAlert size={12} className="text-status-healthy" />}
@@ -191,7 +191,7 @@ export function PendingPlanApprovals() {
               <button
                 onClick={() => cancel(task)}
                 disabled={isActing}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium text-status-error border border-status-error/30 hover:bg-status-error/10 transition-colors disabled:opacity-50">
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-sm text-xs font-medium text-status-error border border-status-error/30 hover:bg-status-error/10 transition-colors disabled:opacity-50">
                 <XCircle size={11} /> Cancel
               </button>
               <div className="flex-1" />
@@ -201,7 +201,7 @@ export function PendingPlanApprovals() {
               <button
                 onClick={() => resume(task)}
                 disabled={isActing}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium bg-status-healthy/15 text-status-healthy border border-status-healthy/30 hover:bg-status-healthy/25 transition-colors disabled:opacity-50">
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-sm text-xs font-medium bg-status-healthy/15 text-status-healthy border border-status-healthy/30 hover:bg-status-healthy/25 transition-colors disabled:opacity-50">
                 {isActing ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
                 {blockedCount > 0 ? 'Approve (partial)' : 'Approve & Resume'}
               </button>

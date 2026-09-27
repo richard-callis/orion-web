@@ -194,13 +194,13 @@ export function MessageList({
       className={`group w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${activeId === `c_${c.id}` ? 'bg-accent/10 border-l-2 border-l-accent' : 'hover:bg-bg-raised'}`}
       {...rowButton(() => { if (editingId !== c.id) { onSelect(`c_${c.id}`); onMobileSelect?.() } })}
     >
-      <MessageSquare size={14} className="flex-shrink-0 mt-0.5 text-text-muted" />
+      <MessageSquare size={14} className="shrink-0 mt-0.5 text-text-muted" />
       <div className="min-w-0 flex-1">
         {editingId === c.id ? (
           <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-            <input ref={inputRef} value={editValue} onChange={e => setEditValue(e.target.value)} onKeyDown={e => onEditKeyDown(e, c.id)} onBlur={() => commitEdit(c.id)} className="flex-1 min-w-0 text-xs bg-bg-raised border border-accent rounded px-1 py-0.5 text-text-primary focus:outline-none" />
-            <button onClick={() => commitEdit(c.id)} className="text-green-400 hover:text-green-300 flex-shrink-0"><Check size={11} /></button>
-            <button aria-label="Cancel" onClick={cancelEdit} className="text-text-muted hover:text-red-400 flex-shrink-0"><X size={11} /></button>
+            <input ref={inputRef} value={editValue} onChange={e => setEditValue(e.target.value)} onKeyDown={e => onEditKeyDown(e, c.id)} onBlur={() => commitEdit(c.id)} className="flex-1 min-w-0 text-xs bg-bg-raised border border-accent rounded-sm px-1 py-0.5 text-text-primary focus:outline-hidden" />
+            <button onClick={() => commitEdit(c.id)} className="text-green-400 hover:text-green-300 shrink-0"><Check size={11} /></button>
+            <button aria-label="Cancel" onClick={cancelEdit} className="text-text-muted hover:text-red-400 shrink-0"><X size={11} /></button>
           </div>
         ) : (
           <>
@@ -210,9 +210,9 @@ export function MessageList({
         )}
       </div>
       {editingId !== c.id && (
-        <div className="flex-shrink-0 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
-          <button onClick={(e) => startEdit(e, c)} className="p-0.5 rounded text-text-muted hover:text-accent hover:bg-accent/10"><Pencil size={11} /></button>
-          <button onClick={(e) => removeConvo(e, c.id)} className="p-0.5 rounded text-text-muted hover:text-red-400 hover:bg-red-400/10"><Trash2 size={11} /></button>
+        <div className="shrink-0 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
+          <button onClick={(e) => startEdit(e, c)} className="p-0.5 rounded-sm text-text-muted hover:text-accent hover:bg-accent/10"><Pencil size={11} /></button>
+          <button onClick={(e) => removeConvo(e, c.id)} className="p-0.5 rounded-sm text-text-muted hover:text-red-400 hover:bg-red-400/10"><Trash2 size={11} /></button>
         </div>
       )}
     </div>
@@ -267,20 +267,20 @@ export function MessageList({
       {...rowButton(() => { if (editingRoomId !== room.id) { onSelect(`r_${room.id}`); onMobileSelect?.() } })}
     >
       <div className="flex items-center gap-1.5 px-3 py-2">
-        <Hash size={11} className="text-text-muted flex-shrink-0" />
+        <Hash size={11} className="text-text-muted shrink-0" />
         {editingRoomId === room.id ? (
           <div className="flex flex-col gap-1 flex-1 min-w-0" onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-1">
               <input ref={roomInputRef} value={editRoomValue} onChange={e => setEditRoomValue(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') commitRoomEdit(room.id, room); if (e.key === 'Escape') setEditingRoomId(null) }}
-                className="flex-1 min-w-0 text-xs bg-bg-raised border border-accent rounded px-1 py-0.5 text-text-primary focus:outline-none" />
-              <button onClick={() => commitRoomEdit(room.id, room)} className="text-green-400 hover:text-green-300 flex-shrink-0"><Check size={11} /></button>
-              <button onClick={() => setEditingRoomId(null)} className="text-text-muted hover:text-red-400 flex-shrink-0"><X size={11} /></button>
+                className="flex-1 min-w-0 text-xs bg-bg-raised border border-accent rounded-sm px-1 py-0.5 text-text-primary focus:outline-hidden" />
+              <button onClick={() => commitRoomEdit(room.id, room)} className="text-green-400 hover:text-green-300 shrink-0"><Check size={11} /></button>
+              <button onClick={() => setEditingRoomId(null)} className="text-text-muted hover:text-red-400 shrink-0"><X size={11} /></button>
             </div>
             <select
               value={editRoomType}
               onChange={e => setEditRoomType(e.target.value)}
-              className="text-[10px] bg-bg-raised border border-border-subtle rounded px-1 py-0.5 text-text-primary focus:outline-none focus:border-accent"
+              className="text-[10px] bg-bg-raised border border-border-subtle rounded-sm px-1 py-0.5 text-text-primary focus:outline-hidden focus:border-accent"
             >
               {ROOM_TYPES.map(t => (
                 <option key={t} value={t}>{t}</option>
@@ -290,10 +290,10 @@ export function MessageList({
         ) : (
           <>
             <span className="text-xs text-text-primary truncate flex-1">{room.name}</span>
-            <span className={`px-1.5 py-0.5 rounded text-[9px] flex-shrink-0 ${TYPE_COLORS[room.type] || TYPE_COLORS.general}`}>{room.type}</span>
-            <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0">
-              <button onClick={e => startRoomEdit(e, room)} className="p-0.5 rounded text-text-muted hover:text-accent hover:bg-accent/10"><Pencil size={10} /></button>
-              <button onClick={e => deleteRoom(e, room.id)} className="p-0.5 rounded text-text-muted hover:text-red-400 hover:bg-red-400/10"><Trash2 size={10} /></button>
+            <span className={`px-1.5 py-0.5 rounded-sm text-[9px] shrink-0 ${TYPE_COLORS[room.type] || TYPE_COLORS.general}`}>{room.type}</span>
+            <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-all shrink-0">
+              <button onClick={e => startRoomEdit(e, room)} className="p-0.5 rounded-sm text-text-muted hover:text-accent hover:bg-accent/10"><Pencil size={10} /></button>
+              <button onClick={e => deleteRoom(e, room.id)} className="p-0.5 rounded-sm text-text-muted hover:text-red-400 hover:bg-red-400/10"><Trash2 size={10} /></button>
             </div>
           </>
         )}
@@ -314,9 +314,9 @@ export function MessageList({
     return (
       <>
         {/* Header */}
-        <div className="flex items-center justify-between px-3 py-3 border-b border-border-subtle flex-shrink-0">
+        <div className="flex items-center justify-between px-3 py-3 border-b border-border-subtle shrink-0">
           <span className="text-xs font-semibold text-text-secondary">AI Chats</span>
-          <button aria-label="New conversation" onClick={onCreateNew} className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New conversation">
+          <button aria-label="New conversation" onClick={onCreateNew} className="p-1 rounded-sm text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New conversation">
             <Plus size={14} />
           </button>
         </div>
@@ -333,7 +333,7 @@ export function MessageList({
             <div className="mx-3 my-1 border-t border-border-subtle" />
             <div {...rowButton(() => setPlanningOpen(p => !p), planningOpen)} className={`${rowBase} text-text-muted hover:text-text-primary font-medium px-3 py-1`}>
               {planningOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              <Layers size={12} className="flex-shrink-0 text-accent" />
+              <Layers size={12} className="shrink-0 text-accent" />
               <span className="flex-1">Planning Chats</span>
               <span className="text-[10px] text-text-muted">{planningConvos.length}</span>
             </div>
@@ -352,7 +352,7 @@ export function MessageList({
                         <div className="ml-4 border-l border-border-subtle pl-2">
                           {epicConvos.map(c => (
                             <div key={c.id} {...rowButton(() => onSelect(`c_${c.id}`))} className={`${rowBase} gap-1.5 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
-                              <MessageSquare size={10} className="flex-shrink-0" />
+                              <MessageSquare size={10} className="shrink-0" />
                               <span className="flex-1 truncate text-[10px]">{c.title ?? 'Planning chat'}</span>
                             </div>
                           ))}
@@ -367,7 +367,7 @@ export function MessageList({
                                 </div>
                                 {fConvos.map(c => (
                                   <div key={c.id} {...rowButton(() => onSelect(`c_${c.id}`))} className={`${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
-                                    <MessageSquare size={10} className="flex-shrink-0" />
+                                    <MessageSquare size={10} className="shrink-0" />
                                     <span className="flex-1 truncate text-[10px]">{c.title ?? 'Planning chat'}</span>
                                   </div>
                                 ))}
@@ -381,7 +381,7 @@ export function MessageList({
                 })}
                 {orphanConvos.map(c => (
                   <div key={c.id} {...rowButton(() => { onSelect(`c_${c.id}`); onMobileSelect?.() })} className={`${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
-                    <MessageSquare size={10} className="flex-shrink-0" />
+                    <MessageSquare size={10} className="shrink-0" />
                     <span className="flex-1 truncate text-[10px]">{c.title ?? 'Planning chat'}</span>
                   </div>
                 ))}
@@ -396,7 +396,7 @@ export function MessageList({
             <div className="mx-3 my-1 border-t border-border-subtle" />
             <div {...rowButton(() => setAgentChatsOpen(p => !p), agentChatsOpen)} className={`${rowBase} text-text-muted hover:text-text-primary font-medium px-3 py-1`}>
               {agentChatsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              <Bot size={12} className="flex-shrink-0 text-accent" />
+              <Bot size={12} className="shrink-0 text-accent" />
               <span className="flex-1">Agent Chats</span>
               <span className="text-[10px] text-text-muted">{(agentConvos ?? []).length}</span>
             </div>
@@ -416,10 +416,10 @@ export function MessageList({
                 <>
                   {draftConvos.map(c => (
                     <div key={c.id} {...rowButton(() => onSelect(`c_${c.id}`))} className={`group ${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
-                      <MessageSquare size={10} className="flex-shrink-0" />
+                      <MessageSquare size={10} className="shrink-0" />
                       <span className="flex-1 truncate text-[10px]">{c.title ?? 'New agent draft'}</span>
                       <span className="text-[9px] text-text-muted italic group-hover:hidden">draft</span>
-                      <button onClick={(e) => { e.stopPropagation(); removeConvo(e, c.id) }} className="hidden group-hover:block p-0.5 rounded text-text-muted hover:text-red-400 hover:bg-red-400/10 flex-shrink-0"><Trash2 size={10} /></button>
+                      <button onClick={(e) => { e.stopPropagation(); removeConvo(e, c.id) }} className="hidden group-hover:block p-0.5 rounded-sm text-text-muted hover:text-red-400 hover:bg-red-400/10 shrink-0"><Trash2 size={10} /></button>
                     </div>
                   ))}
                   {agentsWithConvos.map(agent => {
@@ -436,7 +436,7 @@ export function MessageList({
                           <div className="ml-4 border-l border-border-subtle pl-2">
                             {convs.map(c => (
                               <div key={c.id} {...rowButton(() => onSelect(`c_${c.id}`))} className={`group ${rowBase} gap-1.5 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
-                                <MessageSquare size={10} className="flex-shrink-0" />
+                                <MessageSquare size={10} className="shrink-0" />
                                 <span className="flex-1 truncate text-[10px]">{c.title ?? (c.metadata.agentChat ? 'Chat' : 'Plan')}</span>
                               </div>
                             ))}
@@ -447,7 +447,7 @@ export function MessageList({
                   })}
                   {orphans.map(c => (
                     <div key={c.id} {...rowButton(() => { onSelect(`c_${c.id}`); onMobileSelect?.() })} className={`group ${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
-                      <MessageSquare size={10} className="flex-shrink-0" />
+                      <MessageSquare size={10} className="shrink-0" />
                       <span className="flex-1 truncate text-[10px]">{c.title ?? 'Chat'}</span>
                     </div>
                   ))}
@@ -463,15 +463,15 @@ export function MessageList({
             <div className="mx-3 my-1 border-t border-border-subtle" />
             <div {...rowButton(() => setDebugChatsOpen(p => !p), debugChatsOpen)} className={`${rowBase} text-text-muted hover:text-text-primary font-medium px-3 py-1`}>
               {debugChatsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              <Bug size={12} className="flex-shrink-0 text-accent" />
+              <Bug size={12} className="shrink-0 text-accent" />
               <span className="flex-1">Debug Chats</span>
               <span className="text-[10px] text-text-muted">{debugConvos.length}</span>
             </div>
             {debugChatsOpen && debugConvos.map(c => (
               <div key={c.id} {...rowButton(() => onSelect(`c_${c.id}`))} className={`group ${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
-                <MessageSquare size={10} className="flex-shrink-0" />
+                <MessageSquare size={10} className="shrink-0" />
                 <span className="flex-1 truncate text-[10px]">{c.title ?? 'Debug chat'}</span>
-                <button onClick={(e) => { e.stopPropagation(); removeConvo(e, c.id) }} className="hidden group-hover:block p-0.5 rounded text-text-muted hover:text-red-400 hover:bg-red-400/10 flex-shrink-0"><Trash2 size={10} /></button>
+                <button onClick={(e) => { e.stopPropagation(); removeConvo(e, c.id) }} className="hidden group-hover:block p-0.5 rounded-sm text-text-muted hover:text-red-400 hover:bg-red-400/10 shrink-0"><Trash2 size={10} /></button>
               </div>
             ))}
           </>
@@ -518,9 +518,9 @@ export function MessageList({
     return (
       <>
         {/* Header */}
-        <div className="flex items-center justify-between px-3 py-3 border-b border-border-subtle flex-shrink-0">
+        <div className="flex items-center justify-between px-3 py-3 border-b border-border-subtle shrink-0">
           <span className="text-xs font-semibold text-text-secondary">Chat Rooms</span>
-          <button aria-label="New room" onClick={onCreateNew} className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New room">
+          <button aria-label="New room" onClick={onCreateNew} className="p-1 rounded-sm text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New room">
             <Plus size={14} />
           </button>
         </div>
@@ -566,7 +566,7 @@ export function MessageList({
                     className={`${rowBase} font-medium text-text-secondary hover:text-text-primary px-3 py-2 border-b border-border-subtle`}
                   >
                     {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                    <Layers size={12} className="flex-shrink-0 text-accent" />
+                    <Layers size={12} className="shrink-0 text-accent" />
                     <span className="flex-1 truncate text-[11px]">{epic.title}</span>
                     <span className="text-[10px] text-text-muted">{totalRooms}</span>
                   </div>
@@ -583,7 +583,7 @@ export function MessageList({
                         return (
                           <div key={feature.id}>
                             <div className="flex items-center gap-1.5 px-3 py-1 text-[10px] text-text-muted border-b border-border-subtle bg-bg-base/30">
-                              <GitBranch size={9} className="flex-shrink-0" />
+                              <GitBranch size={9} className="shrink-0" />
                               <span className="truncate">{feature.title}</span>
                             </div>
                             {fRooms.map(r => renderRoom(r, true))}
@@ -617,7 +617,7 @@ export function MessageList({
 
   // ── Main render ───────────────────────────────────────────────
   return (
-    <aside className="w-full md:w-56 lg:w-64 h-full flex-shrink-0 flex flex-col border-r border-border-subtle bg-bg-sidebar overflow-hidden">
+    <aside className="w-full md:w-56 lg:w-64 h-full shrink-0 flex flex-col border-r border-border-subtle bg-bg-sidebar overflow-hidden">
       <div className="flex-1 overflow-y-auto">
         {view === 'ai' ? renderAISections() : renderRoomSections()}
       </div>

@@ -57,7 +57,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     <ToastContext.Provider value={api}>
       {children}
       <div
-        className="fixed bottom-4 right-4 z-[60] flex flex-col gap-2 w-[min(360px,calc(100vw-2rem))] pointer-events-none"
+        className="fixed bottom-4 right-4 z-60 flex flex-col gap-2 w-[min(360px,calc(100vw-2rem))] pointer-events-none"
         aria-live="polite"
         role="status"
       >
@@ -75,7 +75,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             {t.kind === 'error' && <AlertCircle size={14} className="text-red-400 shrink-0 mt-px" aria-hidden="true" />}
             {t.kind === 'success' && <CheckCircle2 size={14} className="text-status-healthy shrink-0 mt-px" aria-hidden="true" />}
             {t.kind === 'info' && <Info size={14} className="text-accent shrink-0 mt-px" aria-hidden="true" />}
-            <span className="flex-1 break-words">{t.message}</span>
+            <span className="flex-1 wrap-break-word">{t.message}</span>
             <button
               type="button"
               onClick={() => dismiss(t.id)}

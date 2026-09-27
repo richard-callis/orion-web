@@ -87,7 +87,7 @@ export function ChatTab({ taskId, rooms, loading, activeRoom, onRoomChange, relo
               role="tab"
               aria-selected={activeRoom === room.id}
               onClick={() => onRoomChange(room.id)}
-              className={`flex-shrink-0 px-2.5 py-1 rounded text-[10px] border transition-colors ${
+              className={`shrink-0 px-2.5 py-1 rounded text-[10px] border transition-colors ${
                 activeRoom === room.id
                   ? 'bg-accent/15 border-accent/40 text-accent'
                   : 'bg-bg-raised border-border-subtle text-text-muted hover:text-text-secondary'
@@ -116,11 +116,11 @@ export function ChatTab({ taskId, rooms, loading, activeRoom, onRoomChange, relo
                 <span className="text-[9px] font-semibold text-text-secondary">
                   {msg.senderType === 'agent' ? msg.sender.name : msg.sender.name || 'system'}
                 </span>
-                <span className="text-[8px] text-text-muted flex-shrink-0">
+                <span className="text-[8px] text-text-muted shrink-0">
                   {new Date(msg.createdAt).toLocaleTimeString()}
                 </span>
               </div>
-              <pre className="whitespace-pre-wrap break-words leading-relaxed font-mono text-[11px]">{msg.content}</pre>
+              <pre className="whitespace-pre-wrap wrap-break-word leading-relaxed font-mono text-[11px]">{msg.content}</pre>
             </div>
           ))
         )}
@@ -128,7 +128,7 @@ export function ChatTab({ taskId, rooms, loading, activeRoom, onRoomChange, relo
       </div>
 
       {/* Input */}
-      <div className="border-t border-border-subtle p-2.5 flex gap-2 flex-shrink-0 mt-2">
+      <div className="border-t border-border-subtle p-2.5 flex gap-2 shrink-0 mt-2">
         <Input
           aria-label="Message"
           value={input}
@@ -142,7 +142,7 @@ export function ChatTab({ taskId, rooms, loading, activeRoom, onRoomChange, relo
           label="Send message"
           onClick={() => void send()}
           disabled={!input.trim() || sending}
-          className="p-1.5 rounded-lg bg-accent text-white hover:bg-accent/80 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+          className="p-1.5 rounded-lg bg-accent text-white hover:bg-accent/80 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
         >
           {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
         </IconButton>

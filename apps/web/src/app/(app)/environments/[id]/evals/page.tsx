@@ -97,7 +97,7 @@ export default function EvalsPage() {
   return (
     <div className="flex flex-col h-full overflow-auto">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
         <div className="flex items-center gap-2">
           <BarChart3 size={18} className="text-accent" />
           <h1 className="text-sm font-semibold text-text-primary">Eval Dashboard</h1>
@@ -107,7 +107,7 @@ export default function EvalsPage() {
         </div>
         <button
           onClick={loadAll}
-          className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
+          className="p-1.5 rounded-sm text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
           title="Refresh"
          aria-label="Refresh">
           <RefreshCw size={14} />
@@ -255,7 +255,7 @@ export default function EvalsPage() {
                 <button
                   onClick={() => handleRunEval(evalType, '')}
                   disabled={running}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 transition-colors disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-xs bg-accent/15 text-accent hover:bg-accent/25 transition-colors disabled:opacity-50"
                 >
                   <Zap size={12} />
                   {running ? 'Running...' : 'Run Eval'}
@@ -276,7 +276,7 @@ export default function EvalsPage() {
                     <button
                       onClick={() => handleRunEval(s.targetType as 'conversation' | 'task' | 'skill' | 'hook', s.targetId)}
                       disabled={running}
-                      className="px-2 py-1 rounded text-[10px] bg-accent/10 text-accent hover:bg-accent/20 transition-colors disabled:opacity-50"
+                      className="px-2 py-1 rounded-sm text-[10px] bg-accent/10 text-accent hover:bg-accent/20 transition-colors disabled:opacity-50"
                     >
                       Re-eval
                     </button>
@@ -292,7 +292,7 @@ export default function EvalsPage() {
                 <select aria-label="Eval type"
                   value={evalType}
                   onChange={e => setEvalType(e.target.value as EvalType)}
-                  className="px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+                  className="px-2 py-1 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
                 >
                   <option value="conversation">Conversations</option>
                   <option value="task">Tasks</option>
@@ -305,7 +305,7 @@ export default function EvalsPage() {
                 <select aria-label="Time window"
                   value={window}
                   onChange={e => setWindow(parseInt(e.target.value, 10) as Window)}
-                  className="px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+                  className="px-2 py-1 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
                 >
                   <option value={7}>7 Days</option>
                   <option value={30}>30 Days</option>

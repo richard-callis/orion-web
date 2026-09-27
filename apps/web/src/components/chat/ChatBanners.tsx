@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import type { ChatMode } from './chat-types'
 
-const bannerButton = 'flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-accent/15 text-accent hover:bg-accent/30'
+const bannerButton = 'flex items-center gap-1.5 px-3 py-1 rounded-sm text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-accent/15 text-accent hover:bg-accent/30'
 const draftField = 'min-w-0 px-2 py-1 text-xs border-border-visible placeholder-text-muted'
 
 export interface AgentDraftForm { name: string; role: string; type: string }
@@ -26,7 +26,7 @@ export function ChatBanners({ mode, hasAnswer, streaming, saved, creatingAgent, 
   switch (mode.kind) {
     case 'plan':
       return (
-        <div className="flex items-center justify-between px-4 py-2 border-b border-border-subtle bg-accent/5 flex-shrink-0">
+        <div className="flex items-center justify-between px-4 py-2 border-b border-border-subtle bg-accent/5 shrink-0">
           <span className="text-xs text-accent">Planning mode — linked to {mode.target.type}</span>
           <button onClick={onSavePlan} disabled={!hasAnswer || streaming} className={bannerButton}>
             {saved ? <><Check size={12} /> Saved!</> : <><ClipboardCheck size={12} /> Save plan to {mode.target.type}</>}
@@ -37,14 +37,14 @@ export function ChatBanners({ mode, hasAnswer, streaming, saved, creatingAgent, 
       return <AgentDraftBanner hasAnswer={hasAnswer} creating={creatingAgent} onCreate={onCreateAgent} />
     case 'agentChat':
       return (
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-border-subtle bg-accent/5 flex-shrink-0">
-          <Bot size={13} className="text-accent flex-shrink-0" />
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-border-subtle bg-accent/5 shrink-0">
+          <Bot size={13} className="text-accent shrink-0" />
           <span className="text-xs text-accent font-medium">Chatting with {mode.agent.name}</span>
         </div>
       )
     case 'agentTarget':
       return (
-        <div className="flex items-center justify-between px-4 py-2 border-b border-border-subtle bg-accent/5 flex-shrink-0">
+        <div className="flex items-center justify-between px-4 py-2 border-b border-border-subtle bg-accent/5 shrink-0">
           <div className="flex items-center gap-2">
             <Bot size={13} className="text-accent" />
             <span className="text-xs text-accent">Agent planning — {mode.agent.name}</span>
@@ -62,9 +62,9 @@ export function ChatBanners({ mode, hasAnswer, streaming, saved, creatingAgent, 
 function AgentDraftBanner({ hasAnswer, creating, onCreate }: { hasAnswer: boolean; creating: boolean; onCreate: (f: AgentDraftForm) => void }) {
   const [form, setForm] = useState<AgentDraftForm>({ name: '', role: '', type: 'claude' })
   return (
-    <div className="border-b border-border-subtle bg-accent/5 flex-shrink-0">
+    <div className="border-b border-border-subtle bg-accent/5 shrink-0">
       <div className="flex items-center gap-2 px-4 py-2">
-        <Bot size={13} className="text-accent flex-shrink-0" />
+        <Bot size={13} className="text-accent shrink-0" />
         <span className="text-xs text-accent flex-1">Agent creation mode — chat with Claude to define your agent</span>
       </div>
       {hasAnswer && (

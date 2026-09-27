@@ -55,7 +55,7 @@ export function ActionsTab({ actions }: { actions: ActionAudit[] }) {
           <div className="flex-1 min-w-0">
             <div className="text-sm text-text-primary flex items-center gap-2">
               <code className="font-mono">{a.actionType}</code>
-              <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${TIER_BADGE[a.tier] ?? 'bg-bg-raised text-text-muted'}`}>{a.tier}</span>
+              <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-sm ${TIER_BADGE[a.tier] ?? 'bg-bg-raised text-text-muted'}`}>{a.tier}</span>
             </div>
             <div className="text-xs text-text-muted">
               Target: {a.target} · by {a.proposedBy}
@@ -164,7 +164,7 @@ export function ObservablesTab({ investigationId }: { investigationId: string | 
                     <td className="px-4 py-2 text-text-muted">{obs.category}</td>
                     <td className="px-4 py-2 text-text-muted">{obs.role}</td>
                     <td className="px-4 py-2">
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${verdictClass(obs.verdict)}`}>{obs.verdict}</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm ${verdictClass(obs.verdict)}`}>{obs.verdict}</span>
                     </td>
                     <td className="px-4 py-2 text-text-muted">{obs.confidence}%</td>
                     <td className="px-4 py-2 text-text-muted">{new Date(obs.firstSeen).toLocaleDateString()}</td>
@@ -229,7 +229,7 @@ export function NotesTab({ investigationId }: { investigationId: string | null }
             {investigation.notes.map(note => (
               <div key={note.id} className="px-4 py-3">
                 <div className="flex items-center gap-2 mb-1">
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${note.authorType === 'warden' ? 'bg-purple-400/15 text-purple-400' : 'bg-accent/15 text-accent'}`}>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm ${note.authorType === 'warden' ? 'bg-purple-400/15 text-purple-400' : 'bg-accent/15 text-accent'}`}>
                     {note.authorType === 'warden' ? 'Warden' : note.author}
                   </span>
                   <span className="text-[10px] text-text-muted">{new Date(note.createdAt).toLocaleString()}</span>
@@ -262,7 +262,7 @@ export function TimelineTab({ investigationId }: { investigationId: string | nul
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-text-primary">{entry.title}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-raised text-text-muted">{entry.eventType}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-bg-raised text-text-muted">{entry.eventType}</span>
                   {entry.source && <span className="text-[10px] text-text-muted">via {entry.source}</span>}
                 </div>
                 {entry.description && <div className="text-xs text-text-muted mt-0.5">{entry.description}</div>}

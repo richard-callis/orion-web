@@ -103,7 +103,7 @@ export function Dialog({
   return (
     <div
       className={cn(
-        'fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm',
+        'fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs',
         overlayClassName,
       )}
       onMouseDown={e => {
@@ -119,7 +119,7 @@ export function Dialog({
         aria-labelledby={labelledBy}
         aria-describedby={describedBy}
         tabIndex={-1}
-        className={cn('outline-none', className)}
+        className={cn('outline-hidden', className)}
       >
         {children}
       </div>

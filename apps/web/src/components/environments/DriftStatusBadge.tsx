@@ -109,7 +109,7 @@ export function DriftStatusBadge({ environmentId, refreshInterval }: Props) {
   return (
     <div className="relative inline-block" ref={popoverRef}>
       {/* Two sibling buttons — a button nested in a button is invalid and unreachable by keyboard */}
-      <span className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs font-medium ${badgeClass}`}>
+      <span className={`inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-xs font-medium ${badgeClass}`}>
         <button
           type="button"
           onClick={() => setPopover(p => !p)}
@@ -138,7 +138,7 @@ export function DriftStatusBadge({ environmentId, refreshInterval }: Props) {
       {scanError && <span role="alert" className="ml-1 text-[10px] text-status-error">{scanError}</span>}
 
       {popover && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-80 rounded border border-border bg-surface-raised p-3 shadow-lg">
+        <div className="absolute left-0 top-full z-50 mt-1 w-80 rounded-sm border border-border bg-surface-raised p-3 shadow-lg">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-semibold text-text-primary">Drift Report</span>
             {report?.scannedAt && (
@@ -158,7 +158,7 @@ export function DriftStatusBadge({ environmentId, refreshInterval }: Props) {
                 <p className="text-xs text-text-muted">Findings data unavailable.</p>
               ) : (
                 report.findings.slice(0, 10).map((f, i) => (
-                  <div key={i} className="rounded bg-surface-base px-2 py-1.5 text-[11px]">
+                  <div key={i} className="rounded-sm bg-surface-base px-2 py-1.5 text-[11px]">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-medium text-text-primary truncate">
                         {f.kind}/{f.resource}

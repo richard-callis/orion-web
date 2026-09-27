@@ -174,8 +174,8 @@ export function TeamDetailPanel({ initialAgents = [], onClose }: { initialAgents
       {importToast && (
         <Toast message={importToast.message} type={importToast.type} prUrl={importToast.prUrl} onDismiss={dismissImportToast} />
       )}
-      <aside className="h-44 flex-shrink-0 md:flex-none md:h-full md:w-80 flex flex-col border-r border-b md:border-b-0 border-border-subtle bg-bg-sidebar overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+      <aside className="h-44 shrink-0 md:flex-none md:h-full md:w-80 flex flex-col border-r border-b md:border-b-0 border-border-subtle bg-bg-sidebar overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
           <span className="text-xs font-semibold text-text-secondary">
             {showArchived ? 'Archived' : 'Active'} ({displayAgents.length})
           </span>
@@ -200,13 +200,13 @@ export function TeamDetailPanel({ initialAgents = [], onClose }: { initialAgents
                 className="w-full text-left rounded-lg border border-border-subtle bg-bg-raised p-3 hover:border-accent/40 hover:bg-bg-card transition-colors"
               >
                 <div className="flex items-center gap-2.5">
-                  <div className={`w-7 h-7 rounded-full ${agentColor(i)} flex items-center justify-center flex-shrink-0`} aria-hidden>
+                  <div className={`w-7 h-7 rounded-full ${agentColor(i)} flex items-center justify-center shrink-0`} aria-hidden>
                     <span className="text-[10px] font-bold text-white">{agentInitials(agent.name)}</span>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs font-medium text-text-primary truncate">{agent.name}</span>
-                      <span className="text-text-muted flex-shrink-0" aria-label={agent.type}>{TYPE_ICONS[agent.type] ?? TYPE_ICONS.custom}</span>
+                      <span className="text-text-muted shrink-0" aria-label={agent.type}>{TYPE_ICONS[agent.type] ?? TYPE_ICONS.custom}</span>
                     </div>
                     {agent.role && <span className="text-[10px] text-accent">{agent.role}</span>}
                   </div>
@@ -286,7 +286,7 @@ export function TeamDetailPanel({ initialAgents = [], onClose }: { initialAgents
           className="w-80 h-full bg-bg-sidebar border-l border-border-subtle shadow-xl overflow-hidden flex flex-col"
           overlayClassName="items-stretch justify-end p-0 bg-transparent backdrop-blur-none"
         >
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
             <span className="text-xs font-semibold text-text-primary">Nebula Catalog</span>
             <IconButton label="Close Nebula catalog" onClick={() => setShowNovaBrowser(false)} className="p-0"><X size={14} /></IconButton>
           </div>

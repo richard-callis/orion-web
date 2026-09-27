@@ -30,10 +30,10 @@ export function ArgoCDSyncPanel({ argocd }: { argocd: ArgoCDState }) {
       {argocd.applications.map(app => (
         <div key={app.name} className="flex items-center justify-between text-xs gap-2">
           <span className="text-text-secondary font-mono truncate flex-1">{app.name}</span>
-          <span className={`flex-shrink-0 ${SYNC_COLORS[app.syncStatus] ?? 'text-text-muted'}`}>
+          <span className={`shrink-0 ${SYNC_COLORS[app.syncStatus] ?? 'text-text-muted'}`}>
             {app.syncStatus}
           </span>
-          <span className={`flex-shrink-0 ${HEALTH_COLORS[app.healthStatus] ?? 'text-text-muted'}`}>
+          <span className={`shrink-0 ${HEALTH_COLORS[app.healthStatus] ?? 'text-text-muted'}`}>
             {app.healthStatus}
           </span>
         </div>

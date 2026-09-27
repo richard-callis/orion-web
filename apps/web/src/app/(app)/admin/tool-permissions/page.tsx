@@ -92,7 +92,7 @@ export default function ToolPermissionsPage() {
         <select
           value={envFilter}
           onChange={e => setEnvFilter(e.target.value)}
-          className="px-2.5 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+          className="px-2.5 py-1.5 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
         >
           <option value="all">All environments</option>
           {environments.map(env => <option key={env} value={env}>{env}</option>)}
@@ -100,14 +100,14 @@ export default function ToolPermissionsPage() {
         <select
           value={statusFilter}
           onChange={e => setStatusFilter(e.target.value)}
-          className="px-2.5 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+          className="px-2.5 py-1.5 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
         >
           <option value="all">All statuses</option>
           <option value="pending">Pending approval</option>
           <option value="disabled">Disabled</option>
           <option value="restricted">Agent-restricted</option>
         </select>
-        <button onClick={load} disabled={loading} className="ml-auto flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary hover:border-border-visible transition-colors">
+        <button onClick={load} disabled={loading} className="ml-auto flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-sm border border-border-subtle text-text-muted hover:text-text-primary hover:border-border-visible transition-colors">
           <RefreshCw size={11} className={loading ? 'animate-spin' : ''} /> Refresh
         </button>
       </div>
@@ -135,7 +135,7 @@ export default function ToolPermissionsPage() {
                       next.has(tool.id) ? next.delete(tool.id) : next.add(tool.id)
                       return next
                     })}
-                    className="text-text-muted hover:text-text-primary flex-shrink-0"
+                    className="text-text-muted hover:text-text-primary shrink-0"
                   >
                     {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                   </button>
@@ -144,12 +144,12 @@ export default function ToolPermissionsPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-text-primary truncate">{tool.name}</span>
-                      {tool.builtIn && <span className="text-[10px] text-text-muted border border-border-subtle rounded px-1">built-in</span>}
+                      {tool.builtIn && <span className="text-[10px] text-text-muted border border-border-subtle rounded-sm px-1">built-in</span>}
                       {tool.status === 'pending' && (
-                        <span className="text-[10px] text-amber-400 border border-amber-400/30 bg-amber-400/10 rounded px-1">pending</span>
+                        <span className="text-[10px] text-amber-400 border border-amber-400/30 bg-amber-400/10 rounded-sm px-1">pending</span>
                       )}
                       {tool.agentRestrictions.length > 0 && (
-                        <span className="text-[10px] text-blue-400 border border-blue-400/30 bg-blue-400/10 rounded px-1 flex items-center gap-0.5">
+                        <span className="text-[10px] text-blue-400 border border-blue-400/30 bg-blue-400/10 rounded-sm px-1 flex items-center gap-0.5">
                           <Lock size={8} />{tool.agentRestrictions.length} agent{tool.agentRestrictions.length !== 1 ? 's' : ''}
                         </span>
                       )}
@@ -162,20 +162,20 @@ export default function ToolPermissionsPage() {
                   </div>
 
                   {/* Actions */}
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     {tool.status === 'pending' && (
                       <>
                         <button
                           onClick={() => patch(tool.id, { status: 'active', enabled: true })}
                           disabled={isSaving}
-                          className="flex items-center gap-1 px-2 py-1 text-[11px] rounded border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-50"
+                          className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-sm border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-50"
                         >
                           <Check size={10} /> Approve
                         </button>
                         <button
                           onClick={() => patch(tool.id, { status: 'rejected', enabled: false })}
                           disabled={isSaving}
-                          className="flex items-center gap-1 px-2 py-1 text-[11px] rounded border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                          className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-sm border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
                         >
                           <X size={10} /> Reject
                         </button>
@@ -204,7 +204,7 @@ export default function ToolPermissionsPage() {
                         <p className="text-[10px] text-text-muted uppercase tracking-wide mb-1">Restricted to agents</p>
                         <div className="flex flex-wrap gap-1.5">
                           {tool.agentRestrictions.map(r => (
-                            <span key={r.agentId} className="text-[10px] px-2 py-0.5 bg-bg-card border border-border-subtle rounded text-text-secondary">
+                            <span key={r.agentId} className="text-[10px] px-2 py-0.5 bg-bg-card border border-border-subtle rounded-sm text-text-secondary">
                               {r.agent.name}
                             </span>
                           ))}

@@ -31,7 +31,7 @@ function heading({ view, selection, epics, totalCount, visibleCount }: Pick<Prop
 export function TaskBoardToolbar(props: Props) {
   const { view, selection, epics, onOpenTree, onViewEpic, onViewFeature, onNewTask } = props
   return (
-    <div className="flex items-center justify-between mb-4 flex-shrink-0">
+    <div className="flex items-center justify-between mb-4 shrink-0">
       <div className="flex items-center gap-2">
         {/* Mobile: open epic tree */}
         <IconButton
