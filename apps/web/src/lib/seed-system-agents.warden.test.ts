@@ -70,9 +70,13 @@ describe('Warden seed', () => {
       expect(allowed).not.toContain('crowdsec_decision_delete')
       expect(allowed).not.toContain('wazuh_active_response')
       expect(allowed).not.toContain('firewall_block')
-      // Read tools still allowed
-      expect(allowed).toContain('elk_flow_search')
-      expect(allowed).toContain('chat_post')
+      // SOC case-management reads + chat still allowed. (elk_flow_search and
+      // friends were dropped from the whitelist in #502, and chat_post never
+      // existed — the real tool is orion_send_message.)
+      expect(allowed).toContain('investigation_read')
+      expect(allowed).toContain('siem_get_incident')
+      expect(allowed).toContain('orion_send_message')
+      expect(allowed).not.toContain('chat_post')
     })
   })
 

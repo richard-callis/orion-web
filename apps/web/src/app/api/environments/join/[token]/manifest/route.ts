@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHash } from 'crypto'
 import { prisma } from '@/lib/db'
+import { gatewayImageSpec } from '@/lib/gateway-image'
 
 // SystemSetting.value is a Json column — narrow to string before using
 function settingStr(setting: { value: unknown } | null, fallback: string): string {
@@ -62,6 +63,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
   // For bare clusters (no ingress), the user sets gatewayUrl to http://<node-ip>:30001 when
   // creating the environment, and the NodePort service below exposes the gateway on that port.
   const gatewayUrl = record.environment.gatewayUrl ?? `http://<node-ip>:30001`
+
+  const gw = gatewayImageSpec()
 
   const manifest = `---
 # ORION Gateway — auto-generated manifest
@@ -196,8 +199,8 @@ spec:
       serviceAccountName: orion-gateway
       containers:
         - name: gateway
-          image: ghcr.io/richard-callis/orion-gateway:latest
-          imagePullPolicy: Always
+          image: ${gw.image}
+          imagePullPolicy: ${gw.pullPolicy}
           ports:
             - containerPort: 3001
           env:
@@ -231,14 +234,31 @@ spec:
                   optional: true
             - name: GATEWAY_SECRET_NAME
               value: "orion-gateway-${envName}-join"
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: { fieldPath: metadata.namespace }
+            - name: POD_NAME
+              valueFrom:
+                fieldRef: { fieldPath: metadata.name }
+            - name: GATEWAY_DEPLOYMENT_NAME
+              value: "orion-gateway-${envName}"
+            - name: MACHINE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: orion-gateway-${envName}-join
+                  key: machine-id
+                  optional: true
             - name: GITEA_CLUSTER_URL
               value: "${giteaClusterUrl}"
+          # /health exists in every gateway image; /readyz (503 until the gateway
+          # has registered and loaded its tool policy) only when the image is
+          # pinned to a release that has it. See lib/gateway-image.ts.
           livenessProbe:
-            httpGet: { path: /health, port: 3001 }
+            httpGet: { path: ${gw.livenessPath}, port: 3001 }
             initialDelaySeconds: 15
             periodSeconds: 30
           readinessProbe:
-            httpGet: { path: /health, port: 3001 }
+            httpGet: { path: ${gw.readinessPath}, port: 3001 }
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:

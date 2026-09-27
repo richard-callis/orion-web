@@ -1,35 +1,70 @@
 # syntax=docker/dockerfile:1
-# Multi-arch: linux/amd64 + linux/arm64
-# TARGETARCH is injected by docker buildx (amd64 or arm64)
-ARG TARGETARCH
+# Build context: REPOSITORY ROOT (docker build -f apps/web/Dockerfile .)
+# so the single workspace lockfile (package-lock.json at the root) is enforced
+# with `npm ci`. Multi-arch: linux/amd64 + linux/arm64 (TARGETARCH from buildx).
+#
+# Base image is pinned by version AND digest (multi-arch index digest), and
+# every downloaded binary is pinned and sha256-verified, so builds are
+# reproducible. Dependabot (docker ecosystem) proposes version/digest bumps.
 
-FROM node:20-alpine AS deps
+# ── Dependencies (lockfile-enforced) ─────────────────────────────────────────
+FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS deps
 WORKDIR /app
-# Build tools needed for node-pty native compilation
-RUN apk add --no-cache make g++
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev --legacy-peer-deps
-
-FROM node:20-alpine AS builder
-WORKDIR /app
-# Install OpenSSL (Prisma) + native build tools for node-pty
+# OpenSSL for Prisma; toolchain for any native module builds
 RUN apk add --no-cache openssl make g++
-COPY --from=deps /app/node_modules ./node_modules
-# Install devDependencies (esbuild, tsx, typescript) for the build step
-COPY package.json package-lock.json* ./
-RUN npm install --legacy-peer-deps
-COPY . .
+COPY package.json package-lock.json ./
+# npm ci validates every workspace listed in the lockfile, so all workspace
+# manifests must be present; only apps/web's dependencies get installed.
+COPY apps/web/package.json apps/web/package.json
+COPY apps/gateway/package.json apps/gateway/package.json
+COPY apps/executor/package.json apps/executor/package.json
+# npm ci fails if the lockfile is out of sync with package.json. The runtime
+# image needs the prisma CLI (a devDependency) for migrations, so dev
+# dependencies are kept rather than pruned.
+RUN npm ci --workspace apps/web --include-workspace-root=false --legacy-peer-deps
+
+# ── Build ────────────────────────────────────────────────────────────────────
+FROM deps AS builder
+COPY apps/web apps/web
+WORKDIR /app/apps/web
 RUN npx prisma generate
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-FROM node:20-alpine AS runner
+# ── CLI tools (pinned + checksum-verified) ───────────────────────────────────
+FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS tools
 ARG TARGETARCH
+ARG KUBECTL_VERSION=1.33.1
+ARG HELM_VERSION=4.2.0
+ARG TALOSCTL_VERSION=1.13.2
+RUN apk add --no-cache curl \
+ && ARCH=${TARGETARCH:-amd64} \
+ && case "$ARCH" in \
+      amd64) KUBECTL_SHA=5de4e9f2266738fd112b721265a0c1cd7f4e5208b670f811861f699474a100a3; \
+             HELM_SHA=97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096; \
+             TALOSCTL_SHA=86e21c434300ab71c27e8644570b14463c8ce78fc272853691de906af8d1c1bb ;; \
+      arm64) KUBECTL_SHA=d595d1a26b7444e0beb122e25750ee4524e74414bbde070b672b423139295ce6; \
+             HELM_SHA=1f8de130dfbd04de64978e7b852a7a547be1404956a366608276d2520b678670; \
+             TALOSCTL_SHA=dcf55741d8fff5793bac0ea9bbcea3147645c1eee6942eb6562db6c2235aac5c ;; \
+      *) echo "unsupported arch $ARCH" && exit 1 ;; \
+    esac \
+ && mkdir -p /out && cd /tmp \
+ && curl -fsSLo kubectl "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" \
+ && echo "${KUBECTL_SHA}  kubectl" | sha256sum -c - \
+ && curl -fsSLo helm.tgz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-${ARCH}.tar.gz" \
+ && echo "${HELM_SHA}  helm.tgz" | sha256sum -c - \
+ && tar -xzf helm.tgz --strip-components=1 "linux-${ARCH}/helm" \
+ && curl -fsSLo talosctl "https://github.com/siderolabs/talos/releases/download/v${TALOSCTL_VERSION}/talosctl-linux-${ARCH}" \
+ && echo "${TALOSCTL_SHA}  talosctl" | sha256sum -c - \
+ && install -m 0755 kubectl helm talosctl /out/
+
+# ── Runtime ──────────────────────────────────────────────────────────────────
+FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Install OpenSSL (Prisma), bash, curl, git, openssh-client, python3 (node-pty runtime)
+# OpenSSL (Prisma), bash, curl (healthcheck), git, openssh-client
 RUN apk add --no-cache openssl libc6-compat bash curl git openssh-client
 
 # Create non-root user for security (SOC2)
@@ -41,36 +76,22 @@ RUN mkdir -p /home/nextjs/.ssh && chmod 700 /home/nextjs/.ssh \
  && chmod 600 /home/nextjs/.ssh/config \
  && chown -R nextjs:nodejs /home/nextjs/.ssh
 
-# Install kubectl — architecture-aware, fetch stable version dynamically
-RUN ARCH=${TARGETARCH:-amd64} \
-    && KUBECTL_VERSION=$(curl -fsSL https://dl.k8s.io/release/stable.txt) \
-    && curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" \
-         -o /usr/local/bin/kubectl \
-    && chmod +x /usr/local/bin/kubectl
-
-# Install Helm — architecture-aware
-RUN curl -fsSL "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3" \
-      | HELM_INSTALL_DIR=/usr/local/bin USE_SUDO=false bash
-
-# Install talosctl — architecture-aware (for Talos cluster kubeconfig fetch)
-RUN ARCH=${TARGETARCH:-amd64} \
-    && TALOS_VERSION=$(curl -fsSL https://api.github.com/repos/siderolabs/talos/releases/latest | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": "\(.*\)".*/\1/') \
-    && curl -fsSL "https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/talosctl-linux-${ARCH}" \
-         -o /usr/local/bin/talosctl \
-    && chmod +x /usr/local/bin/talosctl
+COPY --from=tools /out/ /usr/local/bin/
 
 ENV SHELL=/bin/bash
 
-# Standalone output
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/prisma ./prisma
+# Standalone output. In a workspace build Next nests the app under
+# .next/standalone/apps/web; flatten it so server.js lives at /app.
+COPY --from=builder /app/apps/web/.next/standalone/apps/web ./
+COPY --from=builder /app/apps/web/.next/static ./.next/static
+COPY --from=builder /app/apps/web/prisma ./prisma
 
-# Copy all node_modules from builder (includes all production + transitive dependencies)
+# All node_modules from the (hoisted) workspace install: production deps plus
+# the prisma CLI used by entrypoint.sh and the generated Prisma client.
 COPY --from=builder /app/node_modules ./node_modules
 
-COPY --from=builder /app/worker.js ./worker.js
-COPY entrypoint.sh ./entrypoint.sh
+COPY --from=builder /app/apps/web/worker.js ./worker.js
+COPY apps/web/entrypoint.sh ./entrypoint.sh
 RUN chmod +x entrypoint.sh
 EXPOSE 3000
 ENV PORT=3000

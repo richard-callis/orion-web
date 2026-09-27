@@ -198,7 +198,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tri
   const title = interpolate(trigger.taskTitle, vars)
   const description = trigger.taskDesc ? interpolate(trigger.taskDesc, vars) : null
 
-  // Create the task
+  // Create the task.
+  // SOC2 [M3]: the title/description embed attacker-influenced payload text (commit
+  // messages, custom JSON), so the task is flagged untrusted. checkToolPermission
+  // then requires an admin grant for every non-read tool the task's agent calls.
+  // createdBy stays null: Task.createdBy is an FK to User, and the previous literal
+  // 'webhook' violated it, so every trigger failed to create its task.
   const task = await prisma.task.create({
     data: {
       title,
@@ -206,8 +211,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tri
       status:       'pending',
       priority:     'medium',
       assignedAgent: trigger.agent.id,
-      createdBy:    'webhook',
-    } as never,
+      createdBy:    null,
+      metadata:     { untrusted: true, source: 'webhook', webhookTriggerId: triggerId },
+    },
   })
 
   await Promise.all([

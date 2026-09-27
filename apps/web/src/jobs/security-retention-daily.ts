@@ -5,6 +5,8 @@
  * - SecurityEvent: 30 days
  * - Incident: 365 days
  * - ActionAudit: 365 days
+ * - Operational tables (AgentTrace, ToolExecution, logs, ...): see
+ *   OPERATIONAL_RETENTION below; overridable via SystemSetting retention.<Model>.days
  *
  * Hook: on success, triggers S3 audit-export via existing path.
  *
@@ -16,8 +18,9 @@
  */
 
 import cron from 'node-cron'
+import type { ScheduledTask } from 'node-cron'
 import { prisma } from '@/lib/db'
-import { startJob } from '@/lib/job-runner'
+import { startJob, startJobOnce, utcDateKey } from '@/lib/job-runner'
 import type { JobLogger } from '@/lib/job-runner'
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -30,7 +33,13 @@ const ACTION_AUDIT_RETENTION_DAYS = 365
 
 /**
  * Schedule the retention job with node-cron (daily at 4 AM) and fire once
- * on startup to cover any gap since last shutdown.
+ * on startup to cover any gap since last shutdown. Called only from the worker
+ * process (jobs/scheduled-jobs.ts), never from the web server, so it is
+ * registered once per deployment rather than once per web replica.
+ *
+ * Idempotent per UTC day: every run goes through startJobOnce() with the key
+ * "security-retention-daily:<date>", so the startup catch-up, the cron tick and
+ * any overlapping worker (e.g. during a deploy) create at most one job per day.
  *
  * Cron: "0 4 * * *" — daily at 4:00 AM.
  * node-cron chosen because:
@@ -40,30 +49,29 @@ const ACTION_AUDIT_RETENTION_DAYS = 365
  */
 // Guard against duplicate cron registrations if this module is evaluated
 // more than once (e.g. hot-reload or multiple import paths in the same process).
-let _scheduled = false
+let _task: ScheduledTask | null = null
 
-export function ensureSecurityRetentionJobScheduled(): void {
-  if (_scheduled) return
-  _scheduled = true
-
-  // Set up daily cron schedule (4 AM)
-  cron.schedule('0 4 * * *', () => {
-    startJob(
-      'security-retention-daily',
-      'Security retention: purge old events, incidents, action audits',
-      {},
-      runSecurityRetentionJob,
-    ).catch((err) => console.error('[security-retention] cron run failed:', err))
-  })
-
-  // Fire once immediately on startup (catch-up). startJob's own idempotency
-  // gate prevents duplicate enqueue if a cron-triggered job is already queued.
-  startJob(
+function startDailyRetention(title: string): void {
+  startJobOnce(
     'security-retention-daily',
-    'Security retention: startup catch-up',
+    title,
+    `security-retention-daily:${utcDateKey()}`,
     {},
     runSecurityRetentionJob,
-  ).catch((err) => console.error('[security-retention] startup catch-up failed:', err))
+  ).catch((err) => console.error('[security-retention] run failed to start:', err))
+}
+
+export function ensureSecurityRetentionJobScheduled(): ScheduledTask {
+  if (_task) return _task
+
+  // Set up daily cron schedule (4 AM)
+  _task = cron.schedule('0 4 * * *', () => {
+    startDailyRetention('Security retention: purge old events, incidents, action audits')
+  })
+
+  // Fire once on startup (catch-up) — a no-op if today's run already exists.
+  startDailyRetention('Security retention: startup catch-up')
+  return _task
 }
 
 /**
@@ -133,6 +141,109 @@ export async function runSecurityRetentionJob(log: JobLogger): Promise<void> {
   await log(
     `Security retention complete: ${deletedEvents.count} events, ${deletedIncidents.count} incidents, ${deletedAudits.count} audits purged`,
   )
+
+  // 5. Operational tables that otherwise grow forever. A failure here must not
+  //    mask the security purge above, so it is logged rather than rethrown.
+  try {
+    await purgeOperationalData(log)
+  } catch (err) {
+    await log(`Operational retention failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+// ── Operational data retention ────────────────────────────────────────────────
+//
+// Per-table retention, overridable with SystemSetting `retention.<Model>.days`
+// (a number; 0 disables purging that table). Message (user chat history) is
+// deliberately not purged. Deletes run in batches so a large backlog never
+// holds long locks or one huge transaction.
+
+const PURGE_BATCH_SIZE = 5000
+const PURGE_MAX_BATCHES = 200 // caps one run at 1M rows per table; the rest goes next day
+
+interface OperationalRetention {
+  model: string
+  defaultDays: number
+  /** SQL predicate on the row, with $1 bound to the cutoff timestamp. Identifiers only — never user input. */
+  where: string
+}
+
+const OPERATIONAL_RETENTION: OperationalRetention[] = [
+  { model: 'AgentTrace', defaultDays: 90, where: `"createdAt" < $1` },
+  // Pending/running executions are live approval state — never purged.
+  { model: 'ToolExecution', defaultDays: 180, where: `"createdAt" < $1 AND "status" NOT IN ('pending', 'running')` },
+  { model: 'HookExecutionLog', defaultDays: 30, where: `"startedAt" < $1` },
+  { model: 'SkillExecutionLog', defaultDays: 90, where: `"createdAt" < $1` },
+  { model: 'JobRun', defaultDays: 90, where: `"startedAt" < $1 AND "status" <> 'running'` },
+  { model: 'WebhookDelivery', defaultDays: 30, where: `"receivedAt" < $1` },
+  { model: 'AgentMessage', defaultDays: 90, where: `"createdAt" < $1` },
+  { model: 'ClaudeInvocation', defaultDays: 90, where: `"createdAt" < $1` },
+  { model: 'TaskEvent', defaultDays: 180, where: `"createdAt" < $1` },
+  // Case records: only entries of investigations closed before the cutoff.
+  {
+    model: 'InvestigationTimeline',
+    defaultDays: 365,
+    where: `"createdAt" < $1 AND "investigationId" IN (
+      SELECT "id" FROM "Investigation" WHERE "status" = 'closed' AND "closedAt" < $1)`,
+  },
+  // Cost/budget reporting looks back a year; keep a little over that.
+  { model: 'AgentTokenUsage', defaultDays: 400, where: `"recordedAt" < $1` },
+]
+
+/** AgentTrace.fullContext holds the entire LLM prompt; drop it long before the row. */
+const AGENT_TRACE_FULL_CONTEXT_DEFAULT_DAYS = 14
+
+async function getRetentionDays(key: string, fallback: number): Promise<number> {
+  const row = await prisma.systemSetting.findUnique({ where: { key } })
+  if (!row) return fallback
+  const days = Number(row.value)
+  return Number.isFinite(days) && days >= 0 ? Math.floor(days) : fallback
+}
+
+function cutoffFor(days: number): Date {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+}
+
+async function purgeInBatches(table: string, where: string, cutoff: Date): Promise<number> {
+  let total = 0
+  for (let i = 0; i < PURGE_MAX_BATCHES; i++) {
+    const n = await prisma.$executeRawUnsafe(
+      `DELETE FROM "${table}" WHERE ctid IN (SELECT ctid FROM "${table}" WHERE ${where} LIMIT ${PURGE_BATCH_SIZE})`,
+      cutoff,
+    )
+    total += n
+    if (n < PURGE_BATCH_SIZE) break
+  }
+  return total
+}
+
+export async function purgeOperationalData(log: JobLogger): Promise<void> {
+  const ctxDays = await getRetentionDays('retention.AgentTrace.fullContextDays', AGENT_TRACE_FULL_CONTEXT_DEFAULT_DAYS)
+  if (ctxDays > 0) {
+    const cutoff = cutoffFor(ctxDays)
+    let cleared = 0
+    for (let i = 0; i < PURGE_MAX_BATCHES; i++) {
+      const n = await prisma.$executeRawUnsafe(
+        `UPDATE "AgentTrace" SET "fullContext" = NULL WHERE ctid IN (
+           SELECT ctid FROM "AgentTrace" WHERE "fullContext" IS NOT NULL AND "createdAt" < $1 LIMIT ${PURGE_BATCH_SIZE})`,
+        cutoff,
+      )
+      cleared += n
+      if (n < PURGE_BATCH_SIZE) break
+    }
+    await log(`AgentTrace.fullContext cleared on ${cleared} rows older than ${cutoff.toISOString()}`)
+  }
+
+  for (const { model, defaultDays, where } of OPERATIONAL_RETENTION) {
+    const days = await getRetentionDays(`retention.${model}.days`, defaultDays)
+    if (days === 0) {
+      await log(`${model}: retention disabled (retention.${model}.days = 0)`)
+      continue
+    }
+    const cutoff = cutoffFor(days)
+    const n = await purgeInBatches(model, where, cutoff)
+    await log(`${model} purged: ${n} rows older than ${cutoff.toISOString()} (${days}d)`)
+  }
 }
 
 // ── Manual trigger API ────────────────────────────────────────────────────────

@@ -446,13 +446,26 @@ describe('computeLinkConfidence', () => {
   })
 
   it('auto-links on 2+ medium matches', () => {
+    const existing: ExtractedObservable[] = [
+      ...existingObservables,
+      { value: 'admin@evil.com', displayValue: 'admin@evil.com', category: 'email', confidence: 70 },
+    ]
+    const newObs: ExtractedObservable[] = [
+      { value: 'evil.com', displayValue: 'evil.com', category: 'domain', confidence: 65 },
+      { value: 'admin@evil.com', displayValue: 'admin@evil.com', category: 'email', confidence: 70 },
+    ]
+    const result = computeLinkConfidence(newObs, existing, new Date(Date.now() - 12 * 3600000))
+    expect(result).not.toBeNull()
+    expect(result!.action).toBe('auto')
+  })
+
+  it('does not auto-link a domain + IP pair (IPs are corroboration only)', () => {
     const newObs: ExtractedObservable[] = [
       { value: 'evil.com', displayValue: 'evil.com', category: 'domain', confidence: 65 },
       { value: '203.0.113.5', displayValue: '203.0.113.5', category: 'ipv4', confidence: 60 },
     ]
     const result = computeLinkConfidence(newObs, existingObservables, new Date(Date.now() - 12 * 3600000))
-    expect(result).not.toBeNull()
-    expect(result!.action).toBe('auto')
+    expect(result!.action).toBe('suggestion')
   })
 
   it('returns null for no matches', () => {

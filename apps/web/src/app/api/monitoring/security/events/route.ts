@@ -33,8 +33,11 @@ function sanitizeString(v: unknown, maxLen = MAX_STRING_LEN): string {
 
 export async function POST(req: NextRequest) {
   // Auth: verify trusted internal secret
+  // SOC2 [L1]: fail closed when the secret is unset — comparing '' with '' used to
+  // pass, letting any caller inject SIEM events on deployments without it.
+  const expectedSecret = process.env.GATEWAY_AUDIT_SECRET
   const secret = req.headers.get('x-gateway-secret')
-  if (!constantTimeCompare(secret ?? '', process.env.GATEWAY_AUDIT_SECRET ?? '')) {
+  if (!expectedSecret || !constantTimeCompare(secret ?? '', expectedSecret)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

@@ -65,7 +65,10 @@ describe('find_specialist scoring', () => {
       tags: ['testing', 'code-review', 'deployment'],
       confidence: 1.0,
     }))
-    expect(s).toBeGreaterThan(0.5) // confidence alone gives 0.2 + tags give additional
+    const baseline = scoreProfile('testing code review', makeProfile({ tags: [], confidence: 1.0 }))
+    // confidence alone gives 0.2; all 3 query words match tags → +0.3
+    expect(s).toBeGreaterThan(baseline)
+    expect(s).toBeCloseTo(0.5)
   })
 
   it('weights confidence from profile', () => {

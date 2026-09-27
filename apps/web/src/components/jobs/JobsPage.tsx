@@ -7,6 +7,7 @@ import {
   Webhook, RefreshCw, Copy, ChevronDown, ChevronUp,
   Zap, Activity, Settings, CalendarClock,
 } from 'lucide-react'
+import { RunStatusBadge } from '@/components/ui/Badge'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -642,7 +643,7 @@ function SystemTab() {
                   <td className="px-4 py-3 text-xs text-text-secondary">{job.desc}</td>
                   <td className="px-4 py-3 text-xs font-mono text-text-muted whitespace-nowrap">{job.cadence}</td>
                   <td className="px-4 py-3 text-xs text-text-secondary whitespace-nowrap">{last ? formatDate(last.startedAt) : '—'}</td>
-                  <td className="px-4 py-3">{last ? <StatusBadge status={last.status} /> : <span className="text-xs text-text-muted">—</span>}</td>
+                  <td className="px-4 py-3">{last ? <RunStatusBadge status={last.status} /> : <span className="text-xs text-text-muted">—</span>}</td>
                 </tr>
               )
             })}
@@ -654,13 +655,6 @@ function SystemTab() {
 }
 
 // ── History tab ───────────────────────────────────────────────────────────────
-
-function StatusBadge({ status }: { status: string }) {
-  const cls = status === 'completed' ? 'bg-green-500/20 text-green-400'
-    : status === 'failed' ? 'bg-red-500/20 text-red-400'
-    : 'bg-yellow-500/20 text-yellow-400'
-  return <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${cls}`}>{status}</span>
-}
 
 function SourceBadge({ source }: { source: string }) {
   const cls = source === 'schedule' ? 'bg-blue-500/20 text-blue-400'
@@ -701,7 +695,7 @@ function HistoryTab() {
               <td className="px-3 py-2.5"><SourceBadge source={run.source} /></td>
               <td className="px-3 py-2.5 text-sm text-text-primary">{run.sourceName}</td>
               <td className="px-3 py-2.5 text-xs text-text-secondary font-mono">{run.agentId ? run.agentId.slice(0, 8) + '…' : '—'}</td>
-              <td className="px-3 py-2.5"><StatusBadge status={run.status} />{run.errorMessage && <p className="text-xs text-red-400 mt-0.5 truncate max-w-[200px]" title={run.errorMessage}>{run.errorMessage}</p>}</td>
+              <td className="px-3 py-2.5"><RunStatusBadge status={run.status} />{run.errorMessage && <p className="text-xs text-red-400 mt-0.5 truncate max-w-[200px]" title={run.errorMessage}>{run.errorMessage}</p>}</td>
               <td className="px-3 py-2.5 text-xs font-mono text-text-muted">{duration(run.startedAt, run.finishedAt)}</td>
             </tr>
           ))}

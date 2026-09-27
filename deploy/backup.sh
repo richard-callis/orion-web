@@ -13,6 +13,30 @@ COMPOSE="docker compose -f $DEPLOY_DIR/docker-compose.yml --env-file $DEPLOY_DIR
 BACKUP_DIR="${BACKUP_DIR:-$DEPLOY_DIR/backups}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
+
+# ── --pre-deploy: fast PostgreSQL-only dump taken before every deploy ────────
+# Migrations run automatically when the new orion container starts and cannot
+# be rolled back, so this dump is the rollback path for the database:
+#   deploy/restore.sh predeploy_<timestamp>   (see deploy/rollback.sh)
+# Keeps the newest PREDEPLOY_KEEP dumps. Fails the deploy
+# if the dump fails; skips (exit 0) when no database is running yet.
+if [[ "${1:-}" == "--pre-deploy" ]]; then
+  if [[ -z "$($COMPOSE ps -q --status running postgres 2>/dev/null)" ]]; then
+    echo "Pre-deploy backup: postgres is not running (fresh install?) — skipping."
+    exit 0
+  fi
+  OUT="$BACKUP_DIR/postgres_predeploy_${TIMESTAMP}.sql.gz"
+  echo "Pre-deploy backup: dumping PostgreSQL to $OUT"
+  $COMPOSE exec -T postgres pg_dump -U "${POSTGRES_USER:-orion}" "${POSTGRES_DB:-orion}" \
+    | gzip > "$OUT.partial"
+  gzip -t "$OUT.partial"
+  mv "$OUT.partial" "$OUT"
+  chmod 600 "$OUT"
+  ls -1t "$BACKUP_DIR"/postgres_predeploy_*.sql.gz 2>/dev/null | tail -n +$(( ${PREDEPLOY_KEEP:-10} + 1 )) | xargs -r rm -f
+  echo "  ✓ $(du -h "$OUT" | cut -f1) — keeping newest ${PREDEPLOY_KEEP:-10} pre-deploy dumps"
+  exit 0
+fi
 
 echo "ORION Backup — $TIMESTAMP"
 echo "================================"
@@ -23,6 +47,7 @@ $COMPOSE exec -T postgres pg_dump \
   -U "${POSTGRES_USER:-orion}" \
   "${POSTGRES_DB:-orion}" \
   | gzip > "$BACKUP_DIR/postgres_${TIMESTAMP}.sql.gz"
+chmod 600 "$BACKUP_DIR/postgres_${TIMESTAMP}.sql.gz"
 echo "  ✓ PostgreSQL: $BACKUP_DIR/postgres_${TIMESTAMP}.sql.gz"
 
 # 2. Vault raft snapshot (if unsealed)

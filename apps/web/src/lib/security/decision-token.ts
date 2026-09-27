@@ -44,12 +44,19 @@ export function signDecisionToken(params: {
   auditId: string
   actionType: string
   target: string
+  /**
+   * Secondary tool arguments to bind (e.g. crowdsec scope/duration). The
+   * gateway rejects a call whose bound arguments differ from these, and a token
+   * without `params` only authorises each argument's default value.
+   */
+  params?: Record<string, string>
 }): string {
   const payload = JSON.stringify({
     auditId: params.auditId,
     actionType: params.actionType,
     target: params.target,
     exp: Date.now() + TOKEN_TTL_MS,
+    ...(params.params && Object.keys(params.params).length ? { params: params.params } : {}),
   })
 
   const payloadBuf = Buffer.from(payload, 'utf8')

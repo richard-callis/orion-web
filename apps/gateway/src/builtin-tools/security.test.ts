@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { createHmac } from 'crypto'
+import { createHmac, randomUUID } from 'crypto'
 import { securityTools } from './security'
+
+// Look tools up by name — indexes shift whenever a tool is added.
+const byName = (name: string) => {
+  const t = securityTools.find(x => x.name === name)
+  if (!t) throw new Error(`tool not found: ${name}`)
+  return t
+}
 
 // Test helper: mint a decision token bound to the given actionType + target.
 // Mirrors the signer in apps/web/src/lib/security/decision-token.ts so the
@@ -11,8 +18,9 @@ const TEST_TOKEN_SECRET = 'test-secret-must-be-at-least-32-chars-long!!'
 function b64urlBuf(buf: Buffer): string {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
-function testToken(actionType: string, target: string, ttlMs = 60_000): string {
-  const payload = { auditId: 'test-audit', actionType, target, exp: Date.now() + ttlMs }
+// Each token gets a unique auditId: the gateway rejects replays of the same audit.
+function testToken(actionType: string, target: string, ttlMs = 60_000, params?: Record<string, string>): string {
+  const payload = { auditId: randomUUID(), actionType, target, exp: Date.now() + ttlMs, ...(params ? { params } : {}) }
   const payloadBytes = Buffer.from(JSON.stringify(payload), 'utf8')
   const mac = createHmac('sha256', Buffer.from(TEST_TOKEN_SECRET, 'utf8')).update(payloadBytes).digest()
   return `${b64urlBuf(payloadBytes)}.${b64urlBuf(mac)}`
@@ -45,8 +53,8 @@ describe('Security Tools', () => {
   })
 
   describe('Tool Definitions', () => {
-    it('exports exactly 14 tools', () => {
-      expect(securityTools).toHaveLength(14)
+    it('exports exactly 16 tools', () => {
+      expect(securityTools).toHaveLength(16)
     })
 
     it('has all expected tool names', () => {
@@ -62,6 +70,8 @@ describe('Security Tools', () => {
         'wazuh_rootcheck',
         'prometheus_query',
         'prometheus_query_range',
+        'kubectl_get_events',
+        'security_propose_action',
         'crowdsec_decision_create',
         'crowdsec_decision_delete',
         'wazuh_active_response',
@@ -502,7 +512,7 @@ describe('Security Tools', () => {
 
   describe('crowdsec_decision_create', () => {
     it('returns error when CROWDSEC_API is not set', async () => {
-      const tool = securityTools[10]
+      const tool = byName('crowdsec_decision_create')
       // Token check passes (target=''), env check fails → expected message.
       const result = await tool.execute({ __decision_token: testToken('crowdsec_decision_create', '') })
       expect(result).toBe('CROWDSEC_API environment variable not configured')
@@ -516,7 +526,7 @@ describe('Security Tools', () => {
         text: () => Promise.resolve(JSON.stringify({})),
       })
 
-      const tool = securityTools[10]
+      const tool = byName('crowdsec_decision_create')
       const result = await tool.execute({
         ip: '1.2.3.4',
         reason: 'brute force',
@@ -542,13 +552,14 @@ describe('Security Tools', () => {
         text: () => Promise.resolve(JSON.stringify({})),
       })
 
-      const tool = securityTools[10]
+      const tool = byName('crowdsec_decision_create')
       // scope locked to ip|range|country|as per validation; use 'range' with a CIDR target.
       await tool.execute({
         ip: '203.0.113.0/24',
         scope: 'range',
         duration: '7d',
-        __decision_token: testToken('crowdsec_decision_create', '203.0.113.0/24'),
+        // Non-default scope/duration must be bound into the token's params.
+        __decision_token: testToken('crowdsec_decision_create', '203.0.113.0/24', 60_000, { scope: 'range', duration: '7d' }),
       })
 
       const body = JSON.parse((global.fetch as any).mock.calls[0][1].body)
@@ -565,7 +576,7 @@ describe('Security Tools', () => {
         text: () => Promise.resolve('Forbidden'),
       })
 
-      const tool = securityTools[10]
+      const tool = byName('crowdsec_decision_create')
       const result = await tool.execute({
         ip: '1.2.3.4',
         __decision_token: testToken('crowdsec_decision_create', '1.2.3.4'),
@@ -576,8 +587,8 @@ describe('Security Tools', () => {
 
   describe('crowdsec_decision_delete', () => {
     it('returns error when CROWDSEC_API is not set', async () => {
-      const tool = securityTools[11]
-      // Token target binds to `decisionId` for this tool — see security.ts.
+      const tool = byName('crowdsec_decision_delete')
+      // Token target binds to `ip` (the value actually deleted) — see security.ts.
       const result = await tool.execute({ __decision_token: testToken('crowdsec_decision_delete', '') })
       expect(result).toBe('CROWDSEC_API environment variable not configured')
     })
@@ -590,7 +601,7 @@ describe('Security Tools', () => {
         text: () => Promise.resolve(JSON.stringify({})),
       })
 
-      const tool = securityTools[11]
+      const tool = byName('crowdsec_decision_delete')
       const result = await tool.execute({
         ip: '1.2.3.4',
         decisionId: '1.2.3.4',
@@ -607,7 +618,7 @@ describe('Security Tools', () => {
 
   describe('wazuh_active_response', () => {
     it('returns error when WAZUH_API is not set', async () => {
-      const tool = securityTools[12]
+      const tool = byName('wazuh_active_response')
       const result = await tool.execute({ __decision_token: testToken('wazuh_active_response', '') })
       expect(result).toBe('WAZUH_API environment variable not configured')
     })
@@ -621,7 +632,7 @@ describe('Security Tools', () => {
         text: () => Promise.resolve(JSON.stringify({})),
       })
 
-      const tool = securityTools[12]
+      const tool = byName('wazuh_active_response')
       const result = await tool.execute({
         agent: '001',
         command: 'firewall-drop',
@@ -649,7 +660,7 @@ describe('Security Tools', () => {
         text: () => Promise.resolve(JSON.stringify({})),
       })
 
-      const tool = securityTools[12]
+      const tool = byName('wazuh_active_response')
       await tool.execute({
         agent: '001',
         command: 'firewall-drop',
@@ -669,7 +680,7 @@ describe('Security Tools', () => {
         text: () => Promise.resolve('Not found'),
       })
 
-      const tool = securityTools[12]
+      const tool = byName('wazuh_active_response')
       const result = await tool.execute({
         agent: '001',
         command: 'test',
@@ -681,7 +692,7 @@ describe('Security Tools', () => {
 
   describe('firewall_block', () => {
     it('returns error when FIREWALL_API is not set', async () => {
-      const tool = securityTools[13]
+      const tool = byName('firewall_block')
       const result = await tool.execute({ __decision_token: testToken('firewall_block', '') })
       expect(result).toContain('FIREWALL_API environment variable not configured')
     })
@@ -694,7 +705,7 @@ describe('Security Tools', () => {
         text: () => Promise.resolve(JSON.stringify({})),
       })
 
-      const tool = securityTools[13]
+      const tool = byName('firewall_block')
       const result = await tool.execute({
         cidr: '10.0.0.0/24',
         reason: 'blocked',
@@ -721,7 +732,7 @@ describe('Security Tools', () => {
         text: () => Promise.resolve('Internal error'),
       })
 
-      const tool = securityTools[13]
+      const tool = byName('firewall_block')
       const result = await tool.execute({
         cidr: '10.0.0.0/24',
         __decision_token: testToken('firewall_block', '10.0.0.0/24'),
@@ -745,14 +756,14 @@ describe('Security Tools', () => {
     })
 
     it('crowdsec_decision_create rejects missing ip without HTTP call', async () => {
-      const tool = securityTools[10]
+      const tool = byName('crowdsec_decision_create')
       const result = await tool.execute({ __decision_token: testToken('crowdsec_decision_create', '') })
       expect(result).toContain('validation')
       expect(global.fetch).not.toHaveBeenCalled()
     })
 
     it('crowdsec_decision_create rejects invalid ip without HTTP call', async () => {
-      const tool = securityTools[10]
+      const tool = byName('crowdsec_decision_create')
       const result = await tool.execute({
         ip: 'not-an-ip',
         __decision_token: testToken('crowdsec_decision_create', 'not-an-ip'),
@@ -762,7 +773,7 @@ describe('Security Tools', () => {
     })
 
     it('crowdsec_decision_create rejects 0.0.0.0', async () => {
-      const tool = securityTools[10]
+      const tool = byName('crowdsec_decision_create')
       const result = await tool.execute({
         ip: '0.0.0.0',
         __decision_token: testToken('crowdsec_decision_create', '0.0.0.0'),
@@ -772,7 +783,7 @@ describe('Security Tools', () => {
     })
 
     it('crowdsec_decision_create rejects link-local 169.254.x.x', async () => {
-      const tool = securityTools[10]
+      const tool = byName('crowdsec_decision_create')
       const result = await tool.execute({
         ip: '169.254.10.5',
         __decision_token: testToken('crowdsec_decision_create', '169.254.10.5'),
@@ -782,22 +793,22 @@ describe('Security Tools', () => {
     })
 
     it('crowdsec_decision_create rejects unsupported scope', async () => {
-      const tool = securityTools[10]
+      const tool = byName('crowdsec_decision_create')
       const result = await tool.execute({
         ip: '1.2.3.4',
         scope: 'fqdn',
-        __decision_token: testToken('crowdsec_decision_create', '1.2.3.4'),
+        __decision_token: testToken('crowdsec_decision_create', '1.2.3.4', 60_000, { scope: 'fqdn' }),
       })
       expect(result).toContain('validation')
       expect(global.fetch).not.toHaveBeenCalled()
     })
 
     it('crowdsec_decision_create rejects /0 range', async () => {
-      const tool = securityTools[10]
+      const tool = byName('crowdsec_decision_create')
       const result = await tool.execute({
         ip: '0.0.0.0/0',
         scope: 'range',
-        __decision_token: testToken('crowdsec_decision_create', '0.0.0.0/0'),
+        __decision_token: testToken('crowdsec_decision_create', '0.0.0.0/0', 60_000, { scope: 'range' }),
       })
       expect(result).toContain('validation')
       expect(global.fetch).not.toHaveBeenCalled()
@@ -807,18 +818,18 @@ describe('Security Tools', () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: true, text: () => Promise.resolve('{}'),
       }) as any
-      const tool = securityTools[10]
+      const tool = byName('crowdsec_decision_create')
       const result = await tool.execute({
         ip: '203.0.113.0/24',
         scope: 'range',
-        __decision_token: testToken('crowdsec_decision_create', '203.0.113.0/24'),
+        __decision_token: testToken('crowdsec_decision_create', '203.0.113.0/24', 60_000, { scope: 'range' }),
       })
       expect(result).not.toContain('validation')
       expect(global.fetch).toHaveBeenCalled()
     })
 
     it('firewall_block rejects /0 cidr without HTTP call', async () => {
-      const tool = securityTools[13]
+      const tool = byName('firewall_block')
       const result = await tool.execute({
         cidr: '0.0.0.0/0',
         __decision_token: testToken('firewall_block', '0.0.0.0/0'),
@@ -828,7 +839,7 @@ describe('Security Tools', () => {
     })
 
     it('firewall_block rejects empty cidr', async () => {
-      const tool = securityTools[13]
+      const tool = byName('firewall_block')
       const result = await tool.execute({
         cidr: '',
         __decision_token: testToken('firewall_block', ''),
@@ -839,7 +850,7 @@ describe('Security Tools', () => {
     })
 
     it('firewall_block rejects malformed cidr', async () => {
-      const tool = securityTools[13]
+      const tool = byName('firewall_block')
       const result = await tool.execute({
         cidr: '999.999.999.999/24',
         __decision_token: testToken('firewall_block', '999.999.999.999/24'),
@@ -849,7 +860,7 @@ describe('Security Tools', () => {
     })
 
     it('wazuh_active_response rejects empty agent', async () => {
-      const tool = securityTools[12]
+      const tool = byName('wazuh_active_response')
       const result = await tool.execute({
         agent: '',
         command: 'firewall-drop',
@@ -860,7 +871,7 @@ describe('Security Tools', () => {
     })
 
     it('wazuh_active_response rejects agent with invalid chars', async () => {
-      const tool = securityTools[12]
+      const tool = byName('wazuh_active_response')
       const result = await tool.execute({
         agent: 'agent;rm -rf /',
         command: 'firewall-drop',
@@ -880,7 +891,7 @@ describe('Security Tools', () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: false, status: 400, text: () => Promise.resolve(leak),
       }) as any
-      const tool = securityTools[10]
+      const tool = byName('crowdsec_decision_create')
       const result = await tool.execute({
         ip: '1.2.3.4',
         __decision_token: testToken('crowdsec_decision_create', '1.2.3.4'),
@@ -896,7 +907,7 @@ describe('Security Tools', () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: false, status: 401, text: () => Promise.resolve(leak),
       }) as any
-      const tool = securityTools[13]
+      const tool = byName('firewall_block')
       const result = await tool.execute({
         cidr: '10.0.0.0/24',
         __decision_token: testToken('firewall_block', '10.0.0.0/24'),
@@ -911,7 +922,7 @@ describe('Security Tools', () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: false, status: 500, text: () => Promise.resolve(longBody),
       }) as any
-      const tool = securityTools[10]
+      const tool = byName('crowdsec_decision_create')
       const result = await tool.execute({
         ip: '1.2.3.4',
         __decision_token: testToken('crowdsec_decision_create', '1.2.3.4'),

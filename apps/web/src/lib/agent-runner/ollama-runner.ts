@@ -1,5 +1,7 @@
 import type { AgentRunner, AgentEvent, TaskRunContext, GatewayTool } from './types'
 import { GatewayClient } from './gateway-client'
+import { agentActor } from '../gateway-headers'
+import { runSignal, describeRunnerError, throwIfAborted } from './abort'
 import { getPrompt, interpolate } from '@/lib/system-prompts'
 import { validateToolArgs } from '@/lib/tool-registry'
 import { checkToolPermission } from '@/lib/tool-permissions'
@@ -47,9 +49,9 @@ export const ollamaRunner: AgentRunner = {
     let gatewayTools: GatewayTool[] = []
     let gateway: GatewayClient | null = null
     if (ctx.gateway) {
-      gateway = new GatewayClient(ctx.gateway.url, ctx.gateway.token)
+      gateway = new GatewayClient(ctx.gateway.url, ctx.gateway.token, agentActor(ctx.agentId))
       try {
-        gatewayTools = await gateway.listTools()
+        gatewayTools = await gateway.listTools(ctx.signal)
       } catch (err) {
         yield { type: 'text', content: `⚠ Could not reach gateway: ${err instanceof Error ? err.message : err}\nProceeding without tools.\n` }
       }
@@ -64,7 +66,8 @@ export const ollamaRunner: AgentRunner = {
       },
     }))
 
-    const ollamaToolDefs = [
+    // Plan-only turns get no tools at all — the model can only describe what it would do.
+    const ollamaToolDefs = ctx.planOnly ? [] : [
       ...mgmtToolDefs,
       ...gatewayTools.map(t => ({
         type: 'function',
@@ -95,6 +98,7 @@ export const ollamaRunner: AgentRunner = {
     try {
       while (turns < MAX_TURNS) {
         turns++
+        throwIfAborted(ctx.signal)
         const trimmedMessages = trimConversationHistory(messages)
         const res = await fetch(`${ollamaBaseUrl}/api/chat`, {
           method: 'POST',
@@ -105,7 +109,7 @@ export const ollamaRunner: AgentRunner = {
             stream: false,
             ...(ollamaToolDefs.length > 0 && { tools: ollamaToolDefs }),
           }),
-          signal: AbortSignal.timeout(timeoutSecs * 1000),
+          signal: runSignal(ctx.signal, timeoutSecs * 1000),
         })
 
         if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`)
@@ -116,6 +120,12 @@ export const ollamaRunner: AgentRunner = {
 
         // Handle tool calls
         if (assistantMsg.tool_calls?.length) {
+          // Surface any text the model wrote alongside its tool calls (typically
+          // the <plan>) BEFORE the tool_call events, so the consumer's plan gate
+          // can see it. Each tool_call below is yielded before that tool runs.
+          if (assistantMsg.content) {
+            yield { type: 'text', content: assistantMsg.content }
+          }
           for (const toolCall of assistantMsg.tool_calls) {
             const fn = toolCall.function
             yield { type: 'tool_call', tool: fn.name, args: fn.arguments }
@@ -139,6 +149,8 @@ export const ollamaRunner: AgentRunner = {
               fn.name,
               ctx.agentId ?? null,
               ctx.environmentId ?? null,
+              undefined,
+              { taskId: ctx.taskId },
             )
             if (!permission.allowed) {
               result = `Permission denied for tool '${fn.name}': ${permission.reason ?? 'Tool not permitted for this agent'}. Contact an admin to grant access.`
@@ -157,7 +169,7 @@ export const ollamaRunner: AgentRunner = {
             } else if (gateway) {
               try {
                 const args = JSON.parse(argsRaw)
-                result = await gateway.executeTool(fn.name, args)
+                result = await gateway.executeTool(fn.name, args, ctx.signal)
               } catch (err) {
                 result = `Error: ${err instanceof Error ? err.message : String(err)}`
               }
@@ -185,7 +197,7 @@ export const ollamaRunner: AgentRunner = {
 
       yield { type: 'done' }
     } catch (err) {
-      yield { type: 'error', error: err instanceof Error ? err.message : String(err) }
+      yield { type: 'error', error: describeRunnerError(err) }
     }
   },
 }

@@ -11,12 +11,14 @@ export default async function AgentsPage() {
     prisma.systemSetting.findUnique({ where: { key: 'system.watchers.paused' } }),
   ])
 
-  const messages = messagesRaw.map((msg: any) => ({
+  // Never serialize the (encrypted) per-agent MCP token to the browser.
+  const messages = messagesRaw.map(({ agent, ...msg }) => ({
     ...msg,
+    agent: agent ? { ...agent, mcpToken: undefined } : agent,
     createdAt: msg.createdAt.toISOString(),
   }))
 
-  const agents = agentsRaw.map((a: any) => ({
+  const agents = agentsRaw.map(({ mcpToken: _mcpToken, ...a }) => ({
     ...a,
     lastSeen: a.lastSeen?.toISOString() ?? null,
   }))

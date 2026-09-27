@@ -1,5 +1,6 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback } from 'react'
+import useSWR from 'swr'
 
 export interface PendingTool {
   id: string
@@ -26,27 +27,35 @@ export interface ApprovalRequest {
   createdAt: string
 }
 
+export const PENDING_TOOLS_KEY = '/api/tools/pending'
+export const TOOL_APPROVALS_KEY = '/api/tool-approvals'
+
+const EMPTY: never[] = []
+
+/**
+ * Pending tool proposals + approval requests. Backed by SWR, so every caller
+ * (sidebar, admin layout, notifications) shares one request per key, and
+ * polling pauses while the tab is hidden.
+ */
 export function usePendingTools(intervalMs = 30_000) {
-  const [tools, setTools]     = useState<PendingTool[]>([])
-  const [approvals, setApprovals] = useState<ApprovalRequest[]>([])
+  const tools = useSWR<PendingTool[]>(PENDING_TOOLS_KEY, { refreshInterval: intervalMs })
+  const approvals = useSWR<ApprovalRequest[]>(TOOL_APPROVALS_KEY, { refreshInterval: intervalMs })
 
-  const fetch_ = useCallback(async () => {
-    try {
-      const [toolData, approvalData] = await Promise.all([
-        fetch('/api/tools/pending').then(r => r.ok ? r.json() : []) as Promise<PendingTool[]>,
-        fetch('/api/tool-approvals').then(r => r.ok ? r.json() : []) as Promise<ApprovalRequest[]>,
-      ])
-      setTools(toolData)
-      setApprovals(approvalData)
-    } catch { /* silent */ }
-  }, [])
+  const toolList = tools.data ?? EMPTY
+  const approvalList = approvals.data ?? EMPTY
+  const { mutate: mutateTools } = tools
+  const { mutate: mutateApprovals } = approvals
 
-  useEffect(() => {
-    fetch_()
-    const t = setInterval(fetch_, intervalMs)
-    return () => clearInterval(t)
-  }, [fetch_, intervalMs])
+  const refresh = useCallback(async () => {
+    await Promise.all([mutateTools(), mutateApprovals()])
+  }, [mutateTools, mutateApprovals])
 
-  const count = tools.length + approvals.length
-  return { tools, approvals, count, pendingToolCount: tools.length, pendingApprovalCount: approvals.length, refresh: fetch_ }
+  return {
+    tools: toolList,
+    approvals: approvalList,
+    count: toolList.length + approvalList.length,
+    pendingToolCount: toolList.length,
+    pendingApprovalCount: approvalList.length,
+    refresh,
+  }
 }

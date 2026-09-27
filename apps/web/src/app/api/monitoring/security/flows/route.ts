@@ -1,3 +1,4 @@
+import { gatewayHeaders } from '@/lib/gateway-headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
@@ -88,10 +89,7 @@ export async function GET(request: NextRequest) {
 
   const res = await fetch(`${env.gatewayUrl}/tools/execute`, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${env.gatewayToken ?? ''}`,
-      'Content-Type': 'application/json',
-    },
+    headers: gatewayHeaders(env.gatewayToken ?? ''),
     body: JSON.stringify({
       name: 'elk_flow_search',
       arguments: { query, limit },

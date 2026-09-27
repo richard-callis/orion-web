@@ -3,8 +3,17 @@ set -euo pipefail
 
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Image versions exported by the caller (e.g. .github/workflows/deploy.yml pins
+# the image it just built) must win over any value in .env, which is sourced
+# below. Capture them now and re-export after every `source .env`.
+VERSION_OVERRIDES=""
+for v in ORION_VERSION ORION_WEB_VERSION ORION_GATEWAY_VERSION ORION_VECTOR_VERSION; do
+  if [[ -n "${!v:-}" ]]; then VERSION_OVERRIDES+="export $v=$(printf '%q' "${!v}"); "; fi
+done
+
 # Activate the gitea profile if GIT_PROVIDER is gitea-bundled (or unset, for backwards compat)
 source "$DEPLOY_DIR/.env" 2>/dev/null || true
+eval "$VERSION_OVERRIDES"
 GIT_PROVIDER="${GIT_PROVIDER:-gitea-bundled}"
 PROFILE_FLAGS=""
 if [[ "$GIT_PROVIDER" == "gitea-bundled" ]]; then
@@ -107,6 +116,18 @@ if ! grep -q "^GATEWAY_AUDIT_SECRET=" "$DEPLOY_DIR/.env" || \
   echo "Generated GATEWAY_AUDIT_SECRET."
 fi
 
+# ── Auto-generate ORION_EXECUTOR_TOKEN if missing ──────────────────────────
+# The executor's ONLY credential to ORION (it no longer receives
+# ORION_GATEWAY_TOKEN). ORION accepts it solely for execution records and the
+# execution-room notice — see apps/web/src/lib/executor-scope.ts.
+if ! grep -q "^ORION_EXECUTOR_TOKEN=" "$DEPLOY_DIR/.env" || \
+   grep -q "^ORION_EXECUTOR_TOKEN=$" "$DEPLOY_DIR/.env"; then
+  TOKEN=$(openssl rand -hex 32)
+  sed -i '/^ORION_EXECUTOR_TOKEN=/d' "$DEPLOY_DIR/.env"
+  echo "ORION_EXECUTOR_TOKEN=${TOKEN}" >> "$DEPLOY_DIR/.env"
+  echo "Generated ORION_EXECUTOR_TOKEN."
+fi
+
 # ── Seed NVD_API_KEY into SecurityConfig (Phase 3 PR12) ────────────────────
 # CVE enrichment uses the NIST NVD API. Without a key: 5 req/30s; with: 50.
 # The env var is optional — if absent, enrichNvd() falls back to anon mode.
@@ -207,8 +228,21 @@ if [[ -S /var/run/docker.sock ]]; then
   fi
 fi
 
+# ── Bind address for ORION's direct :3000 port ────────────────────────────────
+# docker-compose.yml publishes :3000 on ORION_BIND_ADDR (default 127.0.0.1)
+# instead of every interface. Remote gateways and first-run setup reach ORION
+# at http://<management-ip>:3000, so existing installs get the management IP.
+if ! grep -q "^ORION_BIND_ADDR=" "$DEPLOY_DIR/.env"; then
+  BIND_ADDR="${MANAGEMENT_IP:-}"
+  [[ -z "$BIND_ADDR" ]] && BIND_ADDR=$(hostname -I 2>/dev/null | awk '{print $1}')
+  BIND_ADDR="${BIND_ADDR:-127.0.0.1}"
+  echo "ORION_BIND_ADDR=${BIND_ADDR}" >> "$DEPLOY_DIR/.env"
+  echo "Set ORION_BIND_ADDR=${BIND_ADDR} (ORION :3000 is published on this address only)."
+fi
+
 # ── Validate required vars ────────────────────────────────────────────────────
 source "$DEPLOY_DIR/.env"
+eval "$VERSION_OVERRIDES"
 MISSING=()
 [[ -z "${GITHUB_ORG:-}" ]]        && MISSING+=("GITHUB_ORG")
 [[ -z "${POSTGRES_PASSWORD:-}" ]] && MISSING+=("POSTGRES_PASSWORD")
@@ -224,7 +258,17 @@ fi
 # ── Pull latest images ────────────────────────────────────────────────────────
 echo ""
 echo "Pulling images..."
-GITHUB_ORG="${GITHUB_ORG}" $COMPOSE pull
+# --ignore-buildable: services with a build: section are handled below, so a
+# not-yet-published image (e.g. orion-minio before its first CI build) can't
+# fail the whole deploy under set -e.
+GITHUB_ORG="${GITHUB_ORG}" $COMPOSE pull --ignore-buildable
+
+# MinIO is built from source (deploy/minio/) and published to GHCR by CI.
+# Prefer the registry image; build it here only if it isn't published yet.
+if ! GITHUB_ORG="${GITHUB_ORG}" $COMPOSE pull minio minio-init; then
+  echo "MinIO images not in the registry yet — building from source (one-off, takes a few minutes)..."
+  GITHUB_ORG="${GITHUB_ORG}" $COMPOSE build minio minio-init
+fi
 
 # ── Rebuild locally-built services ───────────────────────────────────────────
 # These services use build: in docker-compose.yml and are not pushed to a
@@ -426,6 +470,6 @@ else
 fi
 
 echo ""
-echo "IMPORTANT [SOC2]: No automated backup is configured."
-echo "  Schedule backups: crontab -e"
+echo "IMPORTANT [SOC2]: CI deploys take a pre-deploy database dump (backup.sh --pre-deploy),"
+echo "  but no scheduled backup is configured. Schedule one: crontab -e"
 echo "  Add: 0 2 * * * $DEPLOY_DIR/backup.sh >> /var/log/orion-backup.log 2>&1"

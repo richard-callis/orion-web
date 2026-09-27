@@ -32,42 +32,64 @@ const chatMessage_create = vi.fn(async (args: { data: Record<string, unknown> })
 }))
 const sourceHealth_findMany = vi.fn(async () => [] as unknown[])
 
-vi.mock('@/lib/db', () => ({
-  prisma: {
+vi.mock('@/lib/db', () => {
+  const prisma: Record<string, unknown> = {
     environment: { findMany: (...a: unknown[]) => env_findMany(...a) },
     securityEvent: {
       findMany: (...a: unknown[]) => event_findMany(...a),
+      // Orphan (environmentId=null) event count — none in these tests.
+      count: async () => 0,
       updateMany: (...a: unknown[]) => event_updateMany(...a),
       create: async (args: { data: unknown }) => args.data,
     },
     incident: {
       findMany: (...a: unknown[]) => incident_findMany(...a),
+      findFirst: async () => null,
       create: (...a: unknown[]) => incident_create(a[0] as { data: Record<string, unknown> }),
+      update: async (args: { data: unknown }) => args.data,
+      updateMany: async () => ({ count: 1 }),
     },
     chatMessage: {
       create: (...a: unknown[]) => chatMessage_create(a[0] as { data: Record<string, unknown> }),
     },
+    // SOC observable auto-linking (extractAndLinkObservables): no open investigations.
+    investigation: {
+      findMany: async () => [],
+      findFirst: async () => null,
+      create: async (args: { data: unknown }) => args.data,
+    },
+    investigationObservable: { upsert: async () => ({}) },
+    investigationTimeline: { create: async () => ({}), findFirst: async () => null },
+    correlationRule: { findMany: async () => [] },
     sourceHealth: {
       findMany: (...a: unknown[]) => sourceHealth_findMany(...a),
       update: async () => ({}),
     },
-  },
-}))
+  }
+  // Incident creation + event linking run in one transaction.
+  prisma.$transaction = async (fn: (tx: unknown) => unknown) => fn(prisma)
+  return { prisma }
+})
 
 // rule-engine: return one draft per environment so the incident-create branch
 // runs (and with it the Warden-notice + agent-trigger block).
 vi.mock('@/lib/security/rule-engine', () => ({
-  correlateEvents: vi.fn(async (envId: string) => [
-    {
-      ruleName: 'brute_force',
-      severity: 80,
-      rootCauseSummary: 'brute force',
-      attackerKey: '1.2.3.4',
-      hostKey: null,
-      eventIds: ['evt-1'],
-      environmentId: envId,
-    },
-  ]),
+  correlateEvents: vi.fn(async (envId: string) => ({
+    drafts: [
+      {
+        ruleName: 'brute_force',
+        severity: 80,
+        rootCauseSummary: 'brute force',
+        attackerKey: '1.2.3.4',
+        hostKey: null,
+        eventIds: ['evt-1'],
+        environmentId: envId,
+      },
+    ],
+    errorCount: 0,
+    erroredRules: [],
+  })),
+  recordRuleIncident: vi.fn(),
 }))
 
 vi.mock('@/lib/seed-system-epic', () => ({

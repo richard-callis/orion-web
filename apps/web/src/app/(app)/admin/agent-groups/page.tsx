@@ -342,12 +342,12 @@ export default function AgentGroupsPage() {
             )}
           </section>
 
-          {/* Wrench Group Access */}
+          {/* Tool Group Access */}
           <section className="space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Layers size={14} className="text-text-muted" />
-                <h2 className="text-sm font-semibold text-text-primary">Wrench Group Access</h2>
+                <h2 className="text-sm font-semibold text-text-primary">Tool Group Access</h2>
                 <span className="text-xs text-text-muted">({selected.toolAccess.length})</span>
               </div>
               <button onClick={() => { setAddingTool(true); setToolSearch('') }}

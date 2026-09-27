@@ -43,7 +43,9 @@ export { RESERVED_AGENT_NAMES }
  * ManagementToolDef shape (name + description + inputSchema only).
  * Used by openai-runner.ts, ollama-runner.ts, and watcher to build tool lists.
  */
-export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = getAllTools().map(t => ({
+// Room-only tools (availableIn: 'room', see room-tools.ts) are never offered to
+// task agents or human chat — they require a chat-room context.
+export const MANAGEMENT_TOOL_DEFS: ManagementToolDef[] = getAllTools().filter(t => t.availableIn !== 'room').map(t => ({
   name:        t.name,
   description: t.description,
   inputSchema: t.inputSchema as ManagementToolDef['inputSchema'],

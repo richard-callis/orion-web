@@ -1,17 +1,24 @@
 /**
  * GET /api/environments/:id/git-provider
  *
- * Returns the git provider config for a cluster gateway to use when
- * bootstrapping ArgoCD repo registration.
+ * Returns the git credential a cluster gateway uses to register this
+ * environment's repo with ArgoCD.
  *
  * Auth: Bearer gatewayToken (same as heartbeat/sync-status).
+ *
+ * M2: the credential is read-only and scoped to this environment's repo
+ * (lib/environment-git-credentials.ts) — a compromised gateway can no longer
+ * write to every repo in the org. The org-wide token is only returned under the
+ * explicit, opt-in fallback, and is flagged as such.
  *
  * Air-gap design: returns cluster-reachable URLs only (management IP / internal
  * hostnames). Never returns public/Cloudflare URLs — those are browser-only.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { constantTimeCompare } from '@/lib/security/webhook-auth'
 import { getGitProviderConfig } from '@/lib/git-provider'
+import { getGatewayGitCredential, GitCredentialUnavailableError } from '@/lib/environment-git-credentials'
 
 export async function GET(
   req: NextRequest,
@@ -23,7 +30,8 @@ export async function GET(
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const expectedToken = env.gatewayToken
-  if (!expectedToken || auth !== `Bearer ${expectedToken}`) {
+  // SOC2 [M2]: constant-time comparison (was `!==`, a timing oracle on the token)
+  if (!expectedToken || !constantTimeCompare(auth ?? '', `Bearer ${expectedToken}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -32,39 +40,34 @@ export async function GET(
     return NextResponse.json({ error: 'Git provider not configured' }, { status: 404 })
   }
 
-  // Resolve the cluster-reachable URL for the git provider.
-  // For gitea-bundled: use http://<MANAGEMENT_IP>:3002 so traffic stays on the
-  // private network and works in air-gapped deployments. This mirrors how
-  // ORION_CALLBACK_URL uses http://<MANAGEMENT_IP>:3000 for gateway→Orion traffic.
-  // Port 3002 is the host-exposed port for the bundled Gitea container (docker-compose.yml).
-  let url: string
-  if (config.type === 'gitea-bundled') {
-    const managementIp = process.env.MANAGEMENT_IP
-    if (!managementIp) {
-      return NextResponse.json(
-        { error: 'MANAGEMENT_IP not set — cannot derive cluster-reachable Gitea URL' },
-        { status: 500 },
-      )
+  let credential
+  try {
+    credential = await getGatewayGitCredential(env)
+  } catch (err) {
+    if (err instanceof GitCredentialUnavailableError) {
+      return NextResponse.json({ error: err.message }, { status: 409 })
     }
-    url = `http://${managementIp}:3002`
-  } else {
-    // External providers: the user supplied a URL during wizard setup.
-    // config.url is optional for github (uses api.github.com implicitly) but the
-    // bootstrap only needs the base clone URL, not the API URL — use the org pattern.
-    url = config.url ?? (config.type === 'github' ? 'https://github.com' : '')
-  }
-
-  if (!url) {
-    return NextResponse.json(
-      { error: 'No cluster-reachable git URL available' },
-      { status: 404 },
-    )
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(`[git-provider] could not issue git credential for "${env.name}": ${msg}`)
+    return NextResponse.json({ error: 'Could not issue a git credential for this environment' }, { status: 502 })
   }
 
   return NextResponse.json({
     type: config.type,
-    url,
-    token: config.token,
     org: config.org,
+    // Legacy fields for gateways that predate `credential`: they register a
+    // repo-creds Secret using `url` as the URL prefix and `token` as the password.
+    // Pointing `url` at the exact repo keeps that prefix to this one repo.
+    url: credential.repoUrl,
+    token: credential.kind === 'https-token' ? credential.secret : '',
+    credential: {
+      kind: credential.kind,
+      repoUrl: credential.repoUrl,
+      username: credential.username,
+      ...(credential.kind === 'ssh-key'
+        ? { sshPrivateKey: credential.secret }
+        : { password: credential.secret }),
+      orgTokenFallback: credential.orgTokenFallback,
+    },
   })
 }

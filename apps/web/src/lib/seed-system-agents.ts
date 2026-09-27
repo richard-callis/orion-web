@@ -888,32 +888,29 @@ export async function ensureSystemAgents(): Promise<void> {
         },
       })
 
-      // 3. Create NovaDeployment
-      await prisma.novaDeployment.upsert({
-        where:  { novaId_environmentId: { novaId: nova.id, environmentId: null as unknown as string } },
-        update: { status: 'deployed', version: def.nova.version },
-        create: {
-          novaId:    nova.id,
-          agentId:   agent.id,
-          status:    'deployed',
-          version:   def.nova.version,
-          metadata:  { seededAt: new Date().toISOString() } as object,
-        },
-      }).catch(async () => {
-        // Unique constraint doesn't support null environmentId — create directly
-        const existing = await prisma.novaDeployment.findFirst({ where: { novaId: nova.id, agentId: agent.id } })
-        if (!existing) {
-          await prisma.novaDeployment.create({
-            data: {
-              novaId:   nova.id,
-              agentId:  agent.id,
-              status:   'deployed',
-              version:  def.nova.version,
-              metadata: { seededAt: new Date().toISOString() } as object,
-            },
-          })
-        }
+      // 3. Create or refresh the global (environment-less) NovaDeployment.
+      // A compound-unique upsert can't match environmentId = NULL (Postgres
+      // treats NULLs as distinct), so look the row up explicitly.
+      const existingDeployment = await prisma.novaDeployment.findFirst({
+        where: { novaId: nova.id, environmentId: null },
+        select: { id: true },
       })
+      if (existingDeployment) {
+        await prisma.novaDeployment.update({
+          where: { id: existingDeployment.id },
+          data:  { agentId: agent.id, status: 'deployed', version: def.nova.version },
+        })
+      } else {
+        await prisma.novaDeployment.create({
+          data: {
+            novaId:   nova.id,
+            agentId:  agent.id,
+            status:   'deployed',
+            version:  def.nova.version,
+            metadata: { seededAt: new Date().toISOString() } as object,
+          },
+        })
+      }
 
       console.log(`[seed] Created system agent: ${def.nova.displayName} (Nova: ${nova.id})`)
     } catch (err) {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { OrionClient } from './orion-client'
+import { OrionClient, OrionAuthError } from './orion-client'
 
 describe('OrionClient', () => {
   const cfg = {
@@ -90,9 +90,15 @@ describe('OrionClient', () => {
     })
 
     it('throws on non-ok response', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+      const client = new OrionClient(cfg)
+      await expect(client.fetchTools()).rejects.toThrow('Failed to fetch tools: 500')
+    })
+
+    it('throws OrionAuthError on 401', async () => {
       global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401 })
       const client = new OrionClient(cfg)
-      await expect(client.fetchTools()).rejects.toThrow('Failed to fetch tools: 401')
+      await expect(client.fetchTools()).rejects.toBeInstanceOf(OrionAuthError)
     })
   })
 
@@ -119,6 +125,47 @@ describe('OrionClient', () => {
       await vi.advanceTimersByTimeAsync(1050)
       expect(onToolsChanged).not.toHaveBeenCalled()
       client.stopHeartbeat()
+    })
+
+    it('keeps beating after a transient failure', async () => {
+      vi.useFakeTimers()
+      const mockTools = [{ id: 't1' }] as any
+      global.fetch = vi.fn()
+        .mockRejectedValueOnce(new Error('network error'))
+        .mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(mockTools) })
+      const onToolsChanged = vi.fn()
+      const client = new OrionClient(cfg)
+      client.startHeartbeat(onToolsChanged, 1000)
+      await vi.advanceTimersByTimeAsync(2100)
+      expect(onToolsChanged).toHaveBeenCalledWith(mockTools)
+      expect(client.lastHeartbeatAt).toBeGreaterThan(0)
+      client.stopHeartbeat()
+    })
+
+    it('ignores a non-ok heartbeat response instead of treating it as success', async () => {
+      vi.useFakeTimers()
+      global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500, json: () => Promise.resolve([]) })
+      const onToolsChanged = vi.fn()
+      const client = new OrionClient(cfg)
+      client.startHeartbeat(onToolsChanged, 1000)
+      await vi.advanceTimersByTimeAsync(1050)
+      expect(onToolsChanged).not.toHaveBeenCalled()
+      expect(client.lastHeartbeatAt).toBe(0)
+      client.stopHeartbeat()
+    })
+
+    it('stops and reports auth failure on 401', async () => {
+      vi.useFakeTimers()
+      global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401 })
+      const onAuthFailure = vi.fn()
+      const client = new OrionClient(cfg)
+      client.startHeartbeat(vi.fn(), 1000, '1.0', onAuthFailure)
+      await vi.advanceTimersByTimeAsync(1050)
+      expect(onAuthFailure).toHaveBeenCalledOnce()
+      expect(onAuthFailure.mock.calls[0][0]).toBeInstanceOf(OrionAuthError)
+      const calls = (global.fetch as any).mock.calls.length
+      await vi.advanceTimersByTimeAsync(5000)
+      expect((global.fetch as any).mock.calls.length).toBe(calls) // no further beats
     })
   })
 

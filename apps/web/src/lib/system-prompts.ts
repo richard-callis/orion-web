@@ -665,24 +665,33 @@ const DEFAULT_MAP = new Map(PROMPT_DEFAULTS.map(p => [p.key, p]))
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/** Fetch a prompt by key. Falls back to hardcoded default if not in DB yet (and seeds it). */
+/**
+ * Fetch a prompt by key. Falls back to the hardcoded default if not in DB yet
+ * (and seeds it). Throws for a key with no default and no DB row — previously
+ * a typo silently upserted a permanent empty prompt.
+ */
 export async function getPrompt(key: string): Promise<string> {
   const cached = cache.get(key)
   if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.content
 
   const def = DEFAULT_MAP.get(key)
-  const defaultContent = def?.content ?? ''
+  if (!def) {
+    const existing = await prisma.systemPrompt.findUnique({ where: { key } })
+    if (!existing) throw new Error(`Unknown system prompt key: "${key}"`)
+    cache.set(key, { content: existing.content, ts: Date.now() })
+    return existing.content
+  }
 
   const record = await prisma.systemPrompt.upsert({
     where: { key },
     update: {},
     create: {
       key,
-      name: def?.name ?? key,
-      description: def?.description ?? null,
-      category: def?.category ?? 'system',
-      content: defaultContent,
-      variables: (def?.variables ?? null) as unknown as object,
+      name: def.name,
+      description: def.description ?? null,
+      category: def.category ?? 'system',
+      content: def.content,
+      variables: (def.variables ?? null) as unknown as object,
     },
   })
 

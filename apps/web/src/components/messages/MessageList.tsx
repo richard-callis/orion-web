@@ -4,6 +4,8 @@ import {
   Plus, MessageSquare, Trash2, Pencil, Check, X,
   ChevronRight, ChevronDown, GitBranch, Layers, Bot, Bug, Users, Hash,
 } from 'lucide-react'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { useToast } from '@/components/ui/Toast'
 
 // ── Conversation types ──────────────────────────────────────────
 interface Conversation {
@@ -75,12 +77,35 @@ const TYPE_COLORS: Record<string, string> = {
 
 const ROOM_TYPES = ['general', 'ops', 'planning', 'feature', 'task'] as const
 
+/**
+ * Props for a clickable row that contains its own buttons (so it can't be a
+ * <button>): exposes it as a button to assistive tech and makes it
+ * keyboard-activatable with Enter/Space.
+ */
+function rowButton(onActivate: () => void, expanded?: boolean) {
+  return {
+    role: 'button' as const,
+    tabIndex: 0,
+    'aria-expanded': expanded,
+    onClick: onActivate,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.target !== e.currentTarget) return
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        onActivate()
+      }
+    },
+  }
+}
+
 export function MessageList({
   view, onSelect, activeId, onMobileSelect, onCreateNew, onDelete, onRename, onRoomUpdate,
   convos = [], planningConvos = [], agentConvos = [], debugConvos = [],
   epics = [], agents = [],
   rooms = [], roomFilter, onRoomFilterChange,
 }: Props) {
+  const confirmDialog = useConfirm()
+  const toast = useToast()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -162,7 +187,7 @@ export function MessageList({
     <div
       key={c.id}
       className={`group w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${activeId === `c_${c.id}` ? 'bg-accent/10 border-l-2 border-l-accent' : 'hover:bg-bg-raised'}`}
-      onClick={() => { if (editingId !== c.id) { onSelect(`c_${c.id}`); onMobileSelect?.() } }}
+      {...rowButton(() => { if (editingId !== c.id) { onSelect(`c_${c.id}`); onMobileSelect?.() } })}
     >
       <MessageSquare size={14} className="flex-shrink-0 mt-0.5 text-text-muted" />
       <div className="min-w-0 flex-1">
@@ -216,8 +241,9 @@ export function MessageList({
 
   const deleteRoom = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
-    if (!confirm('Delete this chat room and all its messages?')) return
-    await fetch(`/api/chatrooms/${id}`, { method: 'DELETE' })
+    if (!(await confirmDialog({ title: 'Delete chat room?', message: 'This deletes the room and all of its messages.', confirmLabel: 'Delete' }))) return
+    const res = await fetch(`/api/chatrooms/${id}`, { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) { toast.error(`Failed to delete chat room${res ? ` (${res.status})` : ''}`); return }
     onDelete?.(`r_${id}`)
   }
 
@@ -225,7 +251,7 @@ export function MessageList({
     <div
       key={room.id}
       className={`group w-full text-left border-b border-border-subtle transition-colors ${indent ? 'pl-5' : ''} ${activeId === `r_${room.id}` ? 'bg-accent/10 border-l-2 border-l-accent' : 'hover:bg-bg-raised'}`}
-      onClick={() => { if (editingRoomId !== room.id) { onSelect(`r_${room.id}`); onMobileSelect?.() } }}
+      {...rowButton(() => { if (editingRoomId !== room.id) { onSelect(`r_${room.id}`); onMobileSelect?.() } })}
     >
       <div className="flex items-center gap-1.5 px-3 py-2">
         <Hash size={11} className="text-text-muted flex-shrink-0" />
@@ -292,7 +318,7 @@ export function MessageList({
         {planningConvos.length > 0 && (
           <>
             <div className="mx-3 my-1 border-t border-border-subtle" />
-            <div onClick={() => setPlanningOpen(p => !p)} className={`${rowBase} text-text-muted hover:text-text-primary font-medium px-3 py-1`}>
+            <div {...rowButton(() => setPlanningOpen(p => !p), planningOpen)} className={`${rowBase} text-text-muted hover:text-text-primary font-medium px-3 py-1`}>
               {planningOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
               <Layers size={12} className="flex-shrink-0 text-accent" />
               <span className="flex-1">Planning Chats</span>
@@ -305,14 +331,14 @@ export function MessageList({
                   const isOpen = expandedEpics.has(epic.id)
                   return (
                     <div key={epic.id}>
-                      <div onClick={() => toggleEpic(epic.id)} className={`${rowBase} text-text-muted hover:text-text-primary ml-2`}>
+                      <div {...rowButton(() => toggleEpic(epic.id), isOpen)} className={`${rowBase} text-text-muted hover:text-text-primary ml-2`}>
                         {isOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
                         <span className="flex-1 truncate text-[11px]">{epic.title}</span>
                       </div>
                       {isOpen && (
                         <div className="ml-4 border-l border-border-subtle pl-2">
                           {epicConvos.map(c => (
-                            <div key={c.id} onClick={() => onSelect(`c_${c.id}`)} className={`${rowBase} gap-1.5 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
+                            <div key={c.id} {...rowButton(() => onSelect(`c_${c.id}`))} className={`${rowBase} gap-1.5 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
                               <MessageSquare size={10} className="flex-shrink-0" />
                               <span className="flex-1 truncate text-[10px]">{c.title ?? 'Planning chat'}</span>
                             </div>
@@ -327,7 +353,7 @@ export function MessageList({
                                   <span className="truncate">{f.title}</span>
                                 </div>
                                 {fConvos.map(c => (
-                                  <div key={c.id} onClick={() => onSelect(`c_${c.id}`)} className={`${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
+                                  <div key={c.id} {...rowButton(() => onSelect(`c_${c.id}`))} className={`${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
                                     <MessageSquare size={10} className="flex-shrink-0" />
                                     <span className="flex-1 truncate text-[10px]">{c.title ?? 'Planning chat'}</span>
                                   </div>
@@ -341,7 +367,7 @@ export function MessageList({
                   )
                 })}
                 {orphanConvos.map(c => (
-                  <div key={c.id} onClick={() => { onSelect(`c_${c.id}`); onMobileSelect?.() }} className={`${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
+                  <div key={c.id} {...rowButton(() => { onSelect(`c_${c.id}`); onMobileSelect?.() })} className={`${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
                     <MessageSquare size={10} className="flex-shrink-0" />
                     <span className="flex-1 truncate text-[10px]">{c.title ?? 'Planning chat'}</span>
                   </div>
@@ -355,7 +381,7 @@ export function MessageList({
         {agentConvos.length > 0 && (
           <>
             <div className="mx-3 my-1 border-t border-border-subtle" />
-            <div onClick={() => setAgentChatsOpen(p => !p)} className={`${rowBase} text-text-muted hover:text-text-primary font-medium px-3 py-1`}>
+            <div {...rowButton(() => setAgentChatsOpen(p => !p), agentChatsOpen)} className={`${rowBase} text-text-muted hover:text-text-primary font-medium px-3 py-1`}>
               {agentChatsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
               <Bot size={12} className="flex-shrink-0 text-accent" />
               <span className="flex-1">Agent Chats</span>
@@ -376,7 +402,7 @@ export function MessageList({
               return (
                 <>
                   {draftConvos.map(c => (
-                    <div key={c.id} onClick={() => onSelect(`c_${c.id}`)} className={`group ${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
+                    <div key={c.id} {...rowButton(() => onSelect(`c_${c.id}`))} className={`group ${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
                       <MessageSquare size={10} className="flex-shrink-0" />
                       <span className="flex-1 truncate text-[10px]">{c.title ?? 'New agent draft'}</span>
                       <span className="text-[9px] text-text-muted italic group-hover:hidden">draft</span>
@@ -388,7 +414,7 @@ export function MessageList({
                     const isOpen = expandedAgents.has(agent.id)
                     return (
                       <div key={agent.id}>
-                        <div onClick={() => toggleAgent(agent.id)} className={`${rowBase} text-text-muted hover:text-text-primary ml-2`}>
+                        <div {...rowButton(() => toggleAgent(agent.id), isOpen)} className={`${rowBase} text-text-muted hover:text-text-primary ml-2`}>
                           {isOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
                           <span className="flex-1 truncate text-[11px]">{agent.name}</span>
                           <span className="text-[9px] text-text-muted">{convs.length}</span>
@@ -396,7 +422,7 @@ export function MessageList({
                         {isOpen && (
                           <div className="ml-4 border-l border-border-subtle pl-2">
                             {convs.map(c => (
-                              <div key={c.id} onClick={() => onSelect(`c_${c.id}`)} className={`group ${rowBase} gap-1.5 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
+                              <div key={c.id} {...rowButton(() => onSelect(`c_${c.id}`))} className={`group ${rowBase} gap-1.5 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
                                 <MessageSquare size={10} className="flex-shrink-0" />
                                 <span className="flex-1 truncate text-[10px]">{c.title ?? (c.metadata.agentChat ? 'Chat' : 'Plan')}</span>
                               </div>
@@ -407,7 +433,7 @@ export function MessageList({
                     )
                   })}
                   {orphans.map(c => (
-                    <div key={c.id} onClick={() => { onSelect(`c_${c.id}`); onMobileSelect?.() }} className={`group ${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
+                    <div key={c.id} {...rowButton(() => { onSelect(`c_${c.id}`); onMobileSelect?.() })} className={`group ${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
                       <MessageSquare size={10} className="flex-shrink-0" />
                       <span className="flex-1 truncate text-[10px]">{c.title ?? 'Chat'}</span>
                     </div>
@@ -422,14 +448,14 @@ export function MessageList({
         {debugConvos.length > 0 && (
           <>
             <div className="mx-3 my-1 border-t border-border-subtle" />
-            <div onClick={() => setDebugChatsOpen(p => !p)} className={`${rowBase} text-text-muted hover:text-text-primary font-medium px-3 py-1`}>
+            <div {...rowButton(() => setDebugChatsOpen(p => !p), debugChatsOpen)} className={`${rowBase} text-text-muted hover:text-text-primary font-medium px-3 py-1`}>
               {debugChatsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
               <Bug size={12} className="flex-shrink-0 text-accent" />
               <span className="flex-1">Debug Chats</span>
               <span className="text-[10px] text-text-muted">{debugConvos.length}</span>
             </div>
             {debugChatsOpen && debugConvos.map(c => (
-              <div key={c.id} onClick={() => onSelect(`c_${c.id}`)} className={`group ${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
+              <div key={c.id} {...rowButton(() => onSelect(`c_${c.id}`))} className={`group ${rowBase} gap-1.5 ml-2 ${activeId === `c_${c.id}` ? activeRow : idleRow}`}>
                 <MessageSquare size={10} className="flex-shrink-0" />
                 <span className="flex-1 truncate text-[10px]">{c.title ?? 'Debug chat'}</span>
                 <button onClick={(e) => { e.stopPropagation(); removeConvo(e, c.id) }} className="hidden group-hover:block p-0.5 rounded text-text-muted hover:text-red-400 hover:bg-red-400/10 flex-shrink-0"><Trash2 size={10} /></button>

@@ -84,6 +84,8 @@ data:
         hosts => ["http://elasticsearch-client:9200"]
         index => "%{[type]}-%{+YYYY.MM.dd}"
         user => "elastic"
-        password => "orion-elk-default"
+        # Logstash substitutes ${VAR} from the environment (set from the
+        # elasticsearch-credentials Secret in logstash-deployment.yaml).
+        password => "${ELASTIC_PASSWORD}"
       }
     }

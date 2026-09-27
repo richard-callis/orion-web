@@ -1,9 +1,6 @@
-import { promisify } from 'util'
-import { execFile } from 'child_process'
 import { redactSensitive } from '../lib/redact.js'
-import { verifyDecisionToken } from '../lib/decision-token.js'
-
-const exec = promisify(execFile)
+import { verifyDecisionToken, consumeDecisionToken } from '../lib/decision-token.js'
+import { run } from '../lib/run.js'
 
 // ── Validation helpers ────────────────────────────────────────────────────────
 
@@ -496,7 +493,9 @@ const readToolDefs = ([
       }
 
       try {
-        const { stdout } = await exec('kubectl', kargs, { timeout: 30_000 })
+        // maxOutput 0: the JSON must stay parseable; maxBuffer (16 MB) bounds it.
+        // Node's 1 MB default made cluster-wide event lists fail on busy clusters.
+        const { stdout } = await run('kubectl', kargs, { timeoutMs: 30_000, maxOutput: 0 })
         // Validate JSON before returning — kubectl can occasionally emit a
         // trailing newline + warning to stdout depending on version.
         const trimmed = stdout.trim()
@@ -597,16 +596,20 @@ const readToolDefs = ([
 // target arg, so it cannot be replayed across tools or targets. The token is
 // intentionally NOT exposed in the tool's inputSchema — agents must not see or
 // forge it; only action-service can produce one.
+//
+// Each token is single-use (replay cache keyed by actionType + auditId), and
+// `params` binds secondary arguments such as scope/duration.
 function checkDecisionToken(
   args: Record<string, unknown>,
-  expected: { actionType: string; target: string },
+  expected: Parameters<typeof verifyDecisionToken>[1],
 ): string | null {
   const token = args.__decision_token
   if (typeof token !== 'string' || token.length === 0) {
     return jsonStr({ error: 'security write tool requires __decision_token from action-service' })
   }
   try {
-    verifyDecisionToken(token, expected)
+    const payload = verifyDecisionToken(token, expected)
+    consumeDecisionToken(payload)
     return null
   } catch (e) {
     return jsonStr({ error: `decision token rejected: ${e instanceof Error ? e.message : 'invalid'}` })
@@ -634,9 +637,15 @@ const writeToolDefs = ([
     async execute(args: Record<string, unknown>) {
       // Defense-in-depth: gateway refuses direct write-tool calls without a
       // fresh action-service-signed token bound to this actionType + target.
+      const scope = String(args.scope ?? 'ip')
+      const duration = String(args.duration ?? '24h')
       const tokenErr = checkDecisionToken(args, {
         actionType: 'crowdsec_decision_create',
         target: String(args.ip ?? ''),
+        params: {
+          scope: { value: scope, default: 'ip' },
+          duration: { value: duration, default: '24h' },
+        },
       })
       if (tokenErr) return tokenErr
 
@@ -644,8 +653,6 @@ const writeToolDefs = ([
       if (!api) return 'CROWDSEC_API environment variable not configured'
       const key = process.env.CROWDSEC_API_KEY ?? ''
       const ipRaw = args.ip
-      const scope = String(args.scope ?? 'ip')
-      const duration = String(args.duration ?? '24h')
       const reason = String(args.reason ?? 'blocked by security tool')
 
       // ── Input validation (structured error, no HTTP call) ──────────────
@@ -701,14 +708,16 @@ const writeToolDefs = ([
       // Defense-in-depth: gateway refuses direct write-tool calls without a
       // fresh action-service-signed token bound to this actionType + target.
       //
-      // The action-service routes ActionRequest.target through as `decisionId`
-      // for this tool (see apps/web/.../security/actions/route.ts), so the
-      // token's `target` claim must match `decisionId`. The tool body itself
-      // continues to operate on `ip` for backward compatibility with the
-      // pre-existing CrowdSec LAPI shape.
+      // The token's `target` claim is bound to `ip` — the value this tool actually
+      // deletes. It used to be checked against `decisionId` while the DELETE used
+      // `ip`, so a valid token for one decision could unban any address.
+      // (The action-service sends ip === decisionId === target, so this is
+      // backward compatible.)
+      const scope = String(args.scope ?? 'ip')
       const tokenErr = checkDecisionToken(args, {
         actionType: 'crowdsec_decision_delete',
-        target: String(args.decisionId ?? ''),
+        target: String(args.ip ?? ''),
+        params: { scope: { value: scope, default: 'ip' } },
       })
       if (tokenErr) return tokenErr
 
@@ -716,7 +725,9 @@ const writeToolDefs = ([
       if (!api) return 'CROWDSEC_API environment variable not configured'
       const key = process.env.CROWDSEC_API_KEY ?? ''
       const ip = String(args.ip)
-      const scope = String(args.scope ?? 'ip')
+      if (!VALID_CROWDSEC_SCOPES.has(scope)) {
+        return jsonStr({ error: `validation: scope must be one of ${[...VALID_CROWDSEC_SCOPES].join(', ')}` })
+      }
       const url = `${api.replace(/\/+$/, '')}/api/v1/decisions?type=${scope}&value=${encodeURIComponent(ip)}`
       const res = await fetch(url.toString(), {
         method: 'DELETE',

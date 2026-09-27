@@ -10,6 +10,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 
 import { OrionClient } from './orion-client.js'
+import { logger } from './lib/logger.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -83,30 +84,48 @@ export class HooksEngine {
   private orion: OrionClient
   private hooks: Array<{ id: string; name: string; spec: any }> = []
   private interval: ReturnType<typeof setInterval> | null = null
+  private warnedInactive = false
 
   constructor(orion: OrionClient) {
     this.orion = orion
   }
 
   async start(environmentId: string): Promise<void> {
-    // Poll for hook definitions from ORION
-    this.interval = setInterval(async () => {
-      await this.refresh(environmentId)
-    }, 30000) // 30 second poll
+    // Load definitions immediately, then poll every 30s. Errors are caught here:
+    // an unhandled rejection from a failed fetch (any ORION blip) used to crash
+    // the whole gateway process.
+    const tick = () => this.refresh(environmentId).catch(err =>
+      logger.warn({ err: err instanceof Error ? err.message : String(err) }, '[HooksEngine] refresh failed'),
+    )
+    void tick()
+    this.interval = setInterval(tick, 30000)
 
-    // Start event listeners
     this.startEventListeners()
   }
 
   async refresh(environmentId: string): Promise<void> {
     // Fetch active hooks from ORION via OrionClient.fetchNebula(environmentId)
     const response = await this.orion.fetchNebula(environmentId)
-    this.hooks = (response as any).filter((h: any) => h.isInstalled && h.category === 'hook')
+    const hooks = (Array.isArray(response) ? response : []) as any[]
+    this.hooks = hooks.filter((h: any) => h.isInstalled && h.category === 'hook')
+    if (this.hooks.length > 0 && !this.warnedInactive) {
+      this.warnedInactive = true
+      logger.warn(
+        { count: this.hooks.length },
+        '[HooksEngine] hooks are defined in ORION but NOT ACTIVE on this gateway — no event sources are wired, so they will never fire',
+      )
+    }
   }
 
+  /**
+   * No event sources are wired yet. The trigger types (pod_crashloop, pod_oom,
+   * node_disk_full, sync_degraded, tool_execution) have no producer in the
+   * gateway, and silently auto-running remediation commands from a half-wired
+   * source would be riskier than not firing. handleEvent() stays public so a
+   * producer can be connected deliberately later.
+   */
   private startEventListeners(): void {
-    // Listen for kubectl events, ArgoCD sync events, etc.
-    // For now, implement a simple event dispatch
+    logger.info('[HooksEngine] hook event dispatch is not active (no event sources wired); hook definitions are loaded for visibility only')
   }
 
   async handleEvent(event: HookEvent): Promise<void> {

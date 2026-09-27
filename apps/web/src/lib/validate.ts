@@ -162,7 +162,7 @@ export const CreateUserSchema = z.object({
 export const UpdateUserSchema = z.object({
   username: z.string().min(3).max(100).optional(),
   email: z.string().email().optional(),
-  password: z.string().min(8).optional(),
+  password: z.string().min(12, 'Password must be at least 12 characters').optional(),
   name: z.string().max(200).optional(),
   role: z.enum(['admin', 'user', 'readonly']).optional(),
   active: z.boolean().optional(),

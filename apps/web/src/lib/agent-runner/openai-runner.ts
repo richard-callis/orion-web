@@ -1,5 +1,7 @@
 import type { AgentRunner, AgentEvent, TaskRunContext, GatewayTool } from './types'
 import { GatewayClient } from './gateway-client'
+import { agentActor } from '../gateway-headers'
+import { runSignal, describeRunnerError, throwIfAborted } from './abort'
 import { getPrompt, interpolate } from '@/lib/system-prompts'
 import { validateToolArgs } from '@/lib/tool-registry'
 import { checkToolPermission } from '@/lib/tool-permissions'
@@ -64,9 +66,9 @@ export const openaiRunner: AgentRunner = {
     let gatewayTools: GatewayTool[] = []
     let gateway: GatewayClient | null = null
     if (ctx.gateway) {
-      gateway = new GatewayClient(ctx.gateway.url, ctx.gateway.token)
+      gateway = new GatewayClient(ctx.gateway.url, ctx.gateway.token, agentActor(ctx.agentId))
       try {
-        gatewayTools = await gateway.listTools()
+        gatewayTools = await gateway.listTools(ctx.signal)
       } catch (err) {
         yield { type: 'text', content: `⚠ Could not reach gateway: ${err instanceof Error ? err.message : err}\nProceeding without tools.\n` }
       }
@@ -81,7 +83,8 @@ export const openaiRunner: AgentRunner = {
       },
     }))
 
-    const openaiToolDefs = [
+    // Plan-only turns get no tools at all — the model can only describe what it would do.
+    const openaiToolDefs = ctx.planOnly ? [] : [
       ...mgmtToolDefs,
       ...gatewayTools.map(t => ({
         type: 'function',
@@ -114,6 +117,7 @@ export const openaiRunner: AgentRunner = {
     try {
       while (turns < MAX_TURNS) {
         turns++
+        throwIfAborted(ctx.signal)
         const trimmedMessages = trimConversationHistory(messages)
         const res = await fetch(`${baseUrl}/v1/chat/completions`, {
           method: 'POST',
@@ -128,7 +132,7 @@ export const openaiRunner: AgentRunner = {
             ...(maxTokens !== null && { max_tokens: maxTokens }),
             ...(openaiToolDefs.length > 0 && { tools: openaiToolDefs }),
           }),
-          signal: AbortSignal.timeout(timeoutSecs * 1000),
+          signal: runSignal(ctx.signal, timeoutSecs * 1000),
         })
 
         if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`)
@@ -144,6 +148,13 @@ export const openaiRunner: AgentRunner = {
         // Handle tool calls
         if (assistantMsg.tool_calls?.length) {
           const toolCalls = assistantMsg.tool_calls
+
+          // Surface any text the model wrote alongside its tool calls (typically
+          // the <plan>) BEFORE the tool_call events, so the consumer's plan gate
+          // can see it. Previously this content was never yielded at all.
+          if (assistantMsg.content) {
+            yield { type: 'text', content: assistantMsg.content }
+          }
 
           // Helper: execute a single tool call and return { toolCall, result }
           const executeToolCall = async (toolCall: typeof toolCalls[number]): Promise<{ toolCall: typeof toolCalls[number]; result: string }> => {
@@ -169,6 +180,8 @@ export const openaiRunner: AgentRunner = {
               fn.name,
               ctx.agentId ?? null,
               ctx.environmentId ?? null,
+              undefined,
+              { taskId: ctx.taskId },
             )
             if (!permission.allowed) {
               return { toolCall, result: `Permission denied for tool '${fn.name}': ${permission.reason ?? 'Tool not permitted for this agent'}. Contact an admin to grant access.` }
@@ -180,7 +193,7 @@ export const openaiRunner: AgentRunner = {
             } else if (gateway) {
               try {
                 const args = JSON.parse(argsRaw)
-                result = await gateway.executeTool(fn.name, args)
+                result = await gateway.executeTool(fn.name, args, ctx.signal)
               } catch (err) {
                 result = `Error: ${err instanceof Error ? err.message : String(err)}`
               }
@@ -195,10 +208,16 @@ export const openaiRunner: AgentRunner = {
           const parallelCalls = toolCalls.filter(tc => isParallelSafe(tc.function.name))
           const sequentialCalls = toolCalls.filter(tc => !isParallelSafe(tc.function.name))
 
-          // Run parallel-safe tools concurrently
+          // Announce every parallel-safe call BEFORE any of them executes. The
+          // consumer (worker plan gate) stops iterating the generator when it
+          // must pause for approval, so if it stops on any of these yields none
+          // of the batch runs. Results are then yielded in the same order, which
+          // keeps the worker's FIFO tool_call → tool_result pairing intact.
+          for (const toolCall of parallelCalls) {
+            yield { type: 'tool_call', tool: toolCall.function.name, args: toolCall.function.arguments }
+          }
           const parallelResults = await Promise.all(parallelCalls.map(tc => executeToolCall(tc)))
           for (const { toolCall, result } of parallelResults) {
-            yield { type: 'tool_call', tool: toolCall.function.name, args: toolCall.function.arguments }
             yield { type: 'tool_result', tool: toolCall.function.name, result }
             messages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
           }
@@ -231,7 +250,7 @@ export const openaiRunner: AgentRunner = {
       }
       yield { type: 'done' }
     } catch (err) {
-      yield { type: 'error', error: err instanceof Error ? err.message : String(err) }
+      yield { type: 'error', error: describeRunnerError(err) }
     }
   },
 }

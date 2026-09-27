@@ -5,7 +5,8 @@
  * appropriate runner (Claude or Ollama), routing tool calls through the
  * environment's gateway.
  *
- * Started by entrypoint.sh as: node worker.js &
+ * Started by entrypoint.sh (node worker.js). Owns all scheduled/background
+ * jobs so they run once per deployment rather than once per web replica.
  */
 
 import { createHash } from 'crypto'
@@ -19,7 +20,7 @@ import { getSystemRooms } from './lib/seed-system-epic'
 import { getPrompt } from './lib/system-prompts'
 import { resolveAgentGateway } from './lib/agent-gateway'
 import { getAgentsMd } from './lib/agents-md'
-import { startDream } from './lib/dream'
+import { startDream, stopDream } from './lib/dream'
 import { matchAndInjectSkills } from './lib/claude'
 import { resolveAgentPrimaryEnvironmentId } from './lib/skill-tools'
 import { createTrace } from './lib/langfuse'
@@ -43,81 +44,25 @@ import { detectGitOpsDrift } from './jobs/gitops-drift'
 import { runScheduler } from './jobs/task-scheduler'
 import { syncCrowdSecDecisions } from './lib/security/crowdsec-bouncer'
 import { shouldFederate, dispatchToSpoke } from './lib/federation'
+import { isAbortErrorMessage } from './lib/agent-runner/abort'
+import { recoverStalledJobs } from './lib/job-runner'
+import { registerScheduledJobs, stopScheduledJobs } from './jobs/scheduled-jobs'
+import {
+  WORKER_ID,
+  claimTask,
+  heartbeatTask,
+  releaseTaskClaim,
+  staleInProgressWhere,
+  TASK_HEARTBEAT_INTERVAL_MS,
+} from './workers/task-claim'
 
 // Configurable via SystemSetting — worker.pollIntervalMs and worker.maxConcurrent
 // so operators can tune throughput without redeploying.
 let POLL_INTERVAL_MS = 15_000
 let MAX_CONCURRENT   = 3
 
-// SOC2: [C-001] Maximum length per context note to prevent context overflow attacks
+// Maximum length of a knowledge-base note written by the worker (outcomes, watcher state)
 const MAX_NOTE_LENGTH = 8000
-
-/**
- * Sanitize llm-context note content before injecting into system prompts (SOC2: [C-001]).
- * Also exported via lib/sanitize-context.ts for use in the vector-search retrieval path.
- *
- * Mitigates prompt injection attacks where a malicious user could inject
- * system-level instructions through note content (e.g., "Ignore previous instructions").
- *
- * Strategy:
- * - Strip known injection patterns
- * - Add clear boundary markers so LLMs distinguish data from instructions
- * - Truncate overly long notes
- * - Log warnings for suspicious content
- */
-function sanitizeContextNote(title: string, content: string): string {
-  // Known prompt injection patterns (case-insensitive)
-  const INJECTION_PATTERNS = [
-    /^\s*(ignore\s+(previous|above|prior)\s+(instructions|prompts|context|system))/im,
-    /^\s*(you\s+are\s+now)/im,
-    /^\s*(from\s+now\s+on)/im,
-    /^\s*(override\s+(all|the)?\s*(system|previous|original)\s*(instructions|prompt|rules|behavior))/im,
-    /^\s*(do\s+not\s+(follow|obey|respond))/im,
-    /^\s*(disregard\s+(all|the)?\s*(instructions|previous|context))/im,
-    /^\s*(begin\s+(new|all)\s*(instructions|system))/im,
-    /^\s*(you\s+have\s+(been|been)?\s*(new|been))\s+role/im,
-    /^\s*(change\s+(your|the)?\s*(role|persona|identity))/im,
-    /^\s*(reveal|print|output|show|display|dump|list)\s+(your|the)?\s*(system|original|full|complete)\s*(prompt|instructions|rules|context)/im,
-    /^\s*(show\s+me\s+(your|the|this))\s+(prompt|instructions|context)/im,
-  ]
-
-  // Check for injection patterns and warn
-  for (const pattern of INJECTION_PATTERNS) {
-    if (pattern.test(content)) {
-      err(`[C-001] Potential prompt injection detected in note "${title}" — stripping suspicious lines`)
-      // Strip the matching line
-      content = content.split('\n')
-        .filter((line: any) => !INJECTION_PATTERNS.some((p: any) => p.test(line)))
-        .join('\n')
-    }
-  }
-
-  // Truncate if too long
-  if (content.length > MAX_NOTE_LENGTH) {
-    content = content.slice(0, MAX_NOTE_LENGTH) + '\n\n[Note truncated — exceeded maximum length]'
-    err(`[C-001] Context note "${title}" truncated to ${MAX_NOTE_LENGTH} chars`)
-  }
-
-  // Escape markdown that could break the prompt structure
-  content = content.replace(/^---+$/gm, '---') // normalize horizontal rules
-
-  return content
-}
-
-/**
- * Build sanitized knowledge base context from llm-context notes.
- * Returns a sanitized string to append to the system prompt.
- */
-function buildWikiContext(notes: Array<{ title: string; content: string }>): string {
-  if (notes.length === 0) return ''
-
-  const sanitizedNotes = notes.map((n: any) => {
-    const sanitizedContent = sanitizeContextNote(n.title, n.content)
-    return `### ${n.title}\n${sanitizedContent}`
-  }).join('\n\n---\n\n')
-
-  return `\n\n---\n## Trusted Knowledge Base\n${sanitizedNotes}\n---\n## End Trusted Knowledge Base\n\n`
-}
 
 // ── Role-aware tool grouping ────────────────────────────────────────────────────
 // Instead of injecting the full flat tool inventory on every task, detect the task
@@ -193,20 +138,48 @@ const runningWatchers = new Set<string>()
 
 // Overlap guards for periodic jobs — prevents a slow run stacking on itself
 // (e.g. a 15s ELK poll that takes >15s produces competing cursor updates).
-let runningGitOpsSync = false
-let runningCorrelator = false
-let runningK8sPoller = false
-let runningElkPoller = false
-let runningNtopngPoller = false
-let runningVulnScan = false
-let runningDriftDetector = false
-let runningScheduler = false
-let runningGoalHeartbeat = false
-let runningFedPoller = false
+const gitOpsSyncGuard          = { running: false }
+const correlatorGuard          = { running: false }
+const k8sPollerGuard           = { running: false }
+const elkPollerGuard           = { running: false }
+const ntopngPollerGuard        = { running: false }
+const crowdSecGuard            = { running: false }
+const vulnScanGuard            = { running: false }
+const driftDetectorGuard       = { running: false }
+const schedulerGuard           = { running: false }
+const goalHeartbeatGuard       = { running: false }
+const fedPollerGuard           = { running: false }
+const stuckRecoveryGuard       = { running: false }
+const approvalEscalationGuard  = { running: false }
+let runningPoll = false
+
+// Set once shutdown begins: no new tasks are claimed and no periodic job starts.
+let stopping = false
+// Every periodic timer the worker owns, so shutdown can clear them all.
+const intervalHandles: ReturnType<typeof setInterval>[] = []
+
+/** setInterval that is tracked for shutdown and skipped once stopping. */
+function every(ms: number, fn: () => void): void {
+  intervalHandles.push(setInterval(() => { if (!stopping) fn() }, ms))
+}
+
+/** Run `fn` unless a previous run guarded by `guard` is still in flight. */
+function guarded(guard: { running: boolean }, label: string, fn: () => Promise<unknown>): void {
+  if (guard.running) return
+  guard.running = true
+  fn().catch(e => err(`${label} failed: ${e}`)).finally(() => { guard.running = false })
+}
 
 const TASK_TIMEOUT_MS = 60 * 60 * 1000 // 60 minutes
+const WATCHER_TIMEOUT_MS = 30 * 60 * 1000 // 30 minutes per watcher run
 
+/**
+ * Whether a failure may be retried. Client-side aborts/timeouts are terminal:
+ * the run may have been cut off after tools with side effects already ran, and
+ * a retry would execute them again.
+ */
 function isTransientError(errorMessage: string): boolean {
+  if (isAbortErrorMessage(errorMessage)) return false
   const transientPatterns = [
     'ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED',
     'rate_limit', '429', '503', '502',
@@ -221,10 +194,15 @@ async function recoverStuckTasks() {
   const setting = await prisma.systemSetting.findUnique({ where: { key: 'worker.stuckTaskMinutes' } }).catch(() => null)
   const stuckMinutes = Math.max(10, parseInt(String(setting?.value ?? '30'), 10) || 30)
   const stuckCutoff = new Date(Date.now() - stuckMinutes * 60 * 1000)
+  // Claimed tasks are recovered once their owner stops heartbeating; legacy /
+  // externally-set in_progress rows with no heartbeat fall back to updatedAt.
   const stuck = await prisma.task.findMany({
-    where: { status: 'in_progress', updatedAt: { lt: stuckCutoff } }
+    where: staleInProgressWhere(new Date(), stuckCutoff),
+    take: 500, // bounded; federated rows are skipped in-loop, so leave headroom
   })
   for (const task of stuck) {
+    // Federated tasks run on a spoke; pollFederatedTasks owns their lifecycle.
+    if ((task.metadata as Record<string, unknown> | null)?.federated === true) continue
     // BUG 5 fix: `Task.updatedAt` is only bumped on status transitions, not on
     // individual tool calls — a task legitimately running for 30-60 minutes
     // (well within TASK_TIMEOUT_MS's 60-minute allowance) would otherwise look
@@ -251,16 +229,26 @@ async function recoverStuckTasks() {
     const MAX_RECOVERY = 2
     const newStatus = retries < MAX_RECOVERY ? 'pending' : 'failed'
     const newMeta = { ...(currentMeta as object ?? {}), recoveryCount: retries + 1 }
-    await prisma.task.update({
-      where: { id: task.id },
-      data: { status: newStatus, assignedAgent: newStatus === 'pending' ? task.assignedAgent : null, metadata: newMeta as any }
+    // Compare-and-set on the stale claim so a worker that just resumed
+    // heartbeating (or another recovery pass) doesn't get clobbered.
+    const recovered = await prisma.task.updateMany({
+      where: { id: task.id, status: 'in_progress', claimedBy: task.claimedBy, heartbeatAt: task.heartbeatAt },
+      data: {
+        status: newStatus,
+        assignedAgent: newStatus === 'pending' ? task.assignedAgent : null,
+        metadata: newMeta as object,
+        claimedBy: null,
+        claimedAt: null,
+        heartbeatAt: null,
+      },
     })
+    if (recovered.count === 0) continue
     await prisma.taskEvent.create({
       data: {
         taskId: task.id,
         eventType: 'system',
         content: newStatus === 'pending'
-          ? `Task re-queued after crashed worker (${stuckMinutes}min inactivity). Recovery attempt ${retries + 1}/${MAX_RECOVERY}.`
+          ? `Task re-queued after its worker (${task.claimedBy ?? 'unknown'}) stopped responding. Recovery attempt ${retries + 1}/${MAX_RECOVERY}.`
           : `Task failed after ${MAX_RECOVERY} recovery attempts. Use orion_reopen_task to retry manually.`,
         agentId: null
       }
@@ -411,9 +399,20 @@ async function runReviewerCheck(
 
 // ── Core task runner ───────────────────────────────────────────────────────────
 
+/**
+ * Execute a task. The caller must already have claimed it via claimTask(), so
+ * the row is in_progress and owned by this worker; every early-exit path either
+ * moves it to another status or releases the claim.
+ */
 async function runTask(taskId: string): Promise<void> {
   runningTasks.add(taskId)
   const startedAt = Date.now()
+
+  // Liveness: stuck-task recovery keys off heartbeatAt, not updatedAt, so a
+  // long but healthy run is never mistaken for an orphan.
+  const heartbeatHandle = setInterval(() => {
+    heartbeatTask(taskId).catch(e => err(`Heartbeat failed for task ${taskId}: ${e}`))
+  }, TASK_HEARTBEAT_INTERVAL_MS)
 
   const taskAbort = new AbortController()
   const timeoutHandle = setTimeout(() => {
@@ -448,6 +447,7 @@ async function runTask(taskId: string): Promise<void> {
 
     if (!task?.agent) {
       err(`Task ${taskId} has no agent — skipping`)
+      await releaseTaskClaim(taskId)
       return
     }
 
@@ -457,6 +457,7 @@ async function runTask(taskId: string): Promise<void> {
 
     if (meta.archived === true) {
       err(`Task ${taskId} assigned to archived agent "${agent.name}" — skipping`)
+      await releaseTaskClaim(taskId)
       return
     }
 
@@ -487,7 +488,8 @@ async function runTask(taskId: string): Promise<void> {
       ? `${toolList}\n\nAdditional context available via knowledge_load_context(query). Other tools exist beyond this scoped list — call knowledge_search or escalate if you need a capability not shown here.`
       : toolList
     const toolsPreamble = await getPrompt('system.task-runner-tools')
-    const injectedPreamble = toolsPreamble.replace('{{toolList}}', toolListWithHint)
+    // Replacer callback so `$&`, `$'` etc. in the tool list are inserted literally.
+    const injectedPreamble = toolsPreamble.replace('{{toolList}}', () => toolListWithHint)
 
     // Fetch AGENTS.md from the environment's Gitea repo (if linked)
     const agentsMd = agentGw?.environmentId
@@ -548,7 +550,7 @@ async function runTask(taskId: string): Promise<void> {
     const budgetLockToken = await acquireBudgetLock(agent.id)
     if (budgetLockToken === null) {
       // Another task holds the budget lock for this agent — re-queue and retry later.
-      await prisma.task.update({ where: { id: taskId }, data: { status: 'pending' } })
+      await releaseTaskClaim(taskId)
       log(`Task "${task.title}" (${taskId}) deferred — budget lock held by another task`)
       return
     }
@@ -620,8 +622,8 @@ async function runTask(taskId: string): Promise<void> {
     } catch (fedErr) {
       err(`Federation check for task ${taskId} failed (non-fatal): ${fedErr instanceof Error ? fedErr.message : String(fedErr)}`)
     }
-    // Mark task as in progress
-    await prisma.task.update({ where: { id: taskId }, data: { status: 'in_progress' } })
+    // Already in_progress since claimTask(); refresh liveness before the run.
+    await heartbeatTask(taskId).catch(() => false)
 
     // Create a conversation to hold the task's AI activity
     const conversation = await prisma.conversation.create({
@@ -665,6 +667,7 @@ async function runTask(taskId: string): Promise<void> {
         definitions: MANAGEMENT_TOOL_DEFS,
         execute: (name, argsRaw) => executeManagedTool(name, argsRaw, agent.id),
       },
+      signal: taskAbort.signal,
     }
 
     const runner = createRunner(modelId)
@@ -699,7 +702,35 @@ async function runTask(taskId: string): Promise<void> {
     // Inject checkpoints into ctx so runners can replay without re-executing tools
     ctx.checkpoints = checkpoints.size > 0 ? checkpoints : undefined
 
-    for await (const event of runner.run(ctx)) {
+    // Plan gate for runners that execute tools internally. The claude:* sidecar
+    // runs the whole tool loop over MCP and only reports text/usage, so the
+    // tool_call interception below never fires for it. Instead run a separate
+    // plan-only turn (no tools) and gate on that plan before execution starts.
+    // No parseable plan fails closed: it is paused for human review.
+    const runnerExecutesToolsInternally = modelId === 'claude' || modelId.startsWith('claude:')
+    if (planBeforeExecute && runnerExecutesToolsInternally) {
+      for await (const event of runner.run({ ...ctx, planOnly: true })) {
+        if (event.type === 'text') outputText += event.content
+        else if (event.type === 'usage') {
+          totalInputTokens  += event.inputTokens
+          totalOutputTokens += event.outputTokens
+        } else if (event.type === 'error') throw new Error(event.error)
+      }
+      if (outputText) {
+        await prisma.message.create({
+          data: { conversationId: conversation.id, role: 'assistant', content: outputText },
+        }).catch(e => err(`[worker] plan message write failed: ${e instanceof Error ? e.message : e}`))
+      }
+      const plan = parsePlan(outputText)
+      if (!plan || planRequiresApproval(plan)) {
+        pausedForApproval = true
+      } else {
+        await logTaskEvent(taskId, 'plan_auto_approved', `Risk=${plan.riskLevel ?? 'unknown'} — proceeding without human approval.\n\n${plan.raw}`, agent.id)
+        ctx.taskPlan = ctx.taskPlan ? `${ctx.taskPlan}\n\n${plan.raw}` : plan.raw
+      }
+    }
+
+    if (!pausedForApproval) for await (const event of runner.run(ctx)) {
       // Check for task-level abort (60-minute timeout)
       if (taskAbort.signal.aborted) {
         throw new Error('Task exceeded maximum runtime of 60 minutes and was automatically terminated.')
@@ -1017,7 +1048,15 @@ async function runTask(taskId: string): Promise<void> {
       const nextRetryAt = new Date(Date.now() + delayMs)
       await prisma.task.update({
         where: { id: taskId },
-        data: { status: 'pending', retryCount: newRetryCount, nextRetryAt },
+        data: {
+          status: 'pending',
+          retryCount: newRetryCount,
+          nextRetryAt,
+          claimedBy: null,
+          claimedAt: null,
+          heartbeatAt: null,
+          metadata: { ...failMeta, remediation_attempts: remediationAttempts } as object,
+        },
       }).catch(e => err(`[worker] task retry status update failed for ${taskId}: ${e instanceof Error ? e.message : e}`))
       await logTaskEvent(taskId, 'system',
         `Transient failure (${errMsg.slice(0, 100)}) — retry ${newRetryCount}/${failedTask!.maxRetries ?? 3} scheduled in ${delayMs / 1000}s`,
@@ -1046,6 +1085,7 @@ async function runTask(taskId: string): Promise<void> {
     }
   } finally {
     clearTimeout(timeoutHandle)
+    clearInterval(heartbeatHandle)
     runningTasks.delete(taskId)
     // BUG 3 fix: release the in-flight budget reservation on every exit path
     // (success, federated-dispatch, plan-pause, failure) now that real usage
@@ -1463,6 +1503,8 @@ async function runWatchers() {
         definitions: MANAGEMENT_TOOL_DEFS,
         execute: (name, argsRaw) => executeManagedTool(name, argsRaw, agent.id),
       },
+      // Watchers have no task-level timeout of their own — cap each run.
+      signal: AbortSignal.timeout(WATCHER_TIMEOUT_MS),
     }
 
     try {
@@ -1723,7 +1765,24 @@ async function pollFederatedTasks(): Promise<void> {
   }))
 }
 
+// Upper bound on candidates examined per poll. Dependency gating happens in
+// memory, so this is well above MAX_CONCURRENT to avoid starving runnable tasks
+// behind a long run of blocked ones.
+const POLL_CANDIDATE_LIMIT = 200
+
 async function pollOnce() {
+  // In-flight guard: a slow poll must not overlap the next tick, or the two
+  // could together launch more than MAX_CONCURRENT tasks.
+  if (stopping || runningPoll) return
+  runningPoll = true
+  try {
+    await pollOnceInner()
+  } finally {
+    runningPoll = false
+  }
+}
+
+async function pollOnceInner() {
   if (runningTasks.size >= MAX_CONCURRENT) return
 
   const available = MAX_CONCURRENT - runningTasks.size
@@ -1757,6 +1816,7 @@ async function pollOnce() {
     },
     orderBy: [{ wave: 'asc' }, { priority: 'desc' }, { createdAt: 'asc' }],
     select: { id: true, dependsOn: true },
+    take: POLL_CANDIDATE_LIMIT,
   })
 
   if (pending.length === 0) return
@@ -1774,13 +1834,15 @@ async function pollOnce() {
 
   let launched = 0
   for (const task of pending) {
-    if (launched >= available) break
+    if (launched >= available || stopping) break
     // Dependency gate: every depended-upon task must be done.
     if (!task.dependsOn.every(depId => completedTaskIds.has(depId))) continue
-    if (!runningTasks.has(task.id)) {
-      runTask(task.id).catch(e => err(`Unhandled error in runTask(${task.id}): ${e}`))
-      launched++
-    }
+    if (runningTasks.has(task.id)) continue
+    // Atomic claim before ANY other work — only one worker can win the
+    // pending → in_progress transition, so a task never runs twice.
+    if (!(await claimTask(task.id))) continue
+    runTask(task.id).catch(e => err(`Unhandled error in runTask(${task.id}): ${e}`))
+    launched++
   }
 }
 
@@ -1789,7 +1851,7 @@ async function pollOnce() {
 async function main() {
   log('Orchestrator starting…')
 
-  // Wait for the DB to be ready (give Next.js time to run prisma db push)
+  // Give the web container's entrypoint time to finish `prisma migrate deploy`
   await new Promise(resolve => setTimeout(resolve, 5_000))
 
   // Load tunable settings from DB so operators can change them without redeploying
@@ -1816,38 +1878,33 @@ async function main() {
   // Recover any tasks that were in_progress when the worker last crashed
   await recoverStuckTasks().catch(e => err(`Startup recovery failed: ${e}`))
 
-  // Periodic stuck-task recovery — every 5 minutes, re-queue tasks that have
-  // been in_progress longer than the configured threshold. Startup handles the
-  // initial pass; the interval handles tasks that hang post-startup (e.g. a
-  // runner that stops emitting events but never throws). Three hung tasks would
-  // otherwise consume all MAX_CONCURRENT slots and deadlock the worker.
-  // Note: abort signals propagate to the AbortController inside runTask(), but
-  // tool executions inside the runner observe the signal only between LLM events
-  // (not mid-tool). Recovery therefore relies on the stuck-task cutoff rather
-  // than a hard kill.
-  setInterval(() => {
-    recoverStuckTasks().catch(e => err(`Periodic recovery failed: ${e}`))
-  }, 5 * 60_000)
+  // Periodic stuck-task recovery — every 5 minutes, re-queue claimed tasks
+  // whose worker stopped heartbeating (crash, SIGKILL). Startup handles the
+  // initial pass. Heartbeats come from runTask, so a long but healthy run is
+  // never recovered out from under itself.
+  every(5 * 60_000, () => guarded(stuckRecoveryGuard, 'Periodic recovery', recoverStuckTasks))
+
+  // Background jobs orphaned by a dead process (stale heartbeat) → failed.
+  await recoverStalledJobs().catch(e => err(`Background job recovery failed: ${e}`))
+  every(5 * 60_000, () => { recoverStalledJobs().catch(e => err(`Background job recovery failed: ${e}`)) })
+
+  // Scheduled background jobs (security retention, source stale-check, audit
+  // export + AUDIT-001 retention). Registered here — not in the web server's
+  // instrumentation hook — so they run once per deployment instead of once
+  // per web replica, and deduplicated per period via BackgroundJob.dedupeKey.
+  registerScheduledJobs()
 
   // Initial poll
   await pollOnce().catch(e => err(`Initial poll failed: ${e}`))
 
-  // Ongoing poll for assigned tasks
-  setInterval(() => {
-    pollOnce().catch(e => err(`Poll failed: ${e}`))
-  }, POLL_INTERVAL_MS)
+  // Ongoing poll for assigned tasks (pollOnce has its own in-flight guard)
+  every(POLL_INTERVAL_MS, () => { pollOnce().catch(e => err(`Poll failed: ${e}`)) })
 
   // Watcher poll — check every minute whether any watcher is due
-  setInterval(() => {
-    runWatchers().catch(e => err(`Watcher poll failed: ${e}`))
-  }, 60_000)
+  every(60_000, () => { runWatchers().catch(e => err(`Watcher poll failed: ${e}`)) })
 
   // GitOps PR sync — poll Gitea every 60s to catch merges missed by webhooks
-  setInterval(() => {
-    if (runningGitOpsSync) return
-    runningGitOpsSync = true
-    syncGitOpsPRs().catch(e => err(`GitOps PR sync failed: ${e}`)).finally(() => { runningGitOpsSync = false })
-  }, 60_000)
+  every(60_000, () => guarded(gitOpsSyncGuard, 'GitOps PR sync', syncGitOpsPRs))
 
   // Dream — memory consolidation covers three phases:
   //   extraction (every 2h): scans recent chat messages + task events, extracts durable
@@ -1862,47 +1919,24 @@ async function main() {
   startDream()
 
   // Security correlator — poll for uncorrelated events every 30s
-  setInterval(() => {
-    if (runningCorrelator) return
-    runningCorrelator = true
-    runCorrelator().catch(e => err(`Security correlator failed: ${e}`)).finally(() => { runningCorrelator = false })
-  }, 30_000)
+  every(30_000, () => guarded(correlatorGuard, 'Security correlator', runCorrelator))
 
   // K8s events poller — every 30s per the Phase 2 plan.
-  setInterval(() => {
-    if (runningK8sPoller) return
-    runningK8sPoller = true
-    runK8sPollerAll().catch(e => err(`K8s poller failed: ${e}`)).finally(() => { runningK8sPoller = false })
-  }, 30_000)
+  every(30_000, () => guarded(k8sPollerGuard, 'K8s poller', runK8sPollerAll))
 
   // ELK poller — every 15s. No-ops if ELK_URL is not set.
-  setInterval(() => {
-    if (runningElkPoller) return
-    runningElkPoller = true
-    runElkPollerAll().catch(e => err(`ELK poller failed: ${e}`)).finally(() => { runningElkPoller = false })
-  }, 15_000)
+  every(15_000, () => guarded(elkPollerGuard, 'ELK poller', runElkPollerAll))
 
   // ntopng poller — every 30s. No-ops if NTOPNG_URL is not set.
-  setInterval(() => {
-    if (runningNtopngPoller) return
-    runningNtopngPoller = true
-    runNtopngPollerAll().catch(e => err(`ntopng poller failed: ${e}`)).finally(() => { runningNtopngPoller = false })
-  }, 30_000)
+  every(30_000, () => guarded(ntopngPollerGuard, 'ntopng poller', runNtopngPollerAll))
 
-  // CrowdSec decision sync — refresh the application-layer blocklist every 60s.
+  // CrowdSec decision sync — refresh the application-layer blocklist every 30s.
   // Runs independently of the ntopng/ELK pollers so a slow LAPI doesn't block
-  // event ingestion. syncCrowdSecDecisions() has its own internal debounce so
-  // calling it on a 30s interval is harmless.
-  setInterval(() => {
-    syncCrowdSecDecisions().catch(e => err(`CrowdSec sync failed: ${e}`))
-  }, 30_000)
+  // event ingestion. syncCrowdSecDecisions() has its own internal debounce.
+  every(30_000, () => guarded(crowdSecGuard, 'CrowdSec sync', syncCrowdSecDecisions))
 
   // ── Phase 3: vulnerability scanning ───────────────────────────────────────
-  setInterval(() => {
-    if (runningVulnScan) return
-    runningVulnScan = true
-    runEventTriggeredScan().catch(e => err(`Event-triggered vuln scan failed: ${e}`)).finally(() => { runningVulnScan = false })
-  }, 60_000)
+  every(60_000, () => guarded(vulnScanGuard, 'Event-triggered vuln scan', runEventTriggeredScan))
 
   // Daily scheduled scan — once a day at 02:00 server time. Implemented as
   // a guard inside an hourly tick so we don't need a separate scheduler
@@ -1913,7 +1947,7 @@ async function main() {
   // both passing the dateKey guard before either upserts the setting (TOCTOU fix).
   let dailyScanInFlight = false
   const runScheduledDailyScan = () => {
-    if (dailyScanInFlight) return
+    if (dailyScanInFlight || stopping) return
     dailyScanInFlight = true
     const now = new Date()
     const dateKey = now.toISOString().slice(0, 10)
@@ -1968,47 +2002,27 @@ async function main() {
       .catch(() => {})
   }
 
-  setInterval(() => {
-    const now = new Date()
-    if (now.getHours() !== 2) return
+  every(60 * 60 * 1000, () => {
+    if (new Date().getHours() !== 2) return
     runScheduledDailyScan()
-  }, 60 * 60 * 1000)
+  })
 
   // Goal heartbeat — every 5 min, re-trigger agents in rooms whose active goal
   // has gone stale (no non-system message for 15 min). See jobs/goal-heartbeat.ts.
-  setInterval(() => {
-    if (runningGoalHeartbeat) return
-    runningGoalHeartbeat = true
-    runGoalHeartbeat().catch(e => err(`Goal heartbeat failed: ${e}`)).finally(() => { runningGoalHeartbeat = false })
-  }, 5 * 60_000)
+  every(5 * 60_000, () => guarded(goalHeartbeatGuard, 'Goal heartbeat', runGoalHeartbeat))
 
   // Cron scheduler — check every 60s for scheduled tasks due to run
-  setInterval(() => {
-    if (runningScheduler) return
-    runningScheduler = true
-    runScheduler().catch(e => err(`Task scheduler failed: ${e}`)).finally(() => { runningScheduler = false })
-  }, 60_000)
+  every(60_000, () => guarded(schedulerGuard, 'Task scheduler', runScheduler))
 
   // HITL approval timeout escalation — every 5 min, escalate tasks that have
   // been waiting for plan approval longer than APPROVAL_TIMEOUT_MS (default 30 min).
-  setInterval(() => {
-    escalateStalePendingValidation().catch(e => err(`Approval timeout escalation failed: ${e}`))
-  }, 5 * 60_000)
+  every(5 * 60_000, () => guarded(approvalEscalationGuard, 'Approval timeout escalation', escalateStalePendingValidation))
 
   // GitOps drift detection — every 5 min, compare live cluster state to desired state.
-  setInterval(() => {
-    if (runningDriftDetector) return
-    runningDriftDetector = true
-    detectGitOpsDrift().catch(e => err(`GitOps drift detection failed: ${e}`)).finally(() => { runningDriftDetector = false })
-  }, 5 * 60_000)
+  every(5 * 60_000, () => guarded(driftDetectorGuard, 'GitOps drift detection', detectGitOpsDrift))
 
   // Federation spoke polling — every 60s, check in-flight federated tasks for completion.
-  setInterval(() => {
-    if (runningFedPoller) return
-    runningFedPoller = true
-    pollFederatedTasks().catch(e => err(`Federation spoke polling failed: ${e}`)).finally(() => { runningFedPoller = false })
-  }, 60_000)
-
+  every(60_000, () => guarded(fedPollerGuard, 'Federation spoke polling', pollFederatedTasks))
 }
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -2022,17 +2036,23 @@ process.on('uncaughtException', (err) => {
 main().catch(e => { err(`Fatal: ${e}`); process.exit(1) })
 
 // Graceful shutdown on SIGTERM (container stop / redeploy).
-// Without this, in-flight tasks are killed mid-run and left as 'in_progress'
-// in the DB, requiring recoverStuckTasks on the next startup (up to 30 min).
-// We stop polling new tasks and wait up to 60s for running tasks to drain.
+// Stop claiming new work and clear every periodic timer first, then wait up
+// to 60s for in-flight tasks to drain. Tasks still running at the deadline
+// stop heartbeating and are re-queued by recoverStuckTasks on the next start.
 async function shutdown(signal: string): Promise<void> {
-  log(`Received ${signal} — draining in-flight tasks (max 60s)...`)
+  if (stopping) return
+  stopping = true
+  log(`Received ${signal} — stopping schedulers and draining in-flight tasks (max 60s)...`)
+  for (const handle of intervalHandles) clearInterval(handle)
+  intervalHandles.length = 0
+  stopScheduledJobs()
+  stopDream()
   const deadline = Date.now() + 60_000
   while ((runningTasks.size > 0 || runningWatchers.size > 0) && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 1000))
   }
   if (runningTasks.size > 0) err(`Shutdown: ${runningTasks.size} task(s) still running at deadline — exiting anyway`)
-  log('Shutdown complete')
+  log(`Shutdown complete (${WORKER_ID})`)
   process.exit(0)
 }
 

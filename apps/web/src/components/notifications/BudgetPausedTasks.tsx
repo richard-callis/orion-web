@@ -1,14 +1,8 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Coins } from 'lucide-react'
-
-interface PendingTask {
-  id: string
-  title: string
-  status: string
-  metadata: Record<string, unknown> | null
-}
+import { usePendingValidationTasks } from '@/hooks/usePendingValidationTasks'
 
 /**
  * Surfaces tasks that have been paused by the token budget gate
@@ -19,28 +13,9 @@ interface PendingTask {
  * The "Dismiss" button removes the card locally without changing task state.
  */
 export function BudgetPausedTasks() {
-  const [tasks, setTasks]         = useState<PendingTask[]>([])
+  const { tasks: pending } = usePendingValidationTasks(30_000)
+  const tasks = pending.filter(t => (t.metadata as Record<string, unknown> | null)?.budgetExceeded === true)
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
-
-  const fetchPending = useCallback(async () => {
-    try {
-      const res = await fetch('/api/tasks?status=pending_validation')
-      if (!res.ok) throw new Error(`Request failed: ${res.status}`)
-      const data: PendingTask[] = await res.json()
-      setTasks(
-        (Array.isArray(data) ? data : []).filter(t => {
-          const meta = (t.metadata ?? {}) as Record<string, unknown>
-          return meta.budgetExceeded === true
-        })
-      )
-    } catch { /* silent */ }
-  }, [])
-
-  useEffect(() => {
-    fetchPending()
-    const timer = setInterval(fetchPending, 30_000)
-    return () => clearInterval(timer)
-  }, [fetchPending])
 
   const dismiss = (id: string) => setDismissed(prev => new Set([...prev, id]))
 

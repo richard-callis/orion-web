@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth } from '@/lib/auth'
+import { requireServiceAuth, isExecutorServiceCall } from '@/lib/auth'
+import { EXECUTOR_READABLE_SETTING_KEYS } from '@/lib/executor-scope'
 
 // Keys readable by any logged-in user (safe, non-sensitive UI config)
 const PUBLIC_SETTING_KEYS = new Set([
@@ -48,6 +49,16 @@ export async function GET(
       // notifyRoom). Unlike a session caller (who just needs role==='admin' to read ANY
       // non-public key), a gateway-authenticated caller is only trusted for the narrow
       // SERVICE_READABLE_SETTING_KEYS allow-list above.
+      // H2: the executor's x-executor-token may read only the execution-room key.
+      if (isExecutorServiceCall(req)) {
+        if (!EXECUTOR_READABLE_SETTING_KEYS.has(key)) {
+          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+        }
+        const setting = await prisma.systemSetting.findUnique({ where: { key } })
+        if (!setting) return NextResponse.json({ error: 'Setting not found' }, { status: 404 })
+        return NextResponse.json({ key: setting.key, value: setting.value })
+      }
+
       let user
       try {
         user = await requireServiceAuth(req)

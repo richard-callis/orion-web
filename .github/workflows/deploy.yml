@@ -11,8 +11,16 @@ name: Deploy ORION
 #
 # Bootstrap is idempotent — re-running on every deploy is the design. It
 # generates any missing secrets, enables the Vault file audit device, pulls
-# latest images, and runs `docker compose up -d` which picks up any new
-# services (e.g. vector) added to docker-compose.yml.
+# images, and runs `docker compose up -d` which picks up any new services.
+#
+# Safety net:
+#   - The image the triggering build just pushed is pinned by its commit SHA
+#     (not :latest), so the deploy runs exactly what was built.
+#   - A PostgreSQL dump is taken before anything changes (migrations run on
+#     container start and cannot be rolled back).
+#   - The deploy FAILS if ORION is not healthy within 5 minutes.
+#   - Every healthy deploy records deploy/.last-good (git SHA + image digests);
+#     deploy/rollback.sh returns to it. See the failure step for the runbook.
 
 on:
   workflow_run:
@@ -42,6 +50,8 @@ jobs:
     # Skip if triggered by a failed upstream build.
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: [self-hosted, linux, x64]
+    env:
+      DEPLOY_DIR: /opt/orion/deploy
     steps:
       - name: Sync /opt/orion to origin/main
         run: |
@@ -50,25 +60,69 @@ jobs:
           git reset --hard HEAD
           git checkout -B main origin/main
 
+      - name: Pin the image that was just built
+        # Each build workflow tags its image with the commit SHA. Only the
+        # triggering image has that tag; the others stay on ORION_VERSION
+        # (default :latest). bootstrap.sh keeps these exports over .env values.
+        env:
+          RUN_NAME: ${{ github.event.workflow_run.name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          case "$RUN_NAME" in
+            "Build ORION Web")     echo "ORION_WEB_VERSION=$RUN_SHA"     >> "$GITHUB_ENV" ;;
+            "Build ORION Gateway") echo "ORION_GATEWAY_VERSION=$RUN_SHA" >> "$GITHUB_ENV" ;;
+            "Build ORION Vector")  echo "ORION_VECTOR_VERSION=$RUN_SHA"  >> "$GITHUB_ENV" ;;
+            *) echo "Not triggered by an image build — using ORION_VERSION from .env (default latest)." ;;
+          esac
+
+      - name: Pre-deploy database backup
+        run: $DEPLOY_DIR/backup.sh --pre-deploy
+
       - name: Bootstrap and start stack
         # bootstrap.sh:
         #   - generates any missing secrets in deploy/.env (idempotent grep guards)
         #   - seeds Vault KV + SecurityConfig where applicable
         #   - enables Vault file audit device
-        #   - docker compose pull + up -d (picks up new services like vector)
+        #   - docker compose pull + up -d (picks up new services)
         #   - creates Gitea admin + token if using bundled profile
         run: |
-          cd /opt/orion/deploy
+          cd $DEPLOY_DIR
           ./bootstrap.sh
 
       - name: Wait for ORION health
+        # Uses the container healthchecks (orion: /api/health). Fails the job
+        # on timeout — a deploy that never became healthy is not a success.
         run: |
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
-              echo "ORION is healthy."
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "WARNING: health check timed out after 60s — ORION may still be starting"
-          exit 0
+          $DEPLOY_DIR/wait-healthy.sh orion 300
+          $DEPLOY_DIR/wait-healthy.sh orion-worker 60
+
+      - name: Record last-good deploy
+        run: |
+          cd $DEPLOY_DIR
+          tmp=$(mktemp)
+          {
+            echo "GIT_SHA=$(git -C /opt/orion rev-parse HEAD)"
+            echo "DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            for pair in orion:ORION_WEB_VERSION gateway:ORION_GATEWAY_VERSION vector:ORION_VECTOR_VERSION; do
+              svc=${pair%%:*}; var=${pair#*:}
+              cid=$(docker compose -f docker-compose.yml --env-file .env ps -q "$svc" | head -1)
+              [ -n "$cid" ] || continue
+              digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$(docker inspect --format '{{.Image}}' "$cid")" 2>/dev/null || true)
+              [ -n "$digest" ] && echo "$var=$digest"
+            done
+          } > "$tmp"
+          mv "$tmp" .last-good
+          cat .last-good
+
+      - name: Rollback runbook
+        if: failure()
+        run: |
+          echo "::error::Deploy failed. Nothing was rolled back automatically."
+          echo "Last healthy deploy:"; cat $DEPLOY_DIR/.last-good 2>/dev/null || echo "  (none recorded)"
+          echo ""
+          echo "To roll back on the host (see deploy/rollback.sh header):"
+          echo "  1. Images only:  $DEPLOY_DIR/rollback.sh"
+          echo "  2. If a migration ran and the old code can't handle it, first restore the DB:"
+          echo "       docker compose -f $DEPLOY_DIR/docker-compose.yml --env-file $DEPLOY_DIR/.env stop orion orion-worker"
+          echo "       $DEPLOY_DIR/restore.sh predeploy_<timestamp>   # newest: $(ls -1t $DEPLOY_DIR/backups/postgres_predeploy_*.sql.gz 2>/dev/null | head -1)"
+          echo "     then run rollback.sh."

@@ -36,7 +36,9 @@ export async function runScheduler(): Promise<void> {
         status:      'pending',
         priority:    'medium',
         assignedAgent: schedule.agentId,
-        createdBy:   'scheduler',
+        // Task.createdBy is an FK to User — the literal 'scheduler' violated it and
+        // every scheduled spawn failed. Attribute the task to the schedule's owner.
+        createdBy:   schedule.createdBy ?? null,
       }
 
       if (schedule.taskMeta) {

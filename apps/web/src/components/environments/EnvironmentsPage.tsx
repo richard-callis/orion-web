@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Plus, Trash2, Pencil, X, RefreshCw, Check,
@@ -9,6 +9,8 @@ import {
 } from 'lucide-react'
 import { ClusterPreflightFlow } from './ClusterPreflightFlow'
 import { DriftStatusBadge } from './DriftStatusBadge'
+import { useToast } from '@/components/ui/Toast'
+import { Dialog } from '@/components/ui/Dialog'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,6 +43,11 @@ interface Environment {
   gatewayUrl: string | null
   gatewayToken: string | null
   gatewayVersion: string | null
+  // Credentials are never sent to the client — only whether each is set.
+  hasGatewayToken?: boolean
+  hasKubeconfig?: boolean
+  hasFederationToken?: boolean
+  hasTalosConfig?: boolean
   status: string
   lastSeen: string | null
   tools: McpTool[]
@@ -81,7 +88,7 @@ const DEFAULT_INPUT_SCHEMA = `{
 interface EnvForm { name: string; type: string; description: string; gatewayUrl: string; gatewayToken: string; kubeconfig: string; nodeIp: string; talosConfig: string; federationRole: string; federationToken: string; spokeUrl: string; hubUrl: string }
 const EMPTY_ENV: EnvForm = { name: '', type: 'cluster', description: '', gatewayUrl: '', gatewayToken: '', kubeconfig: '', nodeIp: '', talosConfig: '', federationRole: 'standalone', federationToken: '', spokeUrl: '', hubUrl: '' }
 
-// ─── Wrench form ────────────────────────────────────────────────────────────────
+// ─── Tool form ────────────────────────────────────────────────────────────────
 
 interface ToolForm { name: string; description: string; inputSchema: string; execType: string; execConfig: string }
 const EMPTY_TOOL: ToolForm = { name: '', description: '', inputSchema: DEFAULT_INPUT_SCHEMA, execType: 'shell', execConfig: '' }
@@ -91,9 +98,13 @@ const EMPTY_TOOL: ToolForm = { name: '', description: '', inputSchema: DEFAULT_I
 export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments: Environment[] }) {
   const [environments, setEnvironments] = useState<Environment[]>(initialEnvironments)
   const [selected, setSelected]         = useState<Environment | null>(initialEnvironments[0] ?? null)
+  // Latest selected id — async loaders compare against it to drop stale responses.
+  const selectedIdRef = useRef<string | null>(selected?.id ?? null)
+  selectedIdRef.current = selected?.id ?? null
+  const toast = useToast()
   const [tab, setTab]                   = useState<'tools' | 'agents' | 'groups' | 'access'>('tools')
 
-  // ── Wrench groups state ────────────────────────────────────────────────────────
+  // ── Tool groups state ────────────────────────────────────────────────────────
   interface ToolGroup {
     id: string; name: string; description: string | null; minimumTier: string; environmentId: string
     tools: { toolId: string; tool: McpTool }[]
@@ -164,10 +175,10 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   // Pending tool approval state
   const [approvingTool, setApprovingTool] = useState<string | null>(null)
 
-  // Wrench detail modal (click to inspect / toggle enable)
+  // Tool detail modal (click to inspect / toggle enable)
   const [toolDetailModal, setToolDetailModal] = useState<McpTool | null>(null)
 
-  // Wrench CRUD state
+  // Tool CRUD state
   const [toolModal, setToolModal]   = useState<'create' | 'edit' | null>(null)
   const [toolTarget, setToolTarget] = useState<McpTool | null>(null)
   const [toolForm, setToolForm]     = useState<ToolForm>(EMPTY_TOOL)
@@ -336,8 +347,8 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   const openCreateEnv = () => { setEnvForm(EMPTY_ENV); setEnvError(null); setEnvModal('create') }
   const openEditEnv = (env: Environment) => {
     const meta = (env as unknown as { metadata?: Record<string, unknown> }).metadata ?? {}
-    const fedEnv = env as unknown as { federationRole?: string | null; federationToken?: string | null; spokeUrl?: string | null; hubUrl?: string | null }
-    setEnvForm({ name: env.name, type: env.type, description: env.description ?? '', gatewayUrl: env.gatewayUrl ?? '', gatewayToken: '', kubeconfig: '', nodeIp: (meta.nodeIp as string) ?? '', talosConfig: '', federationRole: fedEnv.federationRole ?? 'standalone', federationToken: fedEnv.federationToken ?? '', spokeUrl: fedEnv.spokeUrl ?? '', hubUrl: fedEnv.hubUrl ?? '' })
+    const fedEnv = env as unknown as { federationRole?: string | null; spokeUrl?: string | null; hubUrl?: string | null }
+    setEnvForm({ name: env.name, type: env.type, description: env.description ?? '', gatewayUrl: env.gatewayUrl ?? '', gatewayToken: '', kubeconfig: '', nodeIp: (meta.nodeIp as string) ?? '', talosConfig: '', federationRole: fedEnv.federationRole ?? 'standalone', federationToken: '', spokeUrl: fedEnv.spokeUrl ?? '', hubUrl: fedEnv.hubUrl ?? '' })
     setEnvError(null)
     setEnvModal('edit')
   }
@@ -367,7 +378,8 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
         kubeconfig: kubeconfigB64,
         metadata: metaUpdate,
         federationRole: (envForm.federationRole && envForm.federationRole !== 'standalone') ? envForm.federationRole : null,
-        federationToken: envForm.federationToken || null,
+        // Blank keeps the stored token; switching to standalone clears it.
+        federationToken: envForm.federationRole === 'standalone' ? null : (envForm.federationToken || undefined),
         spokeUrl: envForm.spokeUrl || null,
         hubUrl: envForm.hubUrl || null,
       }
@@ -385,15 +397,15 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
   const deleteEnv = async () => {
     if (!selected) return
-    const res = await fetch(`/api/environments/${selected.id}`, { method: 'DELETE' })
-    if (!res.ok) return
+    const res = await fetch(`/api/environments/${selected.id}`, { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) { toast.error(`Failed to delete environment${res ? ` (${res.status})` : ''}`); return }
     const remaining = environments.filter(e => e.id !== selected.id)
     setEnvironments(remaining)
     setSelected(remaining[0] ?? null)
     setEnvModal(null)
   }
 
-  // ── Wrench modals ───────────────────────────────────────────────────────────────
+  // ── Tool modals ───────────────────────────────────────────────────────────────
 
   const openCreateTool = () => { setToolTarget(null); setToolForm(EMPTY_TOOL); setToolError(null); setToolModal('create') }
   const openEditTool = (t: McpTool) => {
@@ -445,8 +457,9 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
   const deleteTool = async (toolId: string) => {
     if (!selected) return
-    await fetch(`/api/environments/${selected.id}/tools/${toolId}`, { method: 'DELETE' })
+    const res = await fetch(`/api/environments/${selected.id}/tools/${toolId}`, { method: 'DELETE' }).catch(() => null)
     setConfirmDeleteTool(null)
+    if (!res?.ok) { toast.error(`Failed to delete tool${res ? ` (${res.status})` : ''}`); return }
     syncSelected({ ...selected, tools: selected.tools.filter(t => t.id !== toolId) })
   }
 
@@ -471,12 +484,14 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
     }
   }
 
-  // ── Wrench groups ───────────────────────────────────────────────────────────────
+  // ── Tool groups ───────────────────────────────────────────────────────────────
 
   const loadToolGroups = useCallback(async () => {
     if (!selected) return
-    const r = await fetch(`/api/tool-groups?environmentId=${selected.id}`)
+    const envId = selected.id
+    const r = await fetch(`/api/tool-groups?environmentId=${envId}`)
     const data = r.ok ? await r.json() : []
+    if (selectedIdRef.current !== envId) return
     setToolGroups(data)
     setToolGroupsLoaded(true)
   }, [selected])
@@ -485,44 +500,50 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
     if (tab === 'groups' && selected && !toolGroupsLoaded) loadToolGroups()
   }, [tab, selected, toolGroupsLoaded, loadToolGroups])
 
-  useEffect(() => { setToolGroupsLoaded(false) }, [selected?.id])
+  useEffect(() => { setToolGroupsLoaded(false); setToolGroups([]) }, [selected?.id])
 
   const saveTg = async () => {
     if (!selected || !tgForm.name.trim()) return
     setTgSaving(true)
     try {
+      let res: Response | null = null
       if (tgModal === 'create') {
-        await fetch('/api/tool-groups', {
+        res = await fetch('/api/tool-groups', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: tgForm.name.trim(), description: tgForm.description.trim() || null, minimumTier: tgForm.minimumTier, environmentId: selected.id }),
         })
       } else if (tgTarget) {
-        await fetch(`/api/tool-groups/${tgTarget.id}`, {
+        res = await fetch(`/api/tool-groups/${tgTarget.id}`, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: tgForm.name.trim(), description: tgForm.description.trim() || null, minimumTier: tgForm.minimumTier }),
         })
       }
+      if (res && !res.ok) { toast.error(`Failed to save tool group (${res.status})`); return }
       await loadToolGroups()
       setTgModal(null)
-    } finally { setTgSaving(false) }
+    } catch { toast.error('Failed to save tool group') }
+    finally { setTgSaving(false) }
   }
 
   const deleteTg = async (id: string) => {
-    await fetch(`/api/tool-groups/${id}`, { method: 'DELETE' })
-    setToolGroups(prev => prev.filter(g => g.id !== id))
+    const res = await fetch(`/api/tool-groups/${id}`, { method: 'DELETE' }).catch(() => null)
     setConfirmDeleteTg(null)
+    if (!res?.ok) { toast.error(`Failed to delete tool group${res ? ` (${res.status})` : ''}`); return }
+    setToolGroups(prev => prev.filter(g => g.id !== id))
   }
 
   const addToolToGroup = async (tgId: string, toolId: string) => {
-    await fetch(`/api/tool-groups/${tgId}/tools`, {
+    const res = await fetch(`/api/tool-groups/${tgId}/tools`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toolId }),
-    })
+    }).catch(() => null)
+    if (!res?.ok) toast.error(`Failed to add tool to group${res ? ` (${res.status})` : ''}`)
     await loadToolGroups()
     setTgAddingTool(null)
   }
 
   const removeToolFromGroup = async (tgId: string, toolId: string) => {
-    await fetch(`/api/tool-groups/${tgId}/tools?toolId=${toolId}`, { method: 'DELETE' })
+    const res = await fetch(`/api/tool-groups/${tgId}/tools?toolId=${toolId}`, { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) toast.error(`Failed to remove tool from group${res ? ` (${res.status})` : ''}`)
     await loadToolGroups()
   }
 
@@ -543,7 +564,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
       const res = await fetch(`/api/environments/${selected.id}/agents`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentId }),
       })
-      if (!res.ok) return
+      if (!res.ok) { toast.error(`Failed to link agent (${res.status})`); return }
       const link = await res.json() as { id: string; agentId: string; agent: AllAgent }
       setEnvironments(prev => prev.map(e =>
         e.id === selected.id ? { ...e, agents: [...e.agents, { id: link.id, agentId: link.agentId, agent: link.agent }] } : e
@@ -556,7 +577,8 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
   const unlinkAgent = async (agentId: string) => {
     if (!selected) return
-    await fetch(`/api/environments/${selected.id}/agents/${agentId}`, { method: 'DELETE' })
+    const res = await fetch(`/api/environments/${selected.id}/agents/${agentId}`, { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) { toast.error(`Failed to unlink agent${res ? ` (${res.status})` : ''}`); return }
     setEnvironments(prev => prev.map(e =>
       e.id === selected.id ? { ...e, agents: e.agents.filter(a => a.agentId !== agentId) } : e
     ))
@@ -565,14 +587,16 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
   const loadUserTiers = useCallback(async () => {
     if (!selected) return
+    const envId = selected.id
     const [tiersRes, usersRes] = await Promise.all([
-      fetch(`/api/environments/${selected.id}/user-tiers`),
+      fetch(`/api/environments/${envId}/user-tiers`),
       fetch('/api/admin/users'),
     ])
     const [tiersData, usersData] = [
       tiersRes.ok ? await tiersRes.json() : [],
       usersRes.ok ? await usersRes.json() : [],
     ]
+    if (selectedIdRef.current !== envId) return
     setUserTiers(tiersData)
     setAllUsers(usersData)
     setTiersLoaded(true)
@@ -586,22 +610,24 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
     if (tab === 'access' && selected && !tiersLoaded) loadUserTiers()
   }, [tab, selected, tiersLoaded, loadUserTiers])
 
-  useEffect(() => { setTiersLoaded(false) }, [selected?.id])
+  useEffect(() => { setTiersLoaded(false); setUserTiers([]) }, [selected?.id])
 
   const setUserTier = async (userId: string, tier: string) => {
     if (!selected) return
     setAssigningTier({ userId, tier })
     try {
-      await fetch(`/api/environments/${selected.id}/user-tiers`, {
+      const res = await fetch(`/api/environments/${selected.id}/user-tiers`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId, tier }),
-      })
+      }).catch(() => null)
+      if (!res?.ok) toast.error(`Failed to update access tier${res ? ` (${res.status})` : ''}`)
       await loadUserTiers()
     } finally { setAssigningTier(null) }
   }
 
   const removeUserTier = async (userId: string) => {
     if (!selected) return
-    await fetch(`/api/environments/${selected.id}/user-tiers?userId=${userId}`, { method: 'DELETE' })
+    const res = await fetch(`/api/environments/${selected.id}/user-tiers?userId=${userId}`, { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) { toast.error(`Failed to remove access tier${res ? ` (${res.status})` : ''}`); return }
     setUserTiers(prev => prev.filter(t => t.userId !== userId))
   }
 
@@ -750,7 +776,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                 }`}>
                 {t === 'tools'   ? `Tools (${selected.tools.length})` :
                  t === 'agents'  ? `Agents (${selected.agents.length})` :
-                 t === 'groups'  ? 'Wrench Groups' :
+                 t === 'groups'  ? 'Tool Groups' :
                  'Access'}
               </button>
             ))}
@@ -812,7 +838,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                   </p>
                   <button onClick={openCreateTool}
                     className="flex items-center gap-2 px-3 py-1.5 rounded bg-accent text-white text-xs font-medium hover:bg-accent/90 transition-colors">
-                    <Plus size={12} /> Add Wrench
+                    <Plus size={12} /> Add Tool
                   </button>
                 </div>
 
@@ -960,7 +986,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
               <div className="space-y-4 max-w-3xl">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-text-primary">Wrench Groups</p>
+                    <p className="text-sm font-medium text-text-primary">Tool Groups</p>
                     <p className="text-xs text-text-muted mt-0.5">Group tools together and set a minimum user tier required to run them</p>
                   </div>
                   <button onClick={() => { setTgForm({ name: '', description: '', minimumTier: 'viewer' }); setTgTarget(null); setTgModal('create') }}
@@ -1156,627 +1182,646 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
 
       {/* ── Environment modal ── */}
       {envModalOpen && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setEnvModal(null)}>
-          <div className="w-full max-w-md bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
-              <h2 className="text-sm font-semibold text-text-primary">
-                {envModal === 'create' ? 'New Environment' : `Edit · ${selected?.name}`}
-              </h2>
-              <button onClick={() => setEnvModal(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
+        <Dialog
+          onClose={() => setEnvModal(null)}
+          label={envModal === 'create' ? 'New environment' : `Edit ${selected?.name ?? 'environment'}`}
+          className="w-full max-w-md bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl"
+        >
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+            <h2 className="text-sm font-semibold text-text-primary">
+              {envModal === 'create' ? 'New Environment' : `Edit · ${selected?.name}`}
+            </h2>
+            <button onClick={() => setEnvModal(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
+          </div>
+
+          <div className="p-5 space-y-3">
+            {envError && <div className="rounded border border-status-error/40 bg-status-error/10 px-3 py-2 text-xs text-status-error">{envError}</div>}
+
+            <div>
+              <label className={labelCls}>Name *</label>
+              <input value={envForm.name} onChange={e => setEnvForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="K3s Cluster" className={inputCls} autoFocus />
             </div>
+            <div>
+              <label className={labelCls}>Type</label>
+              <select value={envForm.type} onChange={e => setEnvForm(f => ({ ...f, type: e.target.value }))} className={inputCls}>
+                <option value="cluster">Cluster (kubectl)</option>
+                <option value="docker">Docker Node</option>
+                <option value="remote">Remote / Other</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Description</label>
+              <input value={envForm.description} onChange={e => setEnvForm(f => ({ ...f, description: e.target.value }))}
+                placeholder="Main K3s homelab cluster" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>
+                <Link2 size={10} className="inline mr-1" />
+                Gateway URL
+              </label>
+              <input value={envForm.gatewayUrl} onChange={e => setEnvForm(f => ({ ...f, gatewayUrl: e.target.value }))}
+                placeholder="http://gateway.khalis.corp:3001" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Gateway Token (leave blank to keep existing)</label>
+              <input type="password" value={envForm.gatewayToken} onChange={e => setEnvForm(f => ({ ...f, gatewayToken: e.target.value }))}
+                placeholder="••••••••" className={inputCls} autoComplete="off" />
+            </div>
+            {envForm.type === 'cluster' && (
+              <>
+                <div>
+                  <label className={labelCls}>
+                    <Server size={10} className="inline mr-1" />
+                    Control plane node IP
+                    <span className="text-text-muted ml-1">(used to auto-fetch kubeconfig)</span>
+                  </label>
+                  <input
+                    value={envForm.nodeIp}
+                    onChange={e => setEnvForm(f => ({ ...f, nodeIp: e.target.value }))}
+                    placeholder="10.2.2.100"
+                    className={inputCls}
+                  />
+                  <p className="text-[10px] text-text-muted mt-1">
+                    ORION probes this IP to detect Talos (port 50000) or K3s (port 6443) and fetches credentials automatically.
+                  </p>
+                </div>
+                <div>
+                  <label className={labelCls}>
+                    Kubeconfig <span className="text-text-muted">(optional override — leave blank to auto-fetch)</span>
+                  </label>
+                  <textarea
+                    value={envForm.kubeconfig}
+                    onChange={e => setEnvForm(f => ({ ...f, kubeconfig: e.target.value }))}
+                    placeholder="apiVersion: v1&#10;kind: Config&#10;clusters:&#10;  ..."
+                    rows={4}
+                    className={`${inputCls} font-mono text-[11px] resize-y`}
+                  />
+                </div>
+                <div>
+                  <label className={labelCls}>
+                    Talos Config{' '}
+                    <span className="text-text-muted">
+                      {envModal === 'edit' && selected?.hasTalosConfig
+                        ? '(set — leave blank to keep existing)'
+                        : '(optional — enables auto-remediation of Talos prerequisites)'}
+                    </span>
+                  </label>
+                  <textarea
+                    value={envForm.talosConfig}
+                    onChange={e => setEnvForm(f => ({ ...f, talosConfig: e.target.value }))}
+                    placeholder="context: <cluster-name>&#10;contexts:&#10;  <cluster-name>:&#10;    endpoints: [...]&#10;    ca: ...&#10;    crt: ...&#10;    key: ..."
+                    rows={4}
+                    className={`${inputCls} font-mono text-[11px] resize-y`}
+                  />
+                  <p className="text-[10px] text-text-muted mt-1">
+                    Paste your <code className="font-mono">talosconfig</code> content here. Used by storage bootstrap to auto-install
+                    extensions (e.g. iscsi-tools) and reboot nodes. Leave blank to skip auto-remediation.
+                  </p>
+                </div>
+              </>
+            )}
 
-            <div className="p-5 space-y-3">
-              {envError && <div className="rounded border border-status-error/40 bg-status-error/10 px-3 py-2 text-xs text-status-error">{envError}</div>}
-
-              <div>
-                <label className={labelCls}>Name *</label>
-                <input value={envForm.name} onChange={e => setEnvForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="K3s Cluster" className={inputCls} autoFocus />
-              </div>
-              <div>
-                <label className={labelCls}>Type</label>
-                <select value={envForm.type} onChange={e => setEnvForm(f => ({ ...f, type: e.target.value }))} className={inputCls}>
-                  <option value="cluster">Cluster (kubectl)</option>
-                  <option value="docker">Docker Node</option>
-                  <option value="remote">Remote / Other</option>
-                </select>
-              </div>
-              <div>
-                <label className={labelCls}>Description</label>
-                <input value={envForm.description} onChange={e => setEnvForm(f => ({ ...f, description: e.target.value }))}
-                  placeholder="Main K3s homelab cluster" className={inputCls} />
-              </div>
-              <div>
-                <label className={labelCls}>
-                  <Link2 size={10} className="inline mr-1" />
-                  Gateway URL
-                </label>
-                <input value={envForm.gatewayUrl} onChange={e => setEnvForm(f => ({ ...f, gatewayUrl: e.target.value }))}
-                  placeholder="http://gateway.khalis.corp:3001" className={inputCls} />
-              </div>
-              <div>
-                <label className={labelCls}>Gateway Token (leave blank to keep existing)</label>
-                <input type="password" value={envForm.gatewayToken} onChange={e => setEnvForm(f => ({ ...f, gatewayToken: e.target.value }))}
-                  placeholder="••••••••" className={inputCls} autoComplete="off" />
-              </div>
-              {envForm.type === 'cluster' && (
-                <>
-                  <div>
-                    <label className={labelCls}>
-                      <Server size={10} className="inline mr-1" />
-                      Control plane node IP
-                      <span className="text-text-muted ml-1">(used to auto-fetch kubeconfig)</span>
-                    </label>
+            {/* ─── Federation section ─────────────────────────────────────── */}
+            <div className="border-t border-border-subtle pt-4 mt-2">
+              <p className="text-xs font-medium text-text-secondary mb-3 flex items-center gap-1.5">
+                <Globe size={12} />
+                Federation
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <label className={labelCls}>Role</label>
+                  <select
+                    value={envForm.federationRole}
+                    onChange={e => setEnvForm(f => ({ ...f, federationRole: e.target.value }))}
+                    className={inputCls}
+                  >
+                    <option value="standalone">Standalone (no federation)</option>
+                    <option value="hub">Hub (dispatch tasks to spokes)</option>
+                    <option value="spoke">Spoke (receive tasks from hub)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>
+                    Federation Token
+                    {envModal === 'edit' && selected?.hasFederationToken && <span className="text-text-muted"> (set — leave blank to keep existing)</span>}
+                  </label>
+                  <div className="flex gap-2">
                     <input
-                      value={envForm.nodeIp}
-                      onChange={e => setEnvForm(f => ({ ...f, nodeIp: e.target.value }))}
-                      placeholder="10.2.2.100"
+                      type="password"
+                      value={envForm.federationToken}
+                      onChange={e => setEnvForm(f => ({ ...f, federationToken: e.target.value }))}
+                      placeholder="Shared secret for hub&#x2194;spoke auth"
                       className={inputCls}
                     />
-                    <p className="text-[10px] text-text-muted mt-1">
-                      ORION probes this IP to detect Talos (port 50000) or K3s (port 6443) and fetches credentials automatically.
-                    </p>
-                  </div>
-                  <div>
-                    <label className={labelCls}>
-                      Kubeconfig <span className="text-text-muted">(optional override — leave blank to auto-fetch)</span>
-                    </label>
-                    <textarea
-                      value={envForm.kubeconfig}
-                      onChange={e => setEnvForm(f => ({ ...f, kubeconfig: e.target.value }))}
-                      placeholder="apiVersion: v1&#10;kind: Config&#10;clusters:&#10;  ..."
-                      rows={4}
-                      className={`${inputCls} font-mono text-[11px] resize-y`}
-                    />
-                  </div>
-                  <div>
-                    <label className={labelCls}>
-                      Talos Config{' '}
-                      <span className="text-text-muted">(optional — enables auto-remediation of Talos prerequisites)</span>
-                    </label>
-                    <textarea
-                      value={envForm.talosConfig}
-                      onChange={e => setEnvForm(f => ({ ...f, talosConfig: e.target.value }))}
-                      placeholder="context: <cluster-name>&#10;contexts:&#10;  <cluster-name>:&#10;    endpoints: [...]&#10;    ca: ...&#10;    crt: ...&#10;    key: ..."
-                      rows={4}
-                      className={`${inputCls} font-mono text-[11px] resize-y`}
-                    />
-                    <p className="text-[10px] text-text-muted mt-1">
-                      Paste your <code className="font-mono">talosconfig</code> content here. Used by storage bootstrap to auto-install
-                      extensions (e.g. iscsi-tools) and reboot nodes. Leave blank to skip auto-remediation.
-                    </p>
-                  </div>
-                </>
-              )}
-
-              {/* ─── Federation section ─────────────────────────────────────── */}
-              <div className="border-t border-border-subtle pt-4 mt-2">
-                <p className="text-xs font-medium text-text-secondary mb-3 flex items-center gap-1.5">
-                  <Globe size={12} />
-                  Federation
-                </p>
-                <div className="space-y-3">
-                  <div>
-                    <label className={labelCls}>Role</label>
-                    <select
-                      value={envForm.federationRole}
-                      onChange={e => setEnvForm(f => ({ ...f, federationRole: e.target.value }))}
-                      className={inputCls}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const token = Array.from(crypto.getRandomValues(new Uint8Array(24)))
+                          .map(b => b.toString(16).padStart(2, '0'))
+                          .join('')
+                        setEnvForm(f => ({ ...f, federationToken: token }))
+                      }}
+                      className="shrink-0 px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors whitespace-nowrap"
                     >
-                      <option value="standalone">Standalone (no federation)</option>
-                      <option value="hub">Hub (dispatch tasks to spokes)</option>
-                      <option value="spoke">Spoke (receive tasks from hub)</option>
-                    </select>
+                      Generate
+                    </button>
                   </div>
-                  <div>
-                    <label className={labelCls}>Federation Token</label>
-                    <div className="flex gap-2">
+                </div>
+                {envForm.federationRole === 'spoke' && (
+                  <>
+                    <div>
+                      <label className={labelCls}>Spoke URL <span className="text-text-muted">(this instance&apos;s base URL, reachable by the hub)</span></label>
                       <input
-                        type="password"
-                        value={envForm.federationToken}
-                        onChange={e => setEnvForm(f => ({ ...f, federationToken: e.target.value }))}
-                        placeholder="Shared secret for hub&#x2194;spoke auth"
+                        value={envForm.spokeUrl}
+                        onChange={e => setEnvForm(f => ({ ...f, spokeUrl: e.target.value }))}
+                        placeholder="https://spoke-orion.example.com"
                         className={inputCls}
                       />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const token = Array.from(crypto.getRandomValues(new Uint8Array(24)))
-                            .map(b => b.toString(16).padStart(2, '0'))
-                            .join('')
-                          setEnvForm(f => ({ ...f, federationToken: token }))
-                        }}
-                        className="shrink-0 px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors whitespace-nowrap"
-                      >
-                        Generate
-                      </button>
                     </div>
-                  </div>
-                  {envForm.federationRole === 'spoke' && (
-                    <>
-                      <div>
-                        <label className={labelCls}>Spoke URL <span className="text-text-muted">(this instance&apos;s base URL, reachable by the hub)</span></label>
-                        <input
-                          value={envForm.spokeUrl}
-                          onChange={e => setEnvForm(f => ({ ...f, spokeUrl: e.target.value }))}
-                          placeholder="https://spoke-orion.example.com"
-                          className={inputCls}
-                        />
-                      </div>
-                      <div>
-                        <label className={labelCls}>Hub URL <span className="text-text-muted">(URL of the hub instance)</span></label>
-                        <input
-                          value={envForm.hubUrl}
-                          onChange={e => setEnvForm(f => ({ ...f, hubUrl: e.target.value }))}
-                          placeholder="https://hub-orion.example.com"
-                          className={inputCls}
-                        />
-                      </div>
-                    </>
-                  )}
-                </div>
+                    <div>
+                      <label className={labelCls}>Hub URL <span className="text-text-muted">(URL of the hub instance)</span></label>
+                      <input
+                        value={envForm.hubUrl}
+                        onChange={e => setEnvForm(f => ({ ...f, hubUrl: e.target.value }))}
+                        placeholder="https://hub-orion.example.com"
+                        className={inputCls}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
             </div>
-
-            <div className="flex items-center gap-2 px-5 py-4 border-t border-border-subtle">
-              {envModal === 'edit' && (
-                <button onClick={deleteEnv} className="px-3 py-1.5 text-xs rounded border border-status-error/40 text-status-error hover:bg-status-error/10 transition-colors">
-                  <Trash2 size={11} className="inline mr-1" />Delete
-                </button>
-              )}
-              <div className="flex-1" />
-              <button onClick={() => setEnvModal(null)} className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
-                Cancel
-              </button>
-              <button onClick={saveEnv} disabled={envSaving}
-                className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
-                {envSaving ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
-                {envSaving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
           </div>
-        </div>,
+
+          <div className="flex items-center gap-2 px-5 py-4 border-t border-border-subtle">
+            {envModal === 'edit' && (
+              <button onClick={deleteEnv} className="px-3 py-1.5 text-xs rounded border border-status-error/40 text-status-error hover:bg-status-error/10 transition-colors">
+                <Trash2 size={11} className="inline mr-1" />Delete
+              </button>
+            )}
+            <div className="flex-1" />
+            <button onClick={() => setEnvModal(null)} className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+              Cancel
+            </button>
+            <button onClick={saveEnv} disabled={envSaving}
+              className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
+              {envSaving ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
+              {envSaving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </Dialog>,
         document.body
       )}
 
       {/* ── Deploy Gateway modal ── */}
       {deployModal && selected && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => { setDeployModal(false); setDeployResult(null) }}>
-          <div className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
-              <div className="flex items-center gap-2">
-                <Rocket size={14} className="text-accent" />
-                <h2 className="text-sm font-semibold text-text-primary">Deploy Gateway · {selected.name}</h2>
-              </div>
-              <button onClick={() => { setDeployModal(false); setDeployResult(null) }} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
+        <Dialog
+          onClose={() => { setDeployModal(false); setDeployResult(null) }}
+          label="Deploy gateway"
+          className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl"
+        >
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+            <div className="flex items-center gap-2">
+              <Rocket size={14} className="text-accent" />
+              <h2 className="text-sm font-semibold text-text-primary">Deploy Gateway · {selected.name}</h2>
             </div>
-
-            <div className="p-5 space-y-4">
-              {(selected.type === 'localhost' || selected.type === 'docker') ? (
-                /* ── localhost/docker: full SSE bootstrap ── */
-                bootstrapLogs.length === 0 && !deploying ? (
-                  <>
-                    <p className="text-xs text-text-muted">
-                      Deploys the gateway container, creates a Gitea repo with CI/CD scaffold, and registers a self-hosted Actions runner — all in one click.
-                    </p>
-                    <div className="flex justify-end gap-2 pt-1">
-                      <button onClick={() => { setDeployModal(false) }}
-                        className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
-                        Cancel
-                      </button>
-                      <button onClick={runLocalBootstrap} disabled={deploying}
-                        className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
-                        <Rocket size={11} /> Deploy Everything
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="rounded-lg border border-border-subtle bg-bg-card overflow-hidden">
-                      <div className="max-h-72 overflow-y-auto p-3 space-y-1 font-mono text-[11px]">
-                        {bootstrapLogs.map((log, i) => (
-                          <div key={i} className={
-                            log.type === 'step'  ? 'text-accent font-semibold' :
-                            log.type === 'error' ? 'text-status-error' :
-                            log.type === 'done'  ? 'text-status-healthy font-semibold' :
-                            'text-text-muted'
-                          }>
-                            {log.type === 'step' ? `▶ ${log.message}` :
-                             log.type === 'done' ? `✓ ${log.message}` :
-                             log.type === 'error' ? `✗ ${log.message}` :
-                             `  ${log.message}`}
-                          </div>
-                        ))}
-                        {deploying && !bootstrapDone && (
-                          <div className="flex items-center gap-1.5 text-text-muted">
-                            <RefreshCw size={10} className="animate-spin" /> Running…
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    {bootstrapDone && (
-                      <div className="flex justify-end pt-1">
-                        <button onClick={() => { setDeployModal(false); setBootstrapLogs([]); setBootstrapDone(false) }}
-                          className="px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 transition-colors">
-                          Done
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )
-              ) : (
-                /* ── cluster/remote: join token flow ── */
-                !deployResult ? (
-                  <>
-                    <p className="text-xs text-text-muted">
-                      Generate a one-time join token. The gateway uses it on first boot to register itself — no manual credential copying needed.
-                    </p>
-                    <div>
-                      <label className={labelCls}>Gateway Type</label>
-                      <select value={deployGatewayType} onChange={e => setDeployGatewayType(e.target.value)} className={inputCls}>
-                        <option value="cluster">Cluster (kubectl)</option>
-                        <option value="docker">Docker Node</option>
-                        <option value="remote">Remote / Other</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className={labelCls}>Gateway URL <span className="text-text-muted">(how ORION will reach this gateway after deployment)</span></label>
-                      <input value={deployGatewayUrl} onChange={e => setDeployGatewayUrl(e.target.value)}
-                        placeholder="http://10.2.2.84:3001 or http://orion-gateway.management.svc.cluster.local:3001"
-                        className={inputCls} />
-                    </div>
-                    <div className="flex justify-end gap-2 pt-1">
-                      <button onClick={() => { setDeployModal(false); setDeployResult(null) }}
-                        className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
-                        Cancel
-                      </button>
-                      <button onClick={generateJoinToken} disabled={deploying}
-                        className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
-                        {deploying ? <RefreshCw size={11} className="animate-spin" /> : <Rocket size={11} />}
-                        {deploying ? 'Generating…' : 'Generate Join Token'}
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="rounded-lg border border-status-healthy/30 bg-status-healthy/5 px-3 py-2 text-xs text-status-healthy">
-                      Token generated — expires {new Date(deployResult.expiresAt).toLocaleString()}. One-time use only.
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-xs font-medium text-text-secondary flex items-center gap-1.5">
-                          <Terminal size={11} /> Docker
-                        </label>
-                        <button onClick={() => copyToClipboard(deployResult.dockerCmd, 'docker')}
-                          className="flex items-center gap-1 text-[10px] text-text-muted hover:text-accent transition-colors">
-                          {copied === 'docker' ? <CheckCheck size={11} className="text-status-healthy" /> : <Copy size={11} />}
-                          {copied === 'docker' ? 'Copied!' : 'Copy'}
-                        </button>
-                      </div>
-                      <pre className="text-[11px] font-mono bg-bg-raised border border-border-subtle rounded p-3 overflow-x-auto text-text-secondary whitespace-pre">
-                        {deployResult.dockerCmd}
-                      </pre>
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-xs font-medium text-text-secondary flex items-center gap-1.5">
-                          <Server size={11} /> Kubernetes
-                        </label>
-                        <button onClick={() => copyToClipboard(deployResult.kubectlCmd, 'kubectl')}
-                          className="flex items-center gap-1 text-[10px] text-text-muted hover:text-accent transition-colors">
-                          {copied === 'kubectl' ? <CheckCheck size={11} className="text-status-healthy" /> : <Copy size={11} />}
-                          {copied === 'kubectl' ? 'Copied!' : 'Copy'}
-                        </button>
-                      </div>
-                      <pre className="text-[11px] font-mono bg-bg-raised border border-border-subtle rounded p-3 overflow-x-auto text-text-secondary whitespace-pre-wrap break-all">
-                        {deployResult.kubectlCmd}
-                      </pre>
-                    </div>
-                    <div className="flex justify-end pt-1">
-                      <button onClick={() => { setDeployModal(false); setDeployResult(null) }}
-                        className="px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 transition-colors">
-                        Done
-                      </button>
-                    </div>
-                  </>
-                )
-              )}
-            </div>
+            <button onClick={() => { setDeployModal(false); setDeployResult(null) }} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
           </div>
-        </div>,
-        document.body
-      )}
 
-      {/* ── Cluster Bootstrap modal ── */}
-      {bootstrapModal && selected && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => { if (!clusterBootstrapping) setBootstrapModal(false) }}>
-          <div className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
-              <div className="flex items-center gap-2">
-                <Rocket size={14} className="text-accent" />
-                <h2 className="text-sm font-semibold text-text-primary">Bootstrap · {selected.name}</h2>
-              </div>
-              {!clusterBootstrapping && (
-                <button onClick={() => setBootstrapModal(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
-              )}
-            </div>
-
-            <div className="p-5 space-y-4">
-              {/* Preflight — shared component handles detection, credential input, re-check */}
-              {!preflightPassed && !clusterBootstrapLogs.length && (
-                <ClusterPreflightFlow
-                  envId={selected.id}
-                  onReady={() => {
-                    setPreflightPassed(true)
-                    runClusterBootstrap()
-                  }}
-                />
-              )}
-
-              {/* Live bootstrap log stream */}
-              {clusterBootstrapLogs.length > 0 && (
+          <div className="p-5 space-y-4">
+            {(selected.type === 'localhost' || selected.type === 'docker') ? (
+              /* ── localhost/docker: full SSE bootstrap ── */
+              bootstrapLogs.length === 0 && !deploying ? (
+                <>
+                  <p className="text-xs text-text-muted">
+                    Deploys the gateway container, creates a Gitea repo with CI/CD scaffold, and registers a self-hosted Actions runner — all in one click.
+                  </p>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button onClick={() => { setDeployModal(false) }}
+                      className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+                      Cancel
+                    </button>
+                    <button onClick={runLocalBootstrap} disabled={deploying}
+                      className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
+                      <Rocket size={11} /> Deploy Everything
+                    </button>
+                  </div>
+                </>
+              ) : (
                 <>
                   <div className="rounded-lg border border-border-subtle bg-bg-card overflow-hidden">
-                    <div className="max-h-80 overflow-y-auto p-3 space-y-1 font-mono text-[11px]" id="bootstrap-log-scroll">
-                      {clusterBootstrapLogs.map((log, i) => (
+                    <div className="max-h-72 overflow-y-auto p-3 space-y-1 font-mono text-[11px]">
+                      {bootstrapLogs.map((log, i) => (
                         <div key={i} className={
                           log.type === 'step'  ? 'text-accent font-semibold' :
                           log.type === 'error' ? 'text-status-error' :
                           log.type === 'done'  ? 'text-status-healthy font-semibold' :
                           'text-text-muted'
                         }>
-                          {log.type === 'step'  ? `▶ ${log.message}` :
-                           log.type === 'done'  ? `✓ ${log.message}` :
+                          {log.type === 'step' ? `▶ ${log.message}` :
+                           log.type === 'done' ? `✓ ${log.message}` :
                            log.type === 'error' ? `✗ ${log.message}` :
                            `  ${log.message}`}
                         </div>
                       ))}
-                      {clusterBootstrapping && !clusterBootstrapDone && (
+                      {deploying && !bootstrapDone && (
                         <div className="flex items-center gap-1.5 text-text-muted">
                           <RefreshCw size={10} className="animate-spin" /> Running…
                         </div>
                       )}
                     </div>
                   </div>
-                  {clusterBootstrapDone && (
+                  {bootstrapDone && (
                     <div className="flex justify-end pt-1">
-                      <button onClick={() => setBootstrapModal(false)}
+                      <button onClick={() => { setDeployModal(false); setBootstrapLogs([]); setBootstrapDone(false) }}
                         className="px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 transition-colors">
                         Done
                       </button>
                     </div>
                   )}
                 </>
-              )}
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* ── Wrench modal ── */}
-      {toolModalOpen && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setToolModal(null)}>
-          <div className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
-              <h2 className="text-sm font-semibold text-text-primary">
-                {toolModal === 'create' ? 'New Wrench' : `Edit · ${toolTarget?.name}`}
-              </h2>
-              <button onClick={() => setToolModal(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
-            </div>
-
-            <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
-              {toolError && <div className="rounded border border-status-error/40 bg-status-error/10 px-3 py-2 text-xs text-status-error">{toolError}</div>}
-
-              {/* AI assist — only shown when creating */}
-              {toolModal === 'create' && (
-                <div className="rounded-lg border border-accent/20 bg-accent/5 p-3 space-y-2">
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-accent">
-                    <Sparkles size={12} /> AI Assist — describe what you want
+              )
+            ) : (
+              /* ── cluster/remote: join token flow ── */
+              !deployResult ? (
+                <>
+                  <p className="text-xs text-text-muted">
+                    Generate a one-time join token. The gateway uses it on first boot to register itself — no manual credential copying needed.
+                  </p>
+                  <div>
+                    <label className={labelCls}>Gateway Type</label>
+                    <select value={deployGatewayType} onChange={e => setDeployGatewayType(e.target.value)} className={inputCls}>
+                      <option value="cluster">Cluster (kubectl)</option>
+                      <option value="docker">Docker Node</option>
+                      <option value="remote">Remote / Other</option>
+                    </select>
                   </div>
-                  <div className="flex gap-2">
-                    <input
-                      value={aiToolDesc}
-                      onChange={e => setAiToolDesc(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') generateToolWithAI() }}
-                      placeholder="e.g. list pods in a namespace, restart a deployment, show disk usage..."
-                      className={`${inputCls} flex-1`}
-                    />
-                    <button
-                      onClick={generateToolWithAI}
-                      disabled={aiGenerating || !aiToolDesc.trim()}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-xs font-medium hover:bg-accent/80 disabled:opacity-50 transition-colors flex-shrink-0">
-                      {aiGenerating ? <RefreshCw size={11} className="animate-spin" /> : <Sparkles size={11} />}
-                      {aiGenerating ? 'Thinking…' : 'Generate'}
+                  <div>
+                    <label className={labelCls}>Gateway URL <span className="text-text-muted">(how ORION will reach this gateway after deployment)</span></label>
+                    <input value={deployGatewayUrl} onChange={e => setDeployGatewayUrl(e.target.value)}
+                      placeholder="http://10.2.2.84:3001 or http://orion-gateway.management.svc.cluster.local:3001"
+                      className={inputCls} />
+                  </div>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button onClick={() => { setDeployModal(false); setDeployResult(null) }}
+                      className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+                      Cancel
+                    </button>
+                    <button onClick={generateJoinToken} disabled={deploying}
+                      className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
+                      {deploying ? <RefreshCw size={11} className="animate-spin" /> : <Rocket size={11} />}
+                      {deploying ? 'Generating…' : 'Generate Join Token'}
                     </button>
                   </div>
-                  {aiGenError && <p className="text-[11px] text-status-error">{aiGenError}</p>}
-                </div>
-              )}
-
-              <div>
-                <label className={labelCls}>Wrench Name * <span className="text-text-muted">(snake_case, e.g. run_script)</span></label>
-                <input value={toolForm.name} onChange={e => setToolForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="run_script" className={`${inputCls} font-mono`} autoFocus />
-              </div>
-              <div>
-                <label className={labelCls}>Description *</label>
-                <input value={toolForm.description} onChange={e => setToolForm(f => ({ ...f, description: e.target.value }))}
-                  placeholder="What this tool does" className={inputCls} />
-              </div>
-              <div>
-                <label className={labelCls}>Execution Type</label>
-                <select value={toolForm.execType} onChange={e => setToolForm(f => ({ ...f, execType: e.target.value }))} className={inputCls}>
-                  <option value="shell">Shell command</option>
-                  <option value="http">HTTP request</option>
-                  <option value="builtin">Built-in function</option>
-                </select>
-              </div>
-              <div>
-                <label className={labelCls}>
-                  <Code2 size={10} className="inline mr-1" />
-                  Input Schema <span className="text-text-muted">(JSON Schema)</span>
-                </label>
-                <textarea value={toolForm.inputSchema} onChange={e => setToolForm(f => ({ ...f, inputSchema: e.target.value }))}
-                  rows={6} className={`${inputCls} font-mono text-xs resize-none`}
-                  placeholder='{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}' />
-              </div>
-              <div>
-                <label className={labelCls}>
-                  Exec Config <span className="text-text-muted">(JSON — shell: {`{"command":"..."}`}, http: {`{"url":"..."}`})</span>
-                </label>
-                <textarea value={toolForm.execConfig} onChange={e => setToolForm(f => ({ ...f, execConfig: e.target.value }))}
-                  rows={3} className={`${inputCls} font-mono text-xs resize-none`}
-                  placeholder='{"command": "kubectl get pods -n {namespace}"}' />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle">
-              <button onClick={() => setToolModal(null)} className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
-                Cancel
-              </button>
-              <button onClick={saveTool} disabled={toolSaving}
-                className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
-                {toolSaving ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
-                {toolSaving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
+                </>
+              ) : (
+                <>
+                  <div className="rounded-lg border border-status-healthy/30 bg-status-healthy/5 px-3 py-2 text-xs text-status-healthy">
+                    Token generated — expires {new Date(deployResult.expiresAt).toLocaleString()}. One-time use only.
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-medium text-text-secondary flex items-center gap-1.5">
+                        <Terminal size={11} /> Docker
+                      </label>
+                      <button onClick={() => copyToClipboard(deployResult.dockerCmd, 'docker')}
+                        className="flex items-center gap-1 text-[10px] text-text-muted hover:text-accent transition-colors">
+                        {copied === 'docker' ? <CheckCheck size={11} className="text-status-healthy" /> : <Copy size={11} />}
+                        {copied === 'docker' ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                    <pre className="text-[11px] font-mono bg-bg-raised border border-border-subtle rounded p-3 overflow-x-auto text-text-secondary whitespace-pre">
+                      {deployResult.dockerCmd}
+                    </pre>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-medium text-text-secondary flex items-center gap-1.5">
+                        <Server size={11} /> Kubernetes
+                      </label>
+                      <button onClick={() => copyToClipboard(deployResult.kubectlCmd, 'kubectl')}
+                        className="flex items-center gap-1 text-[10px] text-text-muted hover:text-accent transition-colors">
+                        {copied === 'kubectl' ? <CheckCheck size={11} className="text-status-healthy" /> : <Copy size={11} />}
+                        {copied === 'kubectl' ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                    <pre className="text-[11px] font-mono bg-bg-raised border border-border-subtle rounded p-3 overflow-x-auto text-text-secondary whitespace-pre-wrap break-all">
+                      {deployResult.kubectlCmd}
+                    </pre>
+                  </div>
+                  <div className="flex justify-end pt-1">
+                    <button onClick={() => { setDeployModal(false); setDeployResult(null) }}
+                      className="px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 transition-colors">
+                      Done
+                    </button>
+                  </div>
+                </>
+              )
+            )}
           </div>
-        </div>,
+        </Dialog>,
         document.body
       )}
 
-      {/* ── Wrench group modal ── */}
-      {tgModal !== null && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setTgModal(null)}>
-          <div className="w-full max-w-sm bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
-              <h2 className="text-sm font-semibold text-text-primary">{tgModal === 'create' ? 'New Wrench Group' : `Edit · ${tgTarget?.name}`}</h2>
-              <button onClick={() => setTgModal(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
+      {/* ── Cluster Bootstrap modal ── */}
+      {bootstrapModal && selected && createPortal(
+        <Dialog
+          onClose={() => { if (!clusterBootstrapping) setBootstrapModal(false) }}
+          label="Bootstrap cluster"
+          className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl"
+        >
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+            <div className="flex items-center gap-2">
+              <Rocket size={14} className="text-accent" />
+              <h2 className="text-sm font-semibold text-text-primary">Bootstrap · {selected.name}</h2>
             </div>
-            <div className="p-5 space-y-3">
-              <div>
-                <label className={labelCls}>Name *</label>
-                <input value={tgForm.name} onChange={e => setTgForm(f => ({ ...f, name: e.target.value }))} placeholder="Kubernetes Read-only" className={inputCls} autoFocus />
-              </div>
-              <div>
-                <label className={labelCls}>Description</label>
-                <input value={tgForm.description} onChange={e => setTgForm(f => ({ ...f, description: e.target.value }))} placeholder="Optional" className={inputCls} />
-              </div>
-              <div>
-                <label className={labelCls}>Minimum tier to run without approval</label>
-                <select value={tgForm.minimumTier} onChange={e => setTgForm(f => ({ ...f, minimumTier: e.target.value }))} className={inputCls}>
-                  <option value="viewer">viewer — anyone</option>
-                  <option value="operator">operator — operators and above</option>
-                  <option value="admin">admin — admins only</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle">
-              <button onClick={() => setTgModal(null)} className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">Cancel</button>
-              <button onClick={saveTg} disabled={tgSaving || !tgForm.name.trim()}
-                className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
-                {tgSaving ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
-                {tgSaving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
+            {!clusterBootstrapping && (
+              <button onClick={() => setBootstrapModal(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
+            )}
           </div>
-        </div>,
-        document.body
-      )}
 
-      {/* ── Wrench detail modal ── */}
-      {toolDetailModal && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setToolDetailModal(null)}>
-          <div className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-sm font-semibold text-text-primary font-mono truncate">{toolDetailModal.name}</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-raised text-text-muted border border-border-subtle flex-shrink-0">
-                  {EXEC_TYPE_LABELS[toolDetailModal.execType] ?? toolDetailModal.execType}
-                </span>
-                {toolDetailModal.builtIn && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/20 flex-shrink-0">built-in</span>
-                )}
-              </div>
-              <button onClick={() => setToolDetailModal(null)} className="p-1 rounded text-text-muted hover:text-text-primary flex-shrink-0"><X size={14} /></button>
-            </div>
+          <div className="p-5 space-y-4">
+            {/* Preflight — shared component handles detection, credential input, re-check */}
+            {!preflightPassed && !clusterBootstrapLogs.length && (
+              <ClusterPreflightFlow
+                envId={selected.id}
+                onReady={() => {
+                  setPreflightPassed(true)
+                  runClusterBootstrap()
+                }}
+              />
+            )}
 
-            <div className="p-5 space-y-4 max-h-[65vh] overflow-y-auto">
-              {/* Description */}
-              <p className="text-sm text-text-secondary">{toolDetailModal.description}</p>
-
-              {/* Enable / Disable toggle */}
-              <div className="flex items-center justify-between p-3 rounded-lg border border-border-subtle bg-bg-card">
-                <div>
-                  <p className="text-xs font-medium text-text-primary">Enabled</p>
-                  <p className="text-[11px] text-text-muted mt-0.5">
-                    {toolDetailModal.enabled
-                      ? 'Wrench is active and available to the AI'
-                      : 'Wrench is disabled — AI cannot call it'}
-                  </p>
-                </div>
-                <button
-                  onClick={async () => {
-                    await toggleTool(toolDetailModal)
-                    // Reflect updated state in the detail modal
-                    setToolDetailModal(prev => prev ? { ...prev, enabled: !prev.enabled } : null)
-                  }}
-                  className={`flex-shrink-0 transition-colors ${toolDetailModal.enabled ? 'text-status-healthy' : 'text-text-muted'}`}
-                  title={toolDetailModal.enabled ? 'Disable' : 'Enable'}>
-                  {toolDetailModal.enabled
-                    ? <ToggleRight size={28} />
-                    : <ToggleLeft size={28} />}
-                </button>
-              </div>
-
-              {/* Input schema */}
-              {Object.keys((toolDetailModal.inputSchema as { properties?: object }).properties ?? {}).length > 0 && (
-                <div>
-                  <p className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1.5">Parameters</p>
-                  <div className="space-y-1.5">
-                    {Object.entries((toolDetailModal.inputSchema as { properties?: Record<string, { type?: string; description?: string }> }).properties ?? {}).map(([k, v]) => (
-                      <div key={k} className="flex items-start gap-2 text-xs">
-                        <code className="px-1.5 py-0.5 rounded bg-bg-raised text-accent font-mono text-[11px] flex-shrink-0">{k}</code>
-                        <span className="text-text-muted">{v.type ?? 'string'}{v.description ? ` — ${v.description}` : ''}</span>
+            {/* Live bootstrap log stream */}
+            {clusterBootstrapLogs.length > 0 && (
+              <>
+                <div className="rounded-lg border border-border-subtle bg-bg-card overflow-hidden">
+                  <div className="max-h-80 overflow-y-auto p-3 space-y-1 font-mono text-[11px]" id="bootstrap-log-scroll">
+                    {clusterBootstrapLogs.map((log, i) => (
+                      <div key={i} className={
+                        log.type === 'step'  ? 'text-accent font-semibold' :
+                        log.type === 'error' ? 'text-status-error' :
+                        log.type === 'done'  ? 'text-status-healthy font-semibold' :
+                        'text-text-muted'
+                      }>
+                        {log.type === 'step'  ? `▶ ${log.message}` :
+                         log.type === 'done'  ? `✓ ${log.message}` :
+                         log.type === 'error' ? `✗ ${log.message}` :
+                         `  ${log.message}`}
                       </div>
                     ))}
+                    {clusterBootstrapping && !clusterBootstrapDone && (
+                      <div className="flex items-center gap-1.5 text-text-muted">
+                        <RefreshCw size={10} className="animate-spin" /> Running…
+                      </div>
+                    )}
                   </div>
                 </div>
-              )}
-
-              {/* Exec config */}
-              {toolDetailModal.execConfig && Object.keys(toolDetailModal.execConfig).length > 0 && (
-                <div>
-                  <p className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1.5">Command</p>
-                  <code className="block text-[11px] bg-bg-raised rounded px-3 py-2 text-text-secondary font-mono whitespace-pre-wrap break-all border border-border-subtle">
-                    {(toolDetailModal.execConfig as { command?: string; fn?: string }).command
-                      ?? (toolDetailModal.execConfig as { fn?: string }).fn
-                      ?? JSON.stringify(toolDetailModal.execConfig)}
-                  </code>
-                </div>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="flex items-center justify-between px-5 py-3 border-t border-border-subtle">
-              <div className="flex items-center gap-2">
-                {!toolDetailModal.builtIn && (
-                  <button
-                    onClick={() => { openEditTool(toolDetailModal); setToolDetailModal(null) }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-accent hover:border-accent/40 transition-colors">
-                    <Pencil size={11} /> Edit
-                  </button>
+                {clusterBootstrapDone && (
+                  <div className="flex justify-end pt-1">
+                    <button onClick={() => setBootstrapModal(false)}
+                      className="px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 transition-colors">
+                      Done
+                    </button>
+                  </div>
                 )}
+              </>
+            )}
+          </div>
+        </Dialog>,
+        document.body
+      )}
+
+      {/* ── Tool modal ── */}
+      {toolModalOpen && createPortal(
+        <Dialog
+          onClose={() => setToolModal(null)}
+          label={toolModal === 'create' ? 'New tool' : `Edit ${toolTarget?.name ?? 'tool'}`}
+          className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl"
+        >
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+            <h2 className="text-sm font-semibold text-text-primary">
+              {toolModal === 'create' ? 'New Tool' : `Edit · ${toolTarget?.name}`}
+            </h2>
+            <button onClick={() => setToolModal(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
+          </div>
+
+          <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
+            {toolError && <div className="rounded border border-status-error/40 bg-status-error/10 px-3 py-2 text-xs text-status-error">{toolError}</div>}
+
+            {/* AI assist — only shown when creating */}
+            {toolModal === 'create' && (
+              <div className="rounded-lg border border-accent/20 bg-accent/5 p-3 space-y-2">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-accent">
+                  <Sparkles size={12} /> AI Assist — describe what you want
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    value={aiToolDesc}
+                    onChange={e => setAiToolDesc(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') generateToolWithAI() }}
+                    placeholder="e.g. list pods in a namespace, restart a deployment, show disk usage..."
+                    className={`${inputCls} flex-1`}
+                  />
+                  <button
+                    onClick={generateToolWithAI}
+                    disabled={aiGenerating || !aiToolDesc.trim()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-xs font-medium hover:bg-accent/80 disabled:opacity-50 transition-colors flex-shrink-0">
+                    {aiGenerating ? <RefreshCw size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                    {aiGenerating ? 'Thinking…' : 'Generate'}
+                  </button>
+                </div>
+                {aiGenError && <p className="text-[11px] text-status-error">{aiGenError}</p>}
               </div>
-              <button onClick={() => setToolDetailModal(null)}
-                className="px-4 py-1.5 text-xs rounded bg-bg-raised text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
-                Close
-              </button>
+            )}
+
+            <div>
+              <label className={labelCls}>Tool Name * <span className="text-text-muted">(snake_case, e.g. run_script)</span></label>
+              <input value={toolForm.name} onChange={e => setToolForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="run_script" className={`${inputCls} font-mono`} autoFocus />
+            </div>
+            <div>
+              <label className={labelCls}>Description *</label>
+              <input value={toolForm.description} onChange={e => setToolForm(f => ({ ...f, description: e.target.value }))}
+                placeholder="What this tool does" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Execution Type</label>
+              <select value={toolForm.execType} onChange={e => setToolForm(f => ({ ...f, execType: e.target.value }))} className={inputCls}>
+                <option value="shell">Shell command</option>
+                <option value="http">HTTP request</option>
+                <option value="builtin">Built-in function</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>
+                <Code2 size={10} className="inline mr-1" />
+                Input Schema <span className="text-text-muted">(JSON Schema)</span>
+              </label>
+              <textarea value={toolForm.inputSchema} onChange={e => setToolForm(f => ({ ...f, inputSchema: e.target.value }))}
+                rows={6} className={`${inputCls} font-mono text-xs resize-none`}
+                placeholder='{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}' />
+            </div>
+            <div>
+              <label className={labelCls}>
+                Exec Config <span className="text-text-muted">(JSON — shell: {`{"command":"..."}`}, http: {`{"url":"..."}`})</span>
+              </label>
+              <textarea value={toolForm.execConfig} onChange={e => setToolForm(f => ({ ...f, execConfig: e.target.value }))}
+                rows={3} className={`${inputCls} font-mono text-xs resize-none`}
+                placeholder='{"command": "kubectl get pods -n {namespace}"}' />
             </div>
           </div>
-        </div>,
+
+          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle">
+            <button onClick={() => setToolModal(null)} className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+              Cancel
+            </button>
+            <button onClick={saveTool} disabled={toolSaving}
+              className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
+              {toolSaving ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
+              {toolSaving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </Dialog>,
+        document.body
+      )}
+
+      {/* ── Tool group modal ── */}
+      {tgModal !== null && createPortal(
+        <Dialog
+          onClose={() => setTgModal(null)}
+          label={tgModal === 'create' ? 'New tool group' : `Edit ${tgTarget?.name ?? 'tool group'}`}
+          className="w-full max-w-sm bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl"
+        >
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+            <h2 className="text-sm font-semibold text-text-primary">{tgModal === 'create' ? 'New Tool Group' : `Edit · ${tgTarget?.name}`}</h2>
+            <button onClick={() => setTgModal(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
+          </div>
+          <div className="p-5 space-y-3">
+            <div>
+              <label className={labelCls}>Name *</label>
+              <input value={tgForm.name} onChange={e => setTgForm(f => ({ ...f, name: e.target.value }))} placeholder="Kubernetes Read-only" className={inputCls} autoFocus />
+            </div>
+            <div>
+              <label className={labelCls}>Description</label>
+              <input value={tgForm.description} onChange={e => setTgForm(f => ({ ...f, description: e.target.value }))} placeholder="Optional" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Minimum tier to run without approval</label>
+              <select value={tgForm.minimumTier} onChange={e => setTgForm(f => ({ ...f, minimumTier: e.target.value }))} className={inputCls}>
+                <option value="viewer">viewer — anyone</option>
+                <option value="operator">operator — operators and above</option>
+                <option value="admin">admin — admins only</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle">
+            <button onClick={() => setTgModal(null)} className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">Cancel</button>
+            <button onClick={saveTg} disabled={tgSaving || !tgForm.name.trim()}
+              className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
+              {tgSaving ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
+              {tgSaving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </Dialog>,
+        document.body
+      )}
+
+      {/* ── Tool detail modal ── */}
+      {toolDetailModal && createPortal(
+        <Dialog
+          onClose={() => setToolDetailModal(null)}
+          label="Tool details"
+          className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm font-semibold text-text-primary font-mono truncate">{toolDetailModal.name}</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-raised text-text-muted border border-border-subtle flex-shrink-0">
+                {EXEC_TYPE_LABELS[toolDetailModal.execType] ?? toolDetailModal.execType}
+              </span>
+              {toolDetailModal.builtIn && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/20 flex-shrink-0">built-in</span>
+              )}
+            </div>
+            <button onClick={() => setToolDetailModal(null)} className="p-1 rounded text-text-muted hover:text-text-primary flex-shrink-0"><X size={14} /></button>
+          </div>
+
+          <div className="p-5 space-y-4 max-h-[65vh] overflow-y-auto">
+            {/* Description */}
+            <p className="text-sm text-text-secondary">{toolDetailModal.description}</p>
+
+            {/* Enable / Disable toggle */}
+            <div className="flex items-center justify-between p-3 rounded-lg border border-border-subtle bg-bg-card">
+              <div>
+                <p className="text-xs font-medium text-text-primary">Enabled</p>
+                <p className="text-[11px] text-text-muted mt-0.5">
+                  {toolDetailModal.enabled
+                    ? 'Tool is active and available to the AI'
+                    : 'Tool is disabled — AI cannot call it'}
+                </p>
+              </div>
+              <button
+                onClick={async () => {
+                  await toggleTool(toolDetailModal)
+                  // Reflect updated state in the detail modal
+                  setToolDetailModal(prev => prev ? { ...prev, enabled: !prev.enabled } : null)
+                }}
+                className={`flex-shrink-0 transition-colors ${toolDetailModal.enabled ? 'text-status-healthy' : 'text-text-muted'}`}
+                title={toolDetailModal.enabled ? 'Disable' : 'Enable'}>
+                {toolDetailModal.enabled
+                  ? <ToggleRight size={28} />
+                  : <ToggleLeft size={28} />}
+              </button>
+            </div>
+
+            {/* Input schema */}
+            {Object.keys((toolDetailModal.inputSchema as { properties?: object }).properties ?? {}).length > 0 && (
+              <div>
+                <p className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1.5">Parameters</p>
+                <div className="space-y-1.5">
+                  {Object.entries((toolDetailModal.inputSchema as { properties?: Record<string, { type?: string; description?: string }> }).properties ?? {}).map(([k, v]) => (
+                    <div key={k} className="flex items-start gap-2 text-xs">
+                      <code className="px-1.5 py-0.5 rounded bg-bg-raised text-accent font-mono text-[11px] flex-shrink-0">{k}</code>
+                      <span className="text-text-muted">{v.type ?? 'string'}{v.description ? ` — ${v.description}` : ''}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Exec config */}
+            {toolDetailModal.execConfig && Object.keys(toolDetailModal.execConfig).length > 0 && (
+              <div>
+                <p className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1.5">Command</p>
+                <code className="block text-[11px] bg-bg-raised rounded px-3 py-2 text-text-secondary font-mono whitespace-pre-wrap break-all border border-border-subtle">
+                  {(toolDetailModal.execConfig as { command?: string; fn?: string }).command
+                    ?? (toolDetailModal.execConfig as { fn?: string }).fn
+                    ?? JSON.stringify(toolDetailModal.execConfig)}
+                </code>
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between px-5 py-3 border-t border-border-subtle">
+            <div className="flex items-center gap-2">
+              {!toolDetailModal.builtIn && (
+                <button
+                  onClick={() => { openEditTool(toolDetailModal); setToolDetailModal(null) }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-accent hover:border-accent/40 transition-colors">
+                  <Pencil size={11} /> Edit
+                </button>
+              )}
+            </div>
+            <button onClick={() => setToolDetailModal(null)}
+              className="px-4 py-1.5 text-xs rounded bg-bg-raised text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
+              Close
+            </button>
+          </div>
+        </Dialog>,
         document.body
       )}
     </div>

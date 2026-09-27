@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # GitHub Actions are pinned to commit SHAs; Dependabot bumps SHA + version comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+
+  # Single npm workspace lockfile at the root covers web, gateway and executor.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # Base images are pinned by version + digest in each Dockerfile.
+  - package-ecosystem: docker
+    directories: [/apps/web, /apps/gateway, /apps/executor, /deploy/host-agent]
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker-compose
+    directory: /deploy
+    schedule:
+      interval: weekly

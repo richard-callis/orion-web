@@ -1,16 +1,15 @@
-import { execFile } from 'child_process'
-import { promisify } from 'util'
-
-const exec = promisify(execFile)
+import { runOut } from '../lib/run.js'
+import { withValidation, k8sName, k8sNamespace, duration } from '../lib/validate-args.js'
 
 /**
  * Velero backup & recovery tools. Implemented as a thin `velero` CLI wrapper
  * (the velero binary talks to the in-cluster Velero server via the kubeconfig
  * available to the gateway). Critical for disaster recovery.
+ *
+ * Only registered when the velero binary is present (see index.ts).
  */
 async function velero(args: string[], timeoutMs = 120_000): Promise<string> {
-  const { stdout, stderr } = await exec('velero', args, { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 })
-  return stdout || stderr
+  return runOut('velero', args, { timeoutMs })
 }
 
 export const backupTools = ([
@@ -35,11 +34,16 @@ export const backupTools = ([
       required: ['name'],
     },
     async execute(args: Record<string, unknown>) {
-      const cmd = ['backup', 'create', String(args.name)]
-      const namespaces = Array.isArray(args.namespaces) ? (args.namespaces as string[]) : []
-      if (namespaces.length > 0) cmd.push('--include-namespaces', namespaces.join(','))
-      if (args.ttl) cmd.push('--ttl', String(args.ttl))
-      return velero(cmd)
+      return withValidation(async () => {
+        const cmd = ['backup', 'create']
+        const namespaces = Array.isArray(args.namespaces) ? (args.namespaces as unknown[]) : []
+        if (namespaces.length > 0) {
+          cmd.push('--include-namespaces', namespaces.map(n => k8sNamespace('namespaces', n)).join(','))
+        }
+        if (args.ttl) cmd.push('--ttl', duration('ttl', args.ttl))
+        cmd.push('--', k8sName('name', args.name))
+        return velero(cmd)
+      })
     },
   },
   {
@@ -53,7 +57,7 @@ export const backupTools = ([
       required: ['name'],
     },
     async execute(args: Record<string, unknown>) {
-      return velero(['backup', 'describe', String(args.name), '--details'])
+      return withValidation(async () => velero(['backup', 'describe', '--details', '--', k8sName('name', args.name)]))
     },
   },
   {
@@ -68,9 +72,11 @@ export const backupTools = ([
       required: ['backupName'],
     },
     async execute(args: Record<string, unknown>) {
-      const cmd = ['restore', 'create', '--from-backup', String(args.backupName), '--wait']
-      if (args.targetNamespace) cmd.push('--include-namespaces', String(args.targetNamespace))
-      return velero(cmd)
+      return withValidation(async () => {
+        const cmd = ['restore', 'create', `--from-backup=${k8sName('backupName', args.backupName)}`, '--wait']
+        if (args.targetNamespace) cmd.push('--include-namespaces', k8sNamespace('targetNamespace', args.targetNamespace))
+        return velero(cmd)
+      })
     },
   },
   {

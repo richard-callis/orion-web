@@ -11,6 +11,7 @@ export const dynamic = 'force-dynamic'
  *   { type: 'done',  canBootstrap, credentialNeeded?, clusterFlavor?, gitOwner, gitRepo }
  *   { type: 'error', message: string }                          — fatal failure
  */
+import { gatewayHeaders } from '@/lib/gateway-headers'
 import { NextRequest } from 'next/server'
 import { spawn } from 'child_process'
 import { writeFile, rm, mkdir } from 'fs/promises'
@@ -129,7 +130,7 @@ async function gatewayExec(
   try {
     const res = await fetch(`${gatewayUrl}/tools/execute`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${gatewayToken}` },
+      headers: gatewayHeaders(gatewayToken),
       body:    JSON.stringify({ name: toolName, arguments: args }),
       signal:  AbortSignal.timeout(15_000),
     })

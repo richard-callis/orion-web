@@ -2,12 +2,23 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import YAML from 'yaml'
+import { parseArgv, checkAutoCommand, checkNotifyCommand, isBlockedPath } from './command-policy.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CONFIG_PATH = path.join(__dirname, '../config/risk-rules.yaml')
 
+export type RiskTier = 'auto' | 'notify' | 'approve' | 'escalate'
+
+export interface Classification {
+  tier: RiskTier
+  /** Tokenised command for shell_exec when it can run without a shell. */
+  argv?: string[]
+  /** Why an otherwise-unattended command was escalated. */
+  reason?: string
+}
+
 interface RiskRule {
-  tier: 'auto' | 'notify' | 'approve' | 'escalate'
+  tier: RiskTier
   tool: string
   patterns: string[]
 }
@@ -16,17 +27,17 @@ interface RiskConfig {
   rules: RiskRule[]
 }
 
-class Classifier {
+export class Classifier {
   private config: RiskConfig = { rules: [] }
 
-  constructor() {
+  constructor(private configPath: string = CONFIG_PATH, watch = true) {
     this.loadConfig()
-    this.watchConfigFile()
+    if (watch) this.watchConfigFile()
   }
 
   private loadConfig() {
     try {
-      const content = fs.readFileSync(CONFIG_PATH, 'utf-8')
+      const content = fs.readFileSync(this.configPath, 'utf-8')
       this.config = YAML.parse(content) as RiskConfig
       console.log('Risk rules loaded')
     } catch (error) {
@@ -39,20 +50,26 @@ class Classifier {
   }
 
   private watchConfigFile() {
-    fs.watch(CONFIG_PATH, () => {
+    fs.watch(this.configPath, () => {
       console.log('Risk rules changed, reloading...')
       this.loadConfig()
-    })
+    }).unref()
   }
 
-  classify(tool: string, args: Record<string, unknown>): 'auto' | 'notify' | 'approve' | 'escalate' {
+  classify(tool: string, args: Record<string, unknown>): RiskTier {
+    return this.classifyDetailed(tool, args).tier
+  }
+
+  classifyDetailed(tool: string, args: Record<string, unknown>): Classification {
     const matchStr = tool === 'shell_exec' ? String(args.command ?? '') : JSON.stringify(args)
 
     // Fail closed if the loaded config's rules array is empty/malformed (e.g. `rules: []` parses
-    // successfully but matches nothing) — don't fall through to a low-friction default.
-    let tier: 'auto' | 'notify' | 'approve' | 'escalate' = this.config.rules.length ? 'notify' : 'escalate'
+    // successfully but matches nothing) — don't fall through to a low-friction default. A command
+    // no rule matches needs a human: the old default of 'notify' would now mean "run unattended".
+    const rules = Array.isArray(this.config?.rules) ? this.config.rules : []
+    let tier: RiskTier = rules.length ? 'approve' : 'escalate'
 
-    for (const rule of this.config.rules) {
+    for (const rule of rules) {
       if (rule.tool !== tool && rule.tool !== '') {
         continue
       }
@@ -83,8 +100,8 @@ class Classifier {
     }
 
     // The "auto" tier's patterns anchor on the command's first word only (e.g. `^cat\b`) and say
-    // nothing about what follows. sandbox.ts runs shell_exec via `exec()` — full `/bin/sh -c`
-    // interpretation — so ANY shell operator that chains a second command onto a safe-looking
+    // nothing about what follows. Approved shell_exec commands may still run under `/bin/sh -c`
+    // (sandbox.ts), so ANY shell operator that chains a second command onto a safe-looking
     // first one defeats the per-word allowlist: pipe, `&&`/`&`, `;`, command substitution
     // `$(...)`/backticks, redirects, and newlines (sh treats a literal newline as a statement
     // separator same as `;`). Never let such a command through on the no-human-approval "auto"
@@ -114,11 +131,27 @@ class Classifier {
       /\bdmesg\b[^|;]*(-c\b|--clear\b|--read-clear\b)/i, // dmesg buffer clear
     ]
     const chainsAnotherCommand = dangerPatterns.some(p => p.test(matchStr) || p.test(normalized))
-    if (tool === 'shell_exec' && tier === 'auto' && chainsAnotherCommand) {
-      tier = 'escalate'
+    const unattended = tier === 'auto' || tier === 'notify'
+
+    if (tool === 'shell_exec') {
+      if (!unattended) return { tier }
+      if (chainsAnotherCommand) return { tier: 'escalate', reason: 'command uses shell operators or destructive flags' }
+      // Unattended commands never run through a shell: they must tokenise cleanly into argv and
+      // pass the per-binary allowlist and blocked-path checks (command-policy.ts). The regex
+      // rules above only pick the tier; this is the actual control.
+      const argv = parseArgv(matchStr)
+      if (!argv) return { tier: 'escalate', reason: 'command needs a shell to run' }
+      const verdict = tier === 'auto' ? checkAutoCommand(argv) : checkNotifyCommand(argv)
+      if (!verdict.ok) return { tier: 'escalate', reason: verdict.reason }
+      return { tier, argv }
     }
 
-    return tier
+    if (tool === 'file_read' && unattended) {
+      const p = typeof args.path === 'string' ? args.path : ''
+      if (!p || isBlockedPath(p)) return { tier: 'escalate', reason: 'file_read path is blocked' }
+    }
+
+    return { tier }
   }
 }
 

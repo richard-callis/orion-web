@@ -21,12 +21,35 @@ interface GatewayConfig {
   gatewayUrl: string    // this gateway's own URL, reported to ORION
 }
 
+/** Per-request timeout for every call to ORION — a hung ORION must not hang the gateway. */
+const REQUEST_TIMEOUT_MS = 15_000
+
+/** Thrown when ORION rejects the gateway's credentials (401/403). */
+export class OrionAuthError extends Error {
+  constructor(public status: number) {
+    super(`ORION rejected gateway credentials (HTTP ${status})`)
+    this.name = 'OrionAuthError'
+  }
+}
+
 export class OrionClient {
   private cfg: GatewayConfig
-  private heartbeatTimer?: ReturnType<typeof setInterval>
+  private heartbeatTimer?: ReturnType<typeof setTimeout>
+  private heartbeatStopped = true
+  private lastHeartbeatOk = 0
 
   constructor(cfg: GatewayConfig) {
     this.cfg = cfg
+  }
+
+  /** Swap in a rotated gateway token without restarting. */
+  setGatewayToken(token: string): void {
+    this.cfg = { ...this.cfg, gatewayToken: token }
+  }
+
+  /** Epoch ms of the last fully successful heartbeat (0 = never). */
+  get lastHeartbeatAt(): number {
+    return this.lastHeartbeatOk
   }
 
   private headers() {
@@ -36,18 +59,23 @@ export class OrionClient {
     }
   }
 
+  private fetchOrion(url: string, init: RequestInit = {}): Promise<Response> {
+    return fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+  }
+
   async register(version?: string): Promise<void> {
-    const res = await fetch(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}`, {
+    const res = await this.fetchOrion(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}`, {
       method: 'PUT',
       headers: this.headers(),
       body: JSON.stringify({ status: 'connected', gatewayUrl: this.cfg.gatewayUrl, lastSeen: new Date().toISOString(), gatewayVersion: version }),
     })
+    if (res.status === 401 || res.status === 403) throw new OrionAuthError(res.status)
     if (!res.ok) throw new Error(`Failed to register with ORION: ${res.status} ${await res.text()}`)
     console.log(`[gateway] Registered with ORION as environment ${this.cfg.environmentId}`)
   }
 
   async disconnect(): Promise<void> {
-    await fetch(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}`, {
+    await this.fetchOrion(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}`, {
       method: 'PUT',
       headers: this.headers(),
       body: JSON.stringify({ status: 'disconnected' }),
@@ -55,38 +83,69 @@ export class OrionClient {
   }
 
   async fetchTools(): Promise<McpToolConfig[]> {
-    const res = await fetch(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}/tools?enabled=true`, {
+    const res = await this.fetchOrion(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}/tools?enabled=true`, {
       headers: this.headers(),
     })
+    if (res.status === 401 || res.status === 403) throw new OrionAuthError(res.status)
     if (!res.ok) throw new Error(`Failed to fetch tools: ${res.status}`)
     return res.json()
   }
 
-  /** Start sending heartbeats every 30s so ORION knows we're alive */
-  startHeartbeat(onToolsChanged: (tools: McpToolConfig[]) => void, intervalMs = 30_000, version?: string) {
-    this.heartbeatTimer = setInterval(async () => {
+  /**
+   * Send a heartbeat every `intervalMs` so ORION knows we're alive, refreshing
+   * the tool config each time.
+   *
+   * A setTimeout chain (not setInterval) guarantees beats never overlap when
+   * ORION is slow; every request has a timeout. The heartbeat response status is
+   * checked — it used to be ignored, so a revoked token went unnoticed. On
+   * 401/403 the chain stops and `onAuthFailure` decides what to do.
+   */
+  startHeartbeat(
+    onToolsChanged: (tools: McpToolConfig[]) => void,
+    intervalMs = 30_000,
+    version?: string,
+    onAuthFailure?: (err: OrionAuthError) => void,
+  ) {
+    this.heartbeatStopped = false
+    const schedule = () => {
+      if (this.heartbeatStopped) return
+      this.heartbeatTimer = setTimeout(beat, intervalMs)
+    }
+    const beat = async () => {
       try {
-        await fetch(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}`, {
+        const res = await this.fetchOrion(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}`, {
           method: 'PUT',
           headers: this.headers(),
           body: JSON.stringify({ status: 'connected', lastSeen: new Date().toISOString(), gatewayVersion: version }),
         })
+        if (res.status === 401 || res.status === 403) throw new OrionAuthError(res.status)
+        if (!res.ok) throw new Error(`heartbeat returned HTTP ${res.status}`)
         // Refresh tool config on every heartbeat so changes take effect within one interval
         const tools = await this.fetchTools()
         onToolsChanged(tools)
+        this.lastHeartbeatOk = Date.now()
       } catch (err) {
-        console.error('[gateway] Heartbeat failed:', err)
+        if (err instanceof OrionAuthError) {
+          console.error(`[gateway] Heartbeat: ${err.message}`)
+          this.stopHeartbeat()
+          onAuthFailure?.(err)
+          return
+        }
+        console.error('[gateway] Heartbeat failed:', err instanceof Error ? err.message : String(err))
       }
-    }, intervalMs)
+      schedule()
+    }
+    schedule()
   }
 
   stopHeartbeat() {
-    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+    this.heartbeatStopped = true
+    if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer)
   }
 
   /** Report K8s Ingress rules to ORION for display in the Ingress management page */
   async reportIngresses(ingresses: import('./ingress-watcher.js').K8sIngressRule[]): Promise<void> {
-    const res = await fetch(
+    const res = await this.fetchOrion(
       `${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}/ingress/sync`,
       {
         method: 'POST',
@@ -101,7 +160,7 @@ export class OrionClient {
 
   /** Report ArgoCD Application sync/health state to ORION */
   async reportSyncStatus(apps: import('./argocd-watcher.js').ArgoCDApp[]): Promise<void> {
-    const res = await fetch(
+    const res = await this.fetchOrion(
       `${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}/sync-status`,
       {
         method: 'POST',
@@ -116,7 +175,7 @@ export class OrionClient {
 
   /** Fetch active NebulaInstances (skills + hooks) for an environment */
   async fetchNebula(environmentId: string): Promise<unknown[]> {
-    const res = await fetch(
+    const res = await this.fetchOrion(
       `${this.cfg.mccUrl}/api/environments/${environmentId}/nebula/active`,
       { headers: this.headers() },
     )
@@ -138,7 +197,7 @@ export class OrionClient {
       durationMs?: number
     },
   ): Promise<void> {
-    const res = await fetch(
+    const res = await this.fetchOrion(
       `${this.cfg.mccUrl}/api/environments/${environmentId}/nebula/hook/report`,
       {
         method: 'POST',
@@ -183,7 +242,7 @@ export class OrionClient {
     tokensOut?: number
     costCents?: number
   }): Promise<void> {
-    const res = await fetch(
+    const res = await this.fetchOrion(
       `${this.cfg.mccUrl}/api/observability/trace`,
       {
         method: 'POST',

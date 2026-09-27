@@ -5,6 +5,8 @@ import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, CreateEnvironmentSchema } from '@/lib/validate'
 import { encrypt, decrypt } from '@/lib/encryption'
 import { timingSafeEqual } from 'crypto'
+import { toEnvironmentDTO, isUnchangedSecret, mergeEnvironmentMetadata } from '@/lib/environment-dto'
+import { revokeEnvironmentGitCredential } from '@/lib/environment-git-credentials'
 
 /**
  * Map an assertCanModify rejection to the right HTTP status.
@@ -70,11 +72,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     },
   })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  return NextResponse.json({
-    ...env,
-    gatewayToken: env.gatewayToken ? '••••' : null,
-    kubeconfig:   env.kubeconfig   ? '••••' : null,
-  })
+  return NextResponse.json(toEnvironmentDTO(env))
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -128,11 +126,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       })
     }
 
-    return NextResponse.json({
-      ...updated,
-      gatewayToken: updated.gatewayToken ? '••••' : null,
-      kubeconfig:   updated.kubeconfig   ? '••••' : null,
-    })
+    return NextResponse.json(toEnvironmentDTO(updated))
   } else {
     // ── Browser / admin UI ─────────────────────────────────────────────
     // SOC2 [INPUT-001]: Validate request body with Zod schema
@@ -145,7 +139,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     try { caller = await requireAuth() } catch {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
-    const existing = await prisma.environment.findUnique({ where: { id: (await params).id }, select: { gatewayUrl: true, createdBy: true } })
+    const existing = await prisma.environment.findUnique({ where: { id: (await params).id }, select: { gatewayUrl: true, createdBy: true, metadata: true } })
     if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     const denied = await guardAccess(caller, existing.createdBy ?? null)
@@ -156,18 +150,26 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (data.type !== undefined) updateData.type = data.type
     if (data.description !== undefined) updateData.description = data.description || null
     if (data.gatewayUrl !== undefined) updateData.gatewayUrl = data.gatewayUrl || null
-    if (data.gatewayToken !== undefined && data.gatewayToken !== '••••') {
+    // Credentials are never sent to the client, so an omitted (or legacy
+    // masked) value means "keep the stored one"; an explicit null/'' clears it.
+    if (!isUnchangedSecret(data.gatewayToken)) {
       updateData.gatewayToken = data.gatewayToken || null
     }
     if (data.gitOwner !== undefined) updateData.gitOwner = data.gitOwner || null
     if (data.gitRepo !== undefined) updateData.gitRepo = data.gitRepo || null
     if (data.policyConfig !== undefined) updateData.policyConfig = data.policyConfig
-    if (data.kubeconfig !== undefined && data.kubeconfig !== '••••') {
+    if (!isUnchangedSecret(data.kubeconfig)) {
       updateData.kubeconfig = data.kubeconfig || null
     }
+    // metadata used to be silently dropped on update (nodeIp/talosConfig edits
+    // never saved). Merge over the stored value, keeping credential keys the
+    // client can't see unless it sends a new one.
+    if (data.metadata !== undefined) {
+      updateData.metadata = mergeEnvironmentMetadata(existing.metadata, data.metadata)
+    }
     if (data.federationRole  !== undefined) updateData.federationRole  = data.federationRole  === 'standalone' ? null : (data.federationRole ?? null)
-    if (data.federationToken !== undefined) {
-      const rawFedToken = data.federationToken ?? null
+    if (!isUnchangedSecret(data.federationToken)) {
+      const rawFedToken = data.federationToken || null
       updateData.federationToken = rawFedToken && process.env.ORION_ENCRYPTION_KEY
         ? encrypt(rawFedToken)
         : rawFedToken
@@ -204,11 +206,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       })
     }
 
-    return NextResponse.json({
-      ...env,
-      gatewayToken: env.gatewayToken ? '••••' : null,
-      kubeconfig:   env.kubeconfig   ? '••••' : null,
-    })
+    return NextResponse.json(toEnvironmentDTO(env))
   }
 }
 
@@ -223,6 +221,11 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     select: { name: true },
   })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // M2: revoke the gateway's repo-scoped git credential at the provider before
+  // the row cascades away with the environment (failures are logged, not fatal).
+  await revokeEnvironmentGitCredential(id)
+
   try {
     await prisma.environment.delete({ where: { id } })
   } catch (e: any) {

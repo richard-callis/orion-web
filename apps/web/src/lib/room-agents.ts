@@ -16,8 +16,9 @@
 
 import { prisma } from './db'
 import { setTyping, clearTyping } from './typing-state'
-import { buildToolDefinitions, TOOLS_SYSTEM_ADDENDUM, executeTool } from './agent-tools'
-import { getToolsForContext, executeRegisteredTool } from './tool-registry'
+import { TOOLS_SYSTEM_ADDENDUM } from './agent-tools'
+import { executeRegisteredTool } from './tool-registry'
+import { buildRoomToolSchemas } from './room-tools'
 import { checkToolPermission } from './tool-permissions'
 import { publishChatMessage } from './chat-redis'
 import { resolveAgentGateway } from './agent-gateway'
@@ -25,7 +26,9 @@ import { matchAndInjectSkills, type SkillEmbedCache } from './claude'
 import { resolveAgentPrimaryEnvironmentId } from './skill-tools'
 import { buildAgentContext, buildAgentLocalContext, buildRoomLocalContext, invalidateSnapshotCache, getModelContextLimit, getClaudeContextLimit } from './agent-context'
 import { compactRoom, publishCompactionWarning, publishTokenUpdate } from './compaction'
-import { recordTokenUsage, estimateTokens } from './token-budget'
+import { estimateTokens } from './token-budget'
+import { beginBudgetedRun, getRunTokenCap, RunTokenCap } from './llm-budget'
+import { resolveModel } from './model-roles'
 import { rateLimitRedis } from './rate-limit-redis'
 import { auditToolCall } from './security/audit-emitter'
 import { redactSecrets } from './redact'
@@ -395,26 +398,17 @@ async function callOpenAIChat(
 
   const messages: OpenAIMessage[] = [{ role: 'system', content: sys }, ...chatMsgs]
 
-  // Registry tools — all tools available in chat context (the single source of truth)
-  const registryTools = getToolsForContext('chat').map(t => ({
-    type: 'function' as const,
-    function: { name: t.name, description: t.description, parameters: t.inputSchema },
-  }))
-  const registryToolNames: Set<string> = new Set(getToolsForContext('chat').map(t => t.name))
+  // Registry tools — chat/both tools plus room-only tools (room-tools.ts). The
+  // registry is the single source of truth: every ORION tool call goes through
+  // checkToolPermission + executeRegisteredTool below.
+  const registryTools = await buildRoomToolSchemas()
+  const registryToolNames: Set<string> = new Set(registryTools.map(t => t.function.name))
 
-  // Legacy agent-tools (create_task, orion_manage_task, etc.) — keep for backward compat.
-  // Exclude any that are now in the registry to avoid duplicates.
-  // buildToolDefinitions() injects real environment names into write_secret description.
-  const allToolDefs = await buildToolDefinitions()
-  const legacyTools = allToolDefs.filter(d => !registryToolNames.has(d.function.name))
-  const legacyToolNames: Set<string> = new Set(legacyTools.map(d => d.function.name))
-
-  // Merge: registry + legacy + gateway tools
+  // Merge: registry + gateway tools
   const allowedTools = toolContext?.allowedTools
   const merged = hasTools
     ? [
         ...registryTools,
-        ...legacyTools,
         ...(gatewayTools ?? []).map(t => ({
           type: 'function' as const,
           function: { name: t.name, description: t.description, parameters: t.inputSchema },
@@ -428,14 +422,32 @@ async function callOpenAIChat(
     ? merged.filter(t => allowedTools.has(t.function.name))
     : merged
 
-  // Names of ORION-native tools for dispatch routing (registry + legacy)
-  const orionToolNames: Set<string> = new Set([...registryToolNames, ...legacyToolNames])
-
   // Gateway tool names — used to distinguish known gateway tools from hallucinated names.
   // Without this set, any hallucinated name silently falls through to the gateway client
   // and produces an opaque error instead of a useful "tool not found" message.
   const gatewayToolNames: Set<string> = new Set(gatewayTools?.map(t => t.name) ?? [])
-  const allKnownToolNames: string[] = [...orionToolNames, ...gatewayToolNames]
+  const allKnownToolNames: string[] = [...registryToolNames, ...gatewayToolNames]
+
+  // Single guarded path for ORION registry tools: permission check, then execute
+  // with a full ToolExecutionContext (agent + room + gateway), then audit.
+  const runRegistryTool = async (name: string, args: Record<string, unknown>): Promise<string> => {
+    const perm = await checkToolPermission(name, toolContext?.agentId ?? null, null)
+    if (!perm.allowed) {
+      if (toolContext?.agentId) auditToolCall({ toolName: name, args, agentId: toolContext.agentId, agentName, outcome: 'denied' })
+      return `Permission denied: ${perm.reason ?? `tool '${name}' is not permitted for this agent`}. An admin can grant access under Admin → Agents → Tool Permissions.`
+    }
+    const out = await executeRegisteredTool(name, args, {
+      agentId: toolContext!.agentId,
+      roomId:  toolContext!.roomId,
+      prisma,
+      gateway: gateway ? {
+        executeTool: (n, a) => gateway.client.executeTool(n, a),
+        listTools:   () => gateway.client.listTools(),
+      } : undefined,
+    })
+    if (toolContext?.agentId) auditToolCall({ toolName: name, args, agentId: toolContext.agentId, agentName, outcome: 'executed' })
+    return out
+  }
 
   // Qwen3 models generate <think>…</think> tokens by default in Ollama. These thinking
   // tokens interfere with structured tool_calls output — the model occasionally narrates
@@ -456,7 +468,14 @@ async function callOpenAIChat(
   // Tool-call loop — keep going until the model produces a text reply
   const maxToolRoundsSetting = await prisma.systemSetting.findUnique({ where: { key: 'agent.chat.maxToolRounds' } })
   const MAX_TOOL_ROUNDS = parseInt(String(maxToolRoundsSetting?.value ?? '15'), 10) || 15
+  // Per-run token cap: stop the tool loop (and force a final reply) once this
+  // turn's cumulative spend passes agent.run.maxTokens.
+  const runCap = new RunTokenCap(await getRunTokenCap())
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    if (runCap.exceeded) {
+      console.warn(`[room-agents] ${agentName}: ${runCap.message}`)
+      break
+    }
     const body: Record<string, unknown> = { model, stream: false, messages }
     if (allTools) body.tools = allTools
     if (isQwen3) body.think = false
@@ -476,6 +495,7 @@ async function callOpenAIChat(
     tokensUsed = data.usage?.prompt_tokens ?? tokensUsed
     totalInputTokens  += data.usage?.prompt_tokens     ?? 0
     totalOutputTokens += data.usage?.completion_tokens ?? 0
+    runCap.add((data.usage?.prompt_tokens ?? estimateTokens(JSON.stringify(messages))) + (data.usage?.completion_tokens ?? 0))
     const choice = data.choices?.[0]
     if (!choice) return { reply: null, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
 
@@ -525,33 +545,7 @@ async function callOpenAIChat(
           result = `Permission denied: tool '${tc.function.name}' is not in this agent's allowed tool list. An admin can grant access under Admin → Agents → Tool Permissions.`
           if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'denied' })
         } else if (registryToolNames.has(tc.function.name)) {
-          // Gate registry tools through checkToolPermission before execution.
-          // Previously called executeRegisteredTool directly with NO permission check,
-          // allowing room agents to invoke destructive-tier tools without a grant.
-          const agentIdForPerm = toolContext?.agentId ?? null
-          const perm = await checkToolPermission(tc.function.name, agentIdForPerm, null)
-          if (!perm.allowed) {
-            result = `Permission denied: ${perm.reason ?? `tool '${tc.function.name}' is not permitted for this agent`}. An admin can grant access under Admin → Agents → Tool Permissions.`
-            if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'denied' })
-          } else {
-          result = await executeRegisteredTool(tc.function.name, args, {
-            agentId: toolContext!.agentId,
-            prisma,
-            gateway: gateway ? {
-              executeTool: (n, a) => gateway.client.executeTool(n, a),
-              listTools: () => gateway.client.listTools(),
-            } : undefined,
-          })
-          if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'executed' })
-          }
-        } else if (legacyToolNames.has(tc.function.name)) {
-          // Legacy agent-tools (create_task, orion_manage_task, etc.)
-          result = await executeTool(tc.function.name, args, {
-            roomId:        toolContext!.roomId,
-            callerAgentId: toolContext!.agentId,
-            callerLlm:     toolContext!.llm,
-          })
-          if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'executed' })
+          result = await runRegistryTool(tc.function.name, args)
         } else if (gateway && gatewayToolNames.has(tc.function.name)) {
           // Known gateway tool
           result = await gateway.client.executeTool(tc.function.name, args)
@@ -562,30 +556,12 @@ async function callOpenAIChat(
           if (resolved?.confidence === 'high') {
             // Auto-correct: call the real tool without burning a round trip
             console.warn(`[room-agents] ${agentName}: auto-correcting hallucinated tool "${tc.function.name}" → "${resolved.name}"`)
-            if (registryToolNames.has(resolved.name)) {
-              // MINOR fix: fuzzy-resolved registry tools were executed without checkToolPermission.
-              // A slightly-misspelled destructive tool name that resolved with high confidence
-              // bypassed the permission gate entirely. Apply the same check as the direct path.
-              const agentIdForPerm = toolContext?.agentId ?? null
-              const fuzzyPerm = await checkToolPermission(resolved.name, agentIdForPerm, null)
-              if (!fuzzyPerm.allowed) {
-                result = `Permission denied: ${fuzzyPerm.reason ?? `tool '${resolved.name}' is not permitted`}`
-              } else {
-              result = await executeRegisteredTool(resolved.name, args, {
-                agentId: toolContext!.agentId,
-                prisma,
-                gateway: gateway ? {
-                  executeTool: (n, a) => gateway.client.executeTool(n, a),
-                  listTools:   () => gateway.client.listTools(),
-                } : undefined,
-              })
-              }
-            } else if (legacyToolNames.has(resolved.name)) {
-              result = await executeTool(resolved.name, args, {
-                roomId:        toolContext!.roomId,
-                callerAgentId: toolContext!.agentId,
-                callerLlm:     toolContext!.llm,
-              })
+            if (allowedTools && allowedTools.size > 0 && !allowedTools.has(resolved.name)) {
+              // The per-agent allowlist applies to auto-corrected names too
+              result = `Permission denied: tool '${resolved.name}' is not in this agent's allowed tool list.`
+            } else if (registryToolNames.has(resolved.name)) {
+              // Same guarded path as a direct call — fuzzy resolution must not bypass it
+              result = await runRegistryTool(resolved.name, args)
             } else if (gateway) {
               result = await gateway.client.executeTool(resolved.name, args)
             } else {
@@ -643,7 +619,7 @@ async function callOpenAIChat(
 
   // Tool rounds exhausted — force one final response turn with no tools available
   // so the agent always replies with what it learned, never silently disappears.
-  console.warn(`[room-agents] ${agentName} hit MAX_TOOL_ROUNDS — forcing final response turn`)
+  console.warn(`[room-agents] ${agentName} hit ${runCap.exceeded ? 'the run token cap' : 'MAX_TOOL_ROUNDS'} — forcing final response turn`)
   const finalBody: Record<string, unknown> = { model, stream: false, messages }
   if (isQwen3) finalBody.think = false
   // Omit tools entirely so the model must produce a text reply
@@ -682,7 +658,7 @@ async function resolveOllamaBaseUrl(): Promise<string> {
  */
 async function resolveAgentContextLimit(llm: string): Promise<number> {
   if (llm === 'claude' || llm.startsWith('claude:')) {
-    const modelId = llm.startsWith('claude:') ? llm.slice('claude:'.length) : 'claude-haiku-4-5-20251001'
+    const modelId = llm.startsWith('claude:') ? llm.slice('claude:'.length) : await resolveModel('room')
     return getClaudeContextLimit(modelId)
   }
 
@@ -862,9 +838,11 @@ export async function triggerRoomAgentReplies(
 
   // Compute the effective context limit for this room: the smallest limit among all agents' models.
   // A per-room tokenLimit override takes full priority; otherwise use the model minimum.
+  // Default model for agents without an explicit llm (SystemSetting model.role.room)
+  const defaultRoomLlm = `claude:${await resolveModel('room')}`
   const agentLlms = triggeredAgents.map((a: any) => {
     const cc = ((a.metadata ?? {}) as Record<string, unknown>).contextConfig as Record<string, unknown> | undefined
-    return (cc?.llm as string | undefined) ?? 'claude:claude-haiku-4-5-20251001'
+    return (cc?.llm as string | undefined) ?? defaultRoomLlm
   })
   const agentContextLimits = await Promise.all(agentLlms.map(resolveAgentContextLimit))
   const validLimits = agentContextLimits.filter(l => l > 0)
@@ -932,7 +910,7 @@ export async function triggerRoomAgentReplies(
       const meta          = (agent.metadata ?? {}) as Record<string, unknown>
       const contextConfig = (meta.contextConfig ?? {}) as Record<string, unknown>
       const rawPrompt     = meta.systemPrompt as string | undefined
-      const llm           = (contextConfig.llm as string | undefined) ?? 'claude:claude-haiku-4-5-20251001'
+      const llm           = (contextConfig.llm as string | undefined) ?? defaultRoomLlm
       const toolsEnabled  = !!(contextConfig.tools)
 
       // Base persona description — identity constraint is added by buildSystemPrompt()
@@ -1004,6 +982,25 @@ export async function triggerRoomAgentReplies(
       let tokensUsed = 0
       let callInputTokens  = 0
       let callOutputTokens = 0
+
+      // Budget gate — room agents previously recorded usage but never checked
+      // tokenBudgetDay/Month, so a busy room could spend past any limit.
+      const budgetRun = await beginBudgetedRun(agent.id)
+      if (!budgetRun.allowed) {
+        console.warn(`[room-agents] ${agent.name}: budget gate — ${budgetRun.reason}`)
+        const notice = `I can't reply right now: ${budgetRun.reason}. An admin can raise my token budget.`
+        const msg = await prisma.chatMessage.create({
+          data: { roomId, agentId: agent.id, senderType: 'agent', content: notice },
+        })
+        await publishChatMessage(roomId, {
+          id:         msg.id,
+          senderType: 'agent',
+          content:    notice,
+          sender:     { type: 'agent', id: agent.id, name: agent.name },
+          createdAt:  msg.createdAt instanceof Date ? msg.createdAt.toISOString() : msg.createdAt,
+        })
+        continue
+      }
 
       setTyping(roomId, agent.name)
       try {
@@ -1093,6 +1090,8 @@ export async function triggerRoomAgentReplies(
         }
       } finally {
         clearTyping(roomId, agent.name)
+        // Record spend + release the reservation on every path (incl. early `continue`s)
+        await budgetRun.finish(callInputTokens, callOutputTokens, llm)
       }
 
       if (!reply) {
@@ -1144,10 +1143,7 @@ export async function triggerRoomAgentReplies(
       // Skip if compaction already fired this turn — subsequent agents' prompt_tokens
       // reflect pre-compaction context and would incorrectly re-trigger the threshold.
       // roomEffectiveLimit is the min of all agents' model limits (or the room override).
-      // Record per-call token spend to cost dashboard (independent of compaction state)
-      if (callInputTokens > 0 || callOutputTokens > 0) {
-        recordTokenUsage(agent.id, null, callInputTokens, callOutputTokens).catch(() => {})
-      }
+      // Per-call token spend is recorded by budgetRun.finish() above.
 
       if (tokensUsed > 0 && !compactedThisTurn) {
         // Fix: tokenCount is a denormalized field written by fire-and-forget concurrent

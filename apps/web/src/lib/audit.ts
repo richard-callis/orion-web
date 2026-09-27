@@ -93,6 +93,8 @@ export type AuditAction =
   | 'tool_execute'
   | 'tool_approve'
   | 'tool_revoke'
+  | 'execution_approve'
+  | 'execution_deny'
   | 'sso_config_update'
   | 'admin_action'
   | 'settings_update'

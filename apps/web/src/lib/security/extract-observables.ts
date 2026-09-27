@@ -93,7 +93,9 @@ const PRIVATE_RANGES_V4 = [
 const IPV4_RE = /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g
 const IPV6_RE = /\b(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\b/gi
 const DOMAIN_RE = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b/gi
-const URL_RE = /\bhttps?:\/\/[^\s<>"'{}]+/gi
+// Also matches defanged schemes (hxxp://, hxxps://) so they get refanged below —
+// previously only http(s):// matched, so defanged URLs were never extracted.
+const URL_RE = /\b(?:https?|hxxps?|hxpxs?):\/\/[^\s<>"'{}]+/gi
 const MD5_RE = /\b([0-9a-f]{32})\b/gi
 const SHA1_RE = /\b([0-9a-f]{40})\b/gi
 const SHA256_RE = /\b([0-9a-f]{64})\b/gi

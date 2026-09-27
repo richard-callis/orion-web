@@ -7,20 +7,93 @@
  * Designed to be idempotent — safe to call on every restart.
  */
 
-import { exec } from 'child_process'
-import { promisify } from 'util'
-import { writeFileSync, unlinkSync, mkdtempSync, rmSync } from 'fs'
-import { tmpdir } from 'os'
+import { run } from './lib/run.js'
 
-const execAsync = promisify(exec)
+/**
+ * ArgoCD release to install. Defaults to the moving `stable` manifest for
+ * backward compatibility; set ARGOCD_VERSION (e.g. "v2.14.11") to pin it so
+ * installs are reproducible.
+ */
+const ARGOCD_VERSION = process.env.ARGOCD_VERSION ?? 'stable'
+const ARGOCD_INSTALL_URL = `https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml`
 
 export interface GitProviderInfo {
   type: 'gitea-bundled' | 'gitea' | 'github' | 'gitlab'
-  /** Repo clone URL base — already adjusted for cluster reachability by the Orion API.
+  /** Repo clone URL — already adjusted for cluster reachability by the Orion API.
    *  May be empty string if git provider is not fully configured; treat empty as "skip". */
   url: string
-  token: string   // API token / PAT
+  token: string   // legacy: password for `url` (older ORION returned the org-wide token here)
   org: string     // default org/user namespace
+  /** M2: read-only credential scoped to this environment's repo (newer ORION). */
+  credential?: {
+    kind: 'https-token' | 'ssh-key'
+    repoUrl: string
+    username: string
+    password?: string
+    sshPrivateKey?: string
+    orgTokenFallback?: boolean
+  }
+}
+
+/**
+ * Build the ArgoCD Secret for the credential ORION issued.
+ *
+ * Both shapes use a `repo-creds` credential template, which ArgoCD matches by
+ * URL prefix. For a scoped credential the prefix is the env repo itself (minus
+ * any `.git`), so Applications match whether their repoURL has the suffix or
+ * not; the credential only grants access to that one repo anyway. Older ORION
+ * versions only return { url, token } (the org-wide token, prefix = provider
+ * base URL). Either way the Secret is named `orion-git-repo`, so applying it
+ * replaces an older org-token Secret in place.
+ */
+export function buildRepoSecretYaml(gitConfig: GitProviderInfo): { yaml: string; repoUrl: string } {
+  // B1 fix: YAML injection — JSON-encode every value. YAML is a JSON superset, so
+  // JSON strings are valid YAML scalars with all special characters escaped.
+  const q = (v: string) => JSON.stringify(v)
+  const cred = gitConfig.credential
+
+  if (cred) {
+    const prefix = cred.repoUrl.replace(/\.git$/, '')
+    const secretFields = cred.kind === 'ssh-key'
+      ? [`  sshPrivateKey: ${q(cred.sshPrivateKey ?? '')}`]
+      : [`  username: ${q(cred.username)}`, `  password: ${q(cred.password ?? '')}`]
+    return {
+      repoUrl: cred.repoUrl,
+      yaml: [
+        'apiVersion: v1',
+        'kind: Secret',
+        'metadata:',
+        '  name: orion-git-repo',
+        '  namespace: argocd',
+        '  labels:',
+        '    argocd.argoproj.io/secret-type: repo-creds',
+        'stringData:',
+        '  type: git',
+        `  url: ${q(prefix)}`,
+        ...secretFields,
+      ].join('\n'),
+    }
+  }
+
+  // Legacy: repo-creds is a credential template — ArgoCD matches it by URL prefix.
+  const username = gitConfig.type === 'github' ? 'x-access-token' : 'orion'
+  return {
+    repoUrl: gitConfig.url,
+    yaml: [
+      'apiVersion: v1',
+      'kind: Secret',
+      'metadata:',
+      '  name: orion-git-repo',
+      '  namespace: argocd',
+      '  labels:',
+      '    argocd.argoproj.io/secret-type: repo-creds',
+      'stringData:',
+      '  type: git',
+      `  url: ${q(gitConfig.url)}`,
+      `  password: ${q(gitConfig.token)}`,
+      `  username: ${q(username)}`,
+    ].join('\n'),
+  }
 }
 
 
@@ -32,7 +105,7 @@ export async function bootstrapArgoCD(
   // Step 1: Check if ArgoCD namespace exists
   let argocdInstalled = false
   try {
-    await execAsync('kubectl get namespace argocd 2>/dev/null', { timeout: 10_000 })
+    await run('kubectl', ['get', 'namespace', 'argocd'], { timeoutMs: 10_000 })
     argocdInstalled = true
     console.log('[argocd-bootstrap] ArgoCD already installed, skipping install')
   } catch {
@@ -44,20 +117,16 @@ export async function bootstrapArgoCD(
       console.log('[argocd-bootstrap] Installing ArgoCD into cluster...')
 
       // Step 2: Create namespace and apply ArgoCD manifests
-      await execAsync('kubectl create namespace argocd 2>/dev/null', { timeout: 10_000 })
+      await run('kubectl', ['create', 'namespace', 'argocd'], { timeoutMs: 10_000 })
       console.log('[argocd-bootstrap] Namespace argocd created')
 
-      await execAsync(
-        'kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml',
-        { timeout: 120_000 },
-      )
-      console.log('[argocd-bootstrap] ArgoCD manifests applied')
+      await run('kubectl', ['apply', '-n', 'argocd', '-f', ARGOCD_INSTALL_URL], { timeoutMs: 120_000 })
+      console.log(`[argocd-bootstrap] ArgoCD manifests applied (${ARGOCD_VERSION})`)
 
       // Step 3: Wait for ArgoCD server to be ready
-      await execAsync(
-        'kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=120s',
-        { timeout: 130_000 },
-      )
+      await run('kubectl', [
+        'wait', '--for=condition=available', 'deployment/argocd-server', '-n', 'argocd', '--timeout=120s',
+      ], { timeoutMs: 130_000 })
       console.log('[argocd-bootstrap] ArgoCD server is ready')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -66,7 +135,7 @@ export async function bootstrapArgoCD(
     }
   }
 
-  // Step 4: Fetch git provider config from Orion
+  // Step 4: Fetch the git credential from Orion
   try {
     const res = await fetch(
       `${orionUrl.replace(/\/$/, '')}/api/environments/${environmentId}/git-provider`,
@@ -76,85 +145,28 @@ export async function bootstrapArgoCD(
       },
     )
     if (!res.ok) {
-      console.warn(`[argocd-bootstrap] Git provider config returned ${res.status} — skipping repo registration`)
+      // 409: ORION refused to issue a repo-scoped credential and the org-token
+      // fallback is off — the body says why.
+      const detail = await res.json().then((b: { error?: string }) => b?.error ?? '').catch(() => '')
+      console.warn(`[argocd-bootstrap] Git provider config returned ${res.status}${detail ? `: ${detail}` : ''} — skipping repo registration`)
       return
     }
     const gitConfig: GitProviderInfo = await res.json()
-    if (!gitConfig.url) {
+    if (!gitConfig.url && !gitConfig.credential?.repoUrl) {
       console.warn('[argocd-bootstrap] Git provider URL is empty — skipping repo registration')
       return
     }
-    console.log(`[argocd-bootstrap] Git provider: ${gitConfig.type} (${gitConfig.url})`)
-
-    // Step 5: Check if repo is already registered in ArgoCD
-    try {
-      const repoUrl = `${gitConfig.url}/${gitConfig.org}`
-      const secretsResult = await execAsync(
-        'kubectl get secret -n argocd -l argocd.argoproj.io/secret-type=repository -o json 2>/dev/null',
-        { timeout: 15_000 },
-      )
-      const secrets = JSON.parse(secretsResult.stdout)
-      const items = secrets.items ?? []
-
-      for (const item of items) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const data = (item as any).data ?? {}
-        if (data.url) {
-          const decodedUrl = Buffer.from(data.url, 'base64').toString('utf8')
-          if (decodedUrl === repoUrl) {
-            console.log(`[argocd-bootstrap] Repo ${repoUrl} already registered in ArgoCD`)
-            return
-          }
-        }
-      }
-    } catch {
-      // If we can't check, proceed with registration (it's idempotent via kubectl apply)
+    if (gitConfig.credential?.orgTokenFallback) {
+      console.warn('[argocd-bootstrap] ORION issued the org-wide git token (fallback enabled) — not repo-scoped')
     }
 
-    // Step 6: Register the repo as an ArgoCD repository Secret
+    // Step 5: Register (or refresh) the repo Secret. Always applied — kubectl apply
+    // is idempotent, and a rotated credential must replace the previous one.
     try {
-      // repo-creds is a credential template — ArgoCD matches it by URL prefix, so
-      // a single Secret covers all repos under gitConfig.url without needing one
-      // Secret per repo. "repository" type requires an exact URL match and would
-      // never match because the Application repoURL includes the repo path.
-      const repoUrl = gitConfig.url
-      const username = gitConfig.type === 'github' ? 'x-access-token' : 'orion'
-
-      // B1 fix: YAML injection — the previous code only stripped \r\n but
-      // other YAML metacharacters (colons, leading spaces, anchors, etc.) in
-      // repoUrl/token/username can corrupt the document or inject extra fields.
-      // JSON-encode each value: YAML is a JSON superset so JSON strings are valid
-      // YAML scalars and escape all special characters.
-      const yamlRepoUrl  = JSON.stringify(repoUrl)
-      const yamlToken    = JSON.stringify(gitConfig.token)
-      const yamlUsername = JSON.stringify(username)
-
-      const secretYaml = `apiVersion: v1
-kind: Secret
-metadata:
-  name: orion-git-repo
-  namespace: argocd
-  labels:
-    argocd.argoproj.io/secret-type: repo-creds
-stringData:
-  type: git
-  url: ${yamlRepoUrl}
-  password: ${yamlToken}
-  username: ${yamlUsername}`
-
-      // Write to a temp file and apply — avoids stdin piping issues with exec
-      const tmpDir = mkdtempSync(tmpdir() + '/argocd-bootstrap-')
-      const tmpFile = `${tmpDir}/repo-secret.yaml`
-      writeFileSync(tmpFile, secretYaml, { mode: 0o600 })
-      try {
-        await execAsync(`kubectl apply -f ${tmpFile} -n argocd 2>/dev/null`, {
-          timeout: 15_000,
-        })
-        console.log(`[argocd-bootstrap] Registered git repo ${repoUrl} in ArgoCD`)
-      } finally {
-        try { unlinkSync(tmpFile) } catch { /* ignore */ }
-        try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
-      }
+      const { yaml, repoUrl } = buildRepoSecretYaml(gitConfig)
+      // Pipe the Secret through stdin — never touches disk, no shell involved.
+      await run('kubectl', ['apply', '-f', '-', '-n', 'argocd'], { timeoutMs: 15_000, input: yaml })
+      console.log(`[argocd-bootstrap] Registered git repo ${repoUrl} in ArgoCD (${gitConfig.credential?.kind ?? 'legacy token'})`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(`[argocd-bootstrap] Failed to register git repo in ArgoCD (non-fatal): ${msg}`)

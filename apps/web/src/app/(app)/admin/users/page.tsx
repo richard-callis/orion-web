@@ -4,16 +4,20 @@ import { prisma } from '@/lib/db'
 import { UsersClient } from './UsersClient'
 
 export default async function UsersPage() {
+  // Explicit select: never serialize password hashes, TOTP secrets or tokens.
   const rawUsers = await prisma.user.findMany({
     orderBy: { createdAt: 'desc' },
+    select: {
+      id: true, username: true, name: true, email: true, role: true,
+      provider: true, lastSeen: true, active: true, createdAt: true,
+    },
   })
 
   // Serialize dates for client component
-  const users = rawUsers.map((u: any) => ({
+  const users = rawUsers.map(u => ({
     ...u,
     lastSeen: u.lastSeen?.toISOString() ?? null,
     createdAt: u.createdAt.toISOString(),
-    updatedAt: u.updatedAt.toISOString(),
   }))
 
   return (
@@ -21,7 +25,7 @@ export default async function UsersPage() {
       <div>
         <h1 className="text-lg font-semibold text-text-primary">User Management</h1>
         <p className="text-sm text-text-muted mt-0.5">
-          Users are automatically provisioned when they first authenticate via Authentik.
+          Add local users here. SSO users are provisioned automatically on their first login.
         </p>
       </div>
       <UsersClient initialUsers={users} />

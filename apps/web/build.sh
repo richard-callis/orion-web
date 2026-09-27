@@ -28,19 +28,10 @@ NODES=(
 echo "==> Building $IMAGE"
 cd "$(dirname "$0")"
 
-# Install deps if needed
-if [ ! -d node_modules ]; then
-  echo "==> Installing dependencies"
-  npm ci
-fi
-
-# Generate Prisma client
-echo "==> Generating Prisma client"
-npx prisma generate
-
-# Build image
+# Build image (dependencies and the Prisma client are installed/generated inside
+# the image; the build context is the repo root so the workspace lockfile is used)
 echo "==> Building Docker image"
-docker build --platform linux/amd64 -t "$IMAGE" -t "orion:latest" .
+docker build --platform linux/amd64 -f Dockerfile -t "$IMAGE" -t "orion:latest" ../..
 
 # Save image once; reuse for both local import and remote distribution
 echo "==> Saving image to tarball..."

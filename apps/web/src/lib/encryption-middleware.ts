@@ -11,7 +11,9 @@
 import { PrismaClient } from '@prisma/client'
 import { decrypt, encrypt } from './encryption'
 
-const ENCRYPTED_ENV_FIELDS = ['gatewayToken', 'kubeconfig']
+// federationToken was encrypted by the environment routes but never decrypted
+// on read, so the hub sent ciphertext to spokes and token lookups never matched.
+const ENCRYPTED_ENV_FIELDS = ['gatewayToken', 'kubeconfig', 'federationToken']
 const ENCRYPTED_EXT_FIELDS = ['apiKey']
 
 function isRecord(v: unknown): v is Record<string, unknown> {

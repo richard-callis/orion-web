@@ -1,0 +1,17 @@
+# Shared by the apps/*/Dockerfile builds, which use the repository root as
+# build context so the workspace package-lock.json is enforced with npm ci.
+**/node_modules
+**/.next
+**/dist
+**/coverage
+**/*.log
+**/.env
+**/.env.*
+.git
+.github
+.worktrees
+.claude
+docs
+e2e
+deploy
+context

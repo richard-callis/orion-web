@@ -96,7 +96,9 @@ export async function POST(req: NextRequest) {
     select: { id: true, federationToken: true },
   })
   for (const env of envsWithFedToken) {
-    if (!env.federationToken?.startsWith('enc:v1:')) continue
+    // Reads are decrypted by the encryption middleware (legacy plaintext passes
+    // through), so every stored token is re-encrypted under the new key.
+    if (!env.federationToken) continue
     try {
       const plaintext = decrypt(env.federationToken)
       await prisma.environment.update({ where: { id: env.id }, data: { federationToken: encryptWithKey(plaintext, newKeyBase64) } })

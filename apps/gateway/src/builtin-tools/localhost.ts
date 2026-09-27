@@ -1,10 +1,13 @@
 import { randomUUID } from 'crypto'
+import path from 'path'
 import { executorClient } from '../executor-client.js'
+import { logger } from '../lib/logger.js'
 
 /**
  * File read allowlist — paths permitted via file_read.
  * Gateway enforces this as a defense-in-depth control;
  * executor also validates against its own allowlist.
+ * Entries are either a directory prefix or an exact file.
  */
 const FILE_READ_ALLOWLIST = [
   '/var/log',
@@ -13,8 +16,15 @@ const FILE_READ_ALLOWLIST = [
   '/proc/meminfo',
 ]
 
-function isFileReadAllowed(path: string): boolean {
-  return FILE_READ_ALLOWLIST.some(allowed => path.startsWith(allowed))
+/**
+ * Normalise with path.resolve and compare on path-segment boundaries, so
+ * `/var/log/../../etc/shadow` (resolves to /etc/shadow) and `/var/logx`
+ * (a sibling, not a child) are both rejected. A plain startsWith accepted both.
+ */
+export function isFileReadAllowed(p: string): boolean {
+  if (!path.isAbsolute(p) || p.includes('\0')) return false
+  const resolved = path.resolve(p)
+  return FILE_READ_ALLOWLIST.some(allowed => resolved === allowed || resolved.startsWith(allowed + path.sep))
 }
 
 export const localhostTools = ([
@@ -39,14 +49,16 @@ export const localhostTools = ([
       const command = String(args.command ?? '').trim()
       if (!command) return 'Error: command is required'
 
-      console.log(`[localhost] shell_exec: ${command}`)
-
       const executionId = randomUUID()
+      // L5: never log the command itself — it can carry secrets. The executor
+      // records the (redacted) command in the ToolExecution row.
+      logger.info({ executionId, actor: ctx?.agentId ?? ctx?.userId ?? 'unknown', length: command.length }, 'shell_exec requested')
+
       const result = await executorClient.execute({
         tool: 'shell_exec',
         args: { command },
         actorId: (ctx?.agentId as string) || (ctx?.userId as string) || 'unknown',
-        actorType: ctx?.agentId ? 'agent' : 'human',
+        actorType: ctx?.actorType ?? (ctx?.agentId ? 'agent' : 'human'),
         executionId,
       })
 
@@ -73,19 +85,19 @@ export const localhostTools = ([
       const filePath = String(args.path ?? '').trim()
       if (!filePath) return 'Error: path is required'
 
-      // Validate path against allowlist
       if (!isFileReadAllowed(filePath)) {
         return `Error: path '${filePath}' is not in the allowlist`
       }
+      const resolved = path.resolve(filePath)
 
-      console.log(`[localhost] file_read: ${filePath}`)
+      logger.info({ path: resolved }, 'file_read requested')
 
       const executionId = randomUUID()
       const result = await executorClient.execute({
         tool: 'file_read',
-        args: { path: filePath, max_bytes: Number(args.max_bytes ?? 65536) },
+        args: { path: resolved, max_bytes: Number(args.max_bytes ?? 65536) },
         actorId: (ctx?.agentId as string) || (ctx?.userId as string) || 'unknown',
-        actorType: ctx?.agentId ? 'agent' : 'human',
+        actorType: ctx?.actorType ?? (ctx?.agentId ? 'agent' : 'human'),
         executionId,
       })
 
@@ -105,14 +117,12 @@ export const localhostTools = ([
       properties: {},
     },
     async execute(args: Record<string, unknown>, ctx?: { agentId?: string; userId?: string; actorType?: 'agent' | 'human' }) {
-      console.log(`[localhost] system_info`)
-
       const executionId = randomUUID()
       const result = await executorClient.execute({
         tool: 'system_info',
         args: {},
         actorId: (ctx?.agentId as string) || (ctx?.userId as string) || 'unknown',
-        actorType: ctx?.agentId ? 'agent' : 'human',
+        actorType: ctx?.actorType ?? (ctx?.agentId ? 'agent' : 'human'),
         executionId,
       })
 

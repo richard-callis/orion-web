@@ -609,6 +609,23 @@ export async function requireServiceAuth(
 }
 
 /**
+ * SOC2 [C2]: true only when the request carries the executor's x-executor-token.
+ *
+ * Execution records (POST/PATCH /api/executions) are written exclusively by the
+ * executor service. Sessions and the gateway Bearer token must NOT satisfy this —
+ * previously requireServiceAuth let any logged-in user create a pending execution
+ * and then approve it themselves.
+ */
+export function isExecutorServiceCall(req: { headers: Headers }): boolean {
+  const header = req.headers.get('x-executor-token')
+  const expected = process.env.ORION_EXECUTOR_TOKEN
+  if (!header || !expected) return false
+  const a = Buffer.from(header)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
+/**
  * Check if a user (or service) is authorized to modify a resource.
  *
  * Allows if:

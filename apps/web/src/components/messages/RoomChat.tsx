@@ -8,7 +8,7 @@ import {
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
-import 'highlight.js/styles/github-dark.css'
+import { Dialog } from '@/components/ui/Dialog'
 
 /** Render message content with @mention highlighting */
 function MessageContent({ content }: { content: string }) {
@@ -65,6 +65,18 @@ interface RoomDetail {
   members?: RoomMember[]
   messages?: RoomMessage[]
   activeGoal?: { id: string; text: string; status: string; createdAt: string } | null
+}
+
+/**
+ * Combine a freshly fetched page of messages with what is already on screen.
+ * Messages that arrived over SSE while the request was in flight are kept,
+ * and duplicates (same id) are dropped.
+ */
+function mergeMessages(fetched: RoomMessage[], current: RoomMessage[]): RoomMessage[] {
+  const seen = new Set(fetched.map(m => m.id))
+  const lastFetchedAt = fetched.length ? fetched[fetched.length - 1].createdAt : ''
+  const newer = current.filter(m => !seen.has(m.id) && m.createdAt >= lastFetchedAt)
+  return newer.length ? [...fetched, ...newer] : fetched
 }
 
 interface InviteOption {
@@ -242,8 +254,15 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     limit: null,
   })
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const nearBottomRef = useRef(true)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
+  // Latest roomId, used to discard responses for a room the user already left.
+  const roomIdRef = useRef(roomId)
+  roomIdRef.current = roomId
+  const messageLimitRef = useRef(messageLimit)
+  messageLimitRef.current = messageLimit
+  const planTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
 
   // Derive all mentionable members from loaded room data
   const mentionableMembers = (room?.members ?? []).map(m => ({
@@ -283,15 +302,35 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   }
 
   const loadRoom = useCallback(async (limit?: number) => {
+    const requestedRoom = roomId
     try {
-      const res = await fetch(`/api/chatrooms/${roomId}?messages=${limit ?? messageLimit}`)
+      const res = await fetch(`/api/chatrooms/${requestedRoom}?messages=${limit ?? messageLimitRef.current}`)
       if (!res.ok) throw new Error(`Request failed: ${res.status}`)
-      const detail = await res.json()
-      setRoom(detail)
+      const detail: RoomDetail & { tokenCount?: number; tokenLimit?: number | null } = await res.json()
+      if (roomIdRef.current !== requestedRoom) return
+      setRoom(prev => (
+        prev && prev.id === detail.id
+          ? { ...detail, messages: mergeMessages(detail.messages ?? [], prev.messages ?? []) }
+          : detail
+      ))
       setTokenState({ count: detail.tokenCount ?? 0, limit: detail.tokenLimit ?? null })
     } catch { /* ignore */ }
-    setLoading(false)
-  }, [roomId, messageLimit])
+    if (roomIdRef.current === requestedRoom) setLoading(false)
+  }, [roomId])
+
+  // Switching rooms: clear the previous room so its data never shows under the new id.
+  useEffect(() => {
+    setRoom(null)
+    setLoading(true)
+    setMessageLimit(100)
+    nearBottomRef.current = true
+    setTypingAgents([])
+  }, [roomId])
+
+  useEffect(() => {
+    const timers = planTimersRef.current
+    return () => { timers.forEach(clearTimeout) }
+  }, [])
 
   const loadMore = useCallback(() => {
     const next = messageLimit + 100
@@ -299,12 +338,12 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     loadRoom(next)
   }, [messageLimit, loadRoom])
 
-  useEffect(() => { loadRoom() }, [loadRoom])
+  useEffect(() => { loadRoom(100) }, [loadRoom])
 
   // Debounce scroll to avoid performance issues with rapid message arrivals
   useEffect(() => {
     const timer = setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      if (nearBottomRef.current) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
     }, 100)
     return () => clearTimeout(timer)
   }, [room?.messages?.length])
@@ -312,6 +351,8 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   // Subscribe to real-time messages via SSE and poll typing state
   useEffect(() => {
     let active = true
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let hasConnected = false
 
     // SSE subscription for real-time messages
     const connectSSE = () => {
@@ -324,9 +365,10 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
         try {
           const message = JSON.parse(event.data)
 
-          // Skip the initial "connected" message
+          // On (re)connect, reload so messages sent while disconnected appear.
           if (message.type === 'connected') {
-            console.log('[RoomChat] SSE connected for room', roomId)
+            if (hasConnected) loadRoom()
+            hasConnected = true
             return
           }
 
@@ -337,10 +379,12 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
 
           // Update room with new message
           setRoom((prev) => {
-            if (!prev) return prev
+            if (!prev || prev.id !== roomId) return prev
+            if (message.id && prev.messages?.some(m => m.id === message.id)) return prev
             const newMessages = [...(prev.messages || []), message]
-            // Keep only the last 200 messages in DOM to avoid performance issues
-            const trimmedMessages = newMessages.length > 200 ? newMessages.slice(-200) : newMessages
+            // Keep the DOM bounded, but never below what the user explicitly loaded
+            const cap = Math.max(200, messageLimitRef.current)
+            const trimmedMessages = newMessages.length > cap ? newMessages.slice(-cap) : newMessages
             return {
               ...prev,
               messages: trimmedMessages,
@@ -362,11 +406,10 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       })
 
       es.addEventListener('error', () => {
-        console.warn('[RoomChat] SSE connection error, falling back to polling')
         es.close()
         if (active) {
-          // Reconnect after delay if still active
-          setTimeout(connectSSE, 5000)
+          // Reconnect after a delay; the 'connected' handler reloads missed messages.
+          reconnectTimer = setTimeout(connectSSE, 5000)
         }
       })
 
@@ -376,9 +419,10 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       eventSourceRef.current = es
     }
 
-    // Typing state polling (every 2s)
+    // Typing state polling (every 2s). The stream does not carry typing
+    // events, so poll — but only while the tab is visible.
     const pollTyping = async () => {
-      if (!active) return
+      if (!active || document.visibilityState === 'hidden') return
       try {
         const res = await fetch(`/api/chatrooms/${roomId}/typing`)
         if (res.ok) {
@@ -394,12 +438,13 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     return () => {
       active = false
       clearInterval(typingInterval)
+      if (reconnectTimer) clearTimeout(reconnectTimer)
       if (eventSourceRef.current) {
         eventSourceRef.current.close()
         eventSourceRef.current = null
       }
     }
-  }, [roomId])
+  }, [roomId, loadRoom])
 
   const saveAsPlan = useCallback(async (msgId: string, content: string) => {
     if (!room) return
@@ -427,8 +472,10 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
     if (!patchRes.ok) return
     setSavedPlanMsgId(msgId)
     setPlanToast({ msgId, prevPlan })
-    setTimeout(() => setSavedPlanMsgId(null), 3000)
-    setTimeout(() => setPlanToast(null), 5000)
+    planTimersRef.current.push(
+      setTimeout(() => setSavedPlanMsgId(null), 3000),
+      setTimeout(() => setPlanToast(null), 5000),
+    )
   }, [room])
 
   const undoPlan = useCallback(async () => {
@@ -452,6 +499,7 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
   const handleSendMessage = async () => {
     if (!message.trim() || !room || sending) return
     setSending(true)
+    nearBottomRef.current = true
     try {
       const res = await fetch(`/api/chatrooms/${room.id}/messages`, {
         method: 'POST',
@@ -732,7 +780,13 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
       )}
 
       {/* Messages */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
+      <div
+        className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3"
+        onScroll={e => {
+          const el = e.currentTarget
+          nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 150
+        }}
+      >
         {loading ? (
           <div className="flex items-center justify-center h-full"><Loader2 size={20} className="animate-spin text-text-muted" /></div>
         ) : (
@@ -826,82 +880,84 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
 
       {/* Invite Modal */}
       {showInvite && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowInvite(false)}>
-          <div className="w-full max-w-md bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-60 md:max-h-96" onClick={e => e.stopPropagation()}>
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
-              <span className="text-sm font-semibold text-text-primary">Add Member</span>
-              <button onClick={() => setShowInvite(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
-            </div>
-
-            {inviteError && (
-              <div className="px-4 py-2 border-b border-status-error/30 bg-status-error/10 flex items-center gap-2 flex-shrink-0">
-                <span className="text-xs text-status-error flex-1">{inviteError}</span>
-                <button onClick={() => setInviteError(null)} className="text-status-error hover:text-status-error/60"><X size={14} /></button>
-              </div>
-            )}
-
-            {/* Search */}
-            <div className="px-3 py-2 border-b border-border-subtle flex-shrink-0">
-              <input
-                value={inviteSearch}
-                onChange={e => setInviteSearch(e.target.value)}
-                placeholder="Search..."
-                className="w-full px-3 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
-              />
-            </div>
-
-            {/* Tabs */}
-            <div className="flex border-b border-border-subtle flex-shrink-0">
-              <button
-                onClick={() => setInviteTab('agents')}
-                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${inviteTab === 'agents' ? 'text-accent border-b-2 border-accent' : 'text-text-muted hover:text-text-primary'}`}
-              >
-                Agents ({inviteAgents.length})
-              </button>
-              <button
-                onClick={() => setInviteTab('users')}
-                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${inviteTab === 'users' ? 'text-accent border-b-2 border-accent' : 'text-text-muted hover:text-text-primary'}`}
-              >
-                Users ({inviteUsers.length})
-              </button>
-            </div>
-
-            {/* List */}
-            <div className="flex-1 overflow-y-auto">
-              {inviteLoading ? (
-                <div className="flex items-center justify-center py-8"><Loader2 size={16} className="animate-spin text-text-muted" /></div>
-              ) : (inviteTab === 'agents' ? filteredAgents : filteredUsers).length === 0 ? (
-                <div className="text-center text-text-muted text-xs py-8">
-                  {inviteSearch ? 'No results' : 'No available options'}
-                </div>
-              ) : (
-                (inviteTab === 'agents' ? filteredAgents : filteredUsers).map(option => (
-                  <button
-                    key={option.id}
-                    onClick={() => handleInvite(option)}
-                    disabled={isInviting === option.id}
-                    className="w-full flex items-center gap-2 px-4 py-2 text-xs text-left text-text-secondary hover:bg-bg-raised hover:text-text-primary transition-colors disabled:opacity-50"
-                  >
-                    {inviteTab === 'agents' ? (
-                      <Bot size={13} className="text-accent flex-shrink-0" />
-                    ) : (
-                      <UserIcon size={13} className="text-text-muted flex-shrink-0" />
-                    )}
-                    <span className="flex-1 truncate">
-                      {option.name}{option.username ? ` (${option.username})` : ''}
-                    </span>
-                    {isInviting === option.id ? (
-                      <Loader2 size={12} className="animate-spin text-text-muted" />
-                    ) : (
-                      <Plus size={12} className="text-text-muted" />
-                    )}
-                  </button>
-                ))
-              )}
-            </div>
+        <Dialog
+          onClose={() => setShowInvite(false)}
+          label="Add member"
+          className="w-full max-w-md bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-60 md:max-h-96"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+            <span className="text-sm font-semibold text-text-primary">Add Member</span>
+            <button onClick={() => setShowInvite(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
           </div>
-        </div>
+
+          {inviteError && (
+            <div className="px-4 py-2 border-b border-status-error/30 bg-status-error/10 flex items-center gap-2 flex-shrink-0">
+              <span className="text-xs text-status-error flex-1">{inviteError}</span>
+              <button onClick={() => setInviteError(null)} className="text-status-error hover:text-status-error/60"><X size={14} /></button>
+            </div>
+          )}
+
+          {/* Search */}
+          <div className="px-3 py-2 border-b border-border-subtle flex-shrink-0">
+            <input
+              value={inviteSearch}
+              onChange={e => setInviteSearch(e.target.value)}
+              placeholder="Search..."
+              className="w-full px-3 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+            />
+          </div>
+
+          {/* Tabs */}
+          <div className="flex border-b border-border-subtle flex-shrink-0">
+            <button
+              onClick={() => setInviteTab('agents')}
+              className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${inviteTab === 'agents' ? 'text-accent border-b-2 border-accent' : 'text-text-muted hover:text-text-primary'}`}
+            >
+              Agents ({inviteAgents.length})
+            </button>
+            <button
+              onClick={() => setInviteTab('users')}
+              className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${inviteTab === 'users' ? 'text-accent border-b-2 border-accent' : 'text-text-muted hover:text-text-primary'}`}
+            >
+              Users ({inviteUsers.length})
+            </button>
+          </div>
+
+          {/* List */}
+          <div className="flex-1 overflow-y-auto">
+            {inviteLoading ? (
+              <div className="flex items-center justify-center py-8"><Loader2 size={16} className="animate-spin text-text-muted" /></div>
+            ) : (inviteTab === 'agents' ? filteredAgents : filteredUsers).length === 0 ? (
+              <div className="text-center text-text-muted text-xs py-8">
+                {inviteSearch ? 'No results' : 'No available options'}
+              </div>
+            ) : (
+              (inviteTab === 'agents' ? filteredAgents : filteredUsers).map(option => (
+                <button
+                  key={option.id}
+                  onClick={() => handleInvite(option)}
+                  disabled={isInviting === option.id}
+                  className="w-full flex items-center gap-2 px-4 py-2 text-xs text-left text-text-secondary hover:bg-bg-raised hover:text-text-primary transition-colors disabled:opacity-50"
+                >
+                  {inviteTab === 'agents' ? (
+                    <Bot size={13} className="text-accent flex-shrink-0" />
+                  ) : (
+                    <UserIcon size={13} className="text-text-muted flex-shrink-0" />
+                  )}
+                  <span className="flex-1 truncate">
+                    {option.name}{option.username ? ` (${option.username})` : ''}
+                  </span>
+                  {isInviting === option.id ? (
+                    <Loader2 size={12} className="animate-spin text-text-muted" />
+                  ) : (
+                    <Plus size={12} className="text-text-muted" />
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        </Dialog>
       )}
 
       {/* Plan saved toast */}
@@ -920,22 +976,24 @@ export function RoomChat({ roomId, onMobileBack, onLeave }: Props) {
 
       {/* Leave Room Confirmation */}
       {showLeaveConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowLeaveConfirm(false)}>
-          <div className="w-full max-w-sm bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="p-4">
-              <h3 className="text-sm font-semibold text-text-primary mb-2">Leave Room</h3>
-              <p className="text-xs text-text-muted mb-4">You will leave this chat room. You can rejoin later if invited.</p>
-              <div className="flex justify-end gap-2">
-                <button onClick={() => setShowLeaveConfirm(false)} className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
-                  Cancel
-                </button>
-                <button onClick={handleLeave} className="px-3 py-1.5 text-xs rounded bg-status-error text-white hover:bg-status-error/80 transition-colors">
-                  Leave
-                </button>
-              </div>
+        <Dialog
+          onClose={() => setShowLeaveConfirm(false)}
+          label="Leave room"
+          className="w-full max-w-sm bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden"
+        >
+          <div className="p-4">
+            <h3 className="text-sm font-semibold text-text-primary mb-2">Leave Room</h3>
+            <p className="text-xs text-text-muted mb-4">You will leave this chat room. You can rejoin later if invited.</p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowLeaveConfirm(false)} className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+                Cancel
+              </button>
+              <button onClick={handleLeave} className="px-3 py-1.5 text-xs rounded bg-status-error text-white hover:bg-status-error/80 transition-colors">
+                Leave
+              </button>
             </div>
           </div>
-        </div>
+        </Dialog>
       )}
     </div>
   )

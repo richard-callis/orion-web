@@ -3,6 +3,8 @@ import { headers } from 'next/headers'
 // Bundled woff2 fonts — no CDN dependency at build time
 import '@fontsource-variable/inter'
 import '@fontsource-variable/jetbrains-mono'
+// Single highlight.js theme for all rendered code blocks (chat, rooms, notes)
+import 'highlight.js/styles/github-dark.css'
 import './globals.css'
 import { Providers } from '@/components/Providers'
 

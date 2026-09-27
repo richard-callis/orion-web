@@ -81,8 +81,26 @@ const redisUrls = [
   'redis://localhost:6379/0',
 ]
 
+// Fail fast when Redis is unreachable: ioredis' defaults retry/queue commands
+// indefinitely, which stalled every rate-limited request during an outage.
+const CONNECT_OPTS = { connectTimeout: 2_000, maxRetriesPerRequest: 1, enableOfflineQueue: false, lazyConnect: true }
+const PING_TIMEOUT_MS = 2_500
+// After a failed init, serve from the in-memory fallback for a while instead of
+// re-attempting a connection on every request.
+const INIT_BACKOFF_MS = 30_000
+let nextInitAttempt = 0
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let t: ReturnType<typeof setTimeout>
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => { t = setTimeout(() => reject(new Error('redis ping timed out')), ms) }),
+  ]).finally(() => clearTimeout(t))
+}
+
 async function initRedisClient(): Promise<boolean> {
   if (redisClient) return true
+  if (Date.now() < nextInitAttempt) return false
 
   try {
     // Lazy-load ioredis to avoid startup cost
@@ -112,15 +130,18 @@ async function initRedisClient(): Promise<boolean> {
         // Sentinel connection options
         sentinelPassword: process.env.REDIS_SENTINEL_PASSWORD,
         password: process.env.REDIS_PASSWORD,
+        ...CONNECT_OPTS,
       })
     } else {
       const url = redisUrls.find((u: any) => u && u.trim())
       if (!url) return false
-      redisClient = new Redis(url)
+      redisClient = new Redis(url, CONNECT_OPTS)
     }
+    // Swallow client 'error' events — failures surface via the ping below.
+    redisClient.on?.('error', () => {})
 
-    // Test the connection
-    await redisClient.ping()
+    // Test the connection (bounded — never hang the caller)
+    await withTimeout(redisClient.connect().then(() => redisClient.ping()), PING_TIMEOUT_MS)
     redisAvailable = true
     // MAJOR fix: clear stale in-memory fallback state on Redis reconnect.
     // Traffic that accumulated in fallbackStore during an outage is not
@@ -130,8 +151,13 @@ async function initRedisClient(): Promise<boolean> {
     if (fallbackStore.size > 0) fallbackStore.clear()
     return true
   } catch (error) {
+    // Tear the failed client down: dropping the reference alone left ioredis
+    // reconnecting (and logging) forever, and every later call while Redis was
+    // down leaked another such client.
+    try { redisClient?.disconnect() } catch { /* already closed */ }
     redisClient = null
     redisAvailable = false
+    nextInitAttempt = Date.now() + INIT_BACKOFF_MS
     return false
   }
 }
@@ -211,6 +237,7 @@ export async function rateLimitRedis(
       limit: maxRequests,
     }
   } catch (error) {
+    try { redisClient?.disconnect() } catch { /* already closed */ }
     redisAvailable = false
     redisClient = null
     return fallbackRateLimit(key, maxRequests, windowMs)
@@ -252,31 +279,49 @@ export async function getRedisStatus(): Promise<{
 // ─── IP extraction for rate limiting ─────────────────────────────────────────
 
 /**
+ * Number of trusted reverse-proxy hops in front of ORION (TRUSTED_PROXY_COUNT,
+ * default 1 = Traefik). 0 means ORION is reached directly and x-forwarded-for is
+ * entirely client-controlled. Invalid values fall back to 1.
+ */
+export function getTrustedProxyCount(): number {
+  const raw = process.env.TRUSTED_PROXY_COUNT
+  if (raw === undefined || raw.trim() === '') return 1
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) && n >= 0 ? n : 1
+}
+
+/**
  * SOC2: [M-006] Extract the real client IP for rate limiting.
  *
  * Next.js only sets req.ip in the Edge runtime. In self-hosted Node.js
- * deployments req.ip is always undefined, so we read x-forwarded-for first.
+ * deployments req.ip is always undefined, so we read x-forwarded-for.
  *
- * SOC2: [H-002] TRUSTED_PROXY_COUNT (default 1) controls how many proxy hops
- * to strip from the right of the x-forwarded-for list. Taking the Nth-from-right
- * value prevents IP spoofing via attacker-controlled leftmost entries: a client
- * cannot forge the IP that our own trusted proxy appended.
+ * SOC2: [H-002] Each trusted proxy APPENDS the address of the peer it received
+ * the connection from (Next.js itself only sets x-forwarded-for when absent). So
+ * with N trusted proxies the client address is the Nth entry from the right, and
+ * everything to its left was supplied by the client and cannot be trusted:
  *
- * Example with TRUSTED_PROXY_COUNT=1 and header "1.2.3.4, 10.0.0.1":
- *   - rightmost entry (10.0.0.1) was set by our proxy → strip it
- *   - next entry (1.2.3.4) is the real client IP
+ *   TRUSTED_PROXY_COUNT=1, header "6.6.6.6, 1.2.3.4"
+ *     - "1.2.3.4" was appended by Traefik (the real client)
+ *     - "6.6.6.6" was sent by the client (spoofed) → ignored
  *
- * Falls back to req.ip (Edge runtime) then 'unknown'.
+ * The previous implementation took index len - N - 1, i.e. the spoofable entry,
+ * and `parseInt(...) || 1` made TRUSTED_PROXY_COUNT=0 impossible to set.
+ *
+ * With TRUSTED_PROXY_COUNT=0 the header is ignored entirely. Falls back to req.ip
+ * (Edge runtime) then 'unknown'.
  */
 export function getClientIpForRateLimit(req: import('next/server').NextRequest): string {
+  const trustedProxyCount = getTrustedProxyCount()
   const forwarded = req.headers.get('x-forwarded-for')
-  if (forwarded) {
+  if (forwarded && trustedProxyCount > 0) {
     const ips = forwarded.split(',').map((s) => s.trim()).filter(Boolean)
-    const trustedProxyCount = Math.max(0, parseInt(process.env.TRUSTED_PROXY_COUNT ?? '1', 10) || 1)
-    // The real client IP is at index: len - trustedProxyCount - 1
-    // Clamp to index 0 to handle misconfigured shorter lists
-    const idx = Math.max(0, ips.length - trustedProxyCount - 1)
-    return ips[idx] ?? 'unknown'
+    if (ips.length > 0) {
+      // Fewer entries than trusted hops means a misconfigured count; the leftmost
+      // entry is then the best (proxy-supplied) value available.
+      const idx = Math.max(0, ips.length - trustedProxyCount)
+      return ips[idx]
+    }
   }
   return (req as any).ip ?? 'unknown'
 }

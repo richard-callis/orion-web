@@ -1,25 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireServiceAuth, assertCanModify } from '@/lib/auth'
+import { getCurrentUser } from '@/lib/auth'
+import { canManageSchedule } from '@/lib/scheduled-task-access'
 import { nextRun } from '@/lib/cron'
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const caller = await requireServiceAuth(req)
-  const isService = caller === null
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  // SOC2 [H4]: only the schedule's owner or an admin (human session) may fire it.
+  const caller = await getCurrentUser()
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const schedule = await prisma.scheduledTask.findUnique({
     where: { id: (await params).id },
     include: { agent: { select: { id: true } } },
   })
   if (!schedule) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-
-  // SOC2 [PRIV-003]: Verify caller owns (or is admin/service for) the target agent
-  if (schedule.agent) {
-    try {
-      await assertCanModify(caller, isService, '')
-    } catch {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
+  if (!canManageSchedule(caller, schedule.createdBy)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   const now = new Date()
@@ -31,7 +27,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     status:      'pending',
     priority:    'medium',
     assignedAgent: schedule.agentId,
-    createdBy:   'scheduler',
+    // Task.createdBy is an FK to User — the literal 'scheduler' violated it and
+    // every trigger failed. Attribute the task to the schedule's owner instead.
+    createdBy:   schedule.createdBy ?? null,
   }
 
   if (schedule.taskMeta) {

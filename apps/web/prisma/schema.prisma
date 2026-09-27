@@ -31,18 +31,23 @@ model Message {
   outputTokens   Int?
   createdAt      DateTime     @default(now())
   metadata       Json?
+
+  @@index([conversationId, createdAt])
 }
 
 model ClaudeInvocation {
   id             String       @id @default(cuid())
   conversationId String
-  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   prompt         String       @db.Text
   toolsUsed      Json
   tokensUsed     Int?
   durationMs     Int
   success        Boolean      @default(true)
   createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+  @@index([createdAt])
 }
 
 // ── Conversation Memory ──────────────────────────────────────────────────────
@@ -111,6 +116,7 @@ model AgentTokenUsage {
   @@index([agentId, recordedAt])
   @@index([taskId])
   @@index([modelId])
+  @@index([recordedAt])
 }
 
 model Environment {
@@ -171,9 +177,28 @@ model Environment {
   suppressions             Suppression[]
   toolExecutions           ToolExecution[]
   driftReports             DriftReport[]
+  gitCredential            EnvironmentGitCredential?
   creator                  User?                     @relation("EnvironmentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@index([createdBy])
+}
+
+/// M2: the git credential handed to this environment's gateway so ArgoCD can
+/// clone the env repo. Read-only and scoped to that one repo — never the
+/// org-wide provider token. Minted lazily by GET /api/environments/:id/git-provider,
+/// revoked when the gateway first joins or its token is rotated (the next fetch
+/// mints a fresh one), and revoked at the provider when the environment is deleted.
+model EnvironmentGitCredential {
+  id            String      @id @default(cuid())
+  environmentId String      @unique
+  provider      String // "gitea" | "github" | "gitlab"
+  kind          String // "https-token" | "ssh-key"
+  username      String
+  secret        String      @db.Text // encrypted (enc:v1:) token or private key
+  repoUrl       String // exact URL ArgoCD clones (matches the Application repoURL)
+  providerRef   Json // what to revoke at the provider
+  createdAt     DateTime    @default(now())
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
 }
 
 /// Tracks every PR opened by the GitOps loop — open, auto-merged, or awaiting review.
@@ -244,13 +269,17 @@ model EnvironmentJoinToken {
 model AgentMessage {
   id          String   @id @default(cuid())
   agentId     String?
-  agent       Agent?   @relation(fields: [agentId], references: [id])
+  agent       Agent?   @relation(fields: [agentId], references: [id], onDelete: SetNull)
   channel     String   @default("general")
   content     String   @db.Text
   messageType String   @default("text")
   threadId    String?
   createdAt   DateTime @default(now())
   metadata    Json?
+
+  @@index([channel, createdAt])
+  @@index([agentId])
+  @@index([createdAt])
 }
 
 model Epic {
@@ -295,7 +324,7 @@ model Task {
   featureId         String?
   feature           Feature?           @relation(fields: [featureId], references: [id], onDelete: Cascade)
   assignedAgent     String?
-  agent             Agent?             @relation("AssignedTasks", fields: [assignedAgent], references: [id])
+  agent             Agent?             @relation("AssignedTasks", fields: [assignedAgent], references: [id], onDelete: SetNull)
   assignedUserId    String?
   assignedUser      User?              @relation("AssignedUserTasks", fields: [assignedUserId], references: [id], onDelete: SetNull)
   createdBy         String?
@@ -310,6 +339,12 @@ model Task {
   nextRetryAt       DateTime?
   dependsOn         String[]           @default([]) // IDs of Task records that must be 'done' before this runs
   wave              Int? // Execution wave (0 = no deps, 1 = depends on wave-0, etc.) — computed at plan approval time
+  // Worker claim + liveness. claimedBy/claimedAt are set atomically when a worker
+  // claims a pending task; heartbeatAt is bumped while it runs so stuck-task
+  // recovery can tell a live long-running task from one orphaned by a crash.
+  claimedBy         String?
+  claimedAt         DateTime?
+  heartbeatAt       DateTime?
   events            TaskEvent[]
   metadata          Json?
   chatRooms         ChatRoom[]         @relation("ChatRoomTask")
@@ -320,12 +355,15 @@ model Task {
   // Worker poll: pollOnce queries status+assignedAgent ordered by wave,priority,createdAt every 15s
   @@index([status, assignedAgent, wave, priority, createdAt])
   @@index([createdBy])
+  @@index([featureId])
+  @@index([assignedAgent])
+  @@index([status, heartbeatAt])
 }
 
 model FederatedDispatch {
   id             String    @id @default(cuid())
   taskId         String    @unique
-  task           Task      @relation(fields: [taskId], references: [id])
+  task           Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
   targetEnvId    String // which environment the task was routed to
   spokeUrl       String // URL of the spoke that received it
   status         String    @default("dispatched") // dispatched | acknowledged | completed | failed
@@ -347,6 +385,9 @@ model TaskEvent {
   content   String?  @db.Text
   agentId   String?
   createdAt DateTime @default(now())
+
+  @@index([taskId, createdAt])
+  @@index([createdAt])
 }
 
 model AuditLog {
@@ -418,19 +459,18 @@ model Note {
 
 // ── Knowledge Graph: Note Embeddings (pgvector) ────────────────────────────────
 // Each note gets a vector embedding of its title + content.
-// Column is a native pgvector `vector(768)` at the DB level (migration
-// 7_note_embeddings_hnsw_index converts it from the original JSON-text
-// column) — kept as String here because Prisma has no native vector type;
-// all reads/writes to this column go through raw SQL ($queryRaw/$executeRaw).
-// Uses pgvector's <=> (cosine distance) operator for similarity search, to
-// match the HNSW index's `vector_cosine_ops`.
-// vectorSearch() filters by modelRef so vectors from different embedding
-// models are never compared against each other.
-
+// The column is a native pgvector `vector(768)`, declared Unsupported because
+// Prisma has no vector type. Prisma therefore omits it from the generated
+// client: every read/write of `embedding` goes through raw SQL
+// ($queryRaw/$executeRaw with a parameterized `${vec}::vector` literal) in
+// lib/embeddings.ts. Similarity search uses pgvector's <=> (cosine distance)
+// operator to match the HNSW index's `vector_cosine_ops`, and vectorSearch()
+// filters by modelRef so vectors from different embedding models are never
+// compared against each other.
 model NoteEmbedding {
   noteId    String   @id @default(cuid())
   note      Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
-  embedding String   @db.Text // pgvector native vector(768) column (see comment above); JSON-array shape only applies pre-migration-7
+  embedding Unsupported("vector(768)") // written/read via raw SQL only — see comment above
   dimension Int // 1536 (OpenAI) or 768 (Ollama nomic)
   modelRef  String? // which model generated this embedding (ext:xxx ID)
   version   Int      @default(1) // bump when re-embedding
@@ -519,6 +559,7 @@ model ApiKey {
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("api_keys")
+  @@index([userId])
 }
 
 model Session {
@@ -527,6 +568,8 @@ model Session {
   userId       String
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model VerificationToken {
@@ -728,6 +771,8 @@ model DnsRecord {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   domain    Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@index([domainId])
 }
 
 model IngressPoint {
@@ -748,6 +793,9 @@ model IngressPoint {
   environment   Environment?        @relation(fields: [environmentId], references: [id], onDelete: SetNull)
   routes        IngressRoute[]
   middlewares   IngressMiddleware[]
+
+  @@index([domainId])
+  @@index([environmentId])
 }
 
 model IngressRoute {
@@ -782,6 +830,14 @@ model BackgroundJob {
   updatedAt     DateTime  @updatedAt
   completedAt   DateTime?
   archivedAt    DateTime?
+  // Liveness: ownerId identifies the process running the job; heartbeatAt is
+  // bumped while it runs so startup recovery only fails genuinely orphaned jobs.
+  ownerId       String?
+  heartbeatAt   DateTime?
+  // Idempotency key for scheduled jobs, e.g. "security-retention-daily:2026-09-26".
+  dedupeKey     String?   @unique
+
+  @@index([status, heartbeatAt])
 }
 
 model IngressMiddleware {
@@ -843,6 +899,8 @@ model NovaDeployment {
 
   @@unique([novaId, environmentId])
   @@index([novaId])
+  @@index([environmentId])
+  @@index([agentId])
 }
 
 model NovaRevision {
@@ -887,6 +945,8 @@ model ChatRoom {
 
   @@unique([featureId])
   @@map("chat_rooms")
+  @@index([taskId])
+  @@index([epicId])
 }
 
 model RoomGoal {
@@ -947,6 +1007,9 @@ model ChatMessage {
   @@index([roomId, taskId, createdAt])
   @@index([incidentId])
   @@map("chat_messages")
+  @@index([agentId])
+  @@index([userId])
+  @@index([taskId])
 }
 
 // ── Managed Secrets ────────────────────────────────────────────────────────────
@@ -1290,6 +1353,8 @@ model VulnerabilityFinding {
   @@index([isKev])
   @@index([status])
   @@index([severity])
+  @@index([taskId])
+  @@index([scanId])
 }
 
 model VulnerabilityScan {
@@ -1433,7 +1498,7 @@ model NebulaInstance {
   environmentId   String
   environment     Environment         @relation(fields: [environmentId], references: [id], onDelete: Cascade)
   sourceNovaId    String?
-  novaDefinition  NovaDefinition?     @relation(fields: [sourceNovaId], references: [id])
+  novaDefinition  NovaDefinition?     @relation(fields: [sourceNovaId], references: [id], onDelete: SetNull)
   name            String
   category        String // "skill" | "hook"
   spec            String              @db.Text
@@ -1461,13 +1526,13 @@ model NebulaInstance {
 // patterns) for semantic trigger matching — a complement to the existing
 // exact substring match on triggerPatterns, so a message that describes the
 // same situation in different words still surfaces the skill.
-// Mirrors NoteEmbedding's pattern: declared as text here, the migration
-// converts the column to a native pgvector `vector(768)` type with an HNSW
-// index for cosine similarity search (see vectorSearch/skillVectorSearch).
+// Mirrors NoteEmbedding: a native pgvector `vector(768)` column with an HNSW
+// index for cosine similarity search, read/written via raw SQL only
+// (see storeSkillEmbedding/skillVectorSearch in lib/embeddings.ts).
 model NebulaEmbedding {
   nebulaId  String         @id
   nebula    NebulaInstance @relation(fields: [nebulaId], references: [id], onDelete: Cascade)
-  embedding String         @db.Text // JSON-encoded vector array: [0.1, -0.3, ...]
+  embedding Unsupported("vector(768)") // written/read via raw SQL only
   dimension Int // 1536 (OpenAI) or 768 (Ollama nomic)
   modelRef  String? // which model generated this embedding (ext:xxx ID)
   version   Int            @default(1) // bump when re-embedding
@@ -1492,6 +1557,7 @@ model HookExecutionLog {
 
   @@index([nebulaId, startedAt])
   @@index([status, startedAt])
+  @@index([startedAt])
 }
 
 model SkillExecutionLog {
@@ -1504,6 +1570,7 @@ model SkillExecutionLog {
   createdAt      DateTime       @default(now())
 
   @@index([nebulaId, createdAt])
+  @@index([createdAt])
 }
 
 model AgentTrace {
@@ -1767,6 +1834,7 @@ model InvestigationTimeline {
 
   @@index([investigationId, eventTime])
   @@index([investigationId, eventType])
+  @@index([createdAt])
 }
 
 model InvestigationAudit {
@@ -1826,12 +1894,14 @@ model ToolExecution {
   createdAt      DateTime  @default(now())
   completedAt    DateTime?
 
-  environment Environment? @relation(fields: [environmentId], references: [id])
+  environment Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
 
   @@index([actorId, createdAt])
   @@index([status, createdAt])
   @@index([tool, createdAt])
   @@index([expiresAt]) // for expiry sweep job
+  @@index([environmentId])
+  @@index([createdAt])
 }
 
 // ── Agent Benchmark Harness ────────────────────────────────────────────────────
@@ -1843,7 +1913,7 @@ model EvalSuite {
   name        String     @unique
   description String?
   agentId     String?
-  agent       Agent?     @relation("EvalSuiteAgent", fields: [agentId], references: [id])
+  agent       Agent?     @relation("EvalSuiteAgent", fields: [agentId], references: [id], onDelete: SetNull)
   cases       EvalCase[]
   runs        EvalRun[]
   createdAt   DateTime   @default(now())
@@ -1870,9 +1940,9 @@ model EvalCase {
 model EvalRun {
   id          String           @id @default(cuid())
   suiteId     String
-  suite       EvalSuite        @relation(fields: [suiteId], references: [id])
+  suite       EvalSuite        @relation(fields: [suiteId], references: [id], onDelete: Cascade)
   agentId     String
-  agent       Agent            @relation("EvalRunAgent", fields: [agentId], references: [id])
+  agent       Agent            @relation("EvalRunAgent", fields: [agentId], references: [id], onDelete: Cascade)
   modelId     String
   status      String           @default("pending")
   scoreTotal  Float?
@@ -1892,7 +1962,7 @@ model EvalCaseResult {
   runId       String
   run         EvalRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
   caseId      String
-  case        EvalCase @relation(fields: [caseId], references: [id])
+  case        EvalCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
   taskId      String?
   passed      Boolean?
   score       Float?
@@ -1928,7 +1998,7 @@ model ScheduledTask {
   name        String
   description String?
   agentId     String
-  agent       Agent     @relation("ScheduledTaskAgent", fields: [agentId], references: [id])
+  agent       Agent     @relation("ScheduledTaskAgent", fields: [agentId], references: [id], onDelete: Cascade)
   cronExpr    String
   taskTitle   String
   taskDesc    String?   @db.Text
@@ -1937,11 +2007,13 @@ model ScheduledTask {
   lastRunAt   DateTime?
   nextRunAt   DateTime?
   lastTaskId  String?
+  createdBy   String? // User.id of the owner; null = legacy row (admin-only to modify)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   @@index([agentId])
   @@index([nextRunAt, enabled])
+  @@index([createdBy])
 }
 
 // ── Webhook Triggers ───────────────────────────────────────────────────────────
@@ -1997,6 +2069,7 @@ model JobRun {
 
   @@index([source, startedAt])
   @@index([sourceId, startedAt])
+  @@index([startedAt])
 }
 
 // ── Notification Channels ──────────────────────────────────────────────────────

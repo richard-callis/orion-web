@@ -36,7 +36,7 @@
  */
 
 import { prisma } from './db'
-import { embedNote, computeSemanticEdges, embedSkill } from './embeddings'
+import { embedNote, computeSemanticEdges, embedSkill, hybridSearch } from './embeddings'
 import { estimateTokens } from './token-budget'
 import {
   type SkillSpec,
@@ -57,6 +57,16 @@ const SYNTHESIS_INTERVAL_MS       = 12 * 60 * 60 * 1000  // 12 hours
 const PRUNING_INTERVAL_MS         = 24 * 60 * 60 * 1000  // 24 hours
 const SKILL_CRAFTING_INTERVAL_MS  = 12 * 60 * 60 * 1000  // 12 hours
 const EXTRACTION_BATCH       = 80   // messages per LLM call
+// Wikilink candidates shown to the extraction LLM: the notes most relevant to
+// this batch plus the most recently updated ones. Listing every title made the
+// prompt grow without bound as the knowledge base grew.
+const EXTRACTION_RELEVANT_TITLES = 40
+const EXTRACTION_RECENT_TITLES   = 100
+// Retry backoff after a failed phase run: 5 min, 10, 20 … capped at 2 hours.
+// Without it a failing phase (DB down, LLM down) left lastRun unchanged, so the
+// next delay computed to 0 and the scheduler spun in a tight loop.
+const DREAM_MIN_FAILURE_DELAY_MS = 5 * 60 * 1000
+const DREAM_MAX_FAILURE_DELAY_MS = 2 * 60 * 60 * 1000
 const PRUNING_BATCH          = 20   // notes per pruning LLM call
 const SKILL_CRAFTING_BATCH   = 15   // completed tasks reviewed per LLM call
 const MAX_NOTE_AGE_DAYS      = 90   // never auto-delete notes newer than this
@@ -256,6 +266,46 @@ async function setSetting(key: string, value: string): Promise<void> {
 // ── Extraction ────────────────────────────────────────────────────────────────
 
 /**
+ * Latest timestamp that is safe to process when several sources were each
+ * fetched with their own `take`. A source that returned exactly `limit` rows
+ * may have more rows after its last one, so processing must stop there.
+ * Returns null when no source was truncated (everything fetched is safe).
+ */
+export function combinedHorizon(sources: Array<{ rows: Array<{ ts: Date }>; limit: number }>): Date | null {
+  let horizon: Date | null = null
+  for (const { rows, limit } of sources) {
+    if (rows.length < limit || rows.length === 0) continue
+    const last = rows[rows.length - 1].ts
+    if (horizon === null || last.getTime() < horizon.getTime()) horizon = last
+  }
+  return horizon
+}
+
+/** Titles the extraction LLM may [[wikilink]] to: relevant to this batch + recent. */
+async function wikilinkCandidateTitles(corpus: string): Promise<string> {
+  const seen = new Set<string>()
+  const lines: string[] = []
+  const add = (title: string, folder: string | null) => {
+    if (seen.has(title)) return
+    seen.add(title)
+    lines.push(`  - ${title} (${folder ?? 'Notes'})`)
+  }
+  try {
+    const { hits } = await hybridSearch(corpus, EXTRACTION_RELEVANT_TITLES)
+    for (const h of hits) add(h.title, h.folder)
+  } catch (e) {
+    console.warn('[dream] Relevant-title search failed, using recent titles only:', e)
+  }
+  const recent = await prisma.note.findMany({
+    select: { title: true, folder: true },
+    orderBy: { updatedAt: 'desc' },
+    take: EXTRACTION_RECENT_TITLES,
+  })
+  for (const n of recent) add(n.title, n.folder)
+  return lines.join('\n')
+}
+
+/**
  * Extract durable memories from recent messages and task events.
  * Called every EXTRACTION_INTERVAL_MS.
  */
@@ -305,36 +355,36 @@ export async function runExtraction(): Promise<void> {
     return
   }
 
-  // Fetch existing note titles so the LLM can wikilink to related notes
-  const existingNotes = await prisma.note.findMany({
-    select: { title: true, folder: true },
-    orderBy: { updatedAt: 'desc' },
-  })
-  const existingTitles = existingNotes
-    .map(n => `  - ${n.title} (${n.folder})`)
-    .join('\n')
-
-  // Build text corpus for the LLM
-  const messageLines = messages.map(m => {
+  // Build text corpus rows for the LLM
+  const messageRows = messages.map(m => {
     const who    = m.agent?.name ?? m.senderType
     const attach = m.attachments as Record<string, string> | null
     const body   = attach?.output ?? m.content ?? ''
-    return `[${who}] ${body.slice(0, 400)}`
+    return { ts: m.createdAt, line: `[${who}] ${body.slice(0, 400)}` }
   })
 
-  const eventLines = events.map(e => {
+  const eventRows = events.map(e => {
     const task = e.task?.title ? `(task: ${e.task.title}) ` : ''
-    return `[${e.eventType}] ${task}${(e.content ?? '').slice(0, 400)}`
+    return { ts: e.createdAt, line: `[${e.eventType}] ${task}${(e.content ?? '').slice(0, 400)}` }
   })
+
+  // Page both sources by ONE combined cursor. Each query has its own `take`, so
+  // when one source is truncated the other may extend past it — merging both
+  // and advancing the watermark to the later timestamp would permanently skip
+  // the truncated source's unfetched rows. Only rows up to the earliest
+  // truncation point are safe to process this run.
+  const horizon = combinedHorizon([
+    { rows: messageRows, limit: EXTRACTION_BATCH * 3 },
+    { rows: eventRows,   limit: EXTRACTION_BATCH * 2 },
+  ])
 
   // BLOCKER fix: build corpus with a budget and track the watermark to only the
   // last row that actually fit. Previously: all rows were fetched, corpus was
   // blindly sliced to 12k, but watermark advanced to now() unconditionally —
   // content past the 12k cut was permanently skipped on the next run.
-  const allRows = [
-    ...messages.map(m => ({ ts: m.createdAt, line: messageLines[messages.indexOf(m)] })),
-    ...events.map(e => ({ ts: e.createdAt, line: eventLines[events.indexOf(e)] })),
-  ].sort((a, b) => a.ts.getTime() - b.ts.getTime())
+  const allRows = [...messageRows, ...eventRows]
+    .filter(r => horizon === null || r.ts.getTime() <= horizon.getTime())
+    .sort((a, b) => a.ts.getTime() - b.ts.getTime())
 
   let corpusBudget = 0
   let processedThrough = lastRun
@@ -346,6 +396,8 @@ export async function runExtraction(): Promise<void> {
     processedThrough = row.ts
   }
   const corpus = corpusLines.join('\n')
+
+  const existingTitles = await wikilinkCandidateTitles(corpus)
 
   const extractionPrompt = `You are a memory consolidation system for an AI agent team managing a Kubernetes homelab cluster.
 
@@ -374,13 +426,17 @@ Respond with a JSON array (and nothing else). Each item:
 
 If nothing is worth remembering, return an empty array: []`
 
+  // An LLM failure propagates: the watermark is NOT advanced, so this window is
+  // retried (with backoff) instead of being silently skipped. A response that
+  // arrives but can't be parsed is logged and the window is consumed — retrying
+  // the same prompt would most likely fail the same way forever.
+  const raw = (await callLLM(extractionPrompt, 'extraction')).text
   let extracted: Array<{ title: string; content: string; folder: string; tags: string[] }> = []
   try {
-    const raw = (await callLLM(extractionPrompt, 'extraction')).text
     const jsonMatch = raw.match(/\[[\s\S]*\]/)
     if (jsonMatch) extracted = JSON.parse(jsonMatch[0])
   } catch (e) {
-    console.error('[dream] Extraction LLM/parse error:', e)
+    console.error('[dream] Extraction parse error (window consumed):', e)
   }
 
   console.log(`[dream] Extraction — writing ${extracted.length} memories`)
@@ -489,13 +545,15 @@ Respond with a JSON array (and nothing else). Each hub note:
 
 If no hubs are missing, return an empty array: []`
 
+  // LLM failure propagates (no watermark advance → retried with backoff);
+  // an unparseable response is logged and the run is consumed.
+  const raw = (await callLLM(synthesisPrompt, 'synthesis')).text
   let hubs: Array<{ title: string; content: string; folder: string; tags: string[] }> = []
   try {
-    const raw = (await callLLM(synthesisPrompt, 'synthesis')).text
     const jsonMatch = raw.match(/\[[\s\S]*\]/)
     if (jsonMatch) hubs = JSON.parse(jsonMatch[0])
   } catch (e) {
-    console.error('[dream] Synthesis LLM/parse error:', e)
+    console.error('[dream] Synthesis parse error (run consumed):', e)
   }
 
   console.log(`[dream] Synthesis — writing ${hubs.length} hub notes`)
@@ -583,6 +641,8 @@ export async function runPruning(): Promise<void> {
 
   // Process notes in batches
   let deleted = 0
+  let llmFailures = 0
+  const batchCount = Math.ceil(notes.length / PRUNING_BATCH)
   for (let i = 0; i < notes.length; i += PRUNING_BATCH) {
     const batch = notes.slice(i, i + PRUNING_BATCH)
 
@@ -614,8 +674,15 @@ Rules:
 - When in doubt, keep the note (delete:false)
 - Never delete notes with folder "Success Patterns" unless the approach is now known to fail`
 
+    let raw: string
     try {
-      const raw = (await callLLM(prunePrompt, 'pruning')).text
+      raw = (await callLLM(prunePrompt, 'pruning')).text
+    } catch (e) {
+      llmFailures++
+      console.error('[dream] Pruning LLM error:', e)
+      continue
+    }
+    try {
       const jsonMatch = raw.match(/\{[\s\S]*\}/)
       if (!jsonMatch) continue
 
@@ -648,6 +715,12 @@ Rules:
     } catch (e) {
       console.error('[dream] Pruning batch error:', e)
     }
+  }
+
+  // Every batch failed at the LLM → nothing was actually reviewed; don't mark
+  // the run done so it retries with backoff.
+  if (batchCount > 0 && llmFailures === batchCount) {
+    throw new Error(`Pruning: all ${batchCount} LLM batch call(s) failed`)
   }
 
   await setSetting('dream.pruningLastRun', String(now.getTime()))
@@ -751,13 +824,15 @@ Respond with a JSON array (and nothing else) of skill definitions:
 
 If none of the tasks are worth generalizing into a skill, return an empty array: []`
 
+  // LLM failure propagates (no watermark advance → retried with backoff);
+  // an unparseable response is logged and the batch is consumed.
+  const raw = (await callLLM(craftingPrompt, 'skill_crafting')).text
   let proposed: Array<{ task_index: number; name: string; description: string; trigger_patterns: string[]; steps: string[] }> = []
   try {
-    const raw = (await callLLM(craftingPrompt, 'skill_crafting')).text
     const jsonMatch = raw.match(/\[[\s\S]*\]/)
     if (jsonMatch) proposed = JSON.parse(jsonMatch[0])
   } catch (e) {
-    console.error('[dream] Skill crafting LLM/parse error:', e)
+    console.error('[dream] Skill crafting parse error (batch consumed):', e)
   }
 
   console.log(`[dream] Skill crafting — proposing ${proposed.length} skill(s) from ${tasks.length} task(s)`)
@@ -861,75 +936,66 @@ If none of the tasks are worth generalizing into a skill, return an empty array:
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
-let extractionTimer:    ReturnType<typeof setTimeout> | null = null
-let synthesisTimer:     ReturnType<typeof setTimeout> | null = null
-let pruningTimer:       ReturnType<typeof setTimeout> | null = null
-let skillCraftingTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * Delay until a phase's next run. After a failure the phase's lastRun has not
+ * advanced, so the interval-based delay would be 0 — use exponential backoff
+ * instead so a persistent failure can't turn into a hot loop.
+ */
+export function computeDreamDelay(
+  lastRunMs: number,
+  intervalMs: number,
+  consecutiveFailures: number,
+  nowMs: number = Date.now(),
+): number {
+  if (consecutiveFailures > 0) {
+    const backoff = DREAM_MIN_FAILURE_DELAY_MS * Math.pow(2, consecutiveFailures - 1)
+    return Math.min(DREAM_MAX_FAILURE_DELAY_MS, backoff)
+  }
+  return Math.max(0, lastRunMs + intervalMs - nowMs)
+}
+
+const dreamTimers = new Map<string, ReturnType<typeof setTimeout>>()
+let dreamStopped = false
+
+function scheduleDreamPhase(
+  name: string,
+  settingKey: string,
+  intervalMs: number,
+  run: () => Promise<void>,
+  consecutiveFailures = 0,
+): void {
+  if (dreamStopped) return
+  getSetting(settingKey)
+    .catch(() => null)
+    .then(lastRunStr => {
+      if (dreamStopped) return
+      const lastRun = lastRunStr ? parseInt(lastRunStr, 10) || 0 : 0
+      const delay = computeDreamDelay(lastRun, intervalMs, consecutiveFailures)
+      console.log(`[dream] Next ${name} in ${Math.round(delay / 60000)} min${consecutiveFailures ? ` (retry #${consecutiveFailures})` : ''}`)
+      dreamTimers.set(name, setTimeout(async () => {
+        let failures = 0
+        try {
+          await run()
+        } catch (e) {
+          failures = consecutiveFailures + 1
+          console.error(`[dream] ${name} failed (attempt ${failures}):`, e)
+        }
+        scheduleDreamPhase(name, settingKey, intervalMs, run, failures)
+      }, delay))
+    })
+}
 
 export function startDream(): void {
   console.log('[dream] Starting memory consolidation scheduler')
-
-  async function scheduleExtraction() {
-    const lastRunStr = await getSetting('dream.extractionLastRun').catch(() => null)
-    const lastRun    = lastRunStr ? parseInt(lastRunStr, 10) : 0
-    const nextRun    = lastRun + EXTRACTION_INTERVAL_MS
-    const delay      = Math.max(0, nextRun - Date.now())
-
-    console.log(`[dream] Next extraction in ${Math.round(delay / 60000)} min`)
-    extractionTimer = setTimeout(async () => {
-      await runExtraction().catch(e => console.error('[dream] Extraction failed:', e))
-      scheduleExtraction()
-    }, delay)
-  }
-
-  async function scheduleSynthesis() {
-    const lastRunStr = await getSetting('dream.synthesisLastRun').catch(() => null)
-    const lastRun    = lastRunStr ? parseInt(lastRunStr, 10) : 0
-    const nextRun    = lastRun + SYNTHESIS_INTERVAL_MS
-    const delay      = Math.max(0, nextRun - Date.now())
-
-    console.log(`[dream] Next synthesis in ${Math.round(delay / 60000)} min`)
-    synthesisTimer = setTimeout(async () => {
-      await runSynthesis().catch(e => console.error('[dream] Synthesis failed:', e))
-      scheduleSynthesis()
-    }, delay)
-  }
-
-  async function schedulePruning() {
-    const lastRunStr = await getSetting('dream.pruningLastRun').catch(() => null)
-    const lastRun    = lastRunStr ? parseInt(lastRunStr, 10) : 0
-    const nextRun    = lastRun + PRUNING_INTERVAL_MS
-    const delay      = Math.max(0, nextRun - Date.now())
-
-    console.log(`[dream] Next pruning in ${Math.round(delay / 60000)} min`)
-    pruningTimer = setTimeout(async () => {
-      await runPruning().catch(e => console.error('[dream] Pruning failed:', e))
-      schedulePruning()
-    }, delay)
-  }
-
-  async function scheduleSkillCrafting() {
-    const lastRunStr = await getSetting('dream.skillCraftingLastRun').catch(() => null)
-    const lastRun    = lastRunStr ? parseInt(lastRunStr, 10) : 0
-    const nextRun    = lastRun + SKILL_CRAFTING_INTERVAL_MS
-    const delay      = Math.max(0, nextRun - Date.now())
-
-    console.log(`[dream] Next skill crafting in ${Math.round(delay / 60000)} min`)
-    skillCraftingTimer = setTimeout(async () => {
-      await runSkillCrafting().catch(e => console.error('[dream] Skill crafting failed:', e))
-      scheduleSkillCrafting()
-    }, delay)
-  }
-
-  scheduleExtraction()
-  scheduleSynthesis()
-  schedulePruning()
-  scheduleSkillCrafting()
+  dreamStopped = false
+  scheduleDreamPhase('extraction',     'dream.extractionLastRun',    EXTRACTION_INTERVAL_MS,     runExtraction)
+  scheduleDreamPhase('synthesis',      'dream.synthesisLastRun',     SYNTHESIS_INTERVAL_MS,      runSynthesis)
+  scheduleDreamPhase('pruning',        'dream.pruningLastRun',       PRUNING_INTERVAL_MS,        runPruning)
+  scheduleDreamPhase('skill crafting', 'dream.skillCraftingLastRun', SKILL_CRAFTING_INTERVAL_MS, runSkillCrafting)
 }
 
 export function stopDream(): void {
-  if (extractionTimer)    clearTimeout(extractionTimer)
-  if (synthesisTimer)     clearTimeout(synthesisTimer)
-  if (pruningTimer)       clearTimeout(pruningTimer)
-  if (skillCraftingTimer) clearTimeout(skillCraftingTimer)
+  dreamStopped = true
+  for (const t of dreamTimers.values()) clearTimeout(t)
+  dreamTimers.clear()
 }

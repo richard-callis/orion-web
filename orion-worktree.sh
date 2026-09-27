@@ -19,8 +19,8 @@ usage() {
 }
 
 cmd_create() {
-  local branch="${2:?Branch name required}"
-  local path="${3:-$WT_DIR/$branch}"
+  local branch="${1:?Branch name required}"
+  local path="${2:-$WT_DIR/$branch}"
 
   if git -C "$REPO_ROOT" branch --list -q "$branch" | grep -q "$branch"; then
     echo "ERROR: branch '$branch' already exists"
@@ -47,8 +47,13 @@ cmd_delete() {
   local branch="${1:?Branch name required}"
 
   # Find the worktree dir
+  # Exact branch match (porcelain output) — a substring match could pick, and
+  # rm -rf, the wrong worktree.
   local path
-  path=$(git -C "$REPO_ROOT" worktree list | grep "$branch" | head -1 | awk '{print $1}')
+  path=$(git -C "$REPO_ROOT" worktree list --porcelain | awk -v ref="refs/heads/$branch" '
+    /^worktree / { wt = substr($0, 10) }
+    $0 == "branch " ref { print wt; exit }
+  ')
 
   if [ -z "$path" ]; then
     echo "ERROR: no worktree for branch '$branch'"
@@ -75,10 +80,13 @@ cmd_open() {
   fi
 
   echo "Opening: $path"
-  exec cd "$path" && exec bash -i
+  cd "$path" && exec bash -i
 }
 
-case "${2:-}" in
+# Dispatch on the subcommand; each handler gets the remaining arguments.
+cmd="${1:-}"
+[ $# -gt 0 ] && shift
+case "$cmd" in
   create) cmd_create "$@" ;;
   list)   cmd_list ;;
   delete) cmd_delete "$@" ;;

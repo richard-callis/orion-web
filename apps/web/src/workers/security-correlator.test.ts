@@ -20,8 +20,8 @@ const rule_findMany = vi.fn(async () => [] as unknown[])
 const sourceHealth_findMany = vi.fn(async () => [] as unknown[])
 const sourceHealth_update = vi.fn(async () => ({}))
 
-vi.mock('@/lib/db', () => ({
-  prisma: {
+vi.mock('@/lib/db', () => {
+  const prisma: Record<string, unknown> = {
     environment: { findMany: (...a: unknown[]) => env_findMany(...a) },
     securityEvent: {
       findMany: (...a: unknown[]) => event_findMany(...a),
@@ -31,15 +31,30 @@ vi.mock('@/lib/db', () => ({
     },
     incident: {
       findMany: (...a: unknown[]) => incident_findMany(...a),
+      // Cross-run dedup lookup: no open incident for this attacker yet.
+      findFirst: async () => null,
       create: (...a: unknown[]) => incident_create(a[0] as { data: Record<string, unknown> }),
+      update: async (args: { data: unknown }) => args.data,
+      updateMany: async () => ({ count: 0 }),
     },
+    // SOC observable auto-linking (extractAndLinkObservables): no open investigations.
+    investigation: {
+      findMany: async () => [],
+      findFirst: async () => null,
+      create: async (args: { data: unknown }) => args.data,
+    },
+    investigationObservable: { upsert: async () => ({}) },
+    investigationTimeline: { create: async () => ({}), findFirst: async () => null },
     correlationRule: { findMany: (...a: unknown[]) => rule_findMany(...a) },
     sourceHealth: {
       findMany: (...a: unknown[]) => sourceHealth_findMany(...a),
       update: (...a: unknown[]) => sourceHealth_update(...a),
     },
-  },
-}))
+  }
+  // Incident creation + event linking run in one transaction.
+  prisma.$transaction = async (fn: (tx: unknown) => unknown) => fn(prisma)
+  return { prisma }
+})
 
 // rule-engine is imported by the worker; mock it so each test can inject
 // the drafts that "would" come out of the engine without spinning up Postgres.
@@ -53,6 +68,10 @@ vi.mock('@/lib/security/rule-engine', () => ({
   })),
   recordRuleIncident: (...args: unknown[]) => recordRuleIncidentMock(...args),
 }))
+
+// No security room configured → the Warden notice/trigger block is skipped.
+vi.mock('@/lib/seed-system-epic', () => ({ getSystemRoomId: vi.fn(async () => null) }))
+vi.mock('@/lib/room-agents', () => ({ triggerRoomAgentReplies: vi.fn(async () => undefined) }))
 
 import { rulesForEnvironment, runCorrelator, GLOBAL_BUCKET_ID } from './security-correlator'
 

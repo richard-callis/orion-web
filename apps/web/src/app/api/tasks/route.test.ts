@@ -3,7 +3,8 @@
  *
  * Guards that:
  *  - Creating a task with a valid agentId succeeds (201)
- *  - Creating a task with a non-existent agentId returns 4xx (FK violation → 400)
+ *  - Creating a task with a non-existent agentId returns 400 (FK violation)
+ *  - The per-agent pending cap returns 429
  *  - Creating a task without an agentId also succeeds
  */
 
@@ -19,13 +20,21 @@ const task_create = vi.fn(async (args: { data: Record<string, unknown>; include:
   agent: args.data.assignedAgent ? { id: args.data.assignedAgent } : null,
 }))
 
-vi.mock('@/lib/db', () => ({
-  prisma: {
-    task: {
-      create: (...a: unknown[]) => task_create(a[0] as { data: Record<string, unknown>; include: unknown }),
+const task_count = vi.fn(async (_args: unknown) => 0)
+
+vi.mock('@/lib/db', () => {
+  const task = {
+    create: (...a: unknown[]) => task_create(a[0] as { data: Record<string, unknown>; include: unknown }),
+    count: (...a: unknown[]) => task_count(a[0]),
+  }
+  return {
+    prisma: {
+      task,
+      // Assigned tasks are created inside a serializable transaction (pending cap).
+      $transaction: async (fn: (tx: { task: typeof task }) => unknown) => fn({ task }),
     },
-  },
-}))
+  }
+})
 
 // Auth double — service auth returns null (gateway mode)
 const requireServiceAuthMock = vi.fn(async () => null as unknown)
@@ -52,6 +61,7 @@ beforeEach(() => {
     priority: args.data.priority ?? 'medium',
     agent: args.data.assignedAgent ? { id: args.data.assignedAgent } : null,
   }))
+  task_count.mockReset().mockResolvedValue(0)
   requireServiceAuthMock.mockReset().mockResolvedValue(null)
 })
 
@@ -80,12 +90,9 @@ describe('POST /api/tasks — agent spawn enforcement', () => {
     })
     task_create.mockRejectedValue(fkError)
 
-    // The route has no try/catch around prisma.task.create, so FK violations
-    // propagate as unhandled errors. This test documents that behavior and
-    // guards against silent data corruption (the DB correctly rejects the insert).
-    await expect(
-      POST(buildReq({ title: 'Task for ghost agent', assignedAgentId: 'agent-nonexistent' }))
-    ).rejects.toMatchObject({ code: 'P2003' })
+    // The DB rejects the insert; the route maps that to a 400 instead of a 500.
+    const res = await POST(buildReq({ title: 'Task for ghost agent', assignedAgentId: 'agent-nonexistent' }))
+    expect(res.status).toBe(400)
 
     // Prisma was called with the agent id — verifies the route passed it through
     const createArgs = task_create.mock.calls[0]?.[0] as { data: Record<string, unknown> }
@@ -99,8 +106,14 @@ describe('POST /api/tasks — agent spawn enforcement', () => {
     expect(res.status).toBe(201)
 
     const createArgs = task_create.mock.calls[0]?.[0] as { data: Record<string, unknown> }
-    // assignedAgent should not be set (field omitted or undefined)
-    expect(createArgs.data.assignedAgent).toBeUndefined()
+    expect(createArgs.data.assignedAgent).toBeNull()
+  })
+
+  it('returns 429 when the agent already has the maximum pending tasks', async () => {
+    task_count.mockResolvedValue(50)
+    const res = await POST(buildReq({ title: 'One too many', assignedAgentId: 'agent-exists' }))
+    expect(res.status).toBe(429)
+    expect(task_create).not.toHaveBeenCalled()
   })
 
   it('returns 400 for missing required title field', async () => {

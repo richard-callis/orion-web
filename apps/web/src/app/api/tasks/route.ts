@@ -96,23 +96,34 @@ export async function POST(req: NextRequest) {
       if (e?.code === 'P2034') {
         return NextResponse.json({ error: 'Conflict, please retry' }, { status: 409 })
       }
+      if (e?.code === 'P2003') return unknownReferenceResponse()
       throw e
     }
     if (!task) return NextResponse.json({ error: 'Task queue full' }, { status: 429 })
     return NextResponse.json(task, { status: 201 })
   }
 
-  const task = await prisma.task.create({
-    data: {
-      title:          data.title,
-      description:    data.description   ?? null,
-      priority:       data.priority      ?? 'medium',
-      featureId:      data.featureId     ?? null,
-      assignedAgent:  data.assignedAgentId ?? null,
-      assignedUserId: data.assignedUserId  ?? null,
-      createdBy:      isService ? null : (caller?.id ?? null),
-    },
-    include: { agent: true },
-  })
-  return NextResponse.json(task, { status: 201 })
+  try {
+    const task = await prisma.task.create({
+      data: {
+        title:          data.title,
+        description:    data.description   ?? null,
+        priority:       data.priority      ?? 'medium',
+        featureId:      data.featureId     ?? null,
+        assignedAgent:  data.assignedAgentId ?? null,
+        assignedUserId: data.assignedUserId  ?? null,
+        createdBy:      isService ? null : (caller?.id ?? null),
+      },
+      include: { agent: true },
+    })
+    return NextResponse.json(task, { status: 201 })
+  } catch (e: any) {
+    if (e?.code === 'P2003') return unknownReferenceResponse()
+    throw e
+  }
+}
+
+/** A foreign key (agent, user, feature) points at a row that doesn't exist. */
+function unknownReferenceResponse() {
+  return NextResponse.json({ error: 'Unknown agent, user or feature id' }, { status: 400 })
 }

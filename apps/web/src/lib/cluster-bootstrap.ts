@@ -14,8 +14,8 @@
  *   10. Update environment record + clean up temp files
  */
 
-import { spawn } from 'child_process'
-import { writeFile, readFile, rm, mkdir } from 'fs/promises'
+import { spawn, type ChildProcess } from 'child_process'
+import { writeFile, readFile, rm, mkdir, mkdtemp } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
@@ -24,6 +24,7 @@ import { decrypt } from './encryption'
 import { bootstrapEnvironmentRepo } from './gitops'
 import { getGitProvider, getGitProviderConfig } from './git-provider'
 import { VAULT_ADDR, vaultFetch } from './vault'
+import { gatewayImageSpec } from './gateway-image'
 
 const ARGOCD_SERVER = process.env.ARGOCD_SERVER ?? 'http://host.docker.internal:8083'
 const ARGOCD_PASSWORD = process.env.ARGOCD_AUTH_TOKEN
@@ -427,11 +428,27 @@ export type BootstrapEvent =
 
 // ── Shell helpers ─────────────────────────────────────────────────────────────
 
+// Every subprocess gets a hard deadline: ssh/scp/docker-swarm/helm steps can
+// otherwise hang a bootstrap job forever (e.g. an unreachable host with no
+// ConnectTimeout, or a helm --wait that never converges).
+const QUIET_TIMEOUT_MS   = 2 * 60_000   // short probes (kubectl get, token reads)
+const COMMAND_TIMEOUT_MS = 15 * 60_000  // installs/deploys (helm --wait, compose up)
+const KILL_GRACE_MS      = 10_000       // SIGTERM → SIGKILL grace period
+const MAX_QUIET_OUTPUT   = 1024 * 1024  // cap buffered output of runQuiet
+
+/** SIGTERM the process, then SIGKILL it if it hasn't exited after the grace period. */
+function killWithGrace(proc: ChildProcess): void {
+  proc.kill('SIGTERM')
+  const force = setTimeout(() => { if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL') }, KILL_GRACE_MS)
+  force.unref()
+}
+
 /** Run a command and capture stdout+stderr without streaming to the caller. */
 function runQuiet(
   cmd: string,
   args: string[],
   env: Record<string, string>,
+  timeoutMs: number = QUIET_TIMEOUT_MS,
 ): Promise<{ ok: boolean; out: string }> {
   return new Promise((resolve) => {
     const proc = spawn(cmd, args, {
@@ -439,10 +456,25 @@ function runQuiet(
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let out = ''
-    proc.stdout.on('data', (d: Buffer) => { out += d.toString() })
-    proc.stderr.on('data', (d: Buffer) => { out += d.toString() })
-    proc.on('close', (code) => resolve({ ok: code === 0, out: out.trim() }))
-    proc.on('error', (err) => resolve({ ok: false, out: err.message }))
+    let truncated = false
+    let timedOut = false
+    const append = (d: Buffer) => {
+      if (truncated) return
+      out += d.toString()
+      if (out.length > MAX_QUIET_OUTPUT) {
+        out = out.slice(0, MAX_QUIET_OUTPUT) + '\n[output truncated]'
+        truncated = true
+      }
+    }
+    const timer = setTimeout(() => { timedOut = true; killWithGrace(proc) }, timeoutMs)
+    proc.stdout.on('data', append)
+    proc.stderr.on('data', append)
+    proc.on('close', (code) => {
+      clearTimeout(timer)
+      if (timedOut) resolve({ ok: false, out: `${cmd} timed out after ${Math.round(timeoutMs / 1000)}s\n${out.trim()}` })
+      else resolve({ ok: code === 0, out: out.trim() })
+    })
+    proc.on('error', (err) => { clearTimeout(timer); resolve({ ok: false, out: err.message }) })
   })
 }
 
@@ -451,12 +483,19 @@ function runCommand(
   args: string[],
   env: Record<string, string>,
   onLog: (line: string) => void,
+  timeoutMs: number = COMMAND_TIMEOUT_MS,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn(cmd, args, {
       env: { ...process.env, ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      onLog(`${cmd} exceeded ${Math.round(timeoutMs / 1000)}s — terminating`)
+      killWithGrace(proc)
+    }, timeoutMs)
 
     proc.stdout.on('data', (d: Buffer) => {
       d.toString().split('\n').filter(Boolean).forEach(onLog)
@@ -465,10 +504,12 @@ function runCommand(
       d.toString().split('\n').filter(Boolean).forEach(onLog)
     })
     proc.on('close', (code) => {
-      if (code === 0) resolve()
+      clearTimeout(timer)
+      if (timedOut) reject(new Error(`${cmd} timed out after ${Math.round(timeoutMs / 1000)}s`))
+      else if (code === 0) resolve()
       else reject(new Error(`${cmd} exited with code ${code}`))
     })
-    proc.on('error', reject)
+    proc.on('error', (err) => { clearTimeout(timer); reject(err) })
   })
 }
 
@@ -525,9 +566,9 @@ export async function deployMonitoringStack(
 
     if (stack === 'full') {
       emit({ type: 'step', message: 'Deploying ELK stack (logs & flow analysis)...' })
+      await runCommand('kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/elk/namespace.yaml'], kenv, msg => emit({ type: 'log', message: msg }))
+      await ensureElkCredentials(kenv, msg => emit({ type: 'log', message: msg }))
       for (const manifest of [
-        '/opt/orion/deploy/monitoring/elk/namespace.yaml',
-        '/opt/orion/deploy/monitoring/elk/secret.yaml',
         '/opt/orion/deploy/monitoring/elk/elasticsearch-deployment.yaml',
         '/opt/orion/deploy/monitoring/elk/logstash-configmap.yaml',
         '/opt/orion/deploy/monitoring/elk/logstash-deployment.yaml',
@@ -578,11 +619,47 @@ function toSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '')
 }
 
+// ── ELK credentials ───────────────────────────────────────────────────────────
+
+/**
+ * Create the ELK `elasticsearch-credentials` Secret with a random password —
+ * only if it doesn't already exist.
+ *
+ * This used to `kubectl apply` deploy/monitoring/elk/secret.yaml, which
+ * committed a well-known default password ("orion-elk-default") to every
+ * cluster. Existing clusters keep whatever password Elasticsearch was
+ * initialised with (overwriting it would desync Logstash/Kibana/Elastiflow).
+ * The password is written via a 0600 temp file so it never appears in argv.
+ */
+async function ensureElkCredentials(
+  kenv: Record<string, string>,
+  log: (msg: string) => void,
+): Promise<void> {
+  const exists = await runQuiet('kubectl', ['get', 'secret', 'elasticsearch-credentials', '-n', 'elk', '-o', 'name'], kenv)
+  if (exists.ok) {
+    log('elk/elasticsearch-credentials already exists — keeping the current password')
+    return
+  }
+  const dir = await mkdtemp(join(tmpdir(), 'orion-elk-'))
+  const pwFile = join(dir, 'password')
+  try {
+    await writeFile(pwFile, randomBytes(24).toString('base64url'), { mode: 0o600 })
+    await runCommand(
+      'kubectl',
+      ['create', 'secret', 'generic', 'elasticsearch-credentials', '-n', 'elk', `--from-file=password=${pwFile}`],
+      kenv,
+      log,
+    )
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
 // ── Gateway manifest ──────────────────────────────────────────────────────────
 
 function gatewayManifest(envName: string, joinToken: string): string {
   const slug = envName.toLowerCase().replace(/[^a-z0-9-]/g, '-')
-  const image = `ghcr.io/${process.env.GITHUB_ORG ?? 'richard-callis'}/orion-gateway:latest`
+  const gw = gatewayImageSpec()
 
   return `---
 apiVersion: v1
@@ -665,8 +742,8 @@ spec:
       serviceAccountName: orion-gateway
       containers:
         - name: gateway
-          image: ${image}
-          imagePullPolicy: Always
+          image: ${gw.image}
+          imagePullPolicy: ${gw.pullPolicy}
           ports:
             - containerPort: 3001
           env:
@@ -678,6 +755,14 @@ spec:
               value: "${envName}"
             - name: GATEWAY_NAMESPACE
               value: "orion-management"
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: { fieldPath: metadata.namespace }
+            - name: POD_NAME
+              valueFrom:
+                fieldRef: { fieldPath: metadata.name }
+            - name: GATEWAY_DEPLOYMENT_NAME
+              value: "orion-gateway"
             - name: ORION_URL
               valueFrom:
                 secretKeyRef:
@@ -688,14 +773,40 @@ spec:
                 secretKeyRef:
                   name: orion-gateway-credentials
                   key: join-token
+            # Credentials the gateway writes back after registering (the Role
+            # above allows patching this Secret). Without GATEWAY_SECRET_NAME they
+            # were never persisted, so a restarted pod re-joined with a spent token.
+            - name: GATEWAY_SECRET_NAME
+              value: "orion-gateway-credentials"
+            - name: ENVIRONMENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: orion-gateway-credentials
+                  key: environment-id
+                  optional: true
+            - name: GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: orion-gateway-credentials
+                  key: gateway-token
+                  optional: true
+            - name: MACHINE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: orion-gateway-credentials
+                  key: machine-id
+                  optional: true
             - name: GATEWAY_URL
               value: "http://orion-gateway.orion-management.svc.cluster.local:3001"
+          # /health exists in every gateway image; /readyz (503 until the gateway
+          # has registered and loaded its tool policy) only when the image is
+          # pinned to a release that has it. See lib/gateway-image.ts.
           livenessProbe:
-            httpGet: { path: /health, port: 3001 }
+            httpGet: { path: ${gw.livenessPath}, port: 3001 }
             initialDelaySeconds: 15
             periodSeconds: 30
           readinessProbe:
-            httpGet: { path: /health, port: 3001 }
+            httpGet: { path: ${gw.readinessPath}, port: 3001 }
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
@@ -1023,11 +1134,7 @@ async function bootstrapK8sCluster(
           kenv,
           msg => emit({ type: 'log', message: msg }),
         )
-        await runCommand(
-          'kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/elk/secret.yaml'],
-          kenv,
-          msg => emit({ type: 'log', message: msg }),
-        )
+        await ensureElkCredentials(kenv, msg => emit({ type: 'log', message: msg }))
         await runCommand(
           'kubectl', ['apply', '-f', '/opt/orion/deploy/monitoring/elk/elasticsearch-deployment.yaml'],
           kenv,

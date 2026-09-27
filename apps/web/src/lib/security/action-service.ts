@@ -11,6 +11,7 @@
 
 import { prisma } from '@/lib/db'
 import { signDecisionToken } from './decision-token'
+import { gatewayHeaders, SYSTEM_ACTOR } from '@/lib/gateway-headers'
 import { type ActionRequest, type ActionDecision, actionRequestSchema, actionDecisionSchema } from './types'
 
 // ── Gateway executor ──────────────────────────────────────────────────────────
@@ -77,17 +78,23 @@ export async function gatewayExecutor(
 
   let toolName = ''
   let toolArgs: Record<string, unknown> = {}
+  // Secondary arguments the decision token must bind (the gateway verifies them).
+  let boundParams: Record<string, string> | undefined
 
   switch (action.actionType) {
     case 'crowdsec_decision_create':
       toolName = 'crowdsec_decision_create'
-      toolArgs = { ip: target, reason: payload?.reason ?? 'Blocked via ORION' }
+      boundParams = {
+        scope:    typeof payload?.scope === 'string' ? payload.scope : 'ip',
+        duration: typeof payload?.duration === 'string' ? payload.duration : '24h',
+      }
+      toolArgs = { ip: target, reason: payload?.reason ?? 'Blocked via ORION', ...boundParams }
       break
     case 'crowdsec_decision_delete':
       toolName = 'crowdsec_decision_delete'
-      // Tool body reads args.ip; token check reads args.decisionId.
-      // Send both so the token binding and the LAPI call both work.
-      toolArgs = { ip: target, decisionId: target }
+      // The gateway binds the token target to `ip` (the value it deletes).
+      boundParams = { scope: typeof payload?.scope === 'string' ? payload.scope : 'ip' }
+      toolArgs = { ip: target, ...boundParams }
       break
     case 'wazuh_active_response':
       toolName = 'wazuh_active_response'
@@ -112,7 +119,7 @@ export async function gatewayExecutor(
   const isWriteTool = action.actionType !== 'investigate'
   if (isWriteTool && auditId) {
     try {
-      toolArgs.__decision_token = signDecisionToken({ auditId, actionType: action.actionType, target })
+      toolArgs.__decision_token = signDecisionToken({ auditId, actionType: action.actionType, target, params: boundParams })
     } catch (err) {
       return {
         success: false,
@@ -125,10 +132,9 @@ export async function gatewayExecutor(
   try {
     res = await fetch(`${env.gatewayUrl}/tools/execute`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.gatewayToken ?? ''}`,
-        'Content-Type': 'application/json',
-      },
+      // Security actions run on the action-service's behalf (the human or
+      // Warden decision is recorded on the ActionAudit row).
+      headers: gatewayHeaders(env.gatewayToken ?? '', SYSTEM_ACTOR),
       body: JSON.stringify({ name: toolName, arguments: toolArgs }),
     })
   } catch (err) {

@@ -1,8 +1,16 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import mermaid from 'mermaid'
+import type { Mermaid } from 'mermaid'
 
-let initialized = false
+// mermaid is several MB; load it only when a diagram is actually rendered.
+let mermaidPromise: Promise<Mermaid> | null = null
+function loadMermaid(): Promise<Mermaid> {
+  mermaidPromise ??= import('mermaid').then(({ default: mermaid }) => {
+    mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' })
+    return mermaid
+  })
+  return mermaidPromise
+}
 
 // ── SVG sanitizer for XSS prevention ─────────────────────────────────────────
 // Parses SVG string and removes dangerous elements/attributes before rendering.
@@ -57,16 +65,13 @@ export function MermaidBlock({ code }: { code: string }) {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!initialized) {
-      mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' })
-      initialized = true
-    }
-
+    let cancelled = false
     const id = `mermaid-${Math.random().toString(36).slice(2)}`
     setError(null)
-    mermaid.render(id, code)
+    loadMermaid()
+      .then(mermaid => mermaid.render(id, code))
       .then(({ svg }) => {
-        if (ref.current) {
+        if (!cancelled && ref.current) {
           // Clear previous content
           ref.current.innerHTML = ''
 
@@ -80,8 +85,9 @@ export function MermaidBlock({ code }: { code: string }) {
         }
       })
       .catch(err => {
-        setError(err?.message ?? 'Failed to render diagram')
+        if (!cancelled) setError(err?.message ?? 'Failed to render diagram')
       })
+    return () => { cancelled = true }
   }, [code])
 
   if (error) {
