@@ -8,6 +8,11 @@
  * - Agent context injection (specialist context for delegated tasks)
  */
 
+import { PROMPT_DEFAULTS } from './system-prompts'
+
+/** Seeded default content for a system prompt key ('' if the key is missing). */
+const defaultPrompt = (key: string) => PROMPT_DEFAULTS.find(p => p.key === key)?.content ?? ''
+
 // ── Ring leader routing logic (extracted from room-agents) ─────────────────────
 
 function determineTriggeredAgents(
@@ -142,32 +147,19 @@ describe('Specialist List Building', () => {
 
 describe('System Prompt Templates', () => {
   it('ring-leader template key exists in PROMPT_DEFAULTS', () => {
-    const fs = require('fs')
-    const path = require('path')
-    const content = fs.readFileSync(path.join(__dirname, 'system-prompts.ts'), 'utf8')
-    expect(content).toContain("key: 'system.ring-leader'")
+    expect(PROMPT_DEFAULTS.map(p => p.key)).toContain('system.ring-leader')
   })
 
   it('specialist-context template key exists in PROMPT_DEFAULTS', () => {
-    const fs = require('fs')
-    const path = require('path')
-    const content = fs.readFileSync(path.join(__dirname, 'system-prompts.ts'), 'utf8')
-    expect(content).toContain("key: 'system.specialist-context'")
+    expect(PROMPT_DEFAULTS.map(p => p.key)).toContain('system.specialist-context')
   })
 
   it('ring-leader template mentions delegation', () => {
-    const fs = require('fs')
-    const path = require('path')
-    const content = fs.readFileSync(path.join(__dirname, 'system-prompts.ts'), 'utf8')
-    expect(content).toContain('system.ring-leader')
-    expect(content).toContain('delegate')
+    expect(defaultPrompt('system.ring-leader')).toContain('delegate')
   })
 
   it('specialist-context template has delegation structure', () => {
-    const fs = require('fs')
-    const path = require('path')
-    const content = fs.readFileSync(path.join(__dirname, 'system-prompts.ts'), 'utf8')
-    expect(content).toContain('Delegation Received')
+    expect(defaultPrompt('system.specialist-context')).toContain('Delegation Received')
   })
 })
 
@@ -197,10 +189,8 @@ describe('Context Injection', () => {
   })
 
   it('specialist context has delegation instructions', () => {
-    const fs = require('fs')
-    const path = require('path')
-    const content = fs.readFileSync(path.join(__dirname, 'system-prompts.ts'), 'utf8')
+    const content = defaultPrompt('system.specialist-context')
     expect(content).toContain('Delegation Received')
-    expect(content).toContain('delegation')
+    expect(content.toLowerCase()).toContain('delegat')
   })
 })
