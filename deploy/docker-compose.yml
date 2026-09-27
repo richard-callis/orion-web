@@ -357,7 +357,7 @@ services:
   # Provides: mTLS termination, IP allowlisting, rate limiting, circuit breaking,
   # per-connection access logs, and Prometheus metrics on :9901.
   vault-proxy:
-    image: envoyproxy/envoy:v1.29.12
+    image: envoyproxy/envoy:v1.39.1
     restart: unless-stopped
     depends_on:
       vault:
