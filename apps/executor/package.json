@@ -13,13 +13,12 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "fastify": "^4.25.1",
-    "@fastify/cors": "^9.0.1",
     "axios": "^1.20.0",
+    "fastify": "^5.12.5",
     "yaml": "^2.9.1"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.6.3",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1"
