@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const res = await coreApi.listEventForAllNamespaces()
-    let items: any[] = res.body?.items ?? (res as any).items ?? []
+    let items: any[] = res.items ?? []
 
     if (type) items = items.filter((e: any) => e.type === type)
 
