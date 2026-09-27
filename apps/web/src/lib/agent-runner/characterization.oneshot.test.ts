@@ -66,7 +66,12 @@ describe('dream callWithModel', () => {
     const r = await callWithModel('claude:claude-x', 'extract this')
     expect(r.text).toBe('notes')
     expect(r.inputTokens).toBeGreaterThan(0)
-    expect(http.calls[0].body).toEqual({ prompt: 'extract this', model: 'claude-x', maxTurns: 1 })
+    expect(http.calls[0].body).toEqual({
+      prompt: 'extract this', model: 'claude-x', maxTurns: 1,
+      // Structured fields added by the engine consolidation; one-shots run with no tools
+      messages: [{ role: 'user', content: 'extract this' }],
+      allowedTools: [],
+    })
   })
 
   it('OpenAI-compatible: returns reasoning_content and reported usage', async () => {
