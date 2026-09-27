@@ -1,8 +1,10 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
+import useSWR from 'swr'
+import { apiFetch, errorMessage } from '@/lib/api'
 import { useParams } from 'next/navigation'
 import {
-  BarChart3, Play, RefreshCw, TrendingUp, Star, Shield, Target,
+  BarChart3, Play, RefreshCw, TrendingUp, Shield, Target,
   Zap, CheckCircle, AlertCircle,
 } from 'lucide-react'
 
@@ -33,65 +35,33 @@ type EvalType = 'conversation' | 'task' | 'skill' | 'hook'
 
 export default function EvalsPage() {
   const { id } = useParams() as { id: string }
-  const [scores, setScores] = useState<ScoreEntry[]>([])
-  const [aggregate, setAggregate] = useState<AggregateData | null>(null)
-  const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
   const [window, setWindow] = useState<Window>(30)
   const [evalType, setEvalType] = useState<EvalType>('conversation')
   const [runMessage, setRunMessage] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  const loadScores = async () => {
-    try {
-      const res = await fetch(`/api/environments/${id}/evals/scores`)
-      const data = await res.json()
-      setScores(Array.isArray(data) ? data : [])
-    } catch { /* ignore */ }
-  }
-
-  const loadAggregate = async () => {
-    try {
-      const res = await fetch(
-        `/api/environments/${id}/evals/aggregate?type=${evalType}&window=${window}`
-      )
-      const data = await res.json()
-      setAggregate(data)
-    } catch { /* ignore */ }
-  }
-
-  const loadAll = async () => {
-    setError(null)
-    setLoading(true)
-    await Promise.all([loadScores(), loadAggregate()])
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    loadAll()
-  }, [id])
-
-  // Reload aggregate when filters change
-  useEffect(() => {
-    loadAggregate()
-  }, [id, window, evalType])
+  const scoresQ = useSWR<ScoreEntry[]>(`/api/environments/${id}/evals/scores`)
+  // Keyed on the filters, so switching type/window quickly can't show a stale aggregate
+  const aggregateQ = useSWR<AggregateData>(`/api/environments/${id}/evals/aggregate?type=${evalType}&window=${window}`)
+  const scores = Array.isArray(scoresQ.data) ? scoresQ.data : []
+  const aggregate = aggregateQ.data ?? null
+  const loading = scoresQ.isLoading || aggregateQ.isLoading
+  const loadAll = () => { void scoresQ.mutate(); void aggregateQ.mutate() }
 
   const handleRunEval = async (targetType: 'conversation' | 'task' | 'skill' | 'hook', targetId: string) => {
     setRunning(true)
     setRunMessage('')
     setError(null)
     try {
-      const res = await fetch(`/api/environments/${id}/evals/run`, {
+      const data = await apiFetch<{ evalsCreated: number }>(`/api/environments/${id}/evals/run`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetType, targetId }),
+        body: { targetType, targetId },
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Eval failed')
       setRunMessage(`Eval completed: ${data.evalsCreated} eval(s) created`)
       loadAll()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
+      setError(errorMessage(err, 'Eval failed'))
     } finally {
       setRunning(false)
     }
@@ -139,7 +109,7 @@ export default function EvalsPage() {
           onClick={loadAll}
           className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
           title="Refresh"
-        >
+         aria-label="Refresh">
           <RefreshCw size={14} />
         </button>
       </div>
