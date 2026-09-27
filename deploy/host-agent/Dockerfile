@@ -14,6 +14,6 @@
 # from the download server.
 FROM docker:29-cli AS docker-cli
 
-FROM timberio/vector:0.58.0-debian
+FROM timberio/vector:0.39.0-debian
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 USER vector

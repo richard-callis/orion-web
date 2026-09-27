@@ -112,3 +112,18 @@ jobs:
       # Catches what tsc alone does not (e.g. invalid Route exports), which is
       # what broke the image build on main before this gate existed.
       - run: npm run build --workspace apps/web
+      # The worker is an esbuild CommonJS bundle; an ESM dependency that touches
+      # import.meta at module load (node-cron 4.6) crashed it on startup in
+      # production while every other gate was green. Boot it for real: with no
+      # reachable DB it must still be running after 15s (exit 124 from timeout).
+      - name: Worker bundle boots
+        working-directory: apps/web
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:1/ci
+          REDIS_URL: redis://127.0.0.1:1/0
+        run: |
+          set +e
+          timeout 15 node worker.js > worker-boot.log 2>&1
+          code=$?
+          cat worker-boot.log | head -40
+          if [ "$code" -ne 124 ]; then echo "::error::worker.js exited with $code during startup"; exit 1; fi
