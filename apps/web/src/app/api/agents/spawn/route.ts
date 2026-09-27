@@ -12,7 +12,8 @@ export async function POST(req: NextRequest) {
   // BLOCKER fix: no role check — any authenticated user (including readonly) could
   // create agents with arbitrary systemPrompt, then Alpha would pick them up and
   // execute them with full tool access against the cluster.
-  try { await requireAdmin() } catch {
+  let admin: Awaited<ReturnType<typeof requireAdmin>>
+  try { admin = await requireAdmin() } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -57,6 +58,7 @@ export async function POST(req: NextRequest) {
       data: {
         title: `Plan: ${agent.name}`,
         metadata: {
+          ownerId: admin.id, // without it the conversation never shows in the owner's list
           agentTarget: { id: agent.id, name: agent.name },
         } as any,
       },

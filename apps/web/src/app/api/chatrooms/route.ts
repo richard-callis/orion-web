@@ -15,16 +15,18 @@ import { prisma } from '@/lib/db'
 import { getPlannerAgentId, getEnvironmentSMEAgentId } from '@/lib/seed-system-agents'
 import { triggerRoomAgentReplies } from '@/lib/room-agents'
 
-// GET /api/chatrooms — list rooms
+// GET /api/chatrooms — list rooms the caller is a member of.
+// `?all=true` (every room, e.g. the hierarchy view) is admin-only; for anyone
+// else it is ignored and the list stays membership-scoped.
 export async function GET(req: NextRequest) {
-  const _authCheck = await getCurrentUser()
-  if (!_authCheck) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const user = await getCurrentUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
   const type = searchParams.get('type') ?? undefined
   const featureId = searchParams.get('featureId') ?? undefined
   const epicId = searchParams.get('epicId') ?? undefined
-  const all = searchParams.get('all') === 'true'  // skip member filter — for hierarchy view
+  const all = searchParams.get('all') === 'true' && user.role === 'admin'
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '100') || 100, 200)
   const cursor = searchParams.get('cursor')
 
@@ -32,6 +34,8 @@ export async function GET(req: NextRequest) {
   if (type) where.type = type
   if (featureId) where.featureId = featureId
   if (epicId) where.epicId = epicId
+  // Filter in the database (was an N+1 membership lookup after an unscoped fetch)
+  if (!all) where.members = { some: { userId: user.id } }
 
   const rooms = await prisma.chatRoom.findMany({
     where,
@@ -43,36 +47,11 @@ export async function GET(req: NextRequest) {
       task:    { select: { id: true, title: true } },
       feature: { select: { id: true, title: true } },
       epic:    { select: { id: true, title: true } },
+      members: { select: { agentId: true, userId: true } },
     },
   })
 
-  if (all) {
-    return NextResponse.json({ rooms })
-  }
-
-  const session = await getServerSession(authOptions)
-  const userId = session?.user?.id
-
-  let result = rooms
-  if (userId) {
-    const filtered: any[] = []
-    for (const room of rooms) {
-      const members = await prisma.chatRoomMember.findMany({
-        where: { roomId: room.id },
-        select: { userId: true, agentId: true },
-      })
-      const isMember = members.some((m: any) => m.userId === userId)
-      if (isMember) {
-        filtered.push({
-          ...room,
-          members: members.map((m: any) => ({ agentId: m.agentId, userId: m.userId })),
-        })
-      }
-    }
-    result = filtered
-  }
-
-  return NextResponse.json({ rooms: result })
+  return NextResponse.json({ rooms })
 }
 
 // POST /api/chatrooms — create a room
