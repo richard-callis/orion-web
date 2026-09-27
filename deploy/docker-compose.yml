@@ -789,7 +789,7 @@ services:
           memory: 64M
 
   argocd-repo-server:
-    image: quay.io/argoproj/argocd:v3.3.8
+    image: quay.io/argoproj/argocd:v3.5.3
     restart: unless-stopped
     command: argocd-repo-server
     environment:
@@ -806,7 +806,7 @@ services:
           memory: 256M
 
   argocd-server:
-    image: quay.io/argoproj/argocd:v3.3.8
+    image: quay.io/argoproj/argocd:v3.5.3
     restart: unless-stopped
     command: argocd-server --insecure --namespace argocd
     environment:
@@ -827,7 +827,7 @@ services:
           memory: 256M
 
   argocd-application-controller:
-    image: quay.io/argoproj/argocd:v3.3.8
+    image: quay.io/argoproj/argocd:v3.5.3
     restart: unless-stopped
     command: argocd-application-controller --redis argocd-redis:6379 --namespace argocd
     environment:
