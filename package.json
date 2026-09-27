@@ -30,5 +30,11 @@
     "prettier": "^3.9.9",
     "typescript-eslint": "^8.70.1",
     "typescript-native": "npm:typescript@^7.0.2"
+  },
+  "overrides": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0"
   }
 }

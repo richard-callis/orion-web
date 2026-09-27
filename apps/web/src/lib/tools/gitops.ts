@@ -104,8 +104,8 @@ export const gitopsLsTool: ToolDefinition = {
     let liveWatchedPath: string | undefined
     try {
       const { customApi } = await import('../k8s')
-      const apps = await customApi.listClusterCustomObject('argoproj.io', 'v1alpha1', 'applications')
-      const items: any[] = apps?.body?.items ?? []
+      const apps = await customApi.listClusterCustomObject({ group: 'argoproj.io', version: 'v1alpha1', plural: 'applications' })
+      const items: any[] = apps?.items ?? []
       const matchingApp = items.find((app: any) => {
         const repoUrl: string = app?.spec?.source?.repoURL ?? ''
         return repoUrl.includes(env.gitRepo!) || repoUrl.endsWith(`/${env.gitRepo}`)
@@ -143,9 +143,9 @@ async function handleGetClusterApiResources(): Promise<string> {
   storage.k8s.io/v1: StorageClass`
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const crdRes: any = await customApi.listClusterCustomObject('apiextensions.k8s.io', 'v1', 'customresourcedefinitions')
+    const crdRes: any = await customApi.listClusterCustomObject({ group: 'apiextensions.k8s.io', version: 'v1', plural: 'customresourcedefinitions' })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const crds: any[] = crdRes?.body?.items ?? crdRes?.items ?? []
+    const crds: any[] = crdRes?.items ?? []
 
     // Group CRDs by API group+version
     const groupMap = new Map<string, string[]>()
@@ -194,9 +194,9 @@ async function handleValidateManifest(args: unknown): Promise<string> {
     const installedCrdGroups = new Set<string>()
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const crdRes: any = await customApi.listClusterCustomObject('apiextensions.k8s.io', 'v1', 'customresourcedefinitions')
+      const crdRes: any = await customApi.listClusterCustomObject({ group: 'apiextensions.k8s.io', version: 'v1', plural: 'customresourcedefinitions' })
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const crds: any[] = crdRes?.body?.items ?? crdRes?.items ?? []
+      const crds: any[] = crdRes?.items ?? []
       for (const crd of crds) {
         const group = crd.spec?.group ?? ''
         if (group) installedCrdGroups.add(group)
