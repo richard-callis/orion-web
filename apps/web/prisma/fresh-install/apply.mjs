@@ -25,6 +25,9 @@ import pg from 'pg'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const schemaPath = join(here, '..', 'schema.prisma')
+// Prisma 7 reads the datasource URL from prisma.config.mjs (next to prisma/),
+// both in the repo (apps/web/) and in the runtime image (/app/).
+const configPath = join(here, '..', '..', 'prisma.config.mjs')
 const require = createRequire(import.meta.url)
 const prismaCli = process.env.PRISMA_CLI || require.resolve('prisma/build/index.js')
 
@@ -76,7 +79,7 @@ try {
     }
     const missing = legacy.filter(n => !applied.has(n))
     for (const name of missing) {
-      execFileSync(process.execPath, [prismaCli, 'migrate', 'resolve', '--applied', name, '--schema', schemaPath],
+      execFileSync(process.execPath, [prismaCli, 'migrate', 'resolve', '--applied', name, '--schema', schemaPath, '--config', configPath],
         { stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, PRISMA_HIDE_UPDATE_MESSAGE: '1' } })
     }
     if (missing.length) console.log(`fresh-install: recorded ${missing.length} legacy migrations as applied`)

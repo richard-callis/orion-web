@@ -20,7 +20,8 @@ echo "── migrate deploy (second run must be a no-op)"
 npx prisma migrate deploy
 
 echo "── drift check: database vs schema.prisma"
-DIFF=$(npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --script)
+# Prisma 7: the database comes from prisma.config.mjs (DATABASE_URL).
+DIFF=$(npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script)
 
 # Objects that exist in the database but cannot be expressed in schema.prisma.
 # Each one is created by raw SQL in a migration / baseline.sql. Keep this list short

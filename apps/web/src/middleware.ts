@@ -39,6 +39,11 @@ const RATE_LIMITS: Record<string, [number, number]> = {
   // the actual enforcement is done per-trigger inside the webhook route handler.
   '/api/webhooks': [60, 15 * 60 * 1000],
 
+  // Security telemetry (Falco via falcosidekick, host-agent Vector, CrowdSec,
+  // Wazuh). Internal, HMAC-authenticated, and bursty — the 100/15min default
+  // 429'd real alerts. Still bounded per source IP.
+  '/api/monitoring/security/webhooks': [1200, 15 * 60 * 1000],
+
   // Tool generation — moderate limit (cost control)
   '/api/tools/generate': [20, 15 * 60 * 1000],
 

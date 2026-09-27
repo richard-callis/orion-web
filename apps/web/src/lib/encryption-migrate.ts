@@ -10,7 +10,7 @@
  * Generate a new key: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
  */
 
-import { PrismaClient } from '@prisma/client'
+import { createPrismaClient } from './db'
 import { encrypt } from './encryption'
 
 // MAJOR fix: the shared `prisma` client has the auto-encrypt middleware attached,
@@ -19,7 +19,7 @@ import { encrypt } from './encryption'
 // returned true, causing every row to be redundantly re-encrypted on every run.
 // Using a raw client (no middleware) lets us see the actual on-disk value and
 // correctly detect which rows are already encrypted via the 'enc:v1:' prefix.
-const raw = new PrismaClient()
+const raw = createPrismaClient({ encryption: false })
 
 async function migrate() {
   const key = process.env.ORION_ENCRYPTION_KEY

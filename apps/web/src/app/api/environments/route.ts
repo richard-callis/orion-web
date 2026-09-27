@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   const parsed = CreateEnvironmentSchema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json(
-      { error: 'Invalid input', details: parsed.error.errors.map((e: any) => ({ field: e.path.join('.'), message: e.message })) },
+      { error: 'Invalid input', details: parsed.error.issues.map(e => ({ field: e.path.join('.'), message: e.message })) },
       { status: 400 },
     )
   }

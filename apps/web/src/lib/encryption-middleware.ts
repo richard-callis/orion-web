@@ -1,5 +1,7 @@
 /**
- * Prisma $use middleware — auto-decrypts Environment and ExternalModel secrets.
+ * Prisma client extension — encrypts on write and decrypts on read the
+ * Environment and ExternalModel secret fields. (Was a `$use` middleware; Prisma 7
+ * removed `$use`, so it is now a `query` extension with the same semantics.)
  *
  * Transparent: every DB read of an encrypted field returns plaintext.
  * No call site needs to change. No call site can forget to decrypt.
@@ -8,7 +10,7 @@
  * Auth comparisons fail safely (401). LLM calls fail with a clear error.
  */
 
-import { PrismaClient } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import { decrypt, encrypt } from './encryption'
 
 // federationToken was encrypted by the environment routes but never decrypted
@@ -99,53 +101,63 @@ function preProcess(obj: unknown, model?: string): unknown {
   return changed ? copy : obj
 }
 
-export function registerEncryptionMiddleware(prisma: PrismaClient): void {
-  prisma.$use(async (params: any, next: any) => {
-    if (params.model !== 'Environment' && params.model !== 'ExternalModel') {
-      return next(params)
+/** Encrypt the write payloads (data / create / update / connectOrCreate.create) of one operation's args. */
+function encryptArgs(args: unknown, model: string, operation: string): unknown {
+  // Encrypt before writes (POST = create, PUT/PATCH = update)
+  const isWrite = ['create', 'connectOrCreate', 'upsert', 'update', 'updateMany'].includes(operation)
+  if (!isWrite || !isRecord(args)) return args
+  let newArgs: Record<string, unknown> = { ...args }
+
+  // Handle standard data field (create, update, updateMany)
+  if (isRecord(newArgs.data)) {
+    const processed = preProcess(newArgs.data, model)
+    if (processed !== newArgs.data) newArgs = { ...newArgs, data: processed }
+  }
+
+  // Handle upsert's create and update fields
+  if (isRecord(newArgs.create)) {
+    const processed = preProcess(newArgs.create, model)
+    if (processed !== newArgs.create) newArgs = { ...newArgs, create: processed }
+  }
+  if (isRecord(newArgs.update)) {
+    const processed = preProcess(newArgs.update, model)
+    if (processed !== newArgs.update) newArgs = { ...newArgs, update: processed }
+  }
+
+  // Handle connectOrCreate's create field
+  if (isRecord(newArgs.connectOrCreate) && isRecord(newArgs.connectOrCreate.create)) {
+    const processed = preProcess(newArgs.connectOrCreate.create, model)
+    if (processed !== newArgs.connectOrCreate.create) {
+      newArgs = { ...newArgs, connectOrCreate: { ...newArgs.connectOrCreate, create: processed } }
     }
+  }
 
-    // Encrypt before writes (POST = create, PUT/PATCH = update)
-    const isWrite = ['create', 'connectOrCreate', 'upsert', 'update', 'updateMany'].includes(params.action)
-    if (isWrite && params.args) {
-      let newArgs = { ...params.args }
-
-      // Handle standard data field (create, update, updateMany)
-      if (newArgs.data && isRecord(newArgs.data)) {
-        const processed = preProcess(newArgs.data, params.model)
-        if (processed !== newArgs.data) {
-          newArgs = { ...newArgs, data: processed }
-        }
-      }
-
-      // Handle upsert's create and update fields
-      if (newArgs.create && isRecord(newArgs.create)) {
-        const processed = preProcess(newArgs.create, params.model)
-        if (processed !== newArgs.create) {
-          newArgs = { ...newArgs, create: processed }
-        }
-      }
-      if (newArgs.update && isRecord(newArgs.update)) {
-        const processed = preProcess(newArgs.update, params.model)
-        if (processed !== newArgs.update) {
-          newArgs = { ...newArgs, update: processed }
-        }
-      }
-
-      // Handle connectOrCreate's create field
-      if (newArgs.connectOrCreate && isRecord(newArgs.connectOrCreate) && isRecord(newArgs.connectOrCreate.create)) {
-        const processed = preProcess(newArgs.connectOrCreate.create as Record<string, unknown>, params.model)
-        if (processed !== newArgs.connectOrCreate.create) {
-          newArgs = { ...newArgs, connectOrCreate: { ...newArgs.connectOrCreate, create: processed } }
-        }
-      }
-
-      if (newArgs !== params.args) {
-        params = { ...params, args: newArgs }
-      }
-    }
-
-    const result = await next(params)
-    return processResult(result, params.model)
-  })
+  return newArgs
 }
+
+type Operation = { model: string; operation: string; args: unknown; query: (args: unknown) => Promise<unknown> }
+
+async function encryptThenDecrypt({ model, operation, args, query }: Operation): Promise<unknown> {
+  const result = await query(encryptArgs(args, model, operation))
+  return processResult(result, model)
+}
+
+/**
+ * Encrypt-on-write / decrypt-on-read for Environment and ExternalModel.
+ * Apply with `client.$extends(encryptionExtension)`. Like the old `$use`
+ * middleware it covers top-level operations on those two models only.
+ */
+export const encryptionExtension = Prisma.defineExtension({
+  name: 'orion-encryption',
+  query: {
+    environment: {
+      $allOperations: (p) => encryptThenDecrypt(p as unknown as Operation) as ReturnType<typeof p.query>,
+    },
+    externalModel: {
+      $allOperations: (p) => encryptThenDecrypt(p as unknown as Operation) as ReturnType<typeof p.query>,
+    },
+  },
+})
+
+// Exported for unit tests.
+export const __test = { encryptArgs, processResult }
