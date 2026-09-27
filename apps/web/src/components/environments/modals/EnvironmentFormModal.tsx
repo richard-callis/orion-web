@@ -174,7 +174,7 @@ export function EnvironmentFormModal({
                 Kubeconfig <span className="text-text-muted">(optional override — leave blank to auto-fetch)</span>
               </label>
               <Textarea id={f('kubeconfig')} value={form.kubeconfig} onChange={set('kubeconfig')}
-                placeholder={'apiVersion: v1\nkind: Config\nclusters:\n  ...'} rows={4} className="font-mono text-[11px]" />
+                placeholder={'apiVersion: v1\nkind: Config\nclusters:\n  ...'} rows={4} className="font-mono text-[11px] resize-y leading-normal" />
             </div>
             <div>
               <label htmlFor={f('talos')} className={labelClass}>
@@ -187,7 +187,7 @@ export function EnvironmentFormModal({
               </label>
               <Textarea id={f('talos')} value={form.talosConfig} onChange={set('talosConfig')}
                 placeholder={'context: <cluster-name>\ncontexts:\n  <cluster-name>:\n    endpoints: [...]\n    ca: ...\n    crt: ...\n    key: ...'}
-                rows={4} className="font-mono text-[11px]" />
+                rows={4} className="font-mono text-[11px] resize-y leading-normal" />
               <p className="text-[10px] text-text-muted mt-1">
                 Paste your <code className="font-mono">talosconfig</code> content here. Used by storage bootstrap to auto-install
                 extensions (e.g. iscsi-tools) and reboot nodes. Leave blank to skip auto-remediation.

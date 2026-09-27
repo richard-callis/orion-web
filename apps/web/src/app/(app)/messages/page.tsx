@@ -1,5 +1,9 @@
 'use client'
-import { useState, useEffect, useCallback, Suspense } from 'react'
+import { useState, useEffect, useMemo, Suspense } from 'react'
+import useSWR from 'swr'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
+import { useAgents } from '@/hooks/useAgents'
 import { MessageSquare } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import { MessageList } from '@/components/messages/MessageList'
@@ -24,7 +28,6 @@ interface AgentConvo { id: string; title: string | null; metadata: { agentTarget
 interface DebugConvo { id: string; title: string | null }
 
 interface EpicsFeature { id: string; title: string; features: { id: string; title: string }[] }
-interface Agent { id: string; name: string }
 
 interface Room {
   id: string
@@ -39,6 +42,10 @@ interface Room {
   task?: { id: string; title: string } | null
 }
 
+const NO_CONVOS: Conversation[] = []
+const NO_ROOMS: Room[] = []
+const NO_EPICS: EpicsFeature[] = []
+
 function MessagesContent() {
   const searchParams = useSearchParams()
   const incomingRoomId = searchParams.get('r')
@@ -48,12 +55,17 @@ function MessagesContent() {
     incomingRoomId ? `r_${incomingRoomId}` : null
   )
   const [mobileShowList, setMobileShowList] = useState(!incomingRoomId)
-  const [convos, setConvos] = useState<Conversation[]>([])
-  const [epics, setEpics] = useState<EpicsFeature[]>([])
-  const [agents, setAgents] = useState<Agent[]>([])
-  const [rooms, setRooms] = useState<Room[]>([])
   const [roomFilter, setRoomFilter] = useState('')
-  const [loading, setLoading] = useState(true)
+  const toast = useToast()
+
+  // Sidebar data via SWR; local edits update the cache directly.
+  const { data: convos = NO_CONVOS, mutate: mutateConvos } = useSWR<Conversation[]>('/api/chat/conversations')
+  const { data: roomsData, mutate: mutateRooms } = useSWR<{ rooms?: Room[] }>('/api/chatrooms?all=true')
+  const { data: epics = NO_EPICS } = useSWR<EpicsFeature[]>('/api/epics', { revalidateOnFocus: false })
+  const { agents } = useAgents()
+  const rooms = roomsData?.rooms ?? NO_ROOMS
+  const setConvos = (fn: (list: Conversation[]) => Conversation[]) => { void mutateConvos(prev => fn(prev ?? []), { revalidate: false }) }
+  const setRooms = (fn: (list: Room[]) => Room[]) => { void mutateRooms(prev => ({ ...prev, rooms: fn(prev?.rooms ?? []) }), { revalidate: false }) }
 
   // When navigated to with ?r=<roomId>, activate that room
   useEffect(() => {
@@ -63,25 +75,6 @@ function MessagesContent() {
       setMobileShowList(false)
     }
   }, [incomingRoomId])
-
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    try {
-      const [convosRes, epicsRes, agentsRes, roomsRes] = await Promise.all([
-        fetch('/api/chat/conversations').then(r => r.json().catch(() => [])).then((d: any) => Array.isArray(d) ? d : []),
-        fetch('/api/epics').then(r => r.json().catch(() => [])).then((d: any) => Array.isArray(d) ? d : []),
-        fetch('/api/agents').then(r => r.json().catch(() => [])).then((d: any) => Array.isArray(d) ? d : []),
-        fetch('/api/chatrooms?all=true').then(r => r.json().catch(() => ({ rooms: [] }))).then((d: any) => d.rooms || []),
-      ])
-      setConvos(convosRes)
-      setEpics(epicsRes)
-      setAgents(agentsRes)
-      setRooms(roomsRes)
-    } catch { /* ignore */ }
-    setLoading(false)
-  }, [])
-
-  useEffect(() => { loadData() }, [loadData])
 
   const handleSelect = (id: string) => {
     setActiveId(id)
@@ -93,16 +86,13 @@ function MessagesContent() {
     setView(target)
     if (target === 'ai') {
       try {
-        const res = await fetch('/api/chat/conversations', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        })
-        const convo: Conversation = await res.json()
+        const convo = await apiFetch<Conversation>('/api/chat/conversations', { method: 'POST', body: {} })
         setConvos(prev => [convo, ...prev])
         setActiveId(`c_${convo.id}`)
         setMobileShowList(false)
-      } catch { /* ignore */ }
+      } catch (e) {
+        toast.error(`Failed to start a conversation: ${errorMessage(e)}`)
+      }
     }
   }
 
@@ -133,22 +123,21 @@ function MessagesContent() {
 
   const handleNewRoom = async () => {
     try {
-      const res = await fetch('/api/chatrooms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'New Room', type: 'general' }),
-      })
-      const room = await res.json()
+      const room = await apiFetch<Room>('/api/chatrooms', { method: 'POST', body: { name: 'New Room', type: 'general' } })
       setRooms(prev => [room, ...prev])
       setActiveId(`r_${room.id}`)
       setMobileShowList(false)
-    } catch { /* ignore */ }
+    } catch (e) {
+      toast.error(`Failed to create room: ${errorMessage(e)}`)
+    }
   }
 
-  const regularConvos = convos.filter(c => !c.metadata?.planTarget && !c.metadata?.agentTarget && !c.metadata?.agentChat && !c.metadata?.agentDraft && !c.metadata?.debugChat)
-  const planningConvos = convos.filter(c => !!c.metadata?.planTarget) as PlanningConvo[]
-  const agentConvos = convos.filter(c => !!c.metadata?.agentTarget || !!c.metadata?.agentChat || !!c.metadata?.agentDraft) as AgentConvo[]
-  const debugConvos = convos.filter(c => !!c.metadata?.debugChat) as DebugConvo[]
+  const { regularConvos, planningConvos, agentConvos, debugConvos } = useMemo(() => ({
+    regularConvos: convos.filter(c => !c.metadata?.planTarget && !c.metadata?.agentTarget && !c.metadata?.agentChat && !c.metadata?.agentDraft && !c.metadata?.debugChat),
+    planningConvos: convos.filter(c => !!c.metadata?.planTarget) as PlanningConvo[],
+    agentConvos: convos.filter(c => !!c.metadata?.agentTarget || !!c.metadata?.agentChat || !!c.metadata?.agentDraft) as AgentConvo[],
+    debugConvos: convos.filter(c => !!c.metadata?.debugChat) as DebugConvo[],
+  }), [convos])
 
   return (
     <div className="absolute inset-0 flex">

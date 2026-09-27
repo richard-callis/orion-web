@@ -2,21 +2,16 @@
 
 import { useSession, signOut } from 'next-auth/react'
 import { useState, useRef, useEffect } from 'react'
+import useSWR from 'swr'
 import { LogOut } from 'lucide-react'
 import { JobsPanel } from '@/components/jobs/JobsPanel'
 
 export function Header() {
   const { data: session } = useSession()
   const [open, setOpen] = useState(false)
-  const [appName, setAppName] = useState('ORION')
+  const { data: settings } = useSWR<Record<string, unknown>>('/api/admin/settings', { revalidateOnFocus: false, shouldRetryOnError: false })
+  const appName = typeof settings?.['app.name'] === 'string' && settings['app.name'] ? settings['app.name'] : 'ORION'
   const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    fetch('/api/admin/settings')
-      .then(r => { if (!r.ok) throw new Error(`Request failed: ${r.status}`); return r.json() })
-      .then(d => { if (d['app.name']) setAppName(d['app.name'] as string) })
-      .catch((e) => console.error("[fetch]", e))
-  }, [])
 
   useEffect(() => {
     function handler(e: MouseEvent) {

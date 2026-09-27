@@ -1,5 +1,7 @@
 'use client'
-import { Suspense, useState, useEffect, useCallback } from 'react'
+import { Suspense, useMemo } from 'react'
+import useSWR from 'swr'
+import { useAgents } from '@/hooks/useAgents'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { ChatWindow } from '@/components/chat/ChatWindow'
 import { ConversationList } from '@/components/chat/ConversationList'
@@ -34,9 +36,25 @@ interface Epic {
   features: { id: string; title: string }[]
 }
 
-interface Agent {
-  id: string
-  name: string
+type ConvoRow = Conversation & { metadata?: Record<string, unknown> }
+
+const NO_ROWS: ConvoRow[] = []
+const NO_EPICS: Epic[] = []
+
+/** Split conversations into the sidebar sections by their metadata. */
+function groupConversations(rows: ConvoRow[]) {
+  const convos: Conversation[] = []
+  const planningConvos: PlanningConvo[] = []
+  const agentConvos: AgentConvo[] = []
+  const debugConvos: DebugConvo[] = []
+  for (const c of rows) {
+    const meta = c.metadata
+    if (meta?.planTarget)                                               planningConvos.push(c as unknown as PlanningConvo)
+    else if (meta?.agentTarget || meta?.agentChat || meta?.agentDraft)  agentConvos.push(c as unknown as AgentConvo)
+    else if (meta?.debugChat)                                           debugConvos.push(c)
+    else                                                                convos.push(c)
+  }
+  return { convos, planningConvos, agentConvos, debugConvos }
 }
 
 function ChatContent() {
@@ -46,48 +64,13 @@ function ChatContent() {
   const taskId = searchParams.get('task')
   const context = searchParams.get('context')
 
-  const [convos, setConvos]               = useState<Conversation[]>([])
-  const [planningConvos, setPlanningConvos] = useState<PlanningConvo[]>([])
-  const [agentConvos, setAgentConvos]     = useState<AgentConvo[]>([])
-  const [debugConvos, setDebugConvos]     = useState<DebugConvo[]>([])
-  const [epics, setEpics]                 = useState<Epic[]>([])
-  const [agents, setAgents]               = useState<Agent[]>([])
-
-  const loadConvos = useCallback(async () => {
-    try {
-      const data: Array<{ id: string; title: string | null; createdAt: string; metadata?: Record<string, unknown>; _count: { messages: number } }>
-        = await fetch('/api/chat/conversations', { cache: 'no-store' }).then(r => r.json())
-
-      const plain: Conversation[]     = []
-      const planning: PlanningConvo[] = []
-      const agent: AgentConvo[]       = []
-      const debug: DebugConvo[]       = []
-
-      for (const c of data) {
-        const meta = c.metadata as Record<string, unknown> | undefined
-        if (meta?.planTarget)                          planning.push(c as unknown as PlanningConvo)
-        else if (meta?.agentTarget || meta?.agentChat || meta?.agentDraft) agent.push(c as unknown as AgentConvo)
-        else if (meta?.debugChat)                      debug.push(c as DebugConvo)
-        else                                           plain.push(c)
-      }
-
-      setConvos(plain)
-      setPlanningConvos(planning)
-      setAgentConvos(agent)
-      setDebugConvos(debug)
-    } catch { /* ignore */ }
-  }, [])
-
-  useEffect(() => {
-    loadConvos()
-    Promise.all([
-      fetch('/api/epics').then(r => r.json()).catch(() => []),
-      fetch('/api/agents').then(r => r.json()).catch(() => []),
-    ]).then(([e, a]) => {
-      setEpics(e)
-      setAgents(a)
-    })
-  }, [loadConvos])
+  // One conversation list, grouped for the sidebar. SWR keeps it fresh and
+  // local edits (delete / rename / create) update the cache directly.
+  const { data: rows = NO_ROWS, mutate } = useSWR<ConvoRow[]>('/api/chat/conversations')
+  const { convos, planningConvos, agentConvos, debugConvos } = useMemo(() => groupConversations(rows), [rows])
+  const { data: epics = NO_EPICS } = useSWR<Epic[]>('/api/epics', { revalidateOnFocus: false })
+  const { agents } = useAgents()
+  const updateRows = (fn: (rows: ConvoRow[]) => ConvoRow[]) => { void mutate(prev => fn(prev ?? []), { revalidate: false }) }
 
   const handleSelect = (id: string) => {
     const url = new URL(window.location.href)
@@ -102,19 +85,12 @@ function ChatContent() {
   }
 
   const handleDelete = (id: string) => {
-    setConvos(p => p.filter(c => c.id !== id))
-    setPlanningConvos(p => p.filter(c => c.id !== id))
-    setAgentConvos(p => p.filter(c => c.id !== id))
-    setDebugConvos(p => p.filter(c => c.id !== id))
+    updateRows(list => list.filter(c => c.id !== id))
     if (conversationId === id) handleSelect('')
   }
 
   const handleRename = (id: string, title: string) => {
-    const patch = (arr: Conversation[]) => arr.map(c => c.id === id ? { ...c, title } : c)
-    setConvos(patch)
-    setPlanningConvos(p => p.map(c => c.id === id ? { ...c, title } : c))
-    setAgentConvos(p => p.map(c => c.id === id ? { ...c, title } : c))
-    setDebugConvos(p => p.map(c => c.id === id ? { ...c, title } : c))
+    updateRows(list => list.map(c => c.id === id ? { ...c, title } : c))
   }
 
   const handleConversationCreated = (convo: Conversation) => {
@@ -123,7 +99,7 @@ function ChatContent() {
     if (taskId) url.searchParams.set('task', taskId)
     if (context) url.searchParams.set('context', context)
     window.history.replaceState(null, '', url.toString())
-    setConvos(p => [convo, ...p])
+    updateRows(list => [convo, ...list])
   }
 
   return (

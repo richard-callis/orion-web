@@ -4,6 +4,8 @@ import { Plus, Trash2, ChevronRight, User, X } from 'lucide-react'
 import type { Bug, TaskUser } from '@/types/tasks'
 import { KanbanBoard } from '../ui/KanbanBoard'
 import { CreateEntityModal } from '../ui/CreateEntityModal'
+import { useToast } from '../ui/Toast'
+import { apiFetch, errorMessage } from '@/lib/api'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -47,6 +49,7 @@ interface CreateBugForm {
 }
 
 export function BugManager({ initialBugs, users }: Props) {
+  const toast = useToast()
   const [bugs, setBugs]         = useState<Bug[]>(initialBugs)
   const [selectedBug, setSelectedBug] = useState<Bug | null>(null)
   const [modal, setModal]       = useState(false)
@@ -83,38 +86,55 @@ export function BugManager({ initialBugs, users }: Props) {
 
   const byStatus = (s: BugStatus) => bugs.filter(b => b.status === s)
 
+  // Optimistic update/delete: roll back and toast if the server rejects it.
   const updateBug = async (id: string, patch: Partial<Bug>) => {
+    const original = bugs.find(b => b.id === id)
     setBugs(prev => prev.map(b => b.id === id ? { ...b, ...patch } : b))
-    if (selectedBug?.id === id) setSelectedBug(s => s ? { ...s, ...patch } : s)
-    await fetch(`/api/bugs/${id}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    }).catch((e) => console.error("[fetch]", e))
+    setSelectedBug(s => s?.id === id ? { ...s, ...patch } : s)
+    try {
+      await apiFetch(`/api/bugs/${id}`, { method: 'PUT', body: patch as Record<string, unknown> })
+    } catch (e) {
+      if (original) {
+        setBugs(prev => prev.map(b => b.id === id ? original : b))
+        setSelectedBug(s => s?.id === id ? original : s)
+      }
+      toast.error(`Failed to update bug: ${errorMessage(e)}`)
+    }
   }
 
   const deleteBug = async (id: string) => {
+    const index = bugs.findIndex(b => b.id === id)
+    const original = bugs[index]
     setBugs(prev => prev.filter(b => b.id !== id))
-    if (selectedBug?.id === id) {
-      setSelectedBug(null)
-  
+    setSelectedBug(s => s?.id === id ? null : s)
+    try {
+      await apiFetch(`/api/bugs/${id}`, { method: 'DELETE' })
+    } catch (e) {
+      if (original) setBugs(prev => prev.some(b => b.id === id) ? prev : [...prev.slice(0, index), original, ...prev.slice(index)])
+      toast.error(`Failed to delete bug: ${errorMessage(e)}`)
     }
-    await fetch(`/api/bugs/${id}`, { method: 'DELETE' }).catch((e) => console.error("[fetch]", e))
   }
 
   const createBug = async () => {
     if (!form.title.trim()) return
     setSaving(true)
-    const r = await fetch('/api/bugs', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title:       form.title,
-        description: form.description || null,
-        severity:    form.severity,
-        area:        form.area || null,
-        reportedBy:  'admin',
-      }),
-    })
-    if (!r.ok) { setSaving(false); setCreateError('Failed to create bug — please try again'); return }
-    const bug: Bug = await r.json()
+    let bug: Bug
+    try {
+      bug = await apiFetch<Bug>('/api/bugs', {
+        method: 'POST',
+        body: {
+          title:       form.title,
+          description: form.description || null,
+          severity:    form.severity,
+          area:        form.area || null,
+          reportedBy:  'admin',
+        },
+      })
+    } catch {
+      setSaving(false)
+      setCreateError('Failed to create bug — please try again')
+      return
+    }
     setBugs(prev => [bug, ...prev])
     setForm({ title: '', description: '', severity: 'medium', area: '' })
     setModal(false)
@@ -232,8 +252,8 @@ export function BugManager({ initialBugs, users }: Props) {
 
             {/* Title */}
             <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-wide text-text-muted">Title</label>
-              <input
+              <label htmlFor="bug-title" className="text-[10px] uppercase tracking-wide text-text-muted">Title</label>
+              <input id="bug-title"
                 ref={titleRef}
                 value={editTitle}
                 onChange={e => setEditTitle(e.target.value)}
@@ -245,8 +265,8 @@ export function BugManager({ initialBugs, users }: Props) {
             {/* Severity + Status row */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <label className="text-[10px] uppercase tracking-wide text-text-muted">Severity</label>
-                <select
+                <label htmlFor="bug-severity" className="text-[10px] uppercase tracking-wide text-text-muted">Severity</label>
+                <select id="bug-severity"
                   value={editSev}
                   onChange={e => { setEditSev(e.target.value); updateBug(selectedBug.id, { severity: e.target.value }) }}
                   className="w-full text-xs bg-bg-raised border border-border-visible rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
@@ -258,8 +278,8 @@ export function BugManager({ initialBugs, users }: Props) {
                 </select>
               </div>
               <div className="space-y-1">
-                <label className="text-[10px] uppercase tracking-wide text-text-muted">Status</label>
-                <select
+                <label htmlFor="bug-status" className="text-[10px] uppercase tracking-wide text-text-muted">Status</label>
+                <select id="bug-status"
                   value={editStatus}
                   onChange={e => { setEditStatus(e.target.value as BugStatus); updateBug(selectedBug.id, { status: e.target.value }) }}
                   className="w-full text-xs bg-bg-raised border border-border-visible rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
@@ -271,8 +291,8 @@ export function BugManager({ initialBugs, users }: Props) {
 
             {/* Area */}
             <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-wide text-text-muted">Area / Component</label>
-              <input
+              <label htmlFor="bug-area-component" className="text-[10px] uppercase tracking-wide text-text-muted">Area / Component</label>
+              <input id="bug-area-component"
                 value={editArea}
                 onChange={e => setEditArea(e.target.value)}
                 onBlur={saveDetail}
@@ -284,8 +304,8 @@ export function BugManager({ initialBugs, users }: Props) {
             {/* Assignee */}
             {users.length > 0 && (
               <div className="space-y-1">
-                <label className="text-[10px] uppercase tracking-wide text-text-muted">Assigned To</label>
-                <select
+                <label htmlFor="bug-assigned-to" className="text-[10px] uppercase tracking-wide text-text-muted">Assigned To</label>
+                <select id="bug-assigned-to"
                   value={editAssignee}
                   onChange={e => { setEditAssignee(e.target.value); updateBug(selectedBug.id, { assignedUserId: e.target.value || null }) }}
                   className="w-full text-xs bg-bg-raised border border-border-visible rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
@@ -300,8 +320,8 @@ export function BugManager({ initialBugs, users }: Props) {
 
             {/* Description */}
             <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-wide text-text-muted">Description</label>
-              <textarea
+              <label htmlFor="bug-description" className="text-[10px] uppercase tracking-wide text-text-muted">Description</label>
+              <textarea id="bug-description"
                 value={editDesc}
                 onChange={e => setEditDesc(e.target.value)}
                 onBlur={saveDetail}
@@ -345,8 +365,8 @@ export function BugManager({ initialBugs, users }: Props) {
         >
           {createError && <p className="text-xs text-status-error mb-2">{createError}</p>}
           <div className="space-y-1">
-            <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title *</label>
-            <input
+            <label htmlFor="bug-title-2" className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title *</label>
+            <input id="bug-title-2"
               value={form.title}
               onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
               onKeyDown={e => e.key === 'Enter' && createBug()}
@@ -357,8 +377,8 @@ export function BugManager({ initialBugs, users }: Props) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Severity</label>
-              <select
+              <label htmlFor="bug-severity-2" className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Severity</label>
+              <select id="bug-severity-2"
                 value={form.severity}
                 onChange={e => setForm(f => ({ ...f, severity: e.target.value }))}
                 className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
@@ -370,8 +390,8 @@ export function BugManager({ initialBugs, users }: Props) {
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Area</label>
-              <input
+              <label htmlFor="bug-area" className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Area</label>
+              <input id="bug-area"
                 value={form.area}
                 onChange={e => setForm(f => ({ ...f, area: e.target.value }))}
                 placeholder="e.g. Auth, Traefik"
@@ -380,8 +400,8 @@ export function BugManager({ initialBugs, users }: Props) {
             </div>
           </div>
           <div>
-            <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Description</label>
-            <textarea
+            <label htmlFor="bug-description-2" className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Description</label>
+            <textarea id="bug-description-2"
               value={form.description}
               onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
               rows={4}

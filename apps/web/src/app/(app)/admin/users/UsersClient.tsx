@@ -4,6 +4,9 @@ import { Trash2, RefreshCw, UserPlus, KeyRound } from 'lucide-react'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { Dialog } from '@/components/ui/Dialog'
+import { apiFetch, ApiError, errorMessage } from '@/lib/api'
+import { Select } from '@/components/ui/Select'
+import { Input } from '@/components/ui/Input'
 
 interface User {
   id: string
@@ -20,12 +23,11 @@ interface User {
 const ROLES = ['admin', 'user', 'readonly']
 const MIN_PASSWORD = 12
 
-const inputCls = 'w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent'
-
-async function errorMessage(res: Response): Promise<string> {
-  const body = await res.json().catch(() => ({})) as { error?: string; details?: Array<{ field?: string; message: string }> }
-  if (body.details?.length) return body.details.map(d => (d.field ? `${d.field}: ${d.message}` : d.message)).join('; ')
-  return body.error ?? `HTTP ${res.status}`
+/** Server validation details ("field: message; …") when present, else the error message. */
+function describeError(err: unknown): string {
+  const body = err instanceof ApiError ? err.body as { details?: Array<{ field?: string; message: string }> } | null : null
+  if (body?.details?.length) return body.details.map(d => (d.field ? `${d.field}: ${d.message}` : d.message)).join('; ')
+  return errorMessage(err)
 }
 
 export function UsersClient({ initialUsers }: { initialUsers: User[] }) {
@@ -39,20 +41,11 @@ export function UsersClient({ initialUsers }: { initialUsers: User[] }) {
   const patch = async (id: string, data: Partial<User> & { password?: string }): Promise<boolean> => {
     setBusy(b => ({ ...b, [id]: true }))
     try {
-      const res = await fetch(`/api/admin/users/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      })
-      if (!res.ok) {
-        toast.error(`Update failed: ${await errorMessage(res)}`)
-        return false
-      }
-      const updated: User = await res.json()
+      const updated = await apiFetch<User>(`/api/admin/users/${id}`, { method: 'PATCH', body: data })
       setUsers(prev => prev.map(u => u.id === id ? { ...u, ...updated } : u))
       return true
     } catch (e) {
-      toast.error(`Update failed: ${e instanceof Error ? e.message : String(e)}`)
+      toast.error(`Update failed: ${describeError(e)}`)
       return false
     } finally {
       setBusy(b => ({ ...b, [id]: false }))
@@ -66,9 +59,10 @@ export function UsersClient({ initialUsers }: { initialUsers: User[] }) {
     if (!(await confirmDialog({ title: 'Delete user?', message, confirmLabel: 'Delete' }))) return
     setBusy(b => ({ ...b, [u.id]: true }))
     try {
-      const res = await fetch(`/api/admin/users/${u.id}`, { method: 'DELETE' })
-      if (res.ok) setUsers(prev => prev.filter(x => x.id !== u.id))
-      else toast.error(`Delete failed: ${await errorMessage(res)}`)
+      await apiFetch(`/api/admin/users/${u.id}`, { method: 'DELETE' })
+      setUsers(prev => prev.filter(x => x.id !== u.id))
+    } catch (e) {
+      toast.error(`Delete failed: ${describeError(e)}`)
     } finally {
       setBusy(b => ({ ...b, [u.id]: false }))
     }
@@ -212,22 +206,19 @@ function CreateUserDialog({ onClose, onCreated }: { onClose: () => void; onCreat
     if (form.password !== form.confirm) { setError('Passwords do not match'); return }
     setSaving(true); setError(null)
     try {
-      const res = await fetch('/api/admin/users', {
+      const created = await apiFetch<User>('/api/admin/users', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           username: form.username,
           email: form.email,
           password: form.password,
           role: form.role,
           ...(form.name.trim() && { name: form.name.trim() }),
-        }),
+        },
       })
-      if (!res.ok) { setError(await errorMessage(res)); return }
-      const created = await res.json() as Omit<User, 'lastSeen' | 'createdAt'> & { lastSeen: string | null; createdAt: string }
-      onCreated(created as User)
+      onCreated(created)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(describeError(err))
     } finally {
       setSaving(false)
     }
@@ -239,32 +230,32 @@ function CreateUserDialog({ onClose, onCreated }: { onClose: () => void; onCreat
         <h2 id="create-user-title" className="text-sm font-semibold text-text-primary">Add local user</h2>
         <label className="block space-y-1">
           <span className="text-xs text-text-muted">Username</span>
-          <input className={inputCls} value={form.username} onChange={set('username')} autoComplete="off" required autoFocus />
+          <Input className="px-2.5 py-1.5 border-border-visible placeholder-text-muted" value={form.username} onChange={set('username')} autoComplete="off" required autoFocus />
         </label>
         <label className="block space-y-1">
           <span className="text-xs text-text-muted">Name (optional)</span>
-          <input className={inputCls} value={form.name} onChange={set('name')} autoComplete="off" />
+          <Input className="px-2.5 py-1.5 border-border-visible placeholder-text-muted" value={form.name} onChange={set('name')} autoComplete="off" />
         </label>
         <label className="block space-y-1">
           <span className="text-xs text-text-muted">Email</span>
-          <input className={inputCls} type="email" value={form.email} onChange={set('email')} autoComplete="off" required />
+          <Input className="px-2.5 py-1.5 border-border-visible placeholder-text-muted" type="email" value={form.email} onChange={set('email')} autoComplete="off" required />
         </label>
         <div className="grid grid-cols-2 gap-2">
           <label className="block space-y-1">
             <span className="text-xs text-text-muted">Password</span>
-            <input className={inputCls} type="password" value={form.password} onChange={set('password')} autoComplete="new-password" required minLength={MIN_PASSWORD} />
+            <Input className="px-2.5 py-1.5 border-border-visible placeholder-text-muted" type="password" value={form.password} onChange={set('password')} autoComplete="new-password" required minLength={MIN_PASSWORD} />
           </label>
           <label className="block space-y-1">
             <span className="text-xs text-text-muted">Confirm</span>
-            <input className={inputCls} type="password" value={form.confirm} onChange={set('confirm')} autoComplete="new-password" required />
+            <Input className="px-2.5 py-1.5 border-border-visible placeholder-text-muted" type="password" value={form.confirm} onChange={set('confirm')} autoComplete="new-password" required />
           </label>
         </div>
         <p className="text-[10px] text-text-muted">At least {MIN_PASSWORD} characters.</p>
         <label className="block space-y-1">
           <span className="text-xs text-text-muted">Role</span>
-          <select className={inputCls} value={form.role} onChange={set('role')}>
+          <Select className="px-2.5 py-1.5 border-border-visible placeholder-text-muted" value={form.role} onChange={set('role')}>
             {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+          </Select>
         </label>
         {error && <p role="alert" className="text-xs text-status-error">{error}</p>}
         <div className="flex justify-end gap-2 pt-1">
@@ -300,11 +291,11 @@ function SetPasswordDialog({ user, onClose, onSave }: { user: User; onClose: () 
         <h2 id="set-pw-title" className="text-sm font-semibold text-text-primary">Set password for <span className="font-mono">{user.username}</span></h2>
         <label className="block space-y-1">
           <span className="text-xs text-text-muted">New password</span>
-          <input className={inputCls} type="password" value={pw} onChange={e => setPw(e.target.value)} autoComplete="new-password" required minLength={MIN_PASSWORD} autoFocus />
+          <Input className="px-2.5 py-1.5 border-border-visible placeholder-text-muted" type="password" value={pw} onChange={e => setPw(e.target.value)} autoComplete="new-password" required minLength={MIN_PASSWORD} autoFocus />
         </label>
         <label className="block space-y-1">
           <span className="text-xs text-text-muted">Confirm</span>
-          <input className={inputCls} type="password" value={confirm} onChange={e => setConfirm(e.target.value)} autoComplete="new-password" required />
+          <Input className="px-2.5 py-1.5 border-border-visible placeholder-text-muted" type="password" value={confirm} onChange={e => setConfirm(e.target.value)} autoComplete="new-password" required />
         </label>
         {error && <p role="alert" className="text-xs text-status-error">{error}</p>}
         <div className="flex justify-end gap-2 pt-1">

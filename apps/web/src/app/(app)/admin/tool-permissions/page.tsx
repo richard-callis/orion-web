@@ -1,6 +1,8 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { Shield, Eye, EyeOff, Check, X, RefreshCw, ChevronDown, ChevronUp, Lock } from 'lucide-react'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 
 interface AgentRestriction {
   agentId: string
@@ -21,6 +23,7 @@ interface Tool {
 }
 
 export default function ToolPermissionsPage() {
+  const toast = useToast()
   const [tools, setTools] = useState<Tool[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
@@ -31,8 +34,9 @@ export default function ToolPermissionsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await fetch('/api/admin/tools').then(r => r.json()) as Tool[]
-      setTools(data)
+      setTools(await apiFetch<Tool[]>('/api/admin/tools'))
+    } catch (e) {
+      toast.error(`Failed to load tools: ${errorMessage(e)}`)
     } finally {
       setLoading(false)
     }
@@ -43,12 +47,11 @@ export default function ToolPermissionsPage() {
   async function patch(id: string, update: { enabled?: boolean; status?: string }) {
     setSaving(id)
     try {
-      const updated = await fetch('/api/admin/tools', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, ...update }),
-      }).then(r => r.json()) as Tool
+      // (Previously an error response body was merged into the tool's state.)
+      const updated = await apiFetch<Tool>('/api/admin/tools', { method: 'PATCH', body: { id, ...update } })
       setTools(prev => prev.map(t => t.id === id ? { ...t, ...updated } : t))
+    } catch (e) {
+      toast.error(`Failed to update tool: ${errorMessage(e)}`)
     } finally {
       setSaving(null)
     }

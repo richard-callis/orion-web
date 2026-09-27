@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { Save, RefreshCw, ExternalLink, ShieldCheck } from 'lucide-react'
+import { apiFetch } from '@/lib/api'
 
 interface OIDCConfig {
   id?: string
@@ -24,9 +25,8 @@ export default function SSOPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/admin/sso')
-      .then(r => r.json())
-      .then((data: OIDCConfig) => {
+    apiFetch<OIDCConfig>('/api/admin/sso')
+      .then(data => {
         setConfig(data)
         setMappingText(
           JSON.stringify(data.groupMapping ?? DEFAULT_MAPPING, null, 2)
@@ -47,12 +47,7 @@ export default function SSOPage() {
     }
     setSaving(true)
     try {
-      const res = await fetch('/api/admin/sso', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupMapping: parsed }),
-      })
-      if (!res.ok) throw new Error('Failed to save')
+      await apiFetch('/api/admin/sso', { method: 'PATCH', body: { groupMapping: parsed } })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch {

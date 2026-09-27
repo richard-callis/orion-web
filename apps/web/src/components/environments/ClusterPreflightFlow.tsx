@@ -255,7 +255,7 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
                 onChange={e => setInlineTalosconfig(e.target.value)}
                 placeholder={'context: homelab\ncontexts:\n  homelab:\n    endpoints:\n      - ...'}
                 rows={5}
-                className="font-mono text-[11px]"
+                className="font-mono text-[11px] resize-y leading-normal"
               />
             </>
           )}
@@ -271,7 +271,7 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
                 onChange={e => setInlineKubeconfig(e.target.value)}
                 placeholder={'apiVersion: v1\nkind: Config\nclusters:\n  ...'}
                 rows={5}
-                className="font-mono text-[11px]"
+                className="font-mono text-[11px] resize-y leading-normal"
               />
             </>
           )}

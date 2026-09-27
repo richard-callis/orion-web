@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
+import { apiFetch, errorMessage } from '@/lib/api'
 
 // ── Conversation types ──────────────────────────────────────────
 interface Conversation {
@@ -147,8 +148,12 @@ export function MessageList({
 
   const removeConvo = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
-    const res = await fetch(`/api/chat/conversations/${id}`, { method: 'DELETE' })
-    if (!res.ok) return
+    try {
+      await apiFetch(`/api/chat/conversations/${id}`, { method: 'DELETE' })
+    } catch (err) {
+      toast.error(`Failed to delete conversation: ${errorMessage(err)}`)
+      return
+    }
     onDelete?.(`c_${id}`)
   }
 
@@ -161,12 +166,12 @@ export function MessageList({
 
   const commitEdit = async (id: string) => {
     const title = editValue.trim() || null
-    await fetch(`/api/chat/conversations/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title }),
-    })
-    onRename?.(id, title ?? '')
+    try {
+      await apiFetch(`/api/chat/conversations/${id}`, { method: 'PATCH', body: { title } })
+      onRename?.(id, title ?? '')
+    } catch (err) {
+      toast.error(`Failed to rename conversation: ${errorMessage(err)}`)
+    }
     setEditingId(null)
   }
 
@@ -195,7 +200,7 @@ export function MessageList({
           <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
             <input ref={inputRef} value={editValue} onChange={e => setEditValue(e.target.value)} onKeyDown={e => onEditKeyDown(e, c.id)} onBlur={() => commitEdit(c.id)} className="flex-1 min-w-0 text-xs bg-bg-raised border border-accent rounded px-1 py-0.5 text-text-primary focus:outline-none" />
             <button onClick={() => commitEdit(c.id)} className="text-green-400 hover:text-green-300 flex-shrink-0"><Check size={11} /></button>
-            <button onClick={cancelEdit} className="text-text-muted hover:text-red-400 flex-shrink-0"><X size={11} /></button>
+            <button aria-label="Cancel" onClick={cancelEdit} className="text-text-muted hover:text-red-400 flex-shrink-0"><X size={11} /></button>
           </div>
         ) : (
           <>
@@ -232,9 +237,13 @@ export function MessageList({
     if (name && name !== currentRoom?.name) payload.name = name
     if (currentRoom && editRoomType !== currentRoom.type) payload.type = editRoomType
     if (Object.keys(payload).length > 0) {
-      await fetch(`/api/chatrooms/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      onRoomUpdate?.(id, payload)
-      if (payload.name) onRename?.(id, payload.name)
+      try {
+        await apiFetch(`/api/chatrooms/${id}`, { method: 'PATCH', body: payload })
+        onRoomUpdate?.(id, payload)
+        if (payload.name) onRename?.(id, payload.name)
+      } catch (err) {
+        toast.error(`Failed to update room: ${errorMessage(err)}`)
+      }
     }
     setEditingRoomId(null)
   }
@@ -242,8 +251,12 @@ export function MessageList({
   const deleteRoom = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
     if (!(await confirmDialog({ title: 'Delete chat room?', message: 'This deletes the room and all of its messages.', confirmLabel: 'Delete' }))) return
-    const res = await fetch(`/api/chatrooms/${id}`, { method: 'DELETE' }).catch(() => null)
-    if (!res?.ok) { toast.error(`Failed to delete chat room${res ? ` (${res.status})` : ''}`); return }
+    try {
+      await apiFetch(`/api/chatrooms/${id}`, { method: 'DELETE' })
+    } catch (err) {
+      toast.error(`Failed to delete chat room: ${errorMessage(err)}`)
+      return
+    }
     onDelete?.(`r_${id}`)
   }
 
@@ -303,7 +316,7 @@ export function MessageList({
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-3 border-b border-border-subtle flex-shrink-0">
           <span className="text-xs font-semibold text-text-secondary">AI Chats</span>
-          <button onClick={onCreateNew} className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New conversation">
+          <button aria-label="New conversation" onClick={onCreateNew} className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New conversation">
             <Plus size={14} />
           </button>
         </div>
@@ -507,7 +520,7 @@ export function MessageList({
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-3 border-b border-border-subtle flex-shrink-0">
           <span className="text-xs font-semibold text-text-secondary">Chat Rooms</span>
-          <button onClick={onCreateNew} className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New room">
+          <button aria-label="New room" onClick={onCreateNew} className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New room">
             <Plus size={14} />
           </button>
         </div>

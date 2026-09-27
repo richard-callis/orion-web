@@ -29,7 +29,7 @@ export function CodeBlock({ children }: { children: React.ReactNode }) {
       <pre ref={preRef} className="bg-bg-raised rounded overflow-auto text-sm font-mono leading-relaxed [&_.hljs]:bg-transparent [&_.hljs]:p-4 [&_code:not(.hljs)]:p-4 [&_code:not(.hljs)]:block">
         {children}
       </pre>
-      <button
+      <button aria-label={copied ? 'Copied' : 'Copy code'}
         onClick={copy}
         className="absolute top-2 right-2 p-1.5 rounded text-text-muted hover:text-text-primary bg-bg-sidebar/90 opacity-0 group-hover:opacity-100 transition-all"
         title="Copy"
