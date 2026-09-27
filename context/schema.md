@@ -1821,7 +1821,7 @@
 | name | String |  |  |
 | type | String |  | slack \| discord \| webhook |
 | webhookUrl | String |  |  |
-| events | String | `@default("[\"task_completed\",\"task_failed\"]")` | JSON array |
+| events | String | `@default("[\\"task_completed\\",\\"task_failed\\"]")` | JSON array |
 | agentFilter | String? |  | JSON array of agent IDs to filter on, null = all agents |
 | enabled | Boolean | `@default(true)` |  |
 | createdAt | DateTime | `@default(now())` |  |

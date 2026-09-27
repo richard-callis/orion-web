@@ -35,7 +35,18 @@ export function truncateOutput(s: string, max = DEFAULT_MAX_OUTPUT): string {
   return `${s.slice(0, max)}\n[truncated — ${s.length - max} more characters omitted]`
 }
 
+/**
+ * Binaries the gateway may execute. Callers pass literal names; this guards
+ * against a future caller ever routing a user-controlled value into `bin`.
+ * (`sh` is used only for `command -v` probes and admin-defined shell tools,
+ * whose arguments are single-quoted by tool-runner.)
+ */
+export const ALLOWED_BINARIES = new Set(['kubectl', 'helm', 'docker', 'talosctl', 'velero', 'trivy', 'hostname', 'sh'])
+
 export function run(bin: string, args: string[], opts: RunOptions = {}): Promise<RunResult> {
+  if (!ALLOWED_BINARIES.has(bin)) {
+    return Promise.reject(new Error(`run(): '${bin}' is not an allowed binary`))
+  }
   const { timeoutMs = 30_000, maxBuffer = DEFAULT_MAX_BUFFER, maxOutput = DEFAULT_MAX_OUTPUT, input, env } = opts
   return new Promise((resolve, reject) => {
     const child = execFile(

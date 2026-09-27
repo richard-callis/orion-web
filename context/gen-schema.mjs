@@ -15,7 +15,7 @@ const blocks = [...src.matchAll(/^(model|enum) (\w+) \{\n([\s\S]*?)^\}/gm)].map(
 const modelNames = new Set(blocks.filter(b => b.kind === 'model').map(b => b.name))
 const enumNames = new Set(blocks.filter(b => b.kind === 'enum').map(b => b.name))
 
-const esc = s => s.replace(/\|/g, '\\|')
+const esc = s => s.replace(/\\/g, '\\\\').replace(/\|/g, '\\|')
 
 function parseModel(body) {
   const fields = []

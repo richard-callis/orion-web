@@ -251,7 +251,9 @@ export function checkAutoCommand(argv: string[]): PolicyResult {
   const [bin, ...args] = argv
   // Only bare names: an explicit path could point at a different binary with the same name.
   if (bin.includes('/')) return { ok: false, reason: 'auto commands must use a bare binary name' }
-  const rule = AUTO_BINARIES[bin]
+  // Own-property lookup only: 'constructor', 'toString', '__proto__' etc. would
+  // otherwise resolve to Object.prototype members and pass as a rule.
+  const rule = Object.prototype.hasOwnProperty.call(AUTO_BINARIES, bin) ? AUTO_BINARIES[bin] : undefined
   if (!rule) return { ok: false, reason: `'${bin}' is not on the auto allowlist` }
   const verdict = rule(args)
   if (verdict.reason) return { ok: false, reason: verdict.reason }

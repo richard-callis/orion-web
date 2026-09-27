@@ -1703,14 +1703,17 @@ async function* streamGeminiAgentChat(
   ]
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`
+    // Model id goes into the URL path — allow only plain model ids. The API key
+    // travels in a header, not the query string (which ends up in logs).
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(model)) throw new Error(`Invalid Gemini model id: ${model}`)
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`
     const timeoutSignal = AbortSignal.timeout(120000)
     const fetchSignal = abortSignal
       ? AbortSignal.any([abortSignal, timeoutSignal])
       : timeoutSignal
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemPrompt }] },
         contents,
