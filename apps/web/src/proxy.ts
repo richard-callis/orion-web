@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getToken } from 'next-auth/jwt'
+import { getSessionToken } from './lib/session-token'
 import { getOrCreateCorrelationId } from './lib/correlation-id'
 
 // SOC2: [M-004] Wrap console.log BEFORE any other import to catch all log output
@@ -13,7 +13,7 @@ wrapConsoleLog()
 import { rateLimitRedis, getClientIpForRateLimit } from './lib/rate-limit-redis'
 import { rateLimitBucket } from './lib/rate-limit-bucket'
 import { isIpBlocked } from './lib/security/crowdsec-bouncer'
-import { SESSION_COOKIE_NAME } from './lib/auth-constants'
+import { AUTH_CREDENTIAL_LIMIT, isAuthCredentialRequest } from './lib/auth-rate-limit'
 import { isExecutorAllowedRequest } from './lib/executor-scope'
 
 function getRateLimitKey(req: NextRequest): string {
@@ -28,7 +28,8 @@ const RATE_LIMITS: Record<string, [number, number]> = {
   // Auth endpoints — strict limit to prevent brute-force
   '/login': [10, 15 * 60 * 1000],
   '/api/setup': [10, 15 * 60 * 1000],
-  '/api/auth': [10, 15 * 60 * 1000],
+  // /api/auth is public, so a prefix entry here never ran; credential endpoints are
+  // limited explicitly via AUTH_CREDENTIAL_LIMIT before the public-path return.
 
   // Chat/streaming — moderate limit (cost control for LLM calls)
   '/api/chat': [30, 15 * 60 * 1000],
@@ -72,7 +73,9 @@ const RATE_LIMITS: Record<string, [number, number]> = {
   'default': [100, 15 * 60 * 1000],
 }
 
-async function applyRateLimit(req: NextRequest, userId?: string): Promise<NextResponse | null> {
+type RateLimitOverride = { bucket: string; maxRequests: number; windowMs: number }
+
+async function applyRateLimit(req: NextRequest, userId?: string, override?: RateLimitOverride): Promise<NextResponse | null> {
   const ip = getRateLimitKey(req)
   const { pathname } = req.nextUrl
 
@@ -92,7 +95,12 @@ async function applyRateLimit(req: NextRequest, userId?: string): Promise<NextRe
 
   // SOC2 [M6]: bucket by matched prefix for cost-bearing writes and by id-normalized
   // path otherwise — keying by the raw pathname gave every new id a fresh quota.
-  const bucket = rateLimitBucket(pathname, req.method, matchedPrefix)
+  let bucket = rateLimitBucket(pathname, req.method, matchedPrefix)
+  if (override) {
+    bucket = override.bucket
+    maxRequests = override.maxRequests
+    windowMs = override.windowMs
+  }
 
   // SOC2: [H-002] Primary IP-based rate limit (spoofing-resistant via TRUSTED_PROXY_COUNT)
   const ipRateKey = `rate-limit:ip:${ip}:${bucket}`
@@ -289,13 +297,21 @@ export async function proxy(req: NextRequest) {
     if (rateLimited) return addSecurityHeaders(rateLimited, nonce)
   }
 
+  // Credential endpoints (password / TOTP / recovery-code checks) are public paths,
+  // so they must be limited here, before the public-path early return. One shared
+  // per-IP bucket across all of them; session/csrf/providers GETs are untouched.
+  if (isAuthCredentialRequest(pathname, req.method)) {
+    const rateLimited = await applyRateLimit(req, undefined, AUTH_CREDENTIAL_LIMIT)
+    if (rateLimited) return addSecurityHeaders(rateLimited, nonce)
+  }
+
   // Decode session JWT once — reused for rate limit userId and auth redirect below.
   // getToken is a fast local JWT decode (no DB call).
   // For public paths this will usually return null — that's fine.
   const isPublicPath = PUBLIC_PATHS.some((p) => pathname.startsWith(p))
   const sessionToken = isPublicPath
     ? null
-    : await getToken({ req, secret: process.env.NEXTAUTH_SECRET, cookieName: SESSION_COOKIE_NAME })
+    : await getSessionToken(req)
 
   // SOC2: [M-003] Apply rate limiting before auth check (prevents auth DoS)
   // Public endpoints that are rate-limited still get the check, others skip

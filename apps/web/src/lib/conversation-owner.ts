@@ -5,14 +5,14 @@
  * at creation time and enforce it on all subsequent operations.
  * Legacy rows without `ownerId` are accessible to admins only.
  */
-import { getToken } from 'next-auth/jwt'
+import { getSessionToken } from './session-token'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from './db'
 import { requireAdmin } from './auth'
 
 /** Resolve the caller's userId from the JWT token (null if unauthenticated). */
 export async function getCallerId(req: NextRequest): Promise<string | null> {
-  const token = await getToken({ req })
+  const token = await getSessionToken(req)
   return (token?.sub as string) ?? null
 }
 
