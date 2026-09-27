@@ -21,7 +21,7 @@ import tls from 'tls'
 import https from 'https'
 import http from 'http'
 import { DEPLOYMENT_TEMPLATES, getTemplate } from '@/lib/deployment-templates'
-import { writeVaultSecret } from '@/lib/vault'
+import { updateVaultSecret } from '@/lib/vault'
 import { randomBytes } from 'crypto'
 import { isPrivateUrl } from '@/lib/ssrf-guard'
 import { findExecutionForReview, assertCanReview, ExecutionReviewError } from '@/lib/execution-review'
@@ -2999,7 +2999,8 @@ registerTool({
     for (const key of keysToGenerate) generated[key] = randomBytes(32).toString('hex')
 
     try {
-      await writeVaultSecret(secret.remoteRef, generated)
+      // Merge: generating a subset of keys must not wipe the others
+      await updateVaultSecret(secret.remoteRef, generated)
     } catch (e) {
       return `Error: failed to write generated values to Vault: ${e instanceof Error ? e.message : String(e)}`
     }

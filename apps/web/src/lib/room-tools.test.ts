@@ -20,7 +20,7 @@ const db = vi.hoisted(() => ({
 
 vi.mock('./tool-registry', () => reg)
 vi.mock('./db', () => ({ prisma: db }))
-vi.mock('./vault', () => ({ writeVaultSecret: vi.fn() }))
+vi.mock('./vault', () => ({ updateVaultSecret: vi.fn() }))
 vi.mock('./system-cache', () => ({ getOrFetch: (_k: string, _t: string, fn: () => unknown) => fn() }))
 
 import { ROOM_TOOL_NAMES, getRoomAgentTools, buildRoomToolSchemas } from './room-tools'

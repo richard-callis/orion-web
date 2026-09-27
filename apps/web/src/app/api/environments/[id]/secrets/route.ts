@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
-import { writeVaultSecret } from '@/lib/vault'
+import { updateVaultSecret } from '@/lib/vault'
 import { logAudit } from '@/lib/audit'
 
 type Params = { params: Promise<{ id: string }> }
@@ -95,7 +95,8 @@ export async function POST(req: NextRequest, { params }: Params) {
     for (const row of secretValues) {
       vaultData[row.vaultKey.trim()] = String(row.value)
     }
-    await writeVaultSecret(remoteRef, vaultData)
+    // Merge rather than replace: the path may already hold keys ORION doesn't manage
+    await updateVaultSecret(remoteRef, vaultData)
   } catch (e) {
     console.error('[secrets] Vault write failed:', e)
     return NextResponse.json(

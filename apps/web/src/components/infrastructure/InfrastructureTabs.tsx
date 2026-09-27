@@ -313,7 +313,9 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
   ])
   // Edit modal state — update values on an existing secret
   const [editSecret, setEditSecret] = useState<ManagedSecret | null>(null)
-  const [editValues, setEditValues] = useState<Array<{ vaultKey: string; value: string; k8sKey: string }>>([])
+  // `existing` rows mirror keys already in Vault: a blank value keeps the current value.
+  const [editValues, setEditValues] = useState<Array<{ vaultKey: string; value: string; k8sKey: string; existing?: boolean }>>([])
+  const [editRemoved, setEditRemoved] = useState<string[]>([])
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
 
@@ -392,24 +394,35 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
     // Pre-populate key names from dataKeys; values start blank (never stored)
     setEditValues(
       s.dataKeys.length > 0
-        ? s.dataKeys.map(k => ({ vaultKey: k.remoteKey, value: '', k8sKey: k.secretKey }))
+        ? s.dataKeys.map(k => ({ vaultKey: k.remoteKey, value: '', k8sKey: k.secretKey, existing: true }))
         : [{ vaultKey: '', value: '', k8sKey: '' }]
     )
+    setEditRemoved([])
     setEditError(null)
     setEditSecret(s)
   }
 
   const handleEditSave = async () => {
     if (!editSecret) return
-    const validRows = editValues.filter(r => r.vaultKey.trim() && r.value.trim())
-    if (validRows.length === 0) { setEditError('Enter at least one key and value'); return }
+    // Blank value on an existing key = keep it (only the k8s mapping may change).
+    // New keys need a value. Keys are deleted only via the explicit remove list.
+    const rows = editValues.filter(r => r.vaultKey.trim())
+    const missing = rows.filter(r => !r.existing && !r.value)
+    if (missing.length > 0) { setEditError(`Enter a value for new key: ${missing.map(r => r.vaultKey.trim()).join(', ')}`); return }
+    const secretValues = rows.map(({ vaultKey, value, k8sKey }) => ({ vaultKey: vaultKey.trim(), value, k8sKey }))
+    const changed = rows.some(r => r.value) || editRemoved.length > 0 ||
+      rows.some(r => {
+        const orig = editSecret.dataKeys.find(k => k.remoteKey === r.vaultKey.trim())
+        return !orig || (r.k8sKey.trim() || r.vaultKey.trim()) !== orig.secretKey
+      })
+    if (!changed) { setEditError('Nothing to update — enter a new value, change a mapping, or remove a key'); return }
 
     setEditSaving(true); setEditError(null)
     try {
       const res = await fetch(`/api/environments/${envId}/secrets/${editSecret.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ secretValues: validRows }),
+        body: JSON.stringify({ secretValues, removeKeys: editRemoved }),
       })
       const data = await res.json()
       if (!res.ok) { setEditError((data as { error?: string }).error ?? `HTTP ${res.status}`); return }
@@ -587,7 +600,7 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
             <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2.5 text-[10px] text-text-muted leading-relaxed">
               Values are written <span className="text-accent font-semibold">directly to Vault</span> at <span className="font-mono text-text-secondary">{editSecret.remoteRef}</span> and are never stored in ORION.
-              Current values are in Vault — enter new values to overwrite them.
+              Current values stay in Vault — leave a value blank to keep it, or enter a new one to rotate just that key.
             </div>
 
             <div className="space-y-2">
@@ -603,7 +616,7 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
               <div className="space-y-1.5">
                 <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 text-[10px] text-text-muted px-0.5">
                   <span>Vault key</span>
-                  <span>New value <span className="text-accent">*</span></span>
+                  <span>New value</span>
                   <span>K8s key (optional)</span>
                   <span />
                 </div>
@@ -613,12 +626,15 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
                       className="w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
                       placeholder="password"
                       value={row.vaultKey}
+                      readOnly={row.existing}
+                      aria-label="Vault key"
                       onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, vaultKey: e.target.value } : r))}
                     />
                     <input
                       className="w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
                       type="password"
-                      placeholder="new value"
+                      placeholder={row.existing ? 'unchanged' : 'value (required)'}
+                      aria-label={`New value for ${row.vaultKey || 'new key'}`}
                       value={row.value}
                       onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, value: e.target.value } : r))}
                       autoComplete="new-password"
@@ -630,15 +646,34 @@ function SecretsTab({ envId, loading, setLoading, error, setError }: {
                       onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, k8sKey: e.target.value } : r))}
                     />
                     <button
-                      onClick={() => setEditValues(prev => prev.filter((_, idx) => idx !== i))}
-                      disabled={editValues.length === 1}
-                      className="p-1 rounded text-text-muted hover:text-status-error transition-colors disabled:opacity-30"
+                      onClick={() => {
+                        if (row.existing && row.vaultKey.trim()) setEditRemoved(prev => [...prev, row.vaultKey.trim()])
+                        setEditValues(prev => prev.filter((_, idx) => idx !== i))
+                      }}
+                      aria-label={row.existing ? `Delete ${row.vaultKey} from Vault` : 'Remove row'}
+                      title={row.existing ? 'Delete this key from Vault' : 'Remove row'}
+                      className="p-1 rounded text-text-muted hover:text-status-error transition-colors"
                     >
                       <X size={12} />
                     </button>
                   </div>
                 ))}
               </div>
+              {editRemoved.length > 0 && (
+                <div className="rounded border border-status-error/30 bg-status-error/10 px-3 py-2 text-[10px] text-status-error flex items-center justify-between gap-2">
+                  <span>Will be <strong>deleted</strong> from Vault: <span className="font-mono">{editRemoved.join(', ')}</span></span>
+                  <button
+                    onClick={() => {
+                      const orig = editSecret.dataKeys
+                      setEditValues(prev => [...prev, ...editRemoved.map(k => ({ vaultKey: k, value: '', k8sKey: orig.find(d => d.remoteKey === k)?.secretKey ?? '', existing: true }))])
+                      setEditRemoved([])
+                    }}
+                    className="underline hover:no-underline"
+                  >
+                    Undo
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 

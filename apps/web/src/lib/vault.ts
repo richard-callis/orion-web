@@ -175,3 +175,55 @@ export async function writeVaultSecret(
     throw new Error(`Vault responded ${res.status}: ${body.errors?.join(', ') ?? 'unknown error'}`)
   }
 }
+
+/**
+ * Merge-update a Vault KV v2 secret: set/overwrite the keys in `set`, delete the
+ * keys in `remove`, and leave every other existing key untouched.
+ *
+ * KV v2 writes replace the whole secret, so this reads the current version and
+ * writes back with check-and-set (cas) — a concurrent writer causes a retry
+ * instead of a lost update. A missing secret is treated as empty (cas=0).
+ * Returns the keys present after the update.
+ */
+export async function updateVaultSecret(
+  kvPath: string,
+  set: Record<string, string>,
+  remove: string[] = [],
+  opts: { onlyMissing?: boolean } = {},
+): Promise<string[]> {
+  const token = await resolveVaultAdminToken()
+  const normalised = kvPath.replace(/^secret\/data\//, '')
+  const url = `${VAULT_ADDR}/v1/secret/data/${normalised}`
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const cur = await vaultFetch(url, { headers: { 'X-Vault-Token': token } })
+    let existing: Record<string, string> = {}
+    let version = 0
+    if (cur.ok) {
+      const body = await cur.json() as { data?: { data?: Record<string, string> | null; metadata?: { version?: number } } }
+      existing = body.data?.data ?? {}
+      version = body.data?.metadata?.version ?? 0
+    } else if (cur.status !== 404) {
+      const body = await cur.json().catch(() => ({})) as { errors?: string[] }
+      throw new Error(`Vault read responded ${cur.status}: ${body.errors?.join(', ') ?? 'unknown error'}`)
+    }
+
+    // onlyMissing: never overwrite a key that already has a value (placeholders)
+    const merged: Record<string, string> = opts.onlyMissing ? { ...set, ...existing } : { ...existing, ...set }
+    for (const k of remove) delete merged[k]
+
+    const res = await vaultFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Vault-Token': token },
+      body: JSON.stringify({ options: { cas: version }, data: merged }),
+    })
+    if (res.ok) return Object.keys(merged)
+
+    const body = await res.json().catch(() => ({})) as { errors?: string[] }
+    const msg = body.errors?.join(', ') ?? 'unknown error'
+    // cas mismatch → someone wrote in between; re-read and retry
+    if (res.status === 400 && /check-and-set/i.test(msg)) continue
+    throw new Error(`Vault responded ${res.status}: ${msg}`)
+  }
+  throw new Error('Vault secret changed concurrently; update aborted after 3 attempts')
+}

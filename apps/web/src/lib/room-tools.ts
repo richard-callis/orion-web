@@ -18,7 +18,7 @@
  */
 
 import { prisma } from './db'
-import { writeVaultSecret } from './vault'
+import { updateVaultSecret } from './vault'
 import { getOrFetch } from './system-cache'
 import {
   registerTool,
@@ -217,7 +217,8 @@ async function handleWriteSecret(args: Args, ctx: ToolExecutionContext & { roomI
   const placeholderData: Record<string, string> = {}
   for (const key of keyNames) placeholderData[key] = 'PLACEHOLDER'
   try {
-    await writeVaultSecret(normalizedPath, placeholderData)
+    // Never clobber real values already at this path with placeholders
+    await updateVaultSecret(normalizedPath, placeholderData, [], { onlyMissing: true })
   } catch (e) {
     return `Error: failed to write placeholder to Vault: ${e instanceof Error ? e.message : String(e)}`
   }
