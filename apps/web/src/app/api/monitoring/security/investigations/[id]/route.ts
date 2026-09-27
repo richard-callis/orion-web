@@ -83,7 +83,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const raw = await req.json()
   const parsed = updateSchema.safeParse(raw)
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.errors }, { status: 400 })
+    return NextResponse.json({ error: parsed.error.issues }, { status: 400 })
   }
 
   const existing = await prisma.investigation.findUnique({ where: { id } })

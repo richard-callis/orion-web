@@ -36,7 +36,7 @@ export const falcoAlertSchema = z.object({
   rule: z.string(),
   priority: z.string(),
   output: z.string().optional().default(''),
-  output_fields: z.record(z.unknown()).optional().default({}),
+  output_fields: z.record(z.string(), z.unknown()).optional().default({}),
   time: z.string().optional(),
   hostname: z.string().optional(),
   // Falcosidekick sometimes wraps the alert in `customfields` — we read it

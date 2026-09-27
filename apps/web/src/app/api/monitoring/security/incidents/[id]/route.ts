@@ -115,7 +115,7 @@ export async function PATCH(
     status: z.enum(['open', 'triaged', 'contained', 'closed']).optional(),
     rootCauseSummary: z.string().optional().nullable(),
   }).safeParse(await req.json())
-  if (!body.success) return NextResponse.json({ error: body.error.errors }, { status: 400 })
+  if (!body.success) return NextResponse.json({ error: body.error.issues }, { status: 400 })
 
   const incident = await prisma.incident.findUnique({ where: { id } })
   if (!incident) return NextResponse.json({ error: 'Not found' }, { status: 404 })

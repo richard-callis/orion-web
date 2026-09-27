@@ -85,7 +85,7 @@ export async function POST(req: Request) {
 
   const body = createSchema.safeParse(await req.json())
   if (!body.success) {
-    return NextResponse.json({ error: body.error.errors }, { status: 400 })
+    return NextResponse.json({ error: body.error.issues }, { status: 400 })
   }
 
   const { name, severity, tlp, pap, tags, mitreAttackIds, incidentId, createdBy } = body.data

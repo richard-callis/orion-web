@@ -44,7 +44,7 @@ export function parseArgs(args: unknown): Record<string, unknown> {
 export function parseToolArgs<S extends z.ZodTypeAny>(schema: S, args: unknown): z.infer<S> {
   const result = schema.safeParse(parseArgs(args))
   if (!result.success) {
-    const detail = result.error.errors.map(e => `${e.path.join('.') || 'args'}: ${e.message}`).join('; ')
+    const detail = result.error.issues.map(e => `${e.path.join('.') || 'args'}: ${e.message}`).join('; ')
     throw new Error(`invalid arguments — ${detail}`)
   }
   return result.data

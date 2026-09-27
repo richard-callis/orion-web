@@ -22,7 +22,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const id = (await params).id
   const body = linkSchema.safeParse(await req.json())
   if (!body.success) {
-    return NextResponse.json({ error: body.error.errors }, { status: 400 })
+    return NextResponse.json({ error: body.error.issues }, { status: 400 })
   }
 
   const { incidentId } = body.data
