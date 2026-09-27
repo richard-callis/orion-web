@@ -22,6 +22,9 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { RefreshCw, Check, Terminal } from 'lucide-react'
+import { Input } from '@/components/ui/Input'
+import { Textarea } from '@/components/ui/Textarea'
+import { apiFetch, errorMessage, readSSE, parseSSEData } from '@/lib/api'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -50,9 +53,6 @@ interface Props {
   onReady:  () => void
 }
 
-// ── Shared input style (mirrors EnvironmentsPage) ─────────────────────────────
-const inputCls = 'w-full px-3 py-2 text-sm bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors'
-
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export function ClusterPreflightFlow({ envId, onReady }: Props) {
@@ -64,12 +64,18 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
   const [inlineTalosconfig, setInlineTalosconfig] = useState('')
   const [inlineKubeconfig, setInlineKubeconfig] = useState('')
   const [credSaving, setCredSaving]             = useState(false)
-  const logEndRef                               = useRef<HTMLDivElement>(null)
+  const [credError, setCredError]               = useState<string | null>(null)
+  const logRef                                  = useRef<HTMLDivElement>(null)
   const abortRef                                = useRef<AbortController | null>(null)
+  // Parents pass an inline onReady; reading it through a ref keeps runPreflight
+  // stable — before, every parent re-render aborted and restarted the preflight.
+  const onReadyRef                              = useRef(onReady)
+  onReadyRef.current = onReady
 
-  // Auto-scroll log panel
+  // Auto-scroll the log box itself (scrollIntoView also scrolled the page)
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const el = logRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [logs])
 
   const runPreflight = useCallback(async () => {
@@ -98,54 +104,34 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
         return
       }
 
-      const reader  = res.body.getReader()
-      const decoder = new TextDecoder()
-      let   buf     = ''
+      for await (const raw of readSSE(res.body, ctrl.signal)) {
+        const evt = parseSSEData<Record<string, unknown>>(raw)
+        if (!evt) continue
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buf += decoder.decode(value, { stream: true })
-        const lines = buf.split('\n')
-        buf = lines.pop() ?? ''   // keep incomplete line
-
-        for (const line of lines) {
-          if (!line.startsWith('data:')) continue
-          const raw = line.slice(5).trim()
-          if (!raw) continue
-
-          let evt: Record<string, unknown>
-          try { evt = JSON.parse(raw) } catch { continue }
-
-          if (evt.type === 'log') {
-            setLogs(prev => [...prev, evt.message as string])
-          } else if (evt.type === 'check') {
-            const check = evt.check as PreflightCheck
-            setChecks(prev => {
-              const idx = prev.findIndex(c => c.id === check.id)
-              if (idx >= 0) {
-                const next = [...prev]
-                next[idx] = check
-                return next
-              }
-              return [...prev, check]
-            })
-          } else if (evt.type === 'done') {
-            const doneResult = evt as unknown as PreflightResult & { type: string }
-            const { type: _t, ...rest } = doneResult
-            const final = rest as PreflightResult
-            setResult(final)
-            if (final.canBootstrap) {
-              onReady()
+        if (evt.type === 'log') {
+          setLogs(prev => [...prev, evt.message as string])
+        } else if (evt.type === 'check') {
+          const check = evt.check as PreflightCheck
+          setChecks(prev => {
+            const idx = prev.findIndex(c => c.id === check.id)
+            if (idx >= 0) {
+              const next = [...prev]
+              next[idx] = check
+              return next
             }
-          } else if (evt.type === 'error') {
-            setResult({
-              canBootstrap: false,
-              checks: [{ id: 'err', label: 'Error', status: 'error', detail: evt.message as string }],
-              gitOwner: '', gitRepo: '',
-            })
-          }
+            return [...prev, check]
+          })
+        } else if (evt.type === 'done') {
+          const { type: _t, ...rest } = evt as unknown as PreflightResult & { type: string }
+          const final = rest as PreflightResult
+          setResult(final)
+          if (final.canBootstrap) onReadyRef.current()
+        } else if (evt.type === 'error') {
+          setResult({
+            canBootstrap: false,
+            checks: [{ id: 'err', label: 'Error', status: 'error', detail: evt.message as string }],
+            gitOwner: '', gitRepo: '',
+          })
         }
       }
     } catch (err) {
@@ -158,7 +144,7 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [envId, onReady])
+  }, [envId])
 
   // Run on mount
   useEffect(() => {
@@ -168,6 +154,7 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
 
   const saveCredentialAndRecheck = async () => {
     setCredSaving(true)
+    setCredError(null)
     try {
       const body: Record<string, string> = {}
       if (inlineNodeIp.trim())
@@ -177,15 +164,14 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
       if (inlineKubeconfig.trim())
         body.kubeconfig  = btoa(unescape(encodeURIComponent(inlineKubeconfig.trim())))
 
-      await fetch(`/api/environments/${envId}/credentials`, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
-      })
+      await apiFetch(`/api/environments/${envId}/credentials`, { method: 'PATCH', body })
       setInlineNodeIp('')
       setInlineTalosconfig('')
       setInlineKubeconfig('')
       await runPreflight()
+    } catch (e) {
+      // Keep what was typed and don't re-check with credentials that weren't saved
+      setCredError(`Could not save credentials: ${errorMessage(e)}`)
     } finally {
       setCredSaving(false)
     }
@@ -206,14 +192,13 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
             <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider">Bootstrap log</span>
             {loading && <RefreshCw size={9} className="animate-spin text-text-muted ml-auto" />}
           </div>
-          <div className="max-h-40 overflow-y-auto p-2 font-mono text-[10px] text-text-muted space-y-0.5">
+          <div ref={logRef} role="log" aria-live="polite" className="max-h-40 overflow-y-auto p-2 font-mono text-[10px] text-text-muted space-y-0.5">
             {logs.map((line, i) => (
               <div key={i} className="whitespace-pre-wrap leading-relaxed">{line}</div>
             ))}
             {loading && logs.length === 0 && (
               <div className="text-text-muted italic">Checking cluster state…</div>
             )}
-            <div ref={logEndRef} />
           </div>
         </div>
       )}
@@ -245,12 +230,13 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
         <div className="rounded border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
           {credentialNeeded === 'nodeIp' && (
             <>
-              <p className="text-xs font-medium text-amber-400">Control plane node IP required</p>
-              <input
+              <label htmlFor={`${envId}-nodeip`} className="block text-xs font-medium text-amber-400">Control plane node IP required</label>
+              <Input
+                id={`${envId}-nodeip`}
                 value={inlineNodeIp}
                 onChange={e => setInlineNodeIp(e.target.value)}
                 placeholder="10.2.2.100"
-                className={`${inputCls} text-xs`}
+                className="text-xs"
               />
             </>
           )}
@@ -263,12 +249,13 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
                 Run <code className="font-mono bg-bg-raised px-1 rounded">talosctl config view</code> or find it at{' '}
                 <code className="font-mono bg-bg-raised px-1 rounded">~/.talos/config</code>.
               </p>
-              <textarea
+              <Textarea
+                aria-label="talosconfig"
                 value={inlineTalosconfig}
                 onChange={e => setInlineTalosconfig(e.target.value)}
                 placeholder={'context: homelab\ncontexts:\n  homelab:\n    endpoints:\n      - ...'}
                 rows={5}
-                className={`${inputCls} font-mono text-[11px] resize-y`}
+                className="font-mono text-[11px]"
               />
             </>
           )}
@@ -278,15 +265,17 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
               <p className="text-[10px] text-text-muted">
                 Auto-fetch failed for this cluster type. Paste the kubeconfig below.
               </p>
-              <textarea
+              <Textarea
+                aria-label="kubeconfig"
                 value={inlineKubeconfig}
                 onChange={e => setInlineKubeconfig(e.target.value)}
                 placeholder={'apiVersion: v1\nkind: Config\nclusters:\n  ...'}
                 rows={5}
-                className={`${inputCls} font-mono text-[11px] resize-y`}
+                className="font-mono text-[11px]"
               />
             </>
           )}
+          {credError && <p role="alert" className="text-xs text-status-error">{credError}</p>}
           <button
             onClick={saveCredentialAndRecheck}
             disabled={credSaving || !hasInput}
