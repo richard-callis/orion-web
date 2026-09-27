@@ -242,6 +242,8 @@ function checkPaths(args: string[], recursive: boolean): PolicyResult {
   return { ok: true }
 }
 
+const AUTO_RULES: ReadonlyMap<string, BinaryRule> = new Map(Object.entries(AUTO_BINARIES))
+
 function binaryName(argv0: string): string {
   return path.basename(argv0)
 }
@@ -251,9 +253,9 @@ export function checkAutoCommand(argv: string[]): PolicyResult {
   const [bin, ...args] = argv
   // Only bare names: an explicit path could point at a different binary with the same name.
   if (bin.includes('/')) return { ok: false, reason: 'auto commands must use a bare binary name' }
-  // Own-property lookup only: 'constructor', 'toString', '__proto__' etc. would
-  // otherwise resolve to Object.prototype members and pass as a rule.
-  const rule = Object.prototype.hasOwnProperty.call(AUTO_BINARIES, bin) ? AUTO_BINARIES[bin] : undefined
+  // Map lookup: an object index would resolve 'constructor', 'toString',
+  // '__proto__' etc. to Object.prototype members and pass them as rules.
+  const rule = AUTO_RULES.get(bin)
   if (!rule) return { ok: false, reason: `'${bin}' is not on the auto allowlist` }
   const verdict = rule(args)
   if (verdict.reason) return { ok: false, reason: verdict.reason }
