@@ -1,5 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
+import useSWR from 'swr'
+import { apiFetch, errorMessage } from '@/lib/api'
 import { AlertTriangle, CheckCircle, Loader2, RefreshCw } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -32,48 +34,30 @@ interface Props {
 }
 
 export function DriftStatusBadge({ environmentId, refreshInterval }: Props) {
-  const [report, setReport]       = useState<DriftReport | null>(null)
-  const [loading, setLoading]     = useState(true)
+  const driftKey = `/api/environments/${environmentId}/drift`
+  // Polls only when refreshInterval is set; SWR pauses while the tab is hidden
+  const { data, error: loadError, isLoading: loading, mutate } =
+    useSWR<{ reports: DriftReport[] }>(driftKey, { refreshInterval: refreshInterval ?? 0 })
+  const report = data?.reports[0] ?? null
   const [scanning, setScanning]   = useState(false)
+  const [scanError, setScanError] = useState<string | null>(null)
   const [popover, setPopover]     = useState(false)
-  const [error, setError]         = useState<string | null>(null)
+  const error = loadError ? errorMessage(loadError) : null
   const popoverRef                = useRef<HTMLDivElement>(null)
-
-  async function fetchLatest() {
-    try {
-      const res  = await fetch(`/api/environments/${environmentId}/drift`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json() as { reports: DriftReport[] }
-      setReport(data.reports[0] ?? null)
-      setError(null)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoading(false)
-    }
-  }
 
   async function triggerScan() {
     setScanning(true)
+    setScanError(null)
     try {
-      const res  = await fetch(`/api/environments/${environmentId}/drift`, { method: 'POST' })
-      const data = await res.json() as { report?: DriftReport; error?: string }
-      if (data.report) setReport(data.report)
-      setError(null)
+      const res = await apiFetch<{ report?: DriftReport }>(driftKey, { method: 'POST' })
+      if (res?.report) await mutate({ reports: [res.report, ...(data?.reports ?? [])] }, { revalidate: false })
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      // Previously a failed scan (e.g. 500) looked like success
+      setScanError(errorMessage(e, 'Scan failed'))
     } finally {
       setScanning(false)
     }
   }
-
-  useEffect(() => {
-    fetchLatest()
-    if (refreshInterval) {
-      const id = setInterval(fetchLatest, refreshInterval)
-      return () => clearInterval(id)
-    }
-  }, [environmentId, refreshInterval]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close popover on outside click
   useEffect(() => {
@@ -124,36 +108,34 @@ export function DriftStatusBadge({ environmentId, refreshInterval }: Props) {
 
   return (
     <div className="relative inline-block" ref={popoverRef}>
-      <button
-        type="button"
-        onClick={() => setPopover(p => !p)}
-        className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 ${badgeClass}`}
-        title="Click to see drift details"
-      >
-        {hasDrift ? (
-          <AlertTriangle size={12} />
-        ) : isError ? (
-          <AlertTriangle size={12} />
-        ) : (
-          <CheckCircle size={12} />
-        )}
-
-        {hasDrift
-          ? `Drift: ${total} resource${total !== 1 ? 's' : ''} (${worstLabel})`
-          : isError
-            ? 'Drift: scan error'
-            : 'Drift: Clean'}
-
+      {/* Two sibling buttons — a button nested in a button is invalid and unreachable by keyboard */}
+      <span className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs font-medium ${badgeClass}`}>
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); triggerScan() }}
+          onClick={() => setPopover(p => !p)}
+          aria-expanded={popover}
+          className="inline-flex items-center gap-1.5 transition-opacity hover:opacity-80"
+          title="Click to see drift details"
+        >
+          {hasDrift || isError ? <AlertTriangle size={12} aria-hidden /> : <CheckCircle size={12} aria-hidden />}
+          {hasDrift
+            ? `Drift: ${total} resource${total !== 1 ? 's' : ''} (${worstLabel})`
+            : isError
+              ? 'Drift: scan error'
+              : 'Drift: Clean'}
+        </button>
+        <button
+          type="button"
+          onClick={triggerScan}
           className="ml-0.5 opacity-60 hover:opacity-100"
           title="Trigger drift scan now"
+          aria-label="Trigger drift scan now"
           disabled={scanning}
         >
-          <RefreshCw size={10} className={scanning ? 'animate-spin' : ''} />
+          <RefreshCw size={10} className={scanning ? 'animate-spin' : ''} aria-hidden />
         </button>
-      </button>
+      </span>
+      {scanError && <span role="alert" className="ml-1 text-[10px] text-status-error">{scanError}</span>}
 
       {popover && (
         <div className="absolute left-0 top-full z-50 mt-1 w-80 rounded border border-border bg-surface-raised p-3 shadow-lg">

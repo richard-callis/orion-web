@@ -1,6 +1,8 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
+import useSWR from 'swr'
+import { ApiError, errorMessage } from '@/lib/api'
 import { ChevronUp, ChevronDown, Search, Loader2, Settings } from 'lucide-react'
 
 type FlowRow = {
@@ -22,33 +24,17 @@ function formatBytes(b: number) {
 }
 
 export default function FlowTable() {
-  const [flows, setFlows] = useState<FlowRow[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [errorCode, setErrorCode] = useState<string | null>(null)
+  const { data, error: loadError, isLoading: loading } =
+    useSWR<{ flows?: FlowRow[] }>('/api/monitoring/security/flows?limit=50', { revalidateOnFocus: false, shouldRetryOnError: false })
+  const flows = data?.flows ?? []
+  const error = loadError ? errorMessage(loadError, 'Failed to load flows') : null
+  // The route tags configuration problems with a machine-readable code
+  const errorCode = loadError instanceof ApiError && loadError.body && typeof loadError.body === 'object'
+    ? ((loadError.body as { code?: string }).code ?? null)
+    : null
   const [sortCol, setSortCol] = useState<keyof FlowRow>('timestamp')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [search, setSearch] = useState('')
-  const abortRef = useRef<AbortController | null>(null)
-
-  useEffect(() => {
-    abortRef.current = new AbortController()
-
-    fetch('/api/monitoring/security/flows?limit=50', { signal: abortRef.current.signal })
-      .then(r => {
-        if (!r.ok) return r.json().then((d: any) => Promise.reject({ message: d.error || `Error ${r.status}`, code: d.code }))
-        return r.json()
-      })
-      .then(d => { setFlows(d.flows || []); setLoading(false) })
-      .catch((e: any) => {
-        if (e?.name === 'AbortError') return
-        setError(e?.message || 'Failed to load flows')
-        setErrorCode(e?.code ?? null)
-        setLoading(false)
-      })
-
-    return () => abortRef.current?.abort()
-  }, [])
 
   if (loading) {
     return (

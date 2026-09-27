@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import useSWR from 'swr'
+import { useEventSource } from '@/hooks/useSSE'
 import { Loader2, Shield, Wifi, WifiOff, AlertTriangle } from 'lucide-react'
 
 interface SourceHealth {
@@ -40,31 +41,13 @@ const SOURCE_LABELS: Record<string, string> = {
 }
 
 export default function SourceHealthPanel() {
-  const [sources, setSources] = useState<SourceHealth[]>([])
-  const [loading, setLoading] = useState(true)
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch('/api/monitoring/security/sources')
-      const data = await res.json()
-      setSources(data.sources ?? [])
-    } catch {
-      // Silently fail — panel shows gracefully
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { load() }, [load])
+  // A failed load just shows an empty panel (the panel is informational).
+  const { data, isLoading: loading, mutate } = useSWR<{ sources?: SourceHealth[] }>('/api/monitoring/security/sources')
+  const sources = data?.sources ?? []
 
   // Real-time: refetch on any 'sources' SSE frame. We do a full refetch
   // rather than trying to use the frame's ID-only payload (R7 invariant).
-  useEffect(() => {
-    const source = new EventSource('/api/monitoring/security/stream?channel=sources')
-    source.onmessage = () => { load() }
-    source.onerror = () => {} // EventSource auto-reconnects
-    return () => { source.close() }
-  }, [load])
+  useEventSource('/api/monitoring/security/stream?channel=sources', () => { void mutate() })
 
   if (loading) {
     return (

@@ -1,6 +1,10 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import useSWRInfinite from 'swr/infinite'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
+import { useEventSource } from '@/hooks/useSSE'
 import {
   Loader2, Shield, Globe,
   Database, CheckCheck, ChevronDown, RefreshCw,
@@ -28,6 +32,20 @@ const SOURCE_COLORS: Record<string, string> = {
 }
 
 const ALL_SOURCES = ['crowdsec', 'falco', 'wazuh', 'ntopng', 'elk']
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export interface AlertEvent {
+  id: string
+  title: string
+  source: string
+  severity: number
+  acknowledged: boolean
+  createdAt: string
+  description?: string | null
+}
+
+interface AlertsPage { events: AlertEvent[]; pagination?: { total?: number } }
 
 // ── Filter types ─────────────────────────────────────────────────────────────
 
@@ -101,7 +119,7 @@ function buildQuery(f: Filters, page: number, limit = 50): string {
   return `/api/monitoring/security/alerts?${p}`
 }
 
-function matchesFilters(alert: any, f: Filters): boolean {
+function matchesFilters(alert: AlertEvent, f: Filters): boolean {
   if (f.sources.length > 0 && !f.sources.includes(alert.source)) return false
   if (f.minSeverity > 0 && alert.severity < f.minSeverity) return false
   if (f.ackFilter === 'unacked' && alert.acknowledged) return false
@@ -158,6 +176,7 @@ function FilterBar({
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[10px] text-text-muted uppercase tracking-wide mr-0.5">Source</span>
           <button
+            aria-pressed={filters.sources.length === 0}
             onClick={() => onChange({ ...filters, sources: [] })}
             className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
               filters.sources.length === 0
@@ -170,6 +189,7 @@ function FilterBar({
           {ALL_SOURCES.map(src => (
             <button
               key={src}
+              aria-pressed={filters.sources.includes(src)}
               onClick={() => toggleSource(src)}
               className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
                 filters.sources.includes(src)
@@ -189,6 +209,7 @@ function FilterBar({
           <span className="text-[10px] text-text-muted uppercase tracking-wide">Severity</span>
           <div className="relative">
             <select
+              aria-label="Minimum severity"
               value={filters.minSeverity}
               onChange={e => onChange({ ...filters, minSeverity: Number(e.target.value) })}
               className="appearance-none bg-bg-surface border border-border-subtle rounded px-2 py-0.5 pr-5 text-[11px] text-text-primary cursor-pointer hover:border-accent/40 transition-colors focus:outline-none focus:border-accent"
@@ -206,6 +227,7 @@ function FilterBar({
           <span className="text-[10px] text-text-muted uppercase tracking-wide">Status</span>
           <div className="relative">
             <select
+              aria-label="Acknowledgement status"
               value={filters.ackFilter}
               onChange={e => onChange({ ...filters, ackFilter: e.target.value as AckFilter })}
               className="appearance-none bg-bg-surface border border-border-subtle rounded px-2 py-0.5 pr-5 text-[11px] text-text-primary cursor-pointer hover:border-accent/40 transition-colors focus:outline-none focus:border-accent"
@@ -262,6 +284,7 @@ function FilterBar({
             <span className="text-[10px] text-text-muted uppercase tracking-wide">From</span>
             <input
               type="datetime-local"
+              aria-label="From"
               value={pendingFrom}
               onChange={e => setPendingFrom(e.target.value)}
               className="bg-bg-surface border border-border-subtle rounded px-2 py-0.5 text-[11px] text-text-primary focus:outline-none focus:border-accent transition-colors"
@@ -269,6 +292,7 @@ function FilterBar({
             <span className="text-[10px] text-text-muted">→</span>
             <input
               type="datetime-local"
+              aria-label="To"
               value={pendingTo}
               onChange={e => setPendingTo(e.target.value)}
               className="bg-bg-surface border border-border-subtle rounded px-2 py-0.5 text-[11px] text-text-primary focus:outline-none focus:border-accent transition-colors"
@@ -293,6 +317,7 @@ function FilterBar({
           onClick={onRefresh}
           disabled={loading}
           title="Refresh"
+          aria-label="Refresh alerts"
           className="ml-auto p-1 rounded text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
         >
           <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
@@ -304,121 +329,105 @@ function FilterBar({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: any[]; compact?: boolean }) {
+const PAGE_SIZE = 50
+
+export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: AlertEvent[]; compact?: boolean }) {
+  const toast = useToast()
   const [filters, setFilters]   = useState<Filters>(DEFAULT_FILTERS)
-  const [alerts, setAlerts]     = useState<any[]>(initialAlerts || [])
-  const [loading, setLoading]   = useState(!initialAlerts)
-  const [page, setPage]         = useState(1)
-  const [total, setTotal]       = useState(0)
   const [selected, setSelected] = useState<string[]>([])
   const [ackingAll, setAckingAll] = useState(false)
-  const mountedRef = useRef(true)
+  // Alerts that arrived over SSE since the list was (re)loaded, newest first
+  const [live, setLive]         = useState<AlertEvent[]>([])
 
-  useEffect(() => {
-    mountedRef.current = true
-    return () => { mountedRef.current = false }
-  }, [])
+  // Pages are keyed on the filters: a slow response for an old filter can't
+  // overwrite the current one, and there's a single fetch on mount.
+  const pagesQ = useSWRInfinite<AlertsPage>(
+    (index, prev) => (prev && prev.events.length < PAGE_SIZE) ? null : buildQuery(filters, index + 1, PAGE_SIZE),
+    {
+      revalidateOnFocus: false,
+      fallbackData: initialAlerts && filters === DEFAULT_FILTERS
+        ? [{ events: initialAlerts, pagination: { total: initialAlerts.length } }]
+        : undefined,
+    },
+  )
+  const pages = pagesQ.data ?? []
+  const loaded = pages.flatMap(p => p.events)
+  const liveNew = live.filter(a => !loaded.some(l => l.id === a.id))
+  const alerts = [...liveNew, ...loaded]
+  const total = (pages[0]?.pagination?.total ?? 0) + liveNew.length
+  const loading = pagesQ.isValidating
 
-  // ── Fetch from API ──────────────────────────────────────────────────────────
-  const fetchAlerts = useCallback(async (f: Filters, p: number, append = false) => {
-    setLoading(true)
-    try {
-      const res = await fetch(buildQuery(f, p))
-      if (!res.ok || !mountedRef.current) return
-      const data = await res.json()
-      if (!mountedRef.current) return
-      setAlerts(prev => append ? [...prev, ...data.events] : data.events)
-      setTotal(data.pagination?.total ?? 0)
-    } catch {
-      // ignore — leave previous results in place
-    } finally {
-      if (mountedRef.current) setLoading(false)
-    }
-  }, [])
-
-  // Fetch on mount (replace initialAlerts with filtered view)
-  useEffect(() => {
-    fetchAlerts(DEFAULT_FILTERS, 1)
-  }, [fetchAlerts])
-
-  // Re-fetch whenever filters change (not on page change — handled separately)
+  // Reset selection and live buffer when the filters change
   const filtersRef = useRef(filters)
   useEffect(() => {
     filtersRef.current = filters
-    setPage(1)
     setSelected([])
-    fetchAlerts(filters, 1)
-  }, [filters, fetchAlerts])
+    setLive([])
+  }, [filters])
 
   // ── SSE live stream (quick mode only) ─────────────────────────────────────
-  useEffect(() => {
-    if (filters.timeMode !== 'quick') return
-
-    const source = new EventSource('/api/monitoring/security/stream?channel=events')
-    source.onmessage = async (event) => {
+  useEventSource(
+    filters.timeMode === 'quick' ? '/api/monitoring/security/stream?channel=events' : null,
+    async (data) => {
       try {
-        const frame = JSON.parse(event.data) as NotifyMessage
+        const frame = JSON.parse(data) as NotifyMessage
         if (frame.channel !== 'events' || !frame.payload?.id) return
-
-        const res = await fetch(`/api/monitoring/security/alerts/${frame.payload.id}`)
-        if (!res.ok || !mountedRef.current) return
-        const { event: alertEvent } = await res.json()
-        if (!alertEvent || !mountedRef.current) return
-        if (!matchesFilters(alertEvent, filtersRef.current)) return
-
-        setAlerts(prev => {
-          if (prev.some((a: any) => a.id === alertEvent.id)) return prev
-          return [alertEvent, ...prev].slice(0, 200)
-        })
-        setTotal(t => t + 1)
+        const { event: alertEvent } = await apiFetch<{ event?: AlertEvent }>(`/api/monitoring/security/alerts/${frame.payload.id}`)
+        if (!alertEvent || !matchesFilters(alertEvent, filtersRef.current)) return
+        setLive(prev => prev.some(a => a.id === alertEvent.id) ? prev : [alertEvent, ...prev].slice(0, 200))
       } catch {
-        // ignore malformed frames
+        // ignore malformed frames / vanished events
       }
-    }
-    return () => source.close()
-  }, [filters.timeMode])
+    },
+  )
+
+  const markAcked = (pred: (a: AlertEvent) => boolean) => {
+    const ack = (a: AlertEvent) => pred(a) ? { ...a, acknowledged: true } : a
+    setLive(prev => prev.map(ack))
+    void pagesQ.mutate(ps => ps?.map(p => ({ ...p, events: p.events.map(ack) })), { revalidate: false })
+  }
 
   // ── Ack actions ───────────────────────────────────────────────────────────
   async function ackSelected() {
     if (selected.length === 0) return
-    await fetch('/api/monitoring/security/alerts/ack', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: selected }),
-    })
-    setAlerts(prev => prev.map((a: any) => selected.includes(a.id) ? { ...a, acknowledged: true } : a))
-    setSelected([])
+    const ids = selected
+    try {
+      await apiFetch('/api/monitoring/security/alerts/ack', { method: 'POST', body: { ids } })
+      markAcked(a => ids.includes(a.id))
+      setSelected([])
+    } catch (e) {
+      toast.error(`Failed to acknowledge: ${errorMessage(e)}`)
+    }
   }
 
-  const ackAll = useCallback(async () => {
+  async function ackAll() {
     setAckingAll(true)
     try {
-      await fetch('/api/monitoring/security/alerts/ack-all', { method: 'POST' })
-      setAlerts(prev => prev.map((a: any) => ({ ...a, acknowledged: true })))
+      await apiFetch('/api/monitoring/security/alerts/ack-all', { method: 'POST' })
+      markAcked(() => true)
       setSelected([])
+    } catch (e) {
+      toast.error(`Failed to acknowledge all: ${errorMessage(e)}`)
     } finally {
       setAckingAll(false)
     }
-  }, [])
-
-  // ── Load more ─────────────────────────────────────────────────────────────
-  function loadMore() {
-    const nextPage = page + 1
-    setPage(nextPage)
-    fetchAlerts(filters, nextPage, true)
   }
 
-  const hasMore = alerts.length < total
+  // ── Load more ─────────────────────────────────────────────────────────────
+  const loadMore = () => { void pagesQ.setSize(pagesQ.size + 1) }
+  const refresh = () => { setLive([]); void pagesQ.mutate() }
+
+  const hasMore = loaded.length < (pages[0]?.pagination?.total ?? 0)
 
   // ── Render ────────────────────────────────────────────────────────────────
-  const hasUnacked = alerts.some((a: any) => !a.acknowledged)
+  const hasUnacked = alerts.some(a => !a.acknowledged)
 
   return (
     <div>
       <FilterBar
         filters={filters}
         onChange={setFilters}
-        onRefresh={() => fetchAlerts(filters, 1)}
+        onRefresh={refresh}
         loading={loading}
       />
 
@@ -437,7 +446,7 @@ export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: 
               {loading ? (
                 <span className="flex items-center gap-1.5"><Loader2 size={10} className="animate-spin" /> Loading…</span>
               ) : (
-                `${total} total · ${alerts.filter((a: any) => !a.acknowledged).length} unacknowledged`
+                `${total} total · ${alerts.filter(a => !a.acknowledged).length} unacknowledged`
               )}
             </span>
             {hasUnacked && (
@@ -465,7 +474,7 @@ export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: 
         </div>
       ) : (
         <div className="divide-y divide-border-subtle">
-          {alerts.map((alert: any) => {
+          {alerts.map(alert => {
             const Icon = SOURCE_ICONS[alert.source] || Shield
             return (
               <div
@@ -476,6 +485,7 @@ export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: 
               >
                 <input
                   type="checkbox"
+                  aria-label={`Select ${alert.title}`}
                   checked={selected.includes(alert.id)}
                   onChange={() => setSelected(prev =>
                     prev.includes(alert.id) ? prev.filter(id => id !== alert.id) : [...prev, alert.id]
@@ -506,6 +516,10 @@ export default function AlertFeed({ initialAlerts, compact }: { initialAlerts?: 
       )}
 
       {/* Load more */}
+      {pagesQ.error && !pagesQ.data && (
+        <p role="alert" className="px-4 py-3 text-xs text-status-error">Failed to load alerts: {errorMessage(pagesQ.error)}</p>
+      )}
+
       {hasMore && !loading && (
         <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-between">
           <span className="text-xs text-text-muted">Showing {alerts.length} of {total}</span>

@@ -1,6 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
+import useSWR from 'swr'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Shield, Globe, Database, CheckCircle2, Loader2, ExternalLink } from 'lucide-react'
 import Link from 'next/link'
@@ -43,31 +46,25 @@ interface AlertEvent {
 export default function AlertDetailPage() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
-  const [event, setEvent] = useState<AlertEvent | null>(null)
-  const [loading, setLoading] = useState(true)
+  const toast = useToast()
+  const { data, isLoading: loading, mutate } =
+    useSWR<{ event?: AlertEvent }>(`/api/monitoring/security/alerts/${params.id}`, { shouldRetryOnError: false })
+  const event = data?.event ?? null
   const [rawExpanded, setRawExpanded] = useState(false)
   const [acking, setAcking] = useState(false)
-
-  useEffect(() => {
-    fetch(`/api/monitoring/security/alerts/${params.id}`)
-      .then(r => {
-        if (!r.ok) throw new Error(`${r.status}`)
-        return r.json()
-      })
-      .then(d => { setEvent(d.event); setLoading(false) })
-      .catch(() => { setLoading(false) })
-  }, [params.id])
 
   async function acknowledge() {
     if (!event || event.acknowledged) return
     setAcking(true)
-    await fetch('/api/monitoring/security/alerts/ack', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: [event.id] }),
-    })
-    setEvent(prev => prev ? { ...prev, acknowledged: true, acknowledgedAt: new Date().toISOString() } : prev)
-    setAcking(false)
+    try {
+      await apiFetch('/api/monitoring/security/alerts/ack', { method: 'POST', body: { ids: [event.id] } })
+      // Only mark acknowledged once the server accepted it (it was unconditional)
+      await mutate({ event: { ...event, acknowledged: true, acknowledgedAt: new Date().toISOString() } }, { revalidate: false })
+    } catch (e) {
+      toast.error(`Failed to acknowledge: ${errorMessage(e)}`)
+    } finally {
+      setAcking(false)
+    }
   }
 
   if (loading) {
@@ -93,7 +90,7 @@ export default function AlertDetailPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <button onClick={() => router.back()} className="p-1 rounded text-text-muted hover:text-text-primary transition-colors">
+          <button aria-label="Back" onClick={() => router.back()} className="p-1 rounded text-text-muted hover:text-text-primary transition-colors">
             <ArrowLeft size={16} />
           </button>
           <Icon size={18} className={sourceColors[event.source] || 'text-text-muted'} />
