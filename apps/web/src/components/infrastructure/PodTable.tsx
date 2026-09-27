@@ -99,7 +99,7 @@ function DebugButton({ pod, models }: { pod: CachedPod; models: AppModel[] }) {
       <button
         onClick={() => startDebug()}
         disabled={loading}
-        className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-accent/10 text-accent hover:bg-accent/20 transition-colors disabled:opacity-50"
+        className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-sm bg-accent/10 text-accent hover:bg-accent/20 transition-colors disabled:opacity-50"
       >
         <MessageSquare size={12} />
         {loading ? '…' : 'Debug'}
@@ -109,7 +109,7 @@ function DebugButton({ pod, models }: { pod: CachedPod; models: AppModel[] }) {
 
   return (
     <div className="relative inline-block" ref={ref}>
-      <div className="inline-flex rounded overflow-hidden border border-accent/20">
+      <div className="inline-flex rounded-sm overflow-hidden border border-accent/20">
         {/* Left side: quick-launch with default (Claude) */}
         <button
           onClick={() => startDebug()}
@@ -196,7 +196,7 @@ export function PodTable({ pods, nodeFilter }: { pods: CachedPod[]; nodeFilter?:
         <h2 className="text-sm font-semibold text-text-secondary flex items-center gap-2">
           Pods ({filtered.length}{filtered.length !== pods.length ? `/${pods.length}` : ''})
           {nodeFilter && (
-            <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-accent/15 text-accent font-mono">
+            <span className="text-[10px] font-normal px-1.5 py-0.5 rounded-sm bg-accent/15 text-accent font-mono">
               {nodeFilter.replace('k3s-', '').replace('homelab-', '')}
             </span>
           )}
@@ -208,13 +208,13 @@ export function PodTable({ pods, nodeFilter }: { pods: CachedPod[]; nodeFilter?:
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Filter pods..."
-              className="pl-7 pr-3 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent w-48"
+              className="pl-7 pr-3 py-1.5 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent w-48"
             />
           </div>
           <select
             value={nsFilter}
             onChange={e => setNsFilter(e.target.value)}
-            className="px-2 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+            className="px-2 py-1.5 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
           >
             {namespaces.map(ns => <option key={ns} value={ns}>{ns}</option>)}
           </select>

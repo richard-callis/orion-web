@@ -106,7 +106,7 @@ export default function EvalsPage() {
         </div>
         <button
           onClick={() => setShowNewSuite(true)}
-          className="flex items-center gap-2 px-3 py-1.5 bg-accent text-white rounded text-sm hover:bg-accent/80 transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 bg-accent text-white rounded-sm text-sm hover:bg-accent/80 transition-colors"
         >
           <Plus size={15} />
           New Suite
@@ -136,19 +136,19 @@ export default function EvalsPage() {
           <h2 className="text-sm font-medium text-text-primary mb-3">Create Eval Suite</h2>
           <div className="space-y-3">
             <input
-              className="w-full px-3 py-2 bg-bg-raised border border-border-subtle rounded text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+              className="w-full px-3 py-2 bg-bg-raised border border-border-subtle rounded-sm text-sm text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent"
               placeholder="Suite name *"
               value={newName}
               onChange={e => setNewName(e.target.value)}
             />
             <input
-              className="w-full px-3 py-2 bg-bg-raised border border-border-subtle rounded text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+              className="w-full px-3 py-2 bg-bg-raised border border-border-subtle rounded-sm text-sm text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent"
               placeholder="Description (optional)"
               value={newDesc}
               onChange={e => setNewDesc(e.target.value)}
             />
             <select
-              className="w-full px-3 py-2 bg-bg-raised border border-border-subtle rounded text-sm text-text-primary focus:outline-none focus:border-accent"
+              className="w-full px-3 py-2 bg-bg-raised border border-border-subtle rounded-sm text-sm text-text-primary focus:outline-hidden focus:border-accent"
               value={newAgentId}
               onChange={e => setNewAgentId(e.target.value)}
             >
@@ -162,13 +162,13 @@ export default function EvalsPage() {
             <button
               onClick={createSuite}
               disabled={creating || !newName.trim()}
-              className="px-3 py-1.5 bg-accent text-white rounded text-sm hover:bg-accent/80 disabled:opacity-50 transition-colors"
+              className="px-3 py-1.5 bg-accent text-white rounded-sm text-sm hover:bg-accent/80 disabled:opacity-50 transition-colors"
             >
               {creating ? 'Creating...' : 'Create Suite'}
             </button>
             <button
               onClick={() => setShowNewSuite(false)}
-              className="px-3 py-1.5 bg-bg-raised text-text-secondary rounded text-sm hover:bg-bg-hover transition-colors"
+              className="px-3 py-1.5 bg-bg-raised text-text-secondary rounded-sm text-sm hover:bg-bg-hover transition-colors"
             >
               Cancel
             </button>
@@ -196,7 +196,7 @@ export default function EvalsPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-text-primary">{suite.name}</span>
-                      <span className="text-xs text-text-muted bg-bg-raised px-2 py-0.5 rounded">
+                      <span className="text-xs text-text-muted bg-bg-raised px-2 py-0.5 rounded-sm">
                         {suite._count.cases} case{suite._count.cases !== 1 ? 's' : ''}
                       </span>
                       {suite.agent && (

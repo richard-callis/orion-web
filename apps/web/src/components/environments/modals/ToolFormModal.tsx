@@ -111,7 +111,7 @@ export function ToolFormModal({ env, tool, onClose, onSaved }: {
               <Input id={f('ai')} value={aiDesc} onChange={e => setAiDesc(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') generate() }}
                 placeholder="e.g. list pods in a namespace, restart a deployment, show disk usage..." className="flex-1" />
-              <Button onClick={generate} disabled={aiGenerating || !aiDesc.trim()} className="flex-shrink-0">
+              <Button onClick={generate} disabled={aiGenerating || !aiDesc.trim()} className="shrink-0">
                 {aiGenerating ? <RefreshCw size={11} className="animate-spin" aria-hidden /> : <Sparkles size={11} aria-hidden />}
                 {aiGenerating ? 'Thinking…' : 'Generate'}
               </Button>

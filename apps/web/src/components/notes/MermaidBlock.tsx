@@ -92,7 +92,7 @@ export function MermaidBlock({ code }: { code: string }) {
 
   if (error) {
     return (
-      <pre className="bg-bg-raised border border-status-error/30 text-status-error text-xs p-3 rounded mb-3 overflow-auto">
+      <pre className="bg-bg-raised border border-status-error/30 text-status-error text-xs p-3 rounded-sm mb-3 overflow-auto">
         Mermaid error: {error}
       </pre>
     )

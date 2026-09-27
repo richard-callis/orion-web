@@ -64,11 +64,11 @@ export default function ApprovalsPage() {
         </div>
         <div className="flex items-center gap-2">
           <select value={filter} onChange={e => setFilter(e.target.value as 'pending' | 'all')}
-            className="px-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none">
+            className="px-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded-sm text-text-primary focus:outline-hidden">
             <option value="pending">Pending only</option>
             <option value="all">All requests</option>
           </select>
-          <button aria-label="Refresh" onClick={load} className="p-1.5 rounded text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
+          <button aria-label="Refresh" onClick={load} className="p-1.5 rounded-sm text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
@@ -102,10 +102,10 @@ export default function ApprovalsPage() {
                   <div className="flex-1 space-y-1.5">
                     <div className="flex items-center gap-2">
                       <code className="text-sm font-medium text-accent">{r.toolName}</code>
-                      <span className="text-[10px] text-text-muted px-1.5 py-0.5 rounded bg-bg-raised border border-border-subtle">env: {r.environmentId.slice(0, 8)}</span>
+                      <span className="text-[10px] text-text-muted px-1.5 py-0.5 rounded-sm bg-bg-raised border border-border-subtle">env: {r.environmentId.slice(0, 8)}</span>
                     </div>
                     {Object.keys(r.toolArgs ?? {}).length > 0 && (
-                      <pre className="text-[11px] font-mono bg-bg-raised rounded px-2 py-1.5 text-text-secondary border border-border-subtle overflow-x-auto">
+                      <pre className="text-[11px] font-mono bg-bg-raised rounded-sm px-2 py-1.5 text-text-secondary border border-border-subtle overflow-x-auto">
                         {JSON.stringify(r.toolArgs, null, 2)}
                       </pre>
                     )}
@@ -124,11 +124,11 @@ export default function ApprovalsPage() {
                       className="px-2 py-1.5 text-xs flex-1"
                     />
                     <button onClick={() => act(r.id, 'deny')} disabled={acting === r.id}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium text-status-error border border-status-error/30 hover:bg-status-error/10 transition-colors disabled:opacity-50">
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-sm text-xs font-medium text-status-error border border-status-error/30 hover:bg-status-error/10 transition-colors disabled:opacity-50">
                       <XCircle size={12} /> Deny
                     </button>
                     <button onClick={() => act(r.id, 'approve')} disabled={acting === r.id}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium bg-status-healthy/15 text-status-healthy border border-status-healthy/30 hover:bg-status-healthy/25 transition-colors disabled:opacity-50">
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-sm text-xs font-medium bg-status-healthy/15 text-status-healthy border border-status-healthy/30 hover:bg-status-healthy/25 transition-colors disabled:opacity-50">
                       {acting === r.id ? <RefreshCw size={12} className="animate-spin" /> : <CheckCircle size={12} />}
                       Approve
                     </button>

@@ -9,7 +9,7 @@ export function StatusDot({ status }: { status: string }) {
     status === 'active'       ? 'bg-status-healthy' :
     status === 'error'        ? 'bg-status-error'   :
     'bg-text-muted'
-  return <span className={`w-2 h-2 rounded-full flex-shrink-0 ${color}`} />
+  return <span className={`w-2 h-2 rounded-full shrink-0 ${color}`} />
 }
 
 // ── Inline editable text ──────────────────────────────────────────────────────
@@ -38,7 +38,7 @@ export function InlineEdit({
           value={draft}
           onChange={e => setDraft(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }}
-          className="px-1.5 py-0.5 text-xs bg-bg-raised border border-accent rounded text-text-primary focus:outline-none w-48"
+          className="px-1.5 py-0.5 text-xs bg-bg-raised border border-accent rounded-sm text-text-primary focus:outline-hidden w-48"
         />
         <button aria-label="Save" onClick={save} disabled={saving} className="text-status-healthy hover:opacity-80">
           {saving ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
@@ -54,7 +54,7 @@ export function InlineEdit({
       title="Click to edit"
     >
       <span className={value ? '' : 'italic text-text-muted/60'}>{value || placeholder}</span>
-      <Pencil size={10} className="opacity-0 group-hover:opacity-60 text-text-muted flex-shrink-0" />
+      <Pencil size={10} className="opacity-0 group-hover:opacity-60 text-text-muted shrink-0" />
     </button>
   )
 }

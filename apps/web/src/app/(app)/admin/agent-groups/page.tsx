@@ -159,17 +159,17 @@ export default function AgentGroupsPage() {
     <div className="flex h-full overflow-hidden">
 
       {/* Left: group list */}
-      <aside className="w-64 flex-shrink-0 flex flex-col border-r border-border-subtle bg-bg-sidebar overflow-hidden">
+      <aside className="w-64 shrink-0 flex flex-col border-r border-border-subtle bg-bg-sidebar overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
           <div className="flex items-center gap-2">
             <UsersRound size={14} className="text-text-muted" />
             <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Agent Groups</span>
           </div>
           <div className="flex items-center gap-1">
-            <button aria-label="Refresh" onClick={load} className="p-1 rounded text-text-muted hover:text-text-primary transition-colors" title="Refresh">
+            <button aria-label="Refresh" onClick={load} className="p-1 rounded-sm text-text-muted hover:text-text-primary transition-colors" title="Refresh">
               <RefreshCw size={12} className={isValidating ? 'animate-spin' : ''} />
             </button>
-            <button onClick={() => setShowCreate(true)} className="p-1 rounded text-text-muted hover:text-accent hover:bg-bg-raised transition-colors" title="New group">
+            <button onClick={() => setShowCreate(true)} className="p-1 rounded-sm text-text-muted hover:text-accent hover:bg-bg-raised transition-colors" title="New group">
               <Plus size={14} />
             </button>
           </div>
@@ -195,11 +195,11 @@ export default function AgentGroupsPage() {
             />
             <div className="flex gap-2">
               <button onClick={createGroup} disabled={creating || !createName.trim()}
-                className="flex items-center gap-1 px-3 py-1 text-xs rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
+                className="flex items-center gap-1 px-3 py-1 text-xs rounded-sm bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors">
                 {creating ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />} Create
               </button>
               <button onClick={() => { setShowCreate(false); setCreateName(''); setCreateDesc('') }}
-                className="px-3 py-1 text-xs rounded text-text-muted border border-border-subtle hover:text-text-primary transition-colors">
+                className="px-3 py-1 text-xs rounded-sm text-text-muted border border-border-subtle hover:text-text-primary transition-colors">
                 Cancel
               </button>
             </div>
@@ -218,12 +218,12 @@ export default function AgentGroupsPage() {
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <UsersRound size={13} className="flex-shrink-0" />
+                  <UsersRound size={13} className="shrink-0" />
                   <span className="text-xs font-medium flex-1 truncate">{g.name}</span>
                   {confirmDelete === g.id ? (
                     <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                       <button onClick={() => deleteGroup(g.id)}
-                        className="px-1.5 py-0.5 text-[10px] rounded bg-status-error text-white">
+                        className="px-1.5 py-0.5 text-[10px] rounded-sm bg-status-error text-white">
                         Del
                       </button>
                       <button onClick={() => setConfirmDelete(null)}
@@ -234,7 +234,7 @@ export default function AgentGroupsPage() {
                   ) : (
                     <button
                       onClick={e => { e.stopPropagation(); setConfirmDelete(g.id) }}
-                      className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-text-muted hover:text-status-error transition-all">
+                      className="opacity-0 group-hover:opacity-100 p-0.5 rounded-sm text-text-muted hover:text-status-error transition-all">
                       <Trash2 size={11} />
                     </button>
                   )}
@@ -268,7 +268,7 @@ export default function AgentGroupsPage() {
                 <span className="text-xs text-text-muted">({selected.members.length})</span>
               </div>
               <button onClick={() => { setAddingMember(true); setMemberSearch('') }}
-                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded border border-border-subtle text-text-muted hover:text-accent hover:border-accent/40 transition-colors">
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-sm border border-border-subtle text-text-muted hover:text-accent hover:border-accent/40 transition-colors">
                 <Plus size={11} /> Add Agent
               </button>
             </div>
@@ -289,8 +289,8 @@ export default function AgentGroupsPage() {
                   )}
                   {filteredAgents.map(a => (
                     <button key={a.id} onClick={() => addMember(a.id)}
-                      className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm text-left hover:bg-bg-raised transition-colors">
-                      <Bot size={13} className="text-text-muted flex-shrink-0" />
+                      className="w-full flex items-center gap-2 px-3 py-2 rounded-sm text-sm text-left hover:bg-bg-raised transition-colors">
+                      <Bot size={13} className="text-text-muted shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-text-primary text-xs font-medium">{a.name}</p>
                         <p className="text-text-muted text-[10px]">{a.role ?? a.type}</p>
@@ -313,13 +313,13 @@ export default function AgentGroupsPage() {
               <div className="rounded-lg border border-border-subtle bg-bg-card divide-y divide-border-subtle overflow-hidden">
                 {selected.members.map(m => (
                   <div key={m.agentId} className="flex items-center gap-3 px-4 py-2.5">
-                    <Bot size={13} className="text-text-muted flex-shrink-0" />
+                    <Bot size={13} className="text-text-muted shrink-0" />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-text-primary">{m.agent.name}</p>
                       <p className="text-xs text-text-muted">{m.agent.role ?? m.agent.type}</p>
                     </div>
                     <button onClick={() => removeMember(m.agentId)}
-                      className="p-1 rounded text-text-muted hover:text-status-error transition-colors">
+                      className="p-1 rounded-sm text-text-muted hover:text-status-error transition-colors">
                       <X size={12} />
                     </button>
                   </div>
@@ -337,7 +337,7 @@ export default function AgentGroupsPage() {
                 <span className="text-xs text-text-muted">({selected.toolAccess.length})</span>
               </div>
               <button onClick={() => { setAddingTool(true); setToolSearch('') }}
-                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded border border-border-subtle text-text-muted hover:text-accent hover:border-accent/40 transition-colors">
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-sm border border-border-subtle text-text-muted hover:text-accent hover:border-accent/40 transition-colors">
                 <Plus size={11} /> Add Access
               </button>
             </div>
@@ -362,8 +362,8 @@ export default function AgentGroupsPage() {
                   )}
                   {filteredToolGroups.map(tg => (
                     <button key={tg.id} onClick={() => addToolAccess(tg.id)}
-                      className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm text-left hover:bg-bg-raised transition-colors">
-                      <Layers size={13} className="text-text-muted flex-shrink-0" />
+                      className="w-full flex items-center gap-2 px-3 py-2 rounded-sm text-sm text-left hover:bg-bg-raised transition-colors">
+                      <Layers size={13} className="text-text-muted shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-text-primary text-xs font-medium">{tg.name}</p>
                         <p className="text-text-muted text-[10px]">{tg.environment.name} · min tier: {tg.minimumTier}</p>
@@ -386,16 +386,16 @@ export default function AgentGroupsPage() {
               <div className="rounded-lg border border-border-subtle bg-bg-card divide-y divide-border-subtle overflow-hidden">
                 {selected.toolAccess.map(ta => (
                   <div key={ta.toolGroupId} className="flex items-center gap-3 px-4 py-2.5">
-                    <Layers size={13} className="text-text-muted flex-shrink-0" />
+                    <Layers size={13} className="text-text-muted shrink-0" />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-text-primary">{ta.toolGroup.name}</p>
                       <p className="text-xs text-text-muted">{ta.toolGroup.environment.name}</p>
                     </div>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${TIER_COLORS[ta.toolGroup.minimumTier] ?? 'bg-bg-raised text-text-muted'}`}>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-sm font-medium flex items-center gap-1 ${TIER_COLORS[ta.toolGroup.minimumTier] ?? 'bg-bg-raised text-text-muted'}`}>
                       <Shield size={9} /> min: {ta.toolGroup.minimumTier}
                     </span>
                     <button onClick={() => removeToolAccess(ta.toolGroupId)}
-                      className="p-1 rounded text-text-muted hover:text-status-error transition-colors">
+                      className="p-1 rounded-sm text-text-muted hover:text-status-error transition-colors">
                       <X size={12} />
                     </button>
                   </div>

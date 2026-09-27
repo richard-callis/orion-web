@@ -71,7 +71,7 @@ export function EditAgentDialog({ agent, colorIndex, models, saving, onClose, on
   return portal(
     <Dialog onClose={onClose} labelledBy="edit-agent-title" className="w-full max-w-md bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden">
       <div className="flex items-center gap-3 px-5 py-4 border-b border-border-subtle">
-        <div className={`w-9 h-9 rounded-full ${agentColor(colorIndex)} flex items-center justify-center flex-shrink-0`} aria-hidden>
+        <div className={`w-9 h-9 rounded-full ${agentColor(colorIndex)} flex items-center justify-center shrink-0`} aria-hidden>
           <span className="text-xs font-bold text-white">{agentInitials(title)}</span>
         </div>
         <div className="flex-1 min-w-0">
@@ -155,7 +155,7 @@ export function PlanAgentDialog({ conversationId, initialPrompt, creating, onClo
 
   return portal(
     <Dialog onClose={onClose} labelledBy="plan-agent-title" className="w-full max-w-2xl bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-modal-lg">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
         <div className="flex items-center gap-2">
           <Bot size={14} className="text-accent" />
           <h2 id="plan-agent-title" className="text-xs font-semibold text-text-primary">Plan with AI</h2>
@@ -166,11 +166,11 @@ export function PlanAgentDialog({ conversationId, initialPrompt, creating, onClo
       {/* Agent creation banner — shown after Claude responds */}
       {messages.some(m => m.role === 'assistant') && (
         <>
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-border-subtle bg-accent/5 flex-shrink-0">
-            <Bot size={13} className="text-accent flex-shrink-0" />
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-border-subtle bg-accent/5 shrink-0">
+            <Bot size={13} className="text-accent shrink-0" />
             <span className="text-xs text-accent flex-1">Agent creation mode — chat with Claude to define your agent</span>
           </div>
-          <div className="flex items-center gap-2 px-4 pb-2.5 flex-shrink-0">
+          <div className="flex items-center gap-2 px-4 pb-2.5 shrink-0">
             <Input aria-label="Agent name" value={draft.name} onChange={e => setDraft(f => ({ ...f, name: e.target.value }))}
               placeholder="Agent name *" className={`flex-1 ${draftField}`} />
             <Input aria-label="Agent role" value={draft.role} onChange={e => setDraft(f => ({ ...f, role: e.target.value }))}
@@ -181,7 +181,7 @@ export function PlanAgentDialog({ conversationId, initialPrompt, creating, onClo
               <option value="custom">Custom</option>
             </Select>
             <button onClick={() => onCreate(draft, lastAnswer || undefined)} disabled={!draft.name.trim() || creating}
-              className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium bg-accent/15 text-accent hover:bg-accent/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap">
+              className="flex items-center gap-1.5 px-3 py-1 rounded-sm text-xs font-medium bg-accent/15 text-accent hover:bg-accent/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap">
               {creating ? <><Loader2 size={11} className="animate-spin" /> Creating…</> : <><Check size={11} /> Create Agent</>}
             </button>
           </div>
@@ -212,7 +212,7 @@ export function PlanAgentDialog({ conversationId, initialPrompt, creating, onClo
         <div ref={bottomRef} />
       </div>
 
-      <div className="border-t border-border-subtle p-3 flex-shrink-0">
+      <div className="border-t border-border-subtle p-3 shrink-0">
         <div className="flex gap-2">
           <Input aria-label="Message" value={input} onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}

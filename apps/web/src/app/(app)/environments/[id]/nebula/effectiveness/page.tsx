@@ -53,7 +53,7 @@ export default function EffectivenessPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
         <div className="flex items-center gap-2">
           <Zap size={18} className="text-accent" />
           <h1 className="text-sm font-semibold text-text-primary">Effectiveness</h1>
@@ -65,7 +65,7 @@ export default function EffectivenessPage() {
           </span>
           <button
             onClick={load}
-            className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
+            className="p-1.5 rounded-sm text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
             title="Refresh"
            aria-label="Refresh">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -77,12 +77,12 @@ export default function EffectivenessPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-border-subtle shrink-0">
         <Filter size={12} className="text-text-muted" />
         <select
           value={filter}
           onChange={e => setFilter(e.target.value)}
-          className="px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+          className="px-2 py-1 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
         >
           <option value="">All Types</option>
           <option value="skill">Skills</option>
@@ -98,7 +98,7 @@ export default function EffectivenessPage() {
 
       {/* Summary Cards */}
       {entries.length > 0 && (
-        <div className="grid grid-cols-3 gap-3 px-4 pt-3 flex-shrink-0">
+        <div className="grid grid-cols-3 gap-3 px-4 pt-3 shrink-0">
           <div className="rounded-lg border border-border-subtle bg-bg-surface p-3 text-center">
             <div className="text-lg font-semibold text-text-primary">{total}</div>
             <div className="text-[10px] text-text-muted">Total Instances</div>

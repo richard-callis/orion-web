@@ -125,7 +125,7 @@ function JobModal({ jobId, onClose, onArchive, onDelete }: {
             </div>
           )}
         </div>
-        <IconButton label="Close" onClick={onClose} className="flex-shrink-0">
+        <IconButton label="Close" onClick={onClose} className="shrink-0">
           <X size={14} />
         </IconButton>
       </div>
@@ -167,7 +167,7 @@ function JobModal({ jobId, onClose, onArchive, onDelete }: {
               <button
                 onClick={handleArchive}
                 disabled={busy}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary hover:border-accent/40 transition-colors disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-sm border border-border-subtle text-text-muted hover:text-text-primary hover:border-accent/40 transition-colors disabled:opacity-50"
               >
                 <Archive size={11} />
                 Archive
@@ -176,7 +176,7 @@ function JobModal({ jobId, onClose, onArchive, onDelete }: {
             <button
               onClick={handleDelete}
               disabled={busy}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded border border-status-error/40 text-status-error hover:bg-status-error/10 transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-sm border border-status-error/40 text-status-error hover:bg-status-error/10 transition-colors disabled:opacity-50"
             >
               <Trash2 size={11} />
               Delete
@@ -184,7 +184,7 @@ function JobModal({ jobId, onClose, onArchive, onDelete }: {
           </div>
           <button
             onClick={onClose}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-accent text-white hover:bg-accent/90 transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-sm bg-accent text-white hover:bg-accent/90 transition-colors"
           >
             Close
           </button>

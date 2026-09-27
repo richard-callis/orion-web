@@ -79,7 +79,7 @@ export function IncidentSummary({ incident, error, onStatusChange }: {
         <button
           onClick={() => nextStatus && apply(nextStatus)}
           disabled={updating || isClosed || !nextStatus}
-          className="px-3 py-1 text-xs bg-status-warning/15 text-status-warning rounded hover:bg-status-warning/25 disabled:opacity-50 transition-colors flex items-center gap-1 ml-auto"
+          className="px-3 py-1 text-xs bg-status-warning/15 text-status-warning rounded-sm hover:bg-status-warning/25 disabled:opacity-50 transition-colors flex items-center gap-1 ml-auto"
         >
           <ChevronsUp size={12} aria-hidden />
           {isClosed || !nextStatus ? 'Closed' : `Escalate to ${nextStatus}`}

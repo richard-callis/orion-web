@@ -53,7 +53,7 @@ export function Toast({ message, type, prUrl, onDismiss }: ToastProps) {
     <div
       role="status"
       aria-live="polite"
-      className={`fixed bottom-6 right-6 z-[60] w-80 rounded-xl border shadow-2xl p-4 flex gap-3
+      className={`fixed bottom-6 right-6 z-60 w-80 rounded-xl border shadow-2xl p-4 flex gap-3
         ${type === 'error' ? 'bg-bg-card border-status-error/40' : 'bg-bg-card border-accent/40'}`}
     >
       {type === 'error'
@@ -198,14 +198,14 @@ export function NovaBrowser({ onImport, onClose }: Props) {
         />
       )}
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-border-subtle shrink-0">
         <Search size={14} className="text-text-muted" />
         <input
           autoFocus
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Search Nova definitions..."
-          className="flex-1 px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+          className="flex-1 px-2 py-1 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent"
         />
         {onClose && (
           <button onClick={onClose} className="text-text-muted hover:text-text-primary">
@@ -217,7 +217,7 @@ export function NovaBrowser({ onImport, onClose }: Props) {
       </div>
 
       {/* Category filter */}
-      <div className="px-4 py-2 border-b border-border-subtle flex gap-1.5 flex-wrap flex-shrink-0">
+      <div className="px-4 py-2 border-b border-border-subtle flex gap-1.5 flex-wrap shrink-0">
         <button
           onClick={() => setCategory('')}
           className={`px-2 py-0.5 rounded text-[10px] transition-colors ${
@@ -266,7 +266,7 @@ export function NovaBrowser({ onImport, onClose }: Props) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-medium text-text-primary truncate">{nova.displayName}</span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] ${CATEGORY_COLORS[nova.category] || CATEGORY_COLORS.Other}`}>
+                    <span className={`px-1.5 py-0.5 rounded-sm text-[10px] ${CATEGORY_COLORS[nova.category] || CATEGORY_COLORS.Other}`}>
                       {nova.category}
                     </span>
                     <span className="text-[10px] text-text-muted">{nova.source}</span>
@@ -276,7 +276,7 @@ export function NovaBrowser({ onImport, onClose }: Props) {
                   )}
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                     {nova.tags?.slice(0, 3).map(tag => (
-                      <span key={tag} className="text-[9px] text-text-muted bg-bg-raised px-1.5 py-0.5 rounded">
+                      <span key={tag} className="text-[9px] text-text-muted bg-bg-raised px-1.5 py-0.5 rounded-sm">
                         {tag}
                       </span>
                     ))}
@@ -288,7 +288,7 @@ export function NovaBrowser({ onImport, onClose }: Props) {
                   <select
                     value={envByNova[nova.id] || ''}
                     onChange={e => setEnvByNova(prev => ({ ...prev, [nova.id]: e.target.value }))}
-                    className="w-full px-2 py-1 text-[10px] rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+                    className="w-full px-2 py-1 text-[10px] rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
                   >
                     <option value="">Select environment…</option>
                     {environments.map(e => <option key={e.id} value={e.id}>{e.name} ({e.type})</option>)}

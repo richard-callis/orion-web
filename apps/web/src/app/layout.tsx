@@ -24,7 +24,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="flex flex-col h-[100dvh] overflow-hidden bg-bg-page text-text-primary">
+      <body className="flex flex-col h-dvh overflow-hidden bg-bg-page text-text-primary">
         <Providers>
           {children}
         </Providers>

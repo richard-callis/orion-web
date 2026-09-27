@@ -60,7 +60,7 @@ function SourceBadge({ source }: { source: string }) {
   const cls = source === 'schedule' ? 'bg-blue-500/20 text-blue-400'
     : source === 'webhook' ? 'bg-purple-500/20 text-purple-400'
     : 'bg-gray-500/20 text-gray-400'
-  return <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${cls}`}>{source}</span>
+  return <span className={`px-1.5 py-0.5 rounded-sm text-xs font-medium ${cls}`}>{source}</span>
 }
 
 export function HistoryTab() {

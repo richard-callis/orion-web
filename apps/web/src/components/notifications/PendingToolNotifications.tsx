@@ -72,10 +72,10 @@ export function PendingToolNotifications() {
             className="w-full rounded-xl border border-yellow-500/40 bg-bg-sidebar shadow-2xl overflow-hidden animate-in slide-in-from-right-4 duration-200">
             {/* Header */}
             <div className="flex items-center gap-2 px-3 py-2 border-b border-yellow-500/20 bg-yellow-500/5">
-              <Sparkles size={12} className="text-yellow-400 flex-shrink-0" />
+              <Sparkles size={12} className="text-yellow-400 shrink-0" />
               <span className="text-xs font-semibold text-yellow-400 flex-1 truncate">Tool Proposed</span>
               <span className="text-[10px] text-text-muted">{tool.environment.name}</span>
-              <button onClick={() => dismiss(tool.id)} className="p-0.5 rounded text-text-muted hover:text-text-primary transition-colors">
+              <button onClick={() => dismiss(tool.id)} className="p-0.5 rounded-sm text-text-muted hover:text-text-primary transition-colors">
                 <X size={12} />
               </button>
             </div>
@@ -85,7 +85,7 @@ export function PendingToolNotifications() {
               <p className="text-sm font-medium text-text-primary font-mono">{tool.name}</p>
               <p className="text-xs text-text-muted mt-0.5 line-clamp-2">{tool.description}</p>
               {tool.execConfig && (tool.execConfig as { command?: string }).command && (
-                <code className="mt-1.5 block text-[11px] bg-bg-raised rounded px-2 py-1 text-text-secondary font-mono truncate border border-border-subtle">
+                <code className="mt-1.5 block text-[11px] bg-bg-raised rounded-sm px-2 py-1 text-text-secondary font-mono truncate border border-border-subtle">
                   {(tool.execConfig as { command: string }).command}
                 </code>
               )}
@@ -101,19 +101,19 @@ export function PendingToolNotifications() {
               <button
                 onClick={() => reject(tool)}
                 disabled={acting === tool.id}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium text-status-error border border-status-error/30 hover:bg-status-error/10 transition-colors disabled:opacity-50">
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-sm text-xs font-medium text-status-error border border-status-error/30 hover:bg-status-error/10 transition-colors disabled:opacity-50">
                 <XCircle size={11} /> Deny
               </button>
               <button
                 onClick={() => setViewTool(tool)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium text-text-secondary border border-border-subtle hover:text-accent hover:border-accent/40 transition-colors">
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-sm text-xs font-medium text-text-secondary border border-border-subtle hover:text-accent hover:border-accent/40 transition-colors">
                 <ChevronRight size={11} /> View
               </button>
               <div className="flex-1" />
               <button
                 onClick={() => approve(tool)}
                 disabled={acting === tool.id}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium bg-status-healthy/15 text-status-healthy border border-status-healthy/30 hover:bg-status-healthy/25 transition-colors disabled:opacity-50">
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-sm text-xs font-medium bg-status-healthy/15 text-status-healthy border border-status-healthy/30 hover:bg-status-healthy/25 transition-colors disabled:opacity-50">
                 <CheckCircle size={11} /> Approve
               </button>
             </div>
@@ -131,12 +131,12 @@ export function PendingToolNotifications() {
 
           {/* Header */}
           <div className="flex items-center gap-2 px-5 py-4 border-b border-border-subtle">
-            <Sparkles size={14} className="text-yellow-400 flex-shrink-0" />
+            <Sparkles size={14} className="text-yellow-400 shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-[10px] text-text-muted uppercase tracking-wide">Tool Proposal · {viewTool.environment.name}</p>
               <h2 className="text-sm font-semibold text-text-primary font-mono truncate">{viewTool.name}</h2>
             </div>
-            <button onClick={() => setViewTool(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={14} /></button>
+            <button onClick={() => setViewTool(null)} className="p-1 rounded-sm text-text-muted hover:text-text-primary"><X size={14} /></button>
           </div>
 
           <div className="p-5 space-y-4 max-h-[60vh] overflow-y-auto">
@@ -147,7 +147,7 @@ export function PendingToolNotifications() {
             {viewTool.execConfig && (
               <div>
                 <p className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1.5">Command</p>
-                <code className="block text-[11px] bg-bg-raised rounded px-3 py-2 text-text-secondary font-mono whitespace-pre-wrap break-all border border-border-subtle">
+                <code className="block text-[11px] bg-bg-raised rounded-sm px-3 py-2 text-text-secondary font-mono whitespace-pre-wrap break-all border border-border-subtle">
                   {(viewTool.execConfig as { command?: string }).command ?? JSON.stringify(viewTool.execConfig)}
                 </code>
               </div>
@@ -162,9 +162,9 @@ export function PendingToolNotifications() {
                     const required = ((viewTool.inputSchema as { required?: string[] }).required ?? []).includes(k)
                     return (
                       <div key={k} className="flex items-start gap-2 text-xs">
-                        <code className="px-1.5 py-0.5 rounded bg-bg-raised text-accent font-mono text-[11px] flex-shrink-0">{k}</code>
+                        <code className="px-1.5 py-0.5 rounded-sm bg-bg-raised text-accent font-mono text-[11px] shrink-0">{k}</code>
                         <span className="text-text-muted">{v.type ?? 'string'}{v.description ? ` — ${v.description}` : ''}</span>
-                        {!required && <span className="text-[10px] text-text-muted italic flex-shrink-0">optional</span>}
+                        {!required && <span className="text-[10px] text-text-muted italic shrink-0">optional</span>}
                       </div>
                     )
                   })}
@@ -196,7 +196,7 @@ export function PendingToolNotifications() {
               </div>
               <button
                 onClick={() => setViewTool(prev => prev ? { ...prev, enabled: !prev.enabled } : null)}
-                className={`flex-shrink-0 transition-colors ${viewTool.enabled !== false ? 'text-status-healthy' : 'text-text-muted'}`}>
+                className={`shrink-0 transition-colors ${viewTool.enabled !== false ? 'text-status-healthy' : 'text-text-muted'}`}>
                 {viewTool.enabled !== false ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
               </button>
             </div>
@@ -213,18 +213,18 @@ export function PendingToolNotifications() {
             <button
               onClick={() => reject(viewTool)}
               disabled={acting === viewTool.id}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-status-error/40 text-status-error hover:bg-status-error/10 transition-colors disabled:opacity-50">
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-sm border border-status-error/40 text-status-error hover:bg-status-error/10 transition-colors disabled:opacity-50">
               <XCircle size={12} /> Deny
             </button>
             <div className="flex-1" />
             <button onClick={() => setViewTool(null)}
-              className="px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+              className="px-3 py-1.5 text-xs rounded-sm border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
               Cancel
             </button>
             <button
               onClick={() => approve(viewTool)}
               disabled={acting === viewTool.id}
-              className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded bg-status-healthy/15 text-status-healthy border border-status-healthy/30 hover:bg-status-healthy/25 transition-colors disabled:opacity-50">
+              className="flex items-center gap-1.5 px-4 py-1.5 text-xs rounded-sm bg-status-healthy/15 text-status-healthy border border-status-healthy/30 hover:bg-status-healthy/25 transition-colors disabled:opacity-50">
               <CheckCircle size={12} /> Approve
             </button>
           </div>

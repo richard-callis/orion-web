@@ -1,6 +1,101 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Scan only src/ for class names (the v3 config's content glob); automatic
+   detection would also pick up prisma/, docs and prompt markdown. */
+@import 'tailwindcss' source(none);
+@source '../';
+
+@theme {
+  --color-bg-page: #0f0f0f;
+  --color-bg-sidebar: #1a1a1a;
+  --color-bg-card: #1e1e1e;
+  --color-bg-raised: #262626;
+
+  --color-border-subtle: #2d2d2d;
+  --color-border-visible: #404040;
+
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #c8c8c8;
+  --color-text-muted: #9ca3af;
+
+  --color-status-healthy: #0474ba;
+  --color-status-warning: #ffa630;
+  --color-status-error: #ffa630;
+  --color-status-info: #0474ba;
+
+  --color-accent: #00a7e1;
+
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+
+  --animate-bounce0: bounce 1s infinite 0ms;
+  --animate-bounce150: bounce 1s infinite 150ms;
+  --animate-bounce300: bounce 1s infinite 300ms;
+
+  --max-height-modal-lg: min(70vh, 700px);
+  --max-height-modal-md: min(60vh, 450px);
+  --max-height-100dvh: 100dvh;
+
+  --padding-safe-bottom: env(safe-area-inset-bottom);
+
+  /* v3 used fixed rem line-heights; v4 made them unitless ratios, which
+     changes what nested smaller text (e.g. text-[10px] inside text-xs)
+     inherits. Pin the v3 values for identical vertical rhythm. */
+  --text-xs--line-height: 1rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl--line-height: 2rem;
+  --text-3xl--line-height: 2.25rem;
+  --text-4xl--line-height: 2.5rem;
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+/* v3 `space-y-*` parity. v4 puts margin-bottom on every child but the last,
+   which has no effect on inline children (e.g. a <label> above an <input>),
+   collapsing the gap. Restore v3's margin-top-on-following-siblings behaviour:
+   - following siblings: same selector/specificity as v3
+   - first child: cancel v4's margin-bottom at specificity (0,0,1) — above the
+     core :where() rule, below a child's own mb-* class. */
+@utility space-y-* {
+  & > :not([hidden]) ~ :not([hidden]) {
+    margin-block-start: calc(--value(number) * var(--spacing));
+    margin-block-end: 0;
+  }
+  :where(& > *):not(template) {
+    margin-block-end: 0;
+  }
+}
+
+/* v3 preflight parity: v4 made placeholders currentColor@50% and buttons
+   cursor:default. Keep the v3 look/feel. */
+@layer base {
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
 
 :root {
   color-scheme: dark;

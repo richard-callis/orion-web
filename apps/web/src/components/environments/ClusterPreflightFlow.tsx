@@ -186,7 +186,7 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
 
       {/* ── Live log panel ─────────────────────────────────────────────────── */}
       {(loading || logs.length > 0) && (
-        <div className="rounded border border-border-subtle bg-bg-raised overflow-hidden">
+        <div className="rounded-sm border border-border-subtle bg-bg-raised overflow-hidden">
           <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border-subtle bg-bg-canvas">
             <Terminal size={10} className="text-text-muted" />
             <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider">Bootstrap log</span>
@@ -208,7 +208,7 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
         <div className="space-y-2">
           {checks.map(c => (
             <div key={c.id} className="flex items-start gap-3 text-xs">
-              <span className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${
+              <span className={`mt-0.5 shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${
                 c.status === 'ok'      ? 'bg-status-healthy/20 text-status-healthy' :
                 c.status === 'missing' ? 'bg-amber-500/20 text-amber-400' :
                 c.status === 'error'   ? 'bg-status-error/20 text-status-error' :
@@ -227,7 +227,7 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
 
       {/* ── Inline credential input ─────────────────────────────────────────── */}
       {credentialNeeded && (
-        <div className="rounded border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+        <div className="rounded-sm border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
           {credentialNeeded === 'nodeIp' && (
             <>
               <label htmlFor={`${envId}-nodeip`} className="block text-xs font-medium text-amber-400">Control plane node IP required</label>
@@ -246,8 +246,8 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
                 Talos cluster detected — paste your <code className="font-mono">talosconfig</code>
               </p>
               <p className="text-[10px] text-text-muted">
-                Run <code className="font-mono bg-bg-raised px-1 rounded">talosctl config view</code> or find it at{' '}
-                <code className="font-mono bg-bg-raised px-1 rounded">~/.talos/config</code>.
+                Run <code className="font-mono bg-bg-raised px-1 rounded-sm">talosctl config view</code> or find it at{' '}
+                <code className="font-mono bg-bg-raised px-1 rounded-sm">~/.talos/config</code>.
               </p>
               <Textarea
                 aria-label="talosconfig"
@@ -279,7 +279,7 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
           <button
             onClick={saveCredentialAndRecheck}
             disabled={credSaving || !hasInput}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-amber-500 text-black font-medium hover:bg-amber-400 disabled:opacity-50 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-sm bg-amber-500 text-black font-medium hover:bg-amber-400 disabled:opacity-50 transition-colors"
           >
             {credSaving
               ? <><RefreshCw size={10} className="animate-spin" /> Saving &amp; re-checking…</>
@@ -291,7 +291,7 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
 
       {/* Hard error with no actionable credential field */}
       {result && !result.canBootstrap && !credentialNeeded && !loading && (
-        <div className="rounded border border-status-error/30 bg-status-error/5 px-3 py-2 text-xs text-status-error">
+        <div className="rounded-sm border border-status-error/30 bg-status-error/5 px-3 py-2 text-xs text-status-error">
           Fix the errors above before bootstrapping.
         </div>
       )}
@@ -302,7 +302,7 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
           <button
             onClick={runPreflight}
             disabled={loading}
-            className="flex items-center gap-1 px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-accent hover:border-accent/40 transition-colors"
+            className="flex items-center gap-1 px-3 py-1.5 text-xs rounded-sm border border-border-subtle text-text-muted hover:text-accent hover:border-accent/40 transition-colors"
           >
             <RefreshCw size={10} /> Re-check
           </button>

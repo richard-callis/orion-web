@@ -5,7 +5,7 @@ import { cn } from './cn'
 
 /** Shared field styling (inputs, selects, textareas). */
 export const fieldClass =
-  'w-full px-3 py-2 rounded border border-border-subtle bg-bg-raised text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent disabled:opacity-50 transition-colors'
+  'w-full px-3 py-2 rounded-sm border border-border-subtle bg-bg-raised text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-accent disabled:opacity-50 transition-colors'
 
 /** Standard form-label styling (use with htmlFor). */
 export const labelClass = 'block text-xs text-text-muted mb-1'

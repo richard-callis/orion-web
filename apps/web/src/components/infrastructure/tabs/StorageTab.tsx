@@ -78,7 +78,7 @@ export function StorageTab({ envId }: { envId: string }) {
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-text-primary">Longhorn Volumes</h2>
           {stats?.provider && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded border border-accent/30 bg-accent/5 text-accent font-mono capitalize">{stats.provider}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-sm border border-accent/30 bg-accent/5 text-accent font-mono capitalize">{stats.provider}</span>
           )}
         </div>
         <button onClick={load} disabled={loading} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-text-muted hover:text-text-primary border border-border-subtle hover:border-accent/50 disabled:opacity-50 transition-colors">
