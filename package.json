@@ -21,7 +21,7 @@
     "test:e2e": "playwright test -c e2e/playwright.config.mjs"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.5",
+    "@eslint/js": "^10.0.1",
     "@next/eslint-plugin-next": "^15.5.26",
     "@playwright/test": "^1.63.0",
     "eslint": "^10.11.0",
@@ -30,5 +30,11 @@
     "prettier": "^3.9.9",
     "typescript-eslint": "^8.70.1",
     "typescript-native": "npm:typescript@^7.0.2"
+  },
+  "overrides": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0"
   }
 }

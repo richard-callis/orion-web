@@ -329,7 +329,7 @@ export function registerSkillTools(): void {
       if (!instance || instance.category !== 'skill') return `Skill not found: ${name ?? skill_id}`
       if (!instance.isInstalled) return `Skill "${instance.name}" exists but is not installed/active.`
 
-      let spec: SkillSpec = {}
+      let spec: SkillSpec
       try { spec = JSON.parse(instance.spec) as SkillSpec } catch {
         return `Skill "${instance.name}" has a corrupted spec and cannot be used.`
       }

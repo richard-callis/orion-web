@@ -76,8 +76,8 @@ export async function gatewayExecutor(
     return { success: false, result: 'No connected gateway configured' }
   }
 
-  let toolName = ''
-  let toolArgs: Record<string, unknown> = {}
+  let toolName: string
+  let toolArgs: Record<string, unknown>
   // Secondary arguments the decision token must bind (the gateway verifies them).
   let boundParams: Record<string, string> | undefined
 

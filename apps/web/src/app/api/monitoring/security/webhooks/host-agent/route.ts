@@ -64,10 +64,14 @@ export async function POST(req: NextRequest) {
   // parsing the inner batch — no re-serialisation, no ordering ambiguity.
   const bodyText = await req.text()
 
-  let outerEnvelope: { sig?: string; payload?: string } = {}
+  let outerEnvelope: { sig?: string; payload?: string }
   try {
     outerEnvelope = JSON.parse(bodyText)
   } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+  }
+  // A body of `null`/a number parses fine but can't be destructured below.
+  if (!outerEnvelope || typeof outerEnvelope !== 'object') {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 

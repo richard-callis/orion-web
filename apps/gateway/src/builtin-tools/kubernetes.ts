@@ -403,7 +403,7 @@ export const kubernetesTools = ([
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e)
           if (msg.includes('already exists')) return `Repository "${name}" already exists`
-          throw new Error(`helm repo add failed: ${msg}`)
+          throw new Error(`helm repo add failed: ${msg}`, { cause: e })
         }
       })
     },

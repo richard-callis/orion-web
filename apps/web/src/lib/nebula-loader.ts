@@ -58,7 +58,7 @@ export async function loadNovaeFromNebula(nebula: {
   const errors: string[] = []
   const novas: NovaYaml[] = []
 
-  let files: string[] = []
+  let files: string[]
   try {
     files = await provider.listFiles(owner, repo, nebula.path, nebula.branch)
   } catch (err) {

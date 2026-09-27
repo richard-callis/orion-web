@@ -122,7 +122,7 @@ export async function runAuditExportJob(
     }
 
     // Re-throw to mark job as failed
-    throw new Error(error)
+    throw new Error(error, { cause: err })
   }
 }
 
