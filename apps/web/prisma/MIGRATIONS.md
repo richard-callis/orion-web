@@ -50,8 +50,8 @@ Instead:
    ```bash
    git show HEAD:apps/web/prisma/schema.prisma > /tmp/schema.before.prisma
    npx prisma migrate diff \
-     --from-schema-datamodel /tmp/schema.before.prisma \
-     --to-schema-datamodel prisma/schema.prisma --script \
+     --from-schema /tmp/schema.before.prisma \
+     --to-schema prisma/schema.prisma --script \
      > prisma/migrations/t$(date -u +%Y%m%d%H%M%S)_my_change/migration.sql
    ```
 3. **Make the SQL idempotent.** Use `IF NOT EXISTS` / `IF EXISTS`. Never rely
