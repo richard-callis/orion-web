@@ -266,6 +266,9 @@ describe('claudeRunner', () => {
       agentId: 'agent-1',
       maxTurns: 20,
       mcpToken: 'dec(enc-token)',
+      // Structured fields added by the engine consolidation (legacy fields above unchanged)
+      system: 'SYS',
+      messages: [{ role: 'user', content: 'TASK Fix itDescription: desc' }],
     })
   })
 

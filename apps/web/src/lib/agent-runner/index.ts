@@ -1,6 +1,5 @@
 import type { AgentRunner, TaskRunContext, AgentEvent } from './types'
 import { openaiRunner } from './openai-runner'
-import { ollamaRunner } from './ollama-runner'
 import { dispatcherRunner } from './dispatcher-runner'
 import { claudeRunner } from './claude-runner'
 import { buildAgentContext } from '../agent-context'
