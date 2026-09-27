@@ -35,6 +35,11 @@ import { redactSecrets } from './redact'
 import { getPrompt } from './system-prompts'
 import type { AgentGateway } from './agent-gateway'
 import type { GatewayTool } from './agent-runner/types'
+import { sidecarCollect, renderLegacyPrompt, type SidecarCollectResult } from './agent-runner/engine/providers/claude-sidecar'
+import { createOpenAIProvider } from './agent-runner/engine/providers/openai'
+import { runToolLoop, type LoopUsage, type LoopEndReason } from './agent-runner/engine/loop'
+import { ProviderHttpError, type EngineMessage, type ToolCallRequest, type ToolSpec } from './agent-runner/engine/types'
+import { validateArgsAgainstSchema } from './tool-args-validation'
 
 // ── Tool name fuzzy resolution ────────────────────────────────────────────────
 
@@ -82,9 +87,7 @@ export function parseMentions(content: string): string[] {
   return (content.match(/@([\w-]+)/g) ?? []).map((m: any) => m.slice(1))
 }
 
-// ── Credential helpers (mirrors claude.ts) ────────────────────────────────────
-
-const CLAUDE_URL = process.env.ORION_CLAUDE_URL ?? 'http://orion-claude:3100'
+// ── Sidecar error mapping ─────────────────────────────────────────────────────
 
 function mapClaudeError(raw: string): string {
   const lower = raw.toLowerCase()
@@ -208,7 +211,8 @@ function buildChatMessages(history: HistoryEntry[], latestMessage: string): Chat
 /** Claude Code SDK — OAuth credentials, routed through orion-claude sidecar.
  *  When agentId + roomId are supplied, the sidecar writes a per-request .mcp.json
  *  so Claude can call ORION tools natively via MCP instead of going around the system. */
-async function callClaude(
+/** @internal exported for the engine characterization tests */
+export async function callClaude(
   agentName: string,
   agentBasePrompt: string,
   otherParticipants: string[],
@@ -225,89 +229,44 @@ async function callClaude(
   const useMcp = !!agentId && !!roomId
   const toolMode: false | 'legacy' | 'mcp' = useMcp ? 'mcp' : hasTools ? 'legacy' : false
   const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, toolMode, '', activeGoal)
-  const historyBlock = history.length
-    ? history.map(e => `${e.name}: ${e.content}`).join('\n') + '\n\n'
-    : ''
-  const prompt = historyBlock + latestMessage
-  const res = await fetch(`${CLAUDE_URL}/run/collect`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({
-      prompt,
-      systemPrompt: sys,
-      // MCP context: always enabled in rooms so Claude has the same tools as other agents.
-      // maxTurns = maxToolRounds + 1 (the +1 guarantees a final response turn even if all tool rounds are used).
-      // The OpenAI-compat path enforces this via a forced final call; the Claude/MCP path relies on maxTurns headroom.
-      ...(useMcp ? { agentId, roomId, maxTurns: hasTools ? 6 : 3 } : { maxTurns: 1 }),
-      ...(modelId ? { model: modelId } : {}),
-    }),
+  const request = {
+    system: sys,
+    messages: [
+      ...history.map(e => ({ role: e.isSelf ? 'assistant' : 'user', content: e.content, name: e.name })),
+      { role: 'user', content: latestMessage },
+    ],
+    transcript: 'room' as const,
+    // MCP context: always enabled in rooms so Claude has the same tools as other agents.
+    // maxTurns = maxToolRounds + 1 (the +1 guarantees a final response turn even if all tool rounds are used).
+    // The OpenAI-compat path enforces this via a forced final call; the Claude/MCP path relies on maxTurns headroom.
+    ...(useMcp ? { agentId, roomId, maxTurns: hasTools ? 6 : 3 } : { maxTurns: 1 }),
+    ...(modelId ? { model: modelId } : {}),
+  }
+  let r: SidecarCollectResult
+  try {
     // MCP tool calls can take longer — allow 5 min for tool-using sessions
-    signal: AbortSignal.timeout(useMcp ? 300_000 : 120_000),
-  }).catch((e: Error) => { console.error(`[room-agents] orion-claude fetch failed: ${e.message}`); return null })
-  if (!res) return { text: null, error: 'service unreachable', inputTokens: 0, outputTokens: 0 }
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => '')
-    console.error(`[room-agents] orion-claude /run/collect HTTP ${res.status}: ${errBody?.slice(0, 400)}`)
-    return { text: null, error: mapClaudeError(errBody || `HTTP ${res.status}`), inputTokens: 0, outputTokens: 0 }
+    r = await sidecarCollect(request, { timeoutMs: useMcp ? 300_000 : 120_000 })
+  } catch (e) {
+    console.error(`[room-agents] orion-claude fetch failed: ${e instanceof Error ? e.message : String(e)}`)
+    return { text: null, error: 'service unreachable', inputTokens: 0, outputTokens: 0 }
   }
-  const data = await res.json() as {
-    text?: string
-    error?: string
-    usage?: { inputTokens?: number; outputTokens?: number }
-    inputTokens?: number
-    outputTokens?: number
+  if (!r.ok) {
+    if (r.status !== undefined) {
+      console.error(`[room-agents] orion-claude /run/collect HTTP ${r.status}: ${r.error.slice(0, 400)}`)
+      return { text: null, error: mapClaudeError(r.error || `HTTP ${r.status}`), inputTokens: 0, outputTokens: 0 }
+    }
+    console.error(`[room-agents] orion-claude error: ${r.error.slice(0, 400)}`)
+    return { text: null, error: mapClaudeError(r.error), inputTokens: 0, outputTokens: 0 }
   }
-  if (data.error) {
-    console.error(`[room-agents] orion-claude error: ${data.error.slice(0, 400)}`)
-    return { text: null, error: mapClaudeError(data.error), inputTokens: 0, outputTokens: 0 }
-  }
-  const text = data.text?.trim() || null
+  const text = r.text.trim() || null
   if (!text) console.warn('[room-agents] orion-claude returned empty text')
-  // orion-claude's /run/collect doesn't reliably surface usage — use it if present,
-  // otherwise fall back to a length-based estimate (same approach as dream.ts's
-  // callWithModel). Without this, tokensUsed stays 0 for every native-Claude agent
-  // call — the vast majority of agents in this system — and compaction, gated on
-  // tokensUsed > 0, never fires for them regardless of how large the room gets.
-  const inputTokens  = data.usage?.inputTokens  ?? data.inputTokens  ?? estimateTokens(sys + prompt)
-  const outputTokens = data.usage?.outputTokens ?? data.outputTokens ?? (text ? estimateTokens(text) : 0)
+  // Use reported usage when the sidecar provides it, otherwise a length-based
+  // estimate. Without this, tokensUsed stays 0 for native-Claude agents and
+  // compaction (gated on tokensUsed > 0) never fires for them.
+  const inputTokens  = r.usage.inputTokens  ?? estimateTokens(sys + renderLegacyPrompt(request))
+  const outputTokens = r.usage.outputTokens ?? (text ? estimateTokens(text) : 0)
   return { text, inputTokens, outputTokens }
 }
-
-/** Ollama native /api/chat endpoint */
-async function callOllamaChat(
-  agentName: string,
-  agentBasePrompt: string,
-  otherParticipants: string[],
-  history: HistoryEntry[],
-  latestMessage: string,
-  model: string,
-  baseUrl: string,
-  hasTools = false,
-  gatewayCategorySummary = '',
-  activeGoal?: string,
-): Promise<string | null> {
-  const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools, gatewayCategorySummary, activeGoal)
-  const chatMsgs = buildChatMessages(history, latestMessage)
-  const res = await fetch(`${baseUrl}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      stream: false,
-      messages: [{ role: 'system', content: sys }, ...chatMsgs],
-    }),
-    signal: AbortSignal.timeout(120_000),
-  })
-  if (!res.ok) {
-    console.error(`[room-agents] Ollama ${baseUrl} returned HTTP ${res.status}`)
-    return null
-  }
-  const data = await res.json() as { message?: { content?: string } }
-  return data.message?.content?.trim() || null
-}
-
-type OpenAIMessage = { role: string; content: string | null; tool_calls?: ToolCall[]; tool_call_id?: string; name?: string }
-type ToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } }
 
 type OpenAICallResult = { reply: string | null; tokensUsed: number; contextLimit: number; inputTokens: number; outputTokens: number }
 
@@ -365,8 +324,18 @@ function isFakeToolCall(text: string): boolean {
   return FAKE_TOOL_CALL_PATTERNS.some(p => p.test(t))
 }
 
+function parseToolArgs(argsRaw: string): Record<string, unknown> {
+  try {
+    const v: unknown = JSON.parse(argsRaw)
+    return v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
 /** OpenAI-compatible /v1/chat/completions endpoint — supports tool calling */
-async function callOpenAIChat(
+/** @internal exported for the engine characterization tests */
+export async function callOpenAIChat(
   agentName: string,
   agentBasePrompt: string,
   otherParticipants: string[],
@@ -389,14 +358,11 @@ async function callOpenAIChat(
   const hasTools = !!toolContext
   const gatewayCategorySummary = gatewayTools ? buildGatewayCategorySummary(gatewayTools) : ''
   const sys = buildSystemPrompt(agentName, agentBasePrompt, otherParticipants, hasTools, gatewayCategorySummary, activeGoal)
-  const chatMsgs = buildChatMessages(history, latestMessage)
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
 
   // Discover context window size for this endpoint (cached after first call)
   const contextLimit = await getModelContextLimit(baseUrl)
 
-  const messages: OpenAIMessage[] = [{ role: 'system', content: sys }, ...chatMsgs]
+  const messages: EngineMessage[] = [{ role: 'system', content: sys }, ...buildChatMessages(history, latestMessage)]
 
   // Registry tools — chat/both tools plus room-only tools (room-tools.ts). The
   // registry is the single source of truth: every ORION tool call goes through
@@ -404,23 +370,17 @@ async function callOpenAIChat(
   const registryTools = await buildRoomToolSchemas()
   const registryToolNames: Set<string> = new Set(registryTools.map(t => t.function.name))
 
-  // Merge: registry + gateway tools
+  // Registry + gateway tools, narrowed to the agent's allowlist when it has one
+  // (agents like Warden ship with a narrow whitelist via contextConfig.allowedTools;
+  // an empty whitelist means tools off).
   const allowedTools = toolContext?.allowedTools
-  const merged = hasTools
+  const merged: ToolSpec[] = hasTools
     ? [
-        ...registryTools,
-        ...(gatewayTools ?? []).map(t => ({
-          type: 'function' as const,
-          function: { name: t.name, description: t.description, parameters: t.inputSchema },
-        })),
+        ...registryTools.map(t => ({ name: t.function.name, description: t.function.description, parameters: t.function.parameters })),
+        ...(gatewayTools ?? []).map(t => ({ name: t.name, description: t.description, parameters: t.inputSchema })),
       ]
-    : undefined
-  // Apply per-agent allowlist if present (agents like Warden ship with a
-  // narrow whitelist via contextConfig.allowedTools). If the whitelist is
-  // present but empty (operator wants tools off), pass an empty array.
-  const allTools = merged && allowedTools
-    ? merged.filter(t => allowedTools.has(t.function.name))
-    : merged
+    : []
+  const tools = allowedTools ? merged.filter(t => allowedTools.has(t.name)) : merged
 
   // Gateway tool names — used to distinguish known gateway tools from hallucinated names.
   // Without this set, any hallucinated name silently falls through to the gateway client
@@ -449,195 +409,190 @@ async function callOpenAIChat(
     return out
   }
 
-  // Qwen3 models generate <think>…</think> tokens by default in Ollama. These thinking
-  // tokens interfere with structured tool_calls output — the model occasionally narrates
-  // the tool call as prose instead of emitting a proper tool_calls JSON block. Disabling
-  // thinking mode via think:false fixes the inconsistency without removing reasoning ability.
-  const isQwen3 = /qwen3/i.test(model)
-
-  type Choice = { finish_reason: string; message: { role: string; content: string | null; tool_calls?: ToolCall[] } }
-  type OpenAIResponse = { choices?: Choice[]; usage?: { prompt_tokens?: number; completion_tokens?: number } }
-
-  let tokensUsed = 0
-  let totalInputTokens  = 0
-  let totalOutputTokens = 0
+  // Gateway tools follow the same rule as task agents: active agent + admin
+  // grant (tool-permissions.ts), and arguments valid against the gateway schema.
+  // Previously room agents ran any gateway tool with no permission check.
+  const gatewaySchemas = new Map<string, unknown>((gatewayTools ?? []).map(t => [t.name, t.inputSchema]))
+  const runGatewayTool = async (name: string, args: Record<string, unknown>): Promise<string> => {
+    const perm = await checkToolPermission(name, toolContext?.agentId ?? null, gateway?.environmentId ?? null)
+    if (!perm.allowed) {
+      if (toolContext?.agentId) auditToolCall({ toolName: name, args, agentId: toolContext.agentId, agentName, outcome: 'denied' })
+      return `Permission denied: ${perm.reason ?? `tool '${name}' is not permitted for this agent`}`
+    }
+    const validation = validateArgsAgainstSchema(gatewaySchemas.get(name), args)
+    if (!validation.valid) {
+      return `Tool validation failed for ${name}: ${validation.errors.join(', ')}. Check the tool schema and retry with correct arguments.`
+    }
+    const out = await gateway!.client.executeTool(name, args)
+    if (toolContext?.agentId) auditToolCall({ toolName: name, args, agentId: toolContext.agentId, agentName, outcome: 'executed' })
+    return out
+  }
 
   // Per-session tool result cache — keyed by (toolName, args), evicted by TTL
   const toolCache = new Map<string, CacheEntry>()
 
-  // Tool-call loop — keep going until the model produces a text reply
+  /** One tool call: cache → allowlist → registry / gateway / fuzzy name correction; persisted + published. */
+  const runRoomTool = async (call: ToolCallRequest): Promise<string> => {
+    const args = parseToolArgs(call.argsRaw)
+    let result: string
+    const cacheKey = makeToolCacheKey(call.name, args)
+    const ttl = TOOL_CACHE_TTLS[call.name]
+    const cached = !NO_CACHE_TOOLS.has(call.name) && ttl !== undefined ? toolCache.get(cacheKey) : undefined
+
+    if (cached && Date.now() < cached.expiresAt) {
+      console.log(`[room-agents] ${agentName} tool cache hit: ${call.name} (expires in ${Math.round((cached.expiresAt - Date.now()) / 1000)}s)`)
+      result = `[Cached result — fetched earlier this session]\n${cached.result}`
+    } else {
+      console.log(`[room-agents] ${agentName} calling tool: ${call.name}`, args)
+
+      // The allowlist is enforced at dispatch too, not only in the advertised
+      // tool list — a jailbroken model may emit a name outside it.
+      if (allowedTools && allowedTools.size > 0 && !allowedTools.has(call.name)) {
+        result = `Permission denied: tool '${call.name}' is not in this agent's allowed tool list. An admin can grant access under Admin → Agents → Tool Permissions.`
+        if (toolContext?.agentId) auditToolCall({ toolName: call.name, args, agentId: toolContext.agentId, agentName, outcome: 'denied' })
+      } else if (registryToolNames.has(call.name)) {
+        result = await runRegistryTool(call.name, args)
+      } else if (gateway && gatewayToolNames.has(call.name)) {
+        result = await runGatewayTool(call.name, args)
+      } else {
+        // Hallucinated or unknown tool name — attempt fuzzy resolution before giving up.
+        const resolved = resolveToolName(call.name, allKnownToolNames)
+        if (resolved?.confidence === 'high') {
+          console.warn(`[room-agents] ${agentName}: auto-correcting hallucinated tool "${call.name}" → "${resolved.name}"`)
+          if (allowedTools && allowedTools.size > 0 && !allowedTools.has(resolved.name)) {
+            // The per-agent allowlist applies to auto-corrected names too
+            result = `Permission denied: tool '${resolved.name}' is not in this agent's allowed tool list.`
+          } else if (registryToolNames.has(resolved.name)) {
+            // Same guarded path as a direct call — fuzzy resolution must not bypass it
+            result = await runRegistryTool(resolved.name, args)
+          } else if (gateway && gatewayToolNames.has(resolved.name)) {
+            // Same guarded path as a direct gateway call
+            result = await runGatewayTool(resolved.name, args)
+          } else {
+            result = `[Auto-corrected "${call.name}" → "${resolved.name}" but still could not execute]`
+          }
+          result = `[Note: corrected "${call.name}" → "${resolved.name}"]\n${result}`
+        } else {
+          // Can't resolve — return the full tool list so the model can self-correct
+          const toolList = await executeRegisteredTool('list_tools', {}, { agentId: toolContext!.agentId, prisma, gateway: undefined }).catch(() => '')
+          const suggestion = resolved ? ` Did you mean "${resolved.name}"?` : ''
+          result = `Error: tool "${call.name}" does not exist.${suggestion} Use the exact name from the list below — never guess.\n\n${toolList}`
+        }
+      }
+
+      if (ttl !== undefined && !NO_CACHE_TOOLS.has(call.name)) {
+        toolCache.set(cacheKey, { result, expiresAt: isFinite(ttl) ? Date.now() + ttl : Infinity })
+      }
+    }
+
+    console.log(`[room-agents] tool result: ${result}`)
+
+    // Save as a structured tool_call message and publish via SSE so it appears in real time
+    const safeOutput = redactSecrets(result)
+    const attachments = { tool: call.name, input: call.argsRaw, output: safeOutput.slice(0, 2000) }
+    const toolMsg = await prisma.chatMessage.create({
+      data: { roomId: toolContext!.roomId, agentId: toolContext!.agentId, senderType: 'tool_call', content: call.name, attachments },
+    }).catch(() => null)
+    if (toolMsg) {
+      await publishChatMessage(toolContext!.roomId, {
+        id:          toolMsg.id,
+        senderType:  'tool_call',
+        content:     call.name,
+        attachments,
+        sender:      { type: 'agent', id: toolContext!.agentId, name: agentName },
+        createdAt:   toolMsg.createdAt instanceof Date ? toolMsg.createdAt.toISOString() : toolMsg.createdAt,
+      })
+    }
+    return result
+  }
+
+  // Qwen3 models generate <think>…</think> tokens by default in Ollama. These thinking
+  // tokens interfere with structured tool_calls output — the model occasionally narrates
+  // the tool call as prose instead of emitting a proper tool_calls JSON block. Disabling
+  // thinking mode via think:false fixes the inconsistency without removing reasoning ability.
+  const extraBody = /qwen3/i.test(model) ? { think: false } : undefined
+  const providerFor = (withTools: boolean) => createOpenAIProvider({
+    url: `${baseUrl}/v1/chat/completions`,
+    apiKey,
+    model,
+    stream: false,
+    timeoutMs: 120_000,
+    extraBody,
+    sendEmptyTools: withTools,
+  })
+
   const maxToolRoundsSetting = await prisma.systemSetting.findUnique({ where: { key: 'agent.chat.maxToolRounds' } })
   const MAX_TOOL_ROUNDS = parseInt(String(maxToolRoundsSetting?.value ?? '15'), 10) || 15
   // Per-run token cap: stop the tool loop (and force a final reply) once this
   // turn's cumulative spend passes agent.run.maxTokens.
-  const runCap = new RunTokenCap(await getRunTokenCap())
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    if (runCap.exceeded) {
-      console.warn(`[room-agents] ${agentName}: ${runCap.message}`)
-      break
-    }
-    const body: Record<string, unknown> = { model, stream: false, messages }
-    if (allTools) body.tools = allTools
-    if (isQwen3) body.think = false
+  const cap = new RunTokenCap(await getRunTokenCap())
+  const usage: LoopUsage = { inputTokens: 0, outputTokens: 0, reported: false }
+  const result = (reply: string | null): OpenAICallResult =>
+    ({ reply, tokensUsed: usage.lastInputTokens ?? 0, contextLimit, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens })
 
-    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120_000),
-    })
-    if (!res.ok) {
-      console.error(`[room-agents] OpenAI-compat ${baseUrl} returned HTTP ${res.status}`)
-      return { reply: null, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
-    }
-
-    const data = await res.json() as OpenAIResponse
-    tokensUsed = data.usage?.prompt_tokens ?? tokensUsed
-    totalInputTokens  += data.usage?.prompt_tokens     ?? 0
-    totalOutputTokens += data.usage?.completion_tokens ?? 0
-    runCap.add((data.usage?.prompt_tokens ?? estimateTokens(JSON.stringify(messages))) + (data.usage?.completion_tokens ?? 0))
-    const choice = data.choices?.[0]
-    if (!choice) return { reply: null, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
-
-    // Plain text reply — check for fake tool calls before accepting
-    if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
-      const replyText = choice.message.content?.trim() || null
-      // Fix #1: detect when the model wrote a tool call as prose instead of using tool_calls
-      if (replyText && isFakeToolCall(replyText)) {
-        console.warn(`[room-agents] ${agentName}: detected fake tool call in text reply: "${replyText}" — injecting correction`)
-        messages.push({ role: 'assistant', content: replyText })
-        messages.push({
-          role: 'user',
-          content: `Your last reply looked like a tool call written as plain text ("${replyText}"). ` +
-            `Do NOT write tool names in your reply text. ` +
-            `Use the JSON tool_calls mechanism to call tools, or write a real text reply if you have an answer.`,
-        })
-        continue  // burn a round to get a real response
-      }
-      return { reply: replyText, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
-    }
-
-    // Tool calls — execute each and feed results back
-    messages.push({ role: 'assistant', content: choice.message.content, tool_calls: choice.message.tool_calls })
-
-    for (const tc of choice.message.tool_calls) {
-      let args: Record<string, unknown> = {}
-      try { args = JSON.parse(tc.function.arguments) } catch { /* ignore */ }
-
-      // Fix #2: check tool cache before executing (skip write ops)
-      let result: string
-      const cacheKey = makeToolCacheKey(tc.function.name, args)
-      const ttl = TOOL_CACHE_TTLS[tc.function.name]
-      const cached = !NO_CACHE_TOOLS.has(tc.function.name) && ttl !== undefined
-        ? toolCache.get(cacheKey)
-        : undefined
-
-      if (cached && Date.now() < cached.expiresAt) {
-        console.log(`[room-agents] ${agentName} tool cache hit: ${tc.function.name} (expires in ${Math.round((cached.expiresAt - Date.now()) / 1000)}s)`)
-        result = `[Cached result — fetched earlier this session]\n${cached.result}`
-      } else {
-        console.log(`[room-agents] ${agentName} calling tool: ${tc.function.name}`, args)
-
-        // MINOR fix: allowedTools was applied only to the advertised tool list (prompt
-        // layer), not at execution. A jailbroken model emitting a tool name outside the
-        // whitelist still executed it. Enforce at dispatch time.
-        if (allowedTools && allowedTools.size > 0 && !allowedTools.has(tc.function.name)) {
-          result = `Permission denied: tool '${tc.function.name}' is not in this agent's allowed tool list. An admin can grant access under Admin → Agents → Tool Permissions.`
-          if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'denied' })
-        } else if (registryToolNames.has(tc.function.name)) {
-          result = await runRegistryTool(tc.function.name, args)
-        } else if (gateway && gatewayToolNames.has(tc.function.name)) {
-          // Known gateway tool
-          result = await gateway.client.executeTool(tc.function.name, args)
-          if (toolContext?.agentId) auditToolCall({ toolName: tc.function.name, args, agentId: toolContext.agentId, agentName, outcome: 'executed' })
-        } else {
-          // Hallucinated or unknown tool name — attempt fuzzy resolution before giving up.
-          const resolved = resolveToolName(tc.function.name, allKnownToolNames)
-          if (resolved?.confidence === 'high') {
-            // Auto-correct: call the real tool without burning a round trip
-            console.warn(`[room-agents] ${agentName}: auto-correcting hallucinated tool "${tc.function.name}" → "${resolved.name}"`)
-            if (allowedTools && allowedTools.size > 0 && !allowedTools.has(resolved.name)) {
-              // The per-agent allowlist applies to auto-corrected names too
-              result = `Permission denied: tool '${resolved.name}' is not in this agent's allowed tool list.`
-            } else if (registryToolNames.has(resolved.name)) {
-              // Same guarded path as a direct call — fuzzy resolution must not bypass it
-              result = await runRegistryTool(resolved.name, args)
-            } else if (gateway) {
-              result = await gateway.client.executeTool(resolved.name, args)
-            } else {
-              result = `[Auto-corrected "${tc.function.name}" → "${resolved.name}" but still could not execute]`
-            }
-            result = `[Note: corrected "${tc.function.name}" → "${resolved.name}"]\n${result}`
-          } else {
-            // Can't resolve — return the full tool list so the model can self-correct
-            const toolList = await executeRegisteredTool('list_tools', {}, {
-              agentId: toolContext!.agentId,
-              prisma,
-              gateway: undefined,
-            }).catch(() => '')
-            const suggestion = resolved ? ` Did you mean "${resolved.name}"?` : ''
-            result = `Error: tool "${tc.function.name}" does not exist.${suggestion} Use the exact name from the list below — never guess.\n\n${toolList}`
+  let endReason: LoopEndReason = 'max_turns'
+  try {
+    for await (const ev of runToolLoop({
+      provider: providerFor(hasTools),
+      messages,
+      tools,
+      maxTurns: MAX_TOOL_ROUNDS,
+      usage,
+      assistantContent: t => t,
+      toolMessageName: true,
+      toolCallsRequireFinishReason: true,
+      runCap: {
+        cap,
+        after: (r, msgs) => (r.usage?.inputTokens ?? estimateTokens(JSON.stringify(msgs))) + (r.usage?.outputTokens ?? 0),
+      },
+      hooks: {
+        runTool: call => runRoomTool(call),
+        reviewFinal: text => {
+          const replyText = text?.trim() || null
+          if (!replyText || !isFakeToolCall(replyText)) return null
+          // The model wrote a tool call as prose instead of using tool_calls
+          console.warn(`[room-agents] ${agentName}: detected fake tool call in text reply: "${replyText}" — injecting correction`)
+          return {
+            assistant: replyText,
+            user: `Your last reply looked like a tool call written as plain text ("${replyText}"). ` +
+              `Do NOT write tool names in your reply text. ` +
+              `Use the JSON tool_calls mechanism to call tools, or write a real text reply if you have an answer.`,
           }
-        }
-
-        // Store in cache if this tool has a TTL
-        if (ttl !== undefined && !NO_CACHE_TOOLS.has(tc.function.name)) {
-          toolCache.set(cacheKey, {
-            result,
-            expiresAt: isFinite(ttl) ? Date.now() + ttl : Infinity,
-          })
-        }
-      }
-
-      console.log(`[room-agents] tool result: ${result}`)
-
-      // Save as structured tool_call message and publish via SSE so it appears in real-time
-      const safeOutput = redactSecrets(result)
-      const toolMsg = await prisma.chatMessage.create({
-        data: {
-          roomId:      toolContext!.roomId,
-          agentId:     toolContext!.agentId,
-          senderType:  'tool_call',
-          content:     tc.function.name,
-          attachments: { tool: tc.function.name, input: tc.function.arguments ?? '', output: safeOutput.slice(0, 2000) } as any,
         },
-      }).catch(() => null)
-      if (toolMsg) {
-        await publishChatMessage(toolContext!.roomId, {
-          id:          toolMsg.id,
-          senderType:  'tool_call',
-          content:     tc.function.name,
-          attachments: { tool: tc.function.name, input: tc.function.arguments ?? '', output: safeOutput.slice(0, 2000) },
-          sender:      { type: 'agent', id: toolContext!.agentId, name: agentName },
-          createdAt:   toolMsg.createdAt instanceof Date ? toolMsg.createdAt.toISOString() : toolMsg.createdAt,
-        })
-      }
-
-      messages.push({ role: 'tool', content: result, tool_call_id: tc.id, name: tc.function.name })
+      },
+    })) {
+      if (ev.type !== 'end') continue
+      if (ev.reason === 'final') return result(ev.empty ? null : ev.finalText?.trim() || null)
+      endReason = ev.reason
+      if (endReason === 'cap') console.warn(`[room-agents] ${agentName}: ${cap.message}`)
     }
+  } catch (e) {
+    if (!(e instanceof ProviderHttpError)) throw e
+    console.error(`[room-agents] OpenAI-compat ${baseUrl} returned HTTP ${e.status}`)
+    return result(null)
   }
 
   // Tool rounds exhausted — force one final response turn with no tools available
   // so the agent always replies with what it learned, never silently disappears.
-  console.warn(`[room-agents] ${agentName} hit ${runCap.exceeded ? 'the run token cap' : 'MAX_TOOL_ROUNDS'} — forcing final response turn`)
-  const finalBody: Record<string, unknown> = { model, stream: false, messages }
-  if (isQwen3) finalBody.think = false
-  // Omit tools entirely so the model must produce a text reply
-  const finalRes = await fetch(`${baseUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(finalBody),
-    signal: AbortSignal.timeout(120_000),
-  }).catch(() => null)
-  if (!finalRes?.ok) return { reply: null, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
-  const finalData = await finalRes.json() as OpenAIResponse
-  tokensUsed = finalData.usage?.prompt_tokens ?? tokensUsed
-  totalInputTokens  += finalData.usage?.prompt_tokens     ?? 0
-  totalOutputTokens += finalData.usage?.completion_tokens ?? 0
-  const finalReply = finalData.choices?.[0]?.message?.content?.trim() || null
+  console.warn(`[room-agents] ${agentName} hit ${endReason === 'cap' ? 'the run token cap' : 'MAX_TOOL_ROUNDS'} — forcing final response turn`)
+  let finalReply: string | null = null
+  try {
+    for await (const ev of providerFor(false).turn({ messages, tools: [] })) {
+      if (ev.type !== 'end') continue
+      const u = ev.result.usage
+      if (u) {
+        usage.lastInputTokens = u.inputTokens
+        usage.inputTokens += u.inputTokens
+        usage.outputTokens += u.outputTokens
+      }
+      finalReply = ev.result.text?.trim() || null
+    }
+  } catch {
+    return result(null)
+  }
   // Prepend a visible notice so the user knows the agent was cut off mid-work.
   const cutoffNotice = `> ⚠️ **Tool round limit reached** (${MAX_TOOL_ROUNDS} rounds). The agent was cut off before completing all steps. Summary of progress so far:\n\n`
-  return { reply: finalReply ? cutoffNotice + finalReply : finalReply, tokensUsed, contextLimit, inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
+  return result(finalReply ? cutoffNotice + finalReply : finalReply)
 }
 
 /** Resolve a fallback Ollama base URL from configured ExternalModels */
@@ -1014,7 +969,7 @@ export async function triggerRoomAgentReplies(
           const baseUrl = extModel.baseUrl ?? 'http://localhost:11434'
           if (extModel.provider === 'ollama') {
             // Route through OpenAI-compat endpoint so tool_calls JSON is supported.
-            // Ollama's native /api/chat has no tools array — callOllamaChat can't handle tools.
+            // (Room agents don't use Ollama's native /api/chat.)
             const result = await callOpenAIChat(agent.name, agentBasePrompt, otherParticipants, history, latestTurn, extModel.modelId, baseUrl, extModel.apiKey ?? null, toolContext, gateway, gatewayTools, activeGoal)
             reply = result.reply
             tokensUsed = result.tokensUsed

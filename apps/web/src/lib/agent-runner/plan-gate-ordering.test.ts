@@ -17,6 +17,7 @@ vi.mock('@/lib/system-prompts', () => ({
 }))
 vi.mock('@/lib/tool-registry', () => ({
   validateToolArgs: () => ({ valid: true, errors: [] }),
+  getToolDefinition: (name: string) => ({ name }),
 }))
 vi.mock('@/lib/tool-permissions', () => ({
   checkToolPermission: vi.fn(async () => ({ allowed: true })),
