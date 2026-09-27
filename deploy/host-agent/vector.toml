@@ -315,7 +315,10 @@ source = """
 [sinks.webhook]
 type = "http"
 inputs = ["build_envelope"]
-uri = "${ORION_HOST_AGENT_WEBHOOK_URL:-http://orion:3000/api/monitoring/security/webhooks/host-agent}"
+# Literal on purpose: Vector >= 0.5x no longer interpolates ${ENV} in config files
+# unless --dangerously-allow-env-var-interpolation is set (which would expose every
+# env secret to the config). The HMAC secret is read at runtime via get_env_var.
+uri = "http://orion:3000/api/monitoring/security/webhooks/host-agent"
 method = "post"
 
 [sinks.webhook.encoding]

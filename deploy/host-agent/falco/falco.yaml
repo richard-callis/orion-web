@@ -43,6 +43,32 @@ engine:
 # ops is tailing container logs expecting the plain-text format, that changes.
 json_output: true
 
+# Falco >= 0.41 moved container metadata (container.id/name/image, used by the
+# default and local rules) into the `container` plugin. Rules declare
+# `required_plugin_versions: container >= 0.4.0`, so Falco refuses to start
+# unless it is loaded. This file replaces the image's default falco.yaml, so
+# the plugin must be declared here. It reads the Docker socket via HOST_ROOT
+# (/host), which is mounted read-only in docker-compose.yml.
+plugins:
+  - name: container
+    library_path: libcontainer.so
+    init_config:
+      label_max_len: 100
+      with_size: false
+load_plugins: [container]
+
+# Rules no longer embed container fields in their output (0.41+). ORION's
+# normalizer (apps/web/src/lib/security/normalize/falco.ts) reads
+# container.name / container.image from output_fields, so append them.
+append_output:
+  - suggested_output: true
+  - match:
+      source: syscall
+    extra_fields:
+      - container.id
+      - container.name
+      - container.image
+
 # ── Output channels ─────────────────────────────────────────────────────────
 # http_output: Falco POSTs each alert to Falcosidekick which handles retries,
 # CUSTOMFIELDS injection, and forwarding to the Orion webhook.
