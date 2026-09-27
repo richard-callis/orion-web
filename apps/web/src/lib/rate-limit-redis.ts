@@ -81,8 +81,26 @@ const redisUrls = [
   'redis://localhost:6379/0',
 ]
 
+// Fail fast when Redis is unreachable: ioredis' defaults retry/queue commands
+// indefinitely, which stalled every rate-limited request during an outage.
+const CONNECT_OPTS = { connectTimeout: 2_000, maxRetriesPerRequest: 1, enableOfflineQueue: false, lazyConnect: true }
+const PING_TIMEOUT_MS = 2_500
+// After a failed init, serve from the in-memory fallback for a while instead of
+// re-attempting a connection on every request.
+const INIT_BACKOFF_MS = 30_000
+let nextInitAttempt = 0
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let t: ReturnType<typeof setTimeout>
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => { t = setTimeout(() => reject(new Error('redis ping timed out')), ms) }),
+  ]).finally(() => clearTimeout(t))
+}
+
 async function initRedisClient(): Promise<boolean> {
   if (redisClient) return true
+  if (Date.now() < nextInitAttempt) return false
 
   try {
     // Lazy-load ioredis to avoid startup cost
@@ -112,15 +130,18 @@ async function initRedisClient(): Promise<boolean> {
         // Sentinel connection options
         sentinelPassword: process.env.REDIS_SENTINEL_PASSWORD,
         password: process.env.REDIS_PASSWORD,
+        ...CONNECT_OPTS,
       })
     } else {
       const url = redisUrls.find((u: any) => u && u.trim())
       if (!url) return false
-      redisClient = new Redis(url)
+      redisClient = new Redis(url, CONNECT_OPTS)
     }
+    // Swallow client 'error' events — failures surface via the ping below.
+    redisClient.on?.('error', () => {})
 
-    // Test the connection
-    await redisClient.ping()
+    // Test the connection (bounded — never hang the caller)
+    await withTimeout(redisClient.connect().then(() => redisClient.ping()), PING_TIMEOUT_MS)
     redisAvailable = true
     // MAJOR fix: clear stale in-memory fallback state on Redis reconnect.
     // Traffic that accumulated in fallbackStore during an outage is not
@@ -136,6 +157,7 @@ async function initRedisClient(): Promise<boolean> {
     try { redisClient?.disconnect() } catch { /* already closed */ }
     redisClient = null
     redisAvailable = false
+    nextInitAttempt = Date.now() + INIT_BACKOFF_MS
     return false
   }
 }
@@ -215,6 +237,7 @@ export async function rateLimitRedis(
       limit: maxRequests,
     }
   } catch (error) {
+    try { redisClient?.disconnect() } catch { /* already closed */ }
     redisAvailable = false
     redisClient = null
     return fallbackRateLimit(key, maxRequests, windowMs)
