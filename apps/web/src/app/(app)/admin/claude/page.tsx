@@ -204,7 +204,7 @@ export default function ClaudeOAuthPage() {
               <p className="text-xs text-text-muted mt-0.5">{status.reason}</p>
             )}
           </div>
-          <button onClick={loadStatus} className="text-text-muted hover:text-text-primary transition-colors" title="Refresh credentials status">
+          <button aria-label="Refresh credentials status" onClick={loadStatus} className="text-text-muted hover:text-text-primary transition-colors" title="Refresh credentials status">
             <RefreshCw size={13} />
           </button>
         </div>

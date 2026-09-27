@@ -181,7 +181,7 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
                     className="flex-1 min-w-0 text-xs bg-bg-raised border border-accent rounded px-1 py-0.5 text-text-primary focus:outline-none"
                   />
                   <button onClick={() => commitEdit(c.id)} className="text-green-400 hover:text-green-300 flex-shrink-0"><Check size={11} /></button>
-                  <button onClick={cancelEdit} className="text-text-muted hover:text-red-400 flex-shrink-0"><X size={11} /></button>
+                  <button aria-label="Cancel" onClick={cancelEdit} className="text-text-muted hover:text-red-400 flex-shrink-0"><X size={11} /></button>
                 </div>
               ) : (
                 <>

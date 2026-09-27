@@ -68,7 +68,7 @@ export default function ApprovalsPage() {
             <option value="pending">Pending only</option>
             <option value="all">All requests</option>
           </select>
-          <button onClick={load} className="p-1.5 rounded text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
+          <button aria-label="Refresh" onClick={load} className="p-1.5 rounded text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>

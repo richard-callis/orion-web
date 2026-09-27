@@ -116,8 +116,8 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
       }
     >
       <div>
-        <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title</label>
-        <input
+        <label htmlFor="epic-title" className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title</label>
+        <input id="epic-title"
           value={title}
           onChange={e => setTitle(e.target.value)}
           onBlur={save}
@@ -126,8 +126,8 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
       </div>
 
       <div>
-        <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Status</label>
-        <select
+        <label htmlFor="epic-status" className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Status</label>
+        <select id="epic-status"
           value={status}
           onChange={e => { setStatus(e.target.value); onUpdate({ status: e.target.value }) }}
           className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
@@ -139,8 +139,8 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
       </div>
 
       <div>
-        <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
-        <textarea
+        <label htmlFor="epic-your-description" className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
+        <textarea id="epic-your-description"
           value={desc}
           onChange={e => setDesc(e.target.value)}
           onBlur={save}
@@ -151,8 +151,8 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
       </div>
 
       <div>
-        <label className="text-[10px] text-accent uppercase tracking-wide mb-1 block">Claude&apos;s Plan</label>
-        <textarea
+        <label htmlFor="epic-claude-s-plan" className="text-[10px] text-accent uppercase tracking-wide mb-1 block">Claude&apos;s Plan</label>
+        <textarea id="epic-claude-s-plan"
           value={plan}
           onChange={e => setPlan(e.target.value)}
           onBlur={save}
@@ -164,7 +164,7 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
 
       <div>
         <div className="flex items-center justify-between mb-2">
-          <label className="text-[10px] text-text-muted uppercase tracking-wide">Features ({epic.features.length})</label>
+          <span className="text-[10px] text-text-muted uppercase tracking-wide">Features ({epic.features.length})</span>
           <button onClick={onNewFeature} className="flex items-center gap-1 text-[10px] text-accent hover:text-accent/80">
             <Plus size={10} /> Add
           </button>

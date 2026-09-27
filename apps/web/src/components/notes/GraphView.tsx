@@ -1,7 +1,7 @@
 'use client'
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
 import useSWR from 'swr'
-import ForceGraph2D from 'react-force-graph-2d'
+import ForceGraph2D, { type ForceGraphMethods, type LinkObject, type NodeObject } from 'react-force-graph-2d'
 import { Search, X, ArrowLeft } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
@@ -56,7 +56,9 @@ export function GraphView() {
   const [showSemantic, setShowSemantic] = useState(true)
   const [showWikilinks, setShowWikilinks] = useState(true)
   const [hoverTooltip, setHoverTooltip] = useState<HoverTooltip | null>(null)
-  const fgRef = useRef<any>(null)
+  const fgRef = useRef<ForceGraphMethods<NodeObject<GraphNode>, LinkObject<GraphNode, GraphLink>> | undefined>(undefined)
+  // Last pointer position inside the container (the library's hover callback carries no mouse event).
+  const pointerRef = useRef<{ x: number; y: number } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
 
@@ -100,7 +102,7 @@ export function GraphView() {
   }, [visibleLinks])
 
   // Handle node hover — highlights + tooltip
-  const handleNodeHover = useCallback((node: GraphNode | null, _prevNode: GraphNode | null, event?: MouseEvent) => {
+  const handleNodeHover = useCallback((node: NodeObject<GraphNode> | null) => {
     if (!node) {
       setHighlightedNodes(new Set())
       setHighlightedLinks(new Set())
@@ -124,14 +126,8 @@ export function GraphView() {
     setHighlightedNodes(nodes)
     setHighlightedLinks(links)
 
-    if (event && containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect()
-      setHoverTooltip({
-        node,
-        x: event.clientX - rect.left + 12,
-        y: event.clientY - rect.top + 12,
-      })
-    }
+    const pointer = pointerRef.current
+    if (pointer) setHoverTooltip({ node, x: pointer.x + 12, y: pointer.y + 12 })
   }, [visibleLinks])
 
   // Zoom to node on click
@@ -229,14 +225,21 @@ export function GraphView() {
   return (
     <div className="absolute inset-0 flex">
       {/* Graph canvas */}
-      <div ref={containerRef} className="flex-1 relative bg-[#0f172a]">
+      <div
+        ref={containerRef}
+        className="flex-1 relative bg-[#0f172a]"
+        onMouseMove={e => {
+          const rect = e.currentTarget.getBoundingClientRect()
+          pointerRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+        }}
+      >
         {loading ? (
           <div className="flex items-center justify-center h-full text-text-muted text-sm">
             Loading knowledge graph...
           </div>
         ) : (
           <ForceGraph2D
-            ref={fgRef as any}
+            ref={fgRef}
             graphData={data || { nodes: [], links: [] }}
             nodeColor={nodeColor}
             nodeRelSize={4}
@@ -244,7 +247,7 @@ export function GraphView() {
             nodeCanvasObject={paintNode}
             nodeCanvasObjectMode={() => 'replace'}
             onNodeClick={handleNodeClick}
-            onNodeHover={handleNodeHover as any}
+            onNodeHover={handleNodeHover}
             linkColor={linkColor}
             linkWidth={linkWidth}
             backgroundColor="#0f172a"

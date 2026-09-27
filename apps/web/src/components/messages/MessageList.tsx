@@ -200,7 +200,7 @@ export function MessageList({
           <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
             <input ref={inputRef} value={editValue} onChange={e => setEditValue(e.target.value)} onKeyDown={e => onEditKeyDown(e, c.id)} onBlur={() => commitEdit(c.id)} className="flex-1 min-w-0 text-xs bg-bg-raised border border-accent rounded px-1 py-0.5 text-text-primary focus:outline-none" />
             <button onClick={() => commitEdit(c.id)} className="text-green-400 hover:text-green-300 flex-shrink-0"><Check size={11} /></button>
-            <button onClick={cancelEdit} className="text-text-muted hover:text-red-400 flex-shrink-0"><X size={11} /></button>
+            <button aria-label="Cancel" onClick={cancelEdit} className="text-text-muted hover:text-red-400 flex-shrink-0"><X size={11} /></button>
           </div>
         ) : (
           <>
@@ -316,7 +316,7 @@ export function MessageList({
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-3 border-b border-border-subtle flex-shrink-0">
           <span className="text-xs font-semibold text-text-secondary">AI Chats</span>
-          <button onClick={onCreateNew} className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New conversation">
+          <button aria-label="New conversation" onClick={onCreateNew} className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New conversation">
             <Plus size={14} />
           </button>
         </div>
@@ -520,7 +520,7 @@ export function MessageList({
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-3 border-b border-border-subtle flex-shrink-0">
           <span className="text-xs font-semibold text-text-secondary">Chat Rooms</span>
-          <button onClick={onCreateNew} className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New room">
+          <button aria-label="New room" onClick={onCreateNew} className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New room">
             <Plus size={14} />
           </button>
         </div>

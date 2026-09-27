@@ -135,8 +135,8 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
       }
     >
       <div>
-        <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title</label>
-        <input
+        <label htmlFor="feature-title" className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Title</label>
+        <input id="feature-title"
           value={title}
           onChange={e => setTitle(e.target.value)}
           onBlur={save}
@@ -145,8 +145,8 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
       </div>
 
       <div>
-        <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Status</label>
-        <select
+        <label htmlFor="feature-status" className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Status</label>
+        <select id="feature-status"
           value={status}
           onChange={e => { setStatus(e.target.value); onUpdate({ status: e.target.value }) }}
           className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
@@ -158,8 +158,8 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
       </div>
 
       <div>
-        <label className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
-        <textarea
+        <label htmlFor="feature-your-description" className="text-[10px] text-text-muted uppercase tracking-wide mb-1 block">Your Description</label>
+        <textarea id="feature-your-description"
           value={desc}
           onChange={e => setDesc(e.target.value)}
           onBlur={save}
@@ -170,8 +170,8 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
       </div>
 
       <div>
-        <label className="text-[10px] text-accent uppercase tracking-wide mb-1 block">Claude&apos;s Plan</label>
-        <textarea
+        <label htmlFor="feature-claude-s-plan" className="text-[10px] text-accent uppercase tracking-wide mb-1 block">Claude&apos;s Plan</label>
+        <textarea id="feature-claude-s-plan"
           value={plan}
           onChange={e => setPlan(e.target.value)}
           onBlur={save}

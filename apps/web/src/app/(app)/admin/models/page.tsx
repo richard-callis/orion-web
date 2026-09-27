@@ -176,7 +176,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
             </div>
           )}
         </div>
-        <button onClick={onClose} className="p-1.5 rounded text-text-muted hover:text-text-primary transition-colors">
+        <button aria-label="Close" onClick={onClose} className="p-1.5 rounded text-text-muted hover:text-text-primary transition-colors">
           <X size={15} />
         </button>
       </div>

@@ -299,7 +299,7 @@ export default function NotesPage() {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
         <span className="text-sm font-semibold text-text-primary">Notes</span>
-        <button
+        <button aria-label="New note"
           onClick={createNote}
           className="p-1 rounded text-text-muted hover:text-accent transition-colors"
           title="New note"
@@ -400,7 +400,7 @@ export default function NotesPage() {
             />
 
             {/* Pin */}
-            <button
+            <button aria-label={selectedNote.pinned ? 'Unpin note' : 'Pin note'}
               onClick={handlePinToggle}
               title={selectedNote.pinned ? 'Unpin' : 'Pin'}
               className={`p-1.5 rounded transition-colors ${

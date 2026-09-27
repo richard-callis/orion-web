@@ -166,7 +166,7 @@ export default function AgentGroupsPage() {
             <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Agent Groups</span>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={load} className="p-1 rounded text-text-muted hover:text-text-primary transition-colors" title="Refresh">
+            <button aria-label="Refresh" onClick={load} className="p-1 rounded text-text-muted hover:text-text-primary transition-colors" title="Refresh">
               <RefreshCw size={12} className={isValidating ? 'animate-spin' : ''} />
             </button>
             <button onClick={() => setShowCreate(true)} className="p-1 rounded text-text-muted hover:text-accent hover:bg-bg-raised transition-colors" title="New group">
