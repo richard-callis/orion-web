@@ -18,6 +18,11 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      # node-cron >= 4.3 evaluates fileURLToPath(import.meta.url) at module load,
+      # which crashes the esbuild CommonJS worker bundle (prod outage 2026-09-27,
+      # #753). Pinned to 4.2.1 until the worker bundle is ESM or the dep is replaced.
+      - dependency-name: node-cron
 
   # Base images are pinned by version + digest in each Dockerfile.
   - package-ecosystem: docker
