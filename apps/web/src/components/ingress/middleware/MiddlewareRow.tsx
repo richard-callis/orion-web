@@ -22,7 +22,7 @@ export function MiddlewareRow({ mw, onToggle, onDelete }: {
     <div className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-xs transition-colors ${
       mw.enabled ? 'border-border-subtle bg-bg-surface' : 'border-border-subtle/50 bg-bg-canvas opacity-60'
     }`}>
-      <Icon size={13} className={mw.enabled ? 'text-accent flex-shrink-0' : 'text-text-muted flex-shrink-0'} />
+      <Icon size={13} className={mw.enabled ? 'text-accent shrink-0' : 'text-text-muted shrink-0'} />
       <div className="flex-1 min-w-0">
         <span className="font-mono font-medium text-text-primary">{mw.name}</span>
         <span className="ml-2 text-[10px] text-text-muted">{typeInfo.label}</span>

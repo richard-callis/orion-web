@@ -84,15 +84,15 @@ export default function InvestigationsPage() {
               onChange={e => setSearch(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && load()}
               placeholder="Search investigations..."
-              className="w-full pl-8 pr-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+              className="w-full pl-8 pr-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-accent"
             />
           </div>
-          <button onClick={load} aria-label="Refresh investigations" className="p-1.5 rounded text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
+          <button onClick={load} aria-label="Refresh investigations" className="p-1.5 rounded-sm text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
             <RefreshCw size={13} className={isValidating ? 'animate-spin' : ''} />
           </button>
         </div>
         <select aria-label="Status filter" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="px-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none">
+          className="px-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded-sm text-text-primary focus:outline-hidden">
           <option value="">All statuses</option>
           <option value="open">Open</option>
           <option value="active">Active</option>
@@ -128,7 +128,7 @@ export default function InvestigationsPage() {
                       {inv.name}
                     </span>
                     {inv.tags?.slice(0, 2).map((tag: string) => (
-                      <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded bg-bg-raised text-text-muted">
+                      <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded-sm bg-bg-raised text-text-muted">
                         {tag}
                       </span>
                     ))}
@@ -150,7 +150,7 @@ export default function InvestigationsPage() {
 
                 {/* Badges */}
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${tlpClass(inv.tlp)}`}>
+                  <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-sm ${tlpClass(inv.tlp)}`}>
                     {inv.tlp}
                   </span>
                   <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${statusClass(inv.status)}`}>

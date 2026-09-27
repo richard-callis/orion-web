@@ -33,7 +33,7 @@ function CopyBlock({ label, icon, text, wrap }: { label: string; icon: React.Rea
           {copied ? 'Copied!' : 'Copy'}
         </button>
       </div>
-      <pre className={`text-[11px] font-mono bg-bg-raised border border-border-subtle rounded p-3 overflow-x-auto text-text-secondary ${wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>
+      <pre className={`text-[11px] font-mono bg-bg-raised border border-border-subtle rounded-sm p-3 overflow-x-auto text-text-secondary ${wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>
         {text}
       </pre>
     </div>

@@ -21,7 +21,7 @@ export function ModalHeader({ title, onClose, icon }: { title: React.ReactNode; 
         <h2 className="text-sm font-semibold text-text-primary truncate">{title}</h2>
       </div>
       {onClose && (
-        <IconButton label="Close" onClick={onClose} className="flex-shrink-0">
+        <IconButton label="Close" onClick={onClose} className="shrink-0">
           <X size={14} />
         </IconButton>
       )}
@@ -31,7 +31,7 @@ export function ModalHeader({ title, onClose, icon }: { title: React.ReactNode; 
 
 export function ErrorNote({ children }: { children: React.ReactNode }) {
   return (
-    <div role="alert" className="rounded border border-status-error/40 bg-status-error/10 px-3 py-2 text-xs text-status-error">
+    <div role="alert" className="rounded-sm border border-status-error/40 bg-status-error/10 px-3 py-2 text-xs text-status-error">
       {children}
     </div>
   )

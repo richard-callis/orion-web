@@ -72,7 +72,7 @@ export function NewRouteForm({
       </div>
       <Input value={comment} onChange={e => setComment(e.target.value)} placeholder="Comment (optional)" />
       <label className="flex items-center gap-2 cursor-pointer">
-        <input type="checkbox" checked={tls} onChange={e => setTls(e.target.checked)} className="rounded" />
+        <input type="checkbox" checked={tls} onChange={e => setTls(e.target.checked)} className="rounded-sm" />
         <span className="text-text-secondary">TLS / HTTPS</span>
       </label>
       {availableMiddlewares.length > 0 && (

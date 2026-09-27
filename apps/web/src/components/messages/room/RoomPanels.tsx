@@ -30,20 +30,20 @@ interface HeaderProps {
 
 export function RoomHeader({ room, tokenState, compacting, onCompact, onMobileBack, onInvite, onToggleGoal, onLeave }: HeaderProps) {
   return (
-    <div className="flex items-center gap-2 px-4 py-3 border-b border-border-subtle flex-shrink-0">
+    <div className="flex items-center gap-2 px-4 py-3 border-b border-border-subtle shrink-0">
       <IconButton label="Back to room list" onClick={onMobileBack} className="md:hidden hover:bg-bg-raised">
         <Hash size={16} className="text-text-muted" />
       </IconButton>
-      <Hash size={14} className="text-text-muted flex-shrink-0" aria-hidden />
+      <Hash size={14} className="text-text-muted shrink-0" aria-hidden />
       <span className="text-sm font-semibold text-text-primary truncate">{room?.name}</span>
-      {room && <span className={`px-1.5 py-0.5 rounded text-[9px] flex-shrink-0 ${TYPE_COLORS[room.type] || TYPE_COLORS.general}`}>{room.type}</span>}
+      {room && <span className={`px-1.5 py-0.5 rounded-sm text-[9px] shrink-0 ${TYPE_COLORS[room.type] || TYPE_COLORS.general}`}>{room.type}</span>}
       <ContextWindowBar
         tokenCount={tokenState.count}
         tokenLimit={tokenState.limit}
         onCompact={onCompact}
         compacting={compacting}
       />
-      <div className="flex items-center gap-1 ml-auto flex-shrink-0">
+      <div className="flex items-center gap-1 ml-auto shrink-0">
         <IconButton label="Add member" onClick={onInvite} className="p-1.5 hover:bg-bg-raised hover:text-accent">
           <Plus size={14} />
         </IconButton>
@@ -97,7 +97,7 @@ export function InlineInputRow({ label, placeholder, submitLabel, busyLabel, bus
       <button
         onClick={submit}
         disabled={busy || (requireText && !text.trim())}
-        className={`text-xs px-3 py-1.5 rounded disabled:opacity-40 transition-colors ${toneClass}`}
+        className={`text-xs px-3 py-1.5 rounded-sm disabled:opacity-40 transition-colors ${toneClass}`}
       >
         {busy ? busyLabel : submitLabel}
       </button>
@@ -111,10 +111,10 @@ export function InlineInputRow({ label, placeholder, submitLabel, busyLabel, bus
 export function MembersBar({ members, onKick }: { members: RoomMember[]; onKick: (m: RoomMember) => void }) {
   if (members.length === 0) return null
   return (
-    <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border-subtle flex-shrink-0 overflow-x-auto">
-      <span className="text-[10px] text-text-muted flex-shrink-0">Members:</span>
+    <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border-subtle shrink-0 overflow-x-auto">
+      <span className="text-[10px] text-text-muted shrink-0">Members:</span>
       {members.map((m, i) => (
-        <span key={m.agentId ?? m.userId ?? i} className="group/member flex items-center gap-1 text-[10px] text-text-secondary bg-bg-raised px-2 py-0.5 rounded-full flex-shrink-0">
+        <span key={m.agentId ?? m.userId ?? i} className="group/member flex items-center gap-1 text-[10px] text-text-secondary bg-bg-raised px-2 py-0.5 rounded-full shrink-0">
           {m.agent ? <Bot size={11} className="text-accent" /> : <UserIcon size={11} />}
           {m.agent?.name || m.user?.name || m.user?.username || 'unknown'}
           {m.role === 'lead' && <span className="text-accent">·</span>}
@@ -145,26 +145,26 @@ interface GoalBannerProps {
 export function GoalBanner({ goal, completing, onComplete, onAbandon }: GoalBannerProps) {
   const [showComplete, setShowComplete] = useState(false)
   return (
-    <div className="flex-shrink-0 border-b border-border-subtle">
+    <div className="shrink-0 border-b border-border-subtle">
       <div className="flex items-center justify-between px-4 py-2 bg-accent/5">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-accent flex-shrink-0" aria-hidden>🎯</span>
+          <span className="text-accent shrink-0" aria-hidden>🎯</span>
           <span className="text-xs text-text-primary truncate">{goal.text}</span>
-          <span className="text-xs text-text-muted flex-shrink-0">
+          <span className="text-xs text-text-muted shrink-0">
             · {Math.round((Date.now() - new Date(goal.createdAt).getTime()) / 60000)}m ago
           </span>
         </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+        <div className="flex items-center gap-1.5 shrink-0 ml-2">
           <button
             onClick={() => setShowComplete(v => !v)}
             aria-expanded={showComplete}
-            className="text-[11px] px-2 py-0.5 rounded bg-status-healthy/15 text-status-healthy hover:bg-status-healthy/25 transition-colors"
+            className="text-[11px] px-2 py-0.5 rounded-sm bg-status-healthy/15 text-status-healthy hover:bg-status-healthy/25 transition-colors"
           >
             Complete ✓
           </button>
           <button
             onClick={onAbandon}
-            className="text-[11px] px-2 py-0.5 rounded bg-status-error/10 text-status-error hover:bg-status-error/20 transition-colors"
+            className="text-[11px] px-2 py-0.5 rounded-sm bg-status-error/10 text-status-error hover:bg-status-error/20 transition-colors"
           >
             Abandon ×
           </button>
@@ -193,7 +193,7 @@ export function GoalBanner({ goal, completing, onComplete, onAbandon }: GoalBann
 export function TypingIndicator({ names }: { names: string[] }) {
   if (names.length === 0) return null
   return (
-    <div className="px-4 py-1 flex items-center gap-1.5 flex-shrink-0" aria-live="polite">
+    <div className="px-4 py-1 flex items-center gap-1.5 shrink-0" aria-live="polite">
       <span className="flex gap-0.5 items-end" aria-hidden>
         <span className="w-1 h-1 rounded-full bg-accent animate-bounce0" />
         <span className="w-1 h-1 rounded-full bg-accent animate-bounce150" />

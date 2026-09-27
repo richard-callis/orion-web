@@ -192,7 +192,7 @@ export default function SecuritySettings() {
                 aria-label={`${source.name} URL`}
                 value={config[source.key] || source.default}
                 onChange={e => setConfig(prev => ({ ...prev, [source.key]: e.target.value }))}
-                className="w-full px-3 py-1.5 text-xs bg-bg-surface border border-border-subtle rounded-md font-mono text-text-primary focus:outline-none focus:border-accent"
+                className="w-full px-3 py-1.5 text-xs bg-bg-surface border border-border-subtle rounded-md font-mono text-text-primary focus:outline-hidden focus:border-accent"
                 placeholder={source.default}
               />
             </div>
@@ -306,7 +306,7 @@ export default function SecuritySettings() {
                 value={selectedEnvId}
                 onChange={e => setSelectedEnvId(e.target.value)}
                 disabled={deploying}
-                className="w-full px-3 py-1.5 text-xs bg-bg-surface border border-border-subtle rounded-md text-text-primary focus:outline-none focus:border-accent disabled:opacity-50"
+                className="w-full px-3 py-1.5 text-xs bg-bg-surface border border-border-subtle rounded-md text-text-primary focus:outline-hidden focus:border-accent disabled:opacity-50"
               >
                 {k8sEnvs.map(e => (
                   <option key={e.id} value={e.id}>

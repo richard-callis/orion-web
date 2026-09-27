@@ -229,7 +229,7 @@ export function SecretsTab({ envId }: { envId: string }) {
                   <td className="px-3 py-2 font-mono text-xs text-text-muted truncate max-w-[180px]">{s.remoteRef}</td>
                   <td className="px-3 py-2 text-xs text-text-muted">{s.refreshInterval}</td>
                   <td className="px-3 py-2">
-                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-medium ${STATUS_COLORS[s.status] ?? STATUS_COLORS.draft}`}>
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-sm border text-[10px] font-medium ${STATUS_COLORS[s.status] ?? STATUS_COLORS.draft}`}>
                       {s.status}
                     </span>
                   </td>
@@ -274,7 +274,7 @@ export function SecretsTab({ envId }: { envId: string }) {
                             <span className="text-text-muted">Key mappings:</span>
                             <div className="mt-1 flex flex-wrap gap-1.5">
                               {s.dataKeys.map((k, i) => (
-                                <span key={i} className="font-mono text-[10px] bg-bg-sidebar border border-border-subtle px-1.5 py-0.5 rounded">
+                                <span key={i} className="font-mono text-[10px] bg-bg-sidebar border border-border-subtle px-1.5 py-0.5 rounded-sm">
                                   {k.remoteKey} → {k.secretKey}
                                 </span>
                               ))}
@@ -319,13 +319,13 @@ export function SecretsTab({ envId }: { envId: string }) {
           label="Update secret values"
           className="w-full max-w-lg bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
         >
-          <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle flex-shrink-0">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
             <div className="flex items-center gap-2">
               <Pencil size={14} className="text-accent" />
               <span className="text-sm font-semibold text-text-primary">Update Secret Values</span>
               <span className="font-mono text-xs text-text-muted">· {editSecret.name}</span>
             </div>
-            <button aria-label="Close" onClick={() => setEditSecret(null)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
+            <button aria-label="Close" onClick={() => setEditSecret(null)} className="p-1 rounded-sm text-text-muted hover:text-text-primary"><X size={16} /></button>
           </div>
 
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
@@ -381,7 +381,7 @@ export function SecretsTab({ envId }: { envId: string }) {
                       }}
                       aria-label={row.existing ? `Delete ${row.vaultKey} from Vault` : 'Remove row'}
                       title={row.existing ? 'Delete this key from Vault' : 'Remove row'}
-                      className="p-1 rounded text-text-muted hover:text-status-error transition-colors"
+                      className="p-1 rounded-sm text-text-muted hover:text-status-error transition-colors"
                     >
                       <X size={12} />
                     </button>
@@ -389,7 +389,7 @@ export function SecretsTab({ envId }: { envId: string }) {
                 ))}
               </div>
               {editRemoved.length > 0 && (
-                <div className="rounded border border-status-error/30 bg-status-error/10 px-3 py-2 text-[10px] text-status-error flex items-center justify-between gap-2">
+                <div className="rounded-sm border border-status-error/30 bg-status-error/10 px-3 py-2 text-[10px] text-status-error flex items-center justify-between gap-2">
                   <span>Will be <strong>deleted</strong> from Vault: <span className="font-mono">{editRemoved.join(', ')}</span></span>
                   <button
                     onClick={() => {
@@ -407,16 +407,16 @@ export function SecretsTab({ envId }: { envId: string }) {
           </div>
 
           {editError && (
-            <div className="px-5 py-2 border-t border-status-error/30 bg-status-error/10 text-xs text-status-error flex items-center gap-2 flex-shrink-0">
+            <div className="px-5 py-2 border-t border-status-error/30 bg-status-error/10 text-xs text-status-error flex items-center gap-2 shrink-0">
               <ServerCrash size={12} />
               <span>{editError}</span>
             </div>
           )}
-          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle flex-shrink-0">
-            <button onClick={() => setEditSecret(null)} className="px-3 py-1.5 rounded text-xs border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle shrink-0">
+            <button onClick={() => setEditSecret(null)} className="px-3 py-1.5 rounded-sm text-xs border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
               Cancel
             </button>
-            <button onClick={handleEditSave} disabled={editSaving} className="px-4 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50 flex items-center gap-1.5 transition-colors">
+            <button onClick={handleEditSave} disabled={editSaving} className="px-4 py-1.5 rounded-sm text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50 flex items-center gap-1.5 transition-colors">
               {editSaving ? <RefreshCw size={11} className="animate-spin" /> : <KeyRound size={11} />}
               {editSaving ? 'Writing to Vault…' : 'Write to Vault'}
             </button>
@@ -432,12 +432,12 @@ export function SecretsTab({ envId }: { envId: string }) {
           className="w-full max-w-xl bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
         >
           {/* Modal header */}
-          <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle flex-shrink-0">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
             <div className="flex items-center gap-2">
               <KeyRound size={14} className="text-accent" />
               <span className="text-sm font-semibold text-text-primary">Add External Secret</span>
             </div>
-            <button aria-label="Close" onClick={() => setShowModal(false)} className="p-1 rounded text-text-muted hover:text-text-primary"><X size={16} /></button>
+            <button aria-label="Close" onClick={() => setShowModal(false)} className="p-1 rounded-sm text-text-muted hover:text-text-primary"><X size={16} /></button>
           </div>
 
           {/* Modal body */}
@@ -546,7 +546,7 @@ export function SecretsTab({ envId }: { envId: string }) {
                     <Input aria-label={`Kubernetes key for ${row.vaultKey || `key ${i + 1}`}`} placeholder={row.vaultKey || 'DB_PASSWORD'} value={row.k8sKey}
                       onChange={e => updateValueRow(i, 'k8sKey', e.target.value)} />
                     <button aria-label="Remove row" onClick={() => removeValueRow(i)} disabled={secretValues.length === 1}
-                      className="p-1 rounded text-text-muted hover:text-status-error transition-colors disabled:opacity-30">
+                      className="p-1 rounded-sm text-text-muted hover:text-status-error transition-colors disabled:opacity-30">
                       <X size={12} />
                     </button>
                   </div>
@@ -564,16 +564,16 @@ export function SecretsTab({ envId }: { envId: string }) {
 
           {/* Modal footer */}
           {modalError && (
-            <div className="px-5 py-2 border-t border-status-error/30 bg-status-error/10 text-xs text-status-error flex items-center gap-2 flex-shrink-0">
+            <div className="px-5 py-2 border-t border-status-error/30 bg-status-error/10 text-xs text-status-error flex items-center gap-2 shrink-0">
               <ServerCrash size={12} />
               <span>{modalError}</span>
             </div>
           )}
-          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle flex-shrink-0">
-            <button onClick={() => setShowModal(false)} className="px-3 py-1.5 rounded text-xs border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
+          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border-subtle shrink-0">
+            <button onClick={() => setShowModal(false)} className="px-3 py-1.5 rounded-sm text-xs border border-border-subtle text-text-muted hover:text-text-primary transition-colors">
               Cancel
             </button>
-            <button onClick={handleSave} disabled={saving} className="px-4 py-1.5 rounded text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50 flex items-center gap-1.5 transition-colors">
+            <button onClick={handleSave} disabled={saving} className="px-4 py-1.5 rounded-sm text-xs bg-accent/15 text-accent hover:bg-accent/25 border border-accent/30 disabled:opacity-50 flex items-center gap-1.5 transition-colors">
               {saving ? <RefreshCw size={11} className="animate-spin" /> : <KeyRound size={11} />}
               {saving ? 'Writing to Vault…' : 'Write to Vault'}
             </button>

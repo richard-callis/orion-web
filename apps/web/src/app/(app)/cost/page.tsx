@@ -64,7 +64,7 @@ function Sparkline({ data }: { data: number[] }) {
       {data.map((v, i) => (
         <div
           key={i}
-          className="flex-1 bg-accent/50 rounded-sm"
+          className="flex-1 bg-accent/50 rounded-xs"
           style={{ height: `${Math.max(10, (v / max) * 100)}%` }}
           title={String(v)}
         />
@@ -105,7 +105,7 @@ export default function CostPage() {
   return (
     <div className="flex flex-col h-full overflow-auto">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
         <div className="flex items-center gap-2">
           <Coins size={18} className="text-accent" />
           <h1 className="text-sm font-semibold text-text-primary">Token Usage & Cost</h1>
@@ -116,7 +116,7 @@ export default function CostPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center border border-border-subtle rounded overflow-hidden">
+          <div className="flex items-center border border-border-subtle rounded-sm overflow-hidden">
             {([7, 30, 90] as Days[]).map(d => (
               <button
                 key={d}
@@ -133,7 +133,7 @@ export default function CostPage() {
           </div>
           <button
             onClick={() => load(days)}
-            className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
+            className="p-1.5 rounded-sm text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
             title="Refresh"
           >
             <RefreshCw size={14} />
@@ -314,7 +314,7 @@ export default function CostPage() {
                           <td className="px-4 py-2.5 font-mono text-xs text-text-primary">
                             {m.modelId}
                             {m.selfHosted && (
-                              <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] bg-accent/10 text-accent">self-hosted</span>
+                              <span className="ml-2 px-1.5 py-0.5 rounded-sm text-[10px] bg-accent/10 text-accent">self-hosted</span>
                             )}
                           </td>
                           <td className="px-4 py-2.5 text-right text-xs text-text-secondary">{fmt(m.inputTokens)}</td>

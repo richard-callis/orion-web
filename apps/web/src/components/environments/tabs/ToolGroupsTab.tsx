@@ -63,12 +63,12 @@ export function ToolGroupsTab({ env }: { env: Environment }) {
             return (
               <div key={tg.id} className="rounded-lg border border-border-subtle bg-bg-card overflow-hidden">
                 <div className="flex items-center gap-3 px-4 py-3 border-b border-border-subtle bg-bg-raised/50">
-                  <Layers size={13} className="text-text-muted flex-shrink-0" aria-hidden />
+                  <Layers size={13} className="text-text-muted shrink-0" aria-hidden />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-text-primary">{tg.name}</p>
                     {tg.description && <p className="text-xs text-text-muted">{tg.description}</p>}
                   </div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded font-medium flex items-center gap-1 ${TIER_BADGE[tg.minimumTier] ?? 'bg-bg-raised text-text-muted border border-border-subtle'}`}>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-sm font-medium flex items-center gap-1 ${TIER_BADGE[tg.minimumTier] ?? 'bg-bg-raised text-text-muted border border-border-subtle'}`}>
                     <Shield size={9} aria-hidden /> min: {tg.minimumTier}
                   </span>
                   <IconButton label={`Edit ${tg.name}`} onClick={() => setModalGroup(tg)} className="hover:text-accent">
@@ -76,7 +76,7 @@ export function ToolGroupsTab({ env }: { env: Environment }) {
                   </IconButton>
                   {confirmDelete === tg.id ? (
                     <div className="flex items-center gap-1">
-                      <button onClick={() => deleteGroup(tg.id)} className="px-2 py-0.5 text-[10px] rounded bg-status-error text-white">Del</button>
+                      <button onClick={() => deleteGroup(tg.id)} className="px-2 py-0.5 text-[10px] rounded-sm bg-status-error text-white">Del</button>
                       <IconButton label="Cancel delete" onClick={() => setConfirmDelete(null)}><X size={10} /></IconButton>
                     </div>
                   ) : (
@@ -94,10 +94,10 @@ export function ToolGroupsTab({ env }: { env: Environment }) {
                     </button>
                   </div>
                   {addingTo === tg.id && (
-                    <div className="rounded border border-border-subtle bg-bg-raised p-2 space-y-1 max-h-36 overflow-y-auto">
+                    <div className="rounded-sm border border-border-subtle bg-bg-raised p-2 space-y-1 max-h-36 overflow-y-auto">
                       {addable.map(t => (
                         <button key={t.id} onClick={() => addTool(tg.id, t.id)}
-                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left hover:bg-bg-card transition-colors">
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-xs text-left hover:bg-bg-card transition-colors">
                           <Zap size={11} className="text-text-muted" aria-hidden />
                           <span className="font-mono text-text-primary">{t.name}</span>
                         </button>
@@ -110,7 +110,7 @@ export function ToolGroupsTab({ env }: { env: Environment }) {
                   ) : (
                     <div className="flex flex-wrap gap-1.5">
                       {tg.tools.map(tt => (
-                        <span key={tt.toolId} className="flex items-center gap-1 px-2 py-0.5 rounded bg-bg-raised border border-border-subtle text-[11px] text-text-secondary font-mono">
+                        <span key={tt.toolId} className="flex items-center gap-1 px-2 py-0.5 rounded-sm bg-bg-raised border border-border-subtle text-[11px] text-text-secondary font-mono">
                           {tt.tool.name}
                           <button onClick={() => removeTool(tg.id, tt.toolId)} aria-label={`Remove ${tt.tool.name} from ${tg.name}`}
                             className="text-text-muted hover:text-status-error transition-colors">
@@ -125,7 +125,7 @@ export function ToolGroupsTab({ env }: { env: Environment }) {
                       <p className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1">Agent group access</p>
                       <div className="flex flex-wrap gap-1.5">
                         {tg.agentAccess.map(aa => (
-                          <span key={aa.agentGroupId} className="px-2 py-0.5 rounded bg-accent/10 border border-accent/20 text-[11px] text-accent">
+                          <span key={aa.agentGroupId} className="px-2 py-0.5 rounded-sm bg-accent/10 border border-accent/20 text-[11px] text-accent">
                             {aa.agentGroup.name}
                           </span>
                         ))}

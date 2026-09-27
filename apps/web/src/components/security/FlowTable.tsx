@@ -92,7 +92,7 @@ export default function FlowTable() {
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search flows…"
-              className="w-full pl-8 pr-3 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded-md text-text-primary focus:outline-none focus:border-accent"
+              className="w-full pl-8 pr-3 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded-md text-text-primary focus:outline-hidden focus:border-accent"
             />
           </div>
           <span className="text-xs text-text-muted">{sorted.length} flows</span>
