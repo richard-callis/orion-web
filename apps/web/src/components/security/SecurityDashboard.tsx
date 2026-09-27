@@ -1,7 +1,11 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { Shield, AlertTriangle, Activity, Zap, CheckCircle2, Loader2, Info } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import useSWR from 'swr'
+import { errorMessage } from '@/lib/api'
+import { useEventSource } from '@/hooks/useSSE'
+import type { AlertEvent } from './AlertFeed'
+import { Shield, AlertTriangle, Zap, CheckCircle2, Loader2, Info } from 'lucide-react'
 import Link from 'next/link'
 import AlertFeed from './AlertFeed'
 import FlowTable from './FlowTable'
@@ -57,49 +61,43 @@ function StatCard({ icon: Icon, label, value, color }: {
   )
 }
 
+interface OverviewIncident {
+  id: string; severity: number; status: string; rootCauseSummary: string | null; attackerKey: string | null; openedAt: string
+}
+interface OverviewInvestigation {
+  id: string; name: string; severity: number; status: string; _count?: { incidents?: number; observables?: number }
+}
+interface OverviewApproval { id: string; actionType: string; target: unknown; createdAt: string }
+interface Overview {
+  riskScore?: number
+  activeIncidents?: number
+  blockCount?: number
+  anomalyCount?: number
+  pendingApprovals?: number
+  recentAlerts?: AlertEvent[]
+  recentIncidents?: OverviewIncident[]
+  recentInvestigations?: OverviewInvestigation[]
+  pendingApprovalsList?: OverviewApproval[]
+}
+
 type Tab = 'incidents' | 'investigations' | 'alerts' | 'approvals' | 'flows' | 'sources' | 'logs' | 'settings'
 
 export default function SecurityDashboard() {
-  const [data, setData] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('incidents')
+  // Polled every 30s (paused while the tab is hidden) plus SSE nudges below.
+  const { data, error: loadError, isLoading: loading, mutate } =
+    useSWR<Overview>('/api/monitoring/security/overview', { refreshInterval: 30_000 })
+  const error = loadError && !data ? errorMessage(loadError, 'Failed to load') : null
 
-  const loadOverview = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const res = await fetch('/api/monitoring/security/overview', { signal })
-      if (!res.ok) throw new Error(`${res.status}`)
-      const d = await res.json()
-      setData(d)
-      setError(null)
-    } catch (e: unknown) {
-      if (e instanceof DOMException && e.name === 'AbortError') return
-      setError(e instanceof Error ? e.message : 'Failed to load')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    const controller = new AbortController()
-    loadOverview(controller.signal)
-    const interval = setInterval(() => loadOverview(controller.signal), 30_000)
-    return () => { clearInterval(interval); controller.abort() }
-  }, [loadOverview])
-
-  // Real-time incident updates via SSE, alongside the 30s poll above.
-  // Debounce/coalesce bursts within 2s to avoid a refetch storm when many
-  // incidents land at once (e.g. correlation engine opening a batch).
-  useEffect(() => {
-    let timeout: ReturnType<typeof setTimeout> | null = null
-    const source = new EventSource('/api/monitoring/security/stream?channel=incidents')
-    source.onmessage = () => {
-      if (timeout) clearTimeout(timeout)
-      timeout = setTimeout(() => loadOverview(), 2000)
-    }
-    source.onerror = () => {} // auto-reconnects
-    return () => { source.close(); if (timeout) clearTimeout(timeout) }
-  }, [loadOverview])
+  // Real-time incident updates via SSE. Debounce/coalesce bursts within 2s to
+  // avoid a refetch storm when many incidents land at once (e.g. correlation
+  // engine opening a batch).
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current) }, [])
+  useEventSource('/api/monitoring/security/stream?channel=incidents', () => {
+    if (debounce.current) clearTimeout(debounce.current)
+    debounce.current = setTimeout(() => { void mutate() }, 2000)
+  })
 
   if (loading) {
     return (
@@ -191,7 +189,7 @@ export default function SecurityDashboard() {
                 </Link>
               </div>
               <div className="divide-y divide-border-subtle">
-                {data.recentIncidents.map((inc: any) => (
+                {data.recentIncidents.map((inc) => (
                   <Link
                     key={inc.id}
                     href={`/security/incidents/${inc.id}`}
@@ -239,7 +237,7 @@ export default function SecurityDashboard() {
                 </Link>
               </div>
               <div className="divide-y divide-border-subtle">
-                {data.recentInvestigations.map((inv: any) => (
+                {data.recentInvestigations.map((inv) => (
                   <Link
                     key={inv.id}
                     href={`/security/investigations/${inv.id}`}
@@ -294,7 +292,7 @@ export default function SecurityDashboard() {
             </Link>
           </div>
           <div className="divide-y divide-border-subtle">
-            {data?.pendingApprovalsList?.length ? data.pendingApprovalsList.slice(0, 5).map((a: any) => (
+            {data?.pendingApprovalsList?.length ? data.pendingApprovalsList.slice(0, 5).map((a) => (
               <div key={a.id} className="flex items-center gap-3 px-4 py-3">
                 <AlertTriangle size={14} className="text-status-warning shrink-0" />
                 <div className="flex-1 min-w-0">

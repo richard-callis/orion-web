@@ -2,6 +2,9 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Search, ChevronDown, ChevronRight, Loader2, AlertCircle, Terminal } from 'lucide-react'
+import useSWR from 'swr'
+import { clickableProps } from '@/components/ui/clickable'
+import { apiFetch, errorMessage } from '@/lib/api'
 
 type LokiStream = {
   stream: Record<string, string>
@@ -83,7 +86,7 @@ function LogRow({ entry }: { entry: LogEntry }) {
     >
       <div
         className="flex items-start gap-2 px-3 py-1.5 cursor-pointer hover:bg-bg-raised text-xs font-mono group"
-        onClick={() => setExpanded(e => !e)}
+        {...clickableProps(() => setExpanded(e => !e), { expanded })}
       >
         <span className="text-text-muted shrink-0 w-4 mt-0.5">
           {expanded
@@ -123,7 +126,6 @@ export default function LogExplorer() {
   const [entries, setEntries] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [labels, setLabels] = useState<string[]>([])
   const [labelValues, setLabelValues] = useState<Record<string, string[]>>({})
   const [showLabelPicker, setShowLabelPicker] = useState(false)
   const [expandedLabel, setExpandedLabel] = useState<string | null>(null)
@@ -131,12 +133,9 @@ export default function LogExplorer() {
   const runGenRef = useRef(0)
   const labelPickerRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    fetch('/api/logs/labels')
-      .then(r => r.json())
-      .then(d => setLabels(d?.data ?? []))
-      .catch(() => {})
-  }, [])
+  // Label list is optional (the picker is just empty if Loki can't answer)
+  const { data: labelsData } = useSWR<{ data?: string[] }>('/api/logs/labels', { revalidateOnFocus: false, shouldRetryOnError: false })
+  const labels = labelsData?.data ?? []
 
   // Close label picker on outside click
   useEffect(() => {
@@ -153,8 +152,7 @@ export default function LogExplorer() {
   const fetchValues = useCallback(async (label: string) => {
     if (labelValues[label]) { setExpandedLabel(label); return }
     try {
-      const r = await fetch(`/api/logs/label/${encodeURIComponent(label)}/values`)
-      const d = await r.json()
+      const d = await apiFetch<{ data?: string[] }>(`/api/logs/label/${encodeURIComponent(label)}/values`)
       setLabelValues(prev => ({ ...prev, [label]: d?.data ?? [] }))
       setExpandedLabel(label)
     } catch {
@@ -198,8 +196,7 @@ export default function LogExplorer() {
     })
 
     try {
-      const res = await fetch(`/api/logs/query?${params}`, { signal: abortRef.current.signal })
-      const data: LokiResponse = await res.json()
+      const data = await apiFetch<LokiResponse>(`/api/logs/query?${params}`, { signal: abortRef.current.signal })
       if (gen !== runGenRef.current) return
       if (data.error) { setError(data.error); setEntries([]); return }
       if (data.data?.resultType !== 'streams') { setError('Unexpected result type'); setEntries([]); return }
@@ -207,7 +204,7 @@ export default function LogExplorer() {
       setLastRunPresetIdx(presetIdx)
     } catch (e: unknown) {
       if (e instanceof DOMException && e.name === 'AbortError') return
-      if (gen === runGenRef.current) setError(e instanceof Error ? e.message : 'Query failed')
+      if (gen === runGenRef.current) setError(errorMessage(e, 'Query failed'))
     } finally {
       if (gen === runGenRef.current) setLoading(false)
     }
