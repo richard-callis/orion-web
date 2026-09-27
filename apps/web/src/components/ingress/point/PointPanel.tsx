@@ -10,8 +10,11 @@ import { BootstrapPanel } from './BootstrapPanel'
 import { NewRouteForm } from '../routes/NewRouteForm'
 import { RouteRow } from '../routes/RouteRow'
 import { StatusDot, InlineEdit } from '../shared'
-import { btnPrimary } from '../styles'
-import type { IngressPoint, Domain, Env, PointTab } from '../types'
+import type { IngressMiddleware, IngressPoint, IngressRoute, Domain, Env, PointTab } from '../types'
+import { Button } from '@/components/ui/Button'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
+import { clickableProps } from '@/components/ui/clickable'
 
 export function PointPanel({ point, domain, environments, onChange }: {
   point: IngressPoint
@@ -19,6 +22,7 @@ export function PointPanel({ point, domain, environments, onChange }: {
   environments: Env[]
   onChange: (updated: IngressPoint) => void
 }) {
+  const toast = useToast()
   const [expanded, setExpanded]   = useState(true)
   const [tab, setTab]             = useState<PointTab>('routes')
   const [routes, setRoutes]       = useState(point.routes)
@@ -26,53 +30,67 @@ export function PointPanel({ point, domain, environments, onChange }: {
   const [showSSOModal, setShowSSO] = useState(false)
 
   const patchPoint = async (data: Record<string, unknown>) => {
-    const res = await fetch(`/api/ingress/points/${point.id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
-    })
-    const updated = await res.json()
-    onChange(updated)
+    try {
+      onChange(await apiFetch<IngressPoint>(`/api/ingress/points/${point.id}`, { method: 'PATCH', body: data }))
+    } catch (e) {
+      toast.error(`Failed to update ingress point: ${errorMessage(e)}`)
+    }
   }
 
   const toggleRoute = async (routeId: string) => {
-    const res = await fetch(`/api/ingress/routes/${routeId}/toggle`, { method: 'POST' })
-    const updated = await res.json()
-    setRoutes(r => r.map(x => x.id === routeId ? updated : x))
+    try {
+      const updated = await apiFetch<IngressRoute>(`/api/ingress/routes/${routeId}/toggle`, { method: 'POST' })
+      setRoutes(r => r.map(x => x.id === routeId ? updated : x))
+    } catch (e) {
+      toast.error(`Failed to toggle route: ${errorMessage(e)}`)
+    }
   }
 
   const deleteRoute = async (routeId: string) => {
-    await fetch(`/api/ingress/routes/${routeId}`, { method: 'DELETE' })
-    setRoutes(r => r.filter(x => x.id !== routeId))
+    try {
+      await apiFetch(`/api/ingress/routes/${routeId}`, { method: 'DELETE' })
+      setRoutes(r => r.filter(x => x.id !== routeId))
+    } catch (e) {
+      toast.error(`Failed to delete route: ${errorMessage(e)}`)
+    }
   }
 
   const saveRouteComment = async (routeId: string, comment: string) => {
-    const res = await fetch(`/api/ingress/routes/${routeId}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comment }),
-    })
-    const updated = await res.json()
-    setRoutes(r => r.map(x => x.id === routeId ? updated : x))
+    try {
+      const updated = await apiFetch<IngressRoute>(`/api/ingress/routes/${routeId}`, { method: 'PATCH', body: { comment } })
+      setRoutes(r => r.map(x => x.id === routeId ? updated : x))
+    } catch (e) {
+      toast.error(`Failed to save comment: ${errorMessage(e)}`)
+    }
   }
 
   const saveRouteMiddlewares = async (routeId: string, mwNames: string[]) => {
-    const res = await fetch(`/api/ingress/routes/${routeId}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ middlewares: mwNames }),
-    })
-    const updated = await res.json()
-    setRoutes(r => r.map(x => x.id === routeId ? updated : x))
+    try {
+      const updated = await apiFetch<IngressRoute>(`/api/ingress/routes/${routeId}`, { method: 'PATCH', body: { middlewares: mwNames } })
+      setRoutes(r => r.map(x => x.id === routeId ? updated : x))
+    } catch (e) {
+      toast.error(`Failed to update middlewares: ${errorMessage(e)}`)
+    }
   }
 
   const toggleMw = async (mwId: string) => {
     const mw = middlewares.find(m => m.id === mwId)
     if (!mw) return
-    const res = await fetch(`/api/ingress/middlewares/${mwId}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !mw.enabled }),
-    })
-    const updated = await res.json()
-    setMws(ms => ms.map(m => m.id === mwId ? updated : m))
+    try {
+      const updated = await apiFetch<IngressMiddleware>(`/api/ingress/middlewares/${mwId}`, { method: 'PATCH', body: { enabled: !mw.enabled } })
+      setMws(ms => ms.map(m => m.id === mwId ? updated : m))
+    } catch (e) {
+      toast.error(`Failed to toggle middleware: ${errorMessage(e)}`)
+    }
   }
 
   const deleteMw = async (mwId: string) => {
-    await fetch(`/api/ingress/middlewares/${mwId}`, { method: 'DELETE' })
-    setMws(ms => ms.filter(m => m.id !== mwId))
+    try {
+      await apiFetch(`/api/ingress/middlewares/${mwId}`, { method: 'DELETE' })
+      setMws(ms => ms.filter(m => m.id !== mwId))
+    } catch (e) {
+      toast.error(`Failed to delete middleware: ${errorMessage(e)}`)
+    }
   }
 
   const enabledCount  = routes.filter(r => r.enabled).length
@@ -89,7 +107,7 @@ export function PointPanel({ point, domain, environments, onChange }: {
       {/* Point header */}
       <div
         className="flex items-center gap-3 px-4 py-3 bg-bg-raised cursor-pointer hover:bg-bg-surface transition-colors select-none"
-        onClick={() => setExpanded(e => !e)}
+        {...clickableProps(() => setExpanded(e => !e), { expanded })}
       >
         <StatusDot status={point.status} />
         <Server size={13} className="text-text-muted flex-shrink-0" />
@@ -223,12 +241,12 @@ export function PointPanel({ point, domain, environments, onChange }: {
                 <div className="mt-3 pt-3 border-t border-border-subtle">
                   <p className="text-[11px] font-medium text-text-muted mb-2">Deploy Identity Provider (SSO)</p>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <button
+                    <Button
                       onClick={() => setShowSSO(true)}
-                      className={`${btnPrimary} text-[11px]`}
+                      className="text-[11px]"
                     >
                       <KeyRound size={11} /> Bootstrap SSO Provider
-                    </button>
+                    </Button>
                     <span className="text-[10px] text-text-muted">
                       Authentik · Authelia · OAuth2 Proxy · Keycloak · Custom OIDC
                     </span>

@@ -1,43 +1,17 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import { Globe, RefreshCw, AlertCircle } from 'lucide-react'
+import { Button } from '@/components/ui/Button'
 import { DomainPanel } from './domain/DomainPanel'
 import { NewDomainForm } from './domain/NewDomainForm'
-import { btnGhost } from './styles'
-import type { Domain, Env } from './types'
+import { useIngressData } from './useIngressData'
 
 export function IngressPage() {
-  const [domains, setDomains]           = useState<Domain[]>([])
-  const [environments, setEnvironments] = useState<Env[]>([])
-  const [loading, setLoading]           = useState(true)
-  // True once the first load finished. Refreshes keep the list mounted so
-  // expanded panels and half-filled forms survive.
-  const [loaded, setLoaded]             = useState(false)
-  const [error, setError]               = useState<string | null>(null)
-  const [selectedId, setSelectedId]     = useState<string | null>(null)
-
-  const load = useCallback(async () => {
-    setLoading(true); setError(null)
-    try {
-      const [dRes, eRes] = await Promise.all([
-        fetch('/api/ingress/domains'),
-        fetch('/api/environments'),
-      ])
-      if (!dRes.ok || !eRes.ok) throw new Error('Failed to fetch')
-      const [d, e] = await Promise.all([dRes.json(), eRes.json()])
-      setDomains(d)
-      setEnvironments(e)
-      setSelectedId(prev => prev ?? (d.length > 0 ? d[0].id : null))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unknown error')
-    } finally {
-      setLoading(false)
-      setLoaded(true)
-    }
-  }, [])
-
-  useEffect(() => { load() }, [load])
+  const { domains, environments, loaded, loading, error, reload, updateDomain, addDomain } = useIngressData()
+  // undefined = follow the default (first domain); null = user collapsed everything
+  const [pickedId, setPickedId] = useState<string | null | undefined>(undefined)
+  const selectedId = pickedId === undefined ? domains[0]?.id ?? null : pickedId
 
   const totalRoutes    = domains.reduce((s, d) => s + d.ingressPoints.reduce((ss, p) => ss + p.routes.length, 0), 0)
   const disabledRoutes = domains.reduce((s, d) => s + d.ingressPoints.reduce((ss, p) => ss + p.routes.filter(r => !r.enabled).length, 0), 0)
@@ -51,10 +25,10 @@ export function IngressPage() {
             Domains · ingress points · routes · middlewares
           </p>
         </div>
-        <button onClick={load} disabled={loading} className={btnGhost}>
-          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+        <Button variant="secondary" onClick={reload} disabled={loading}>
+          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} aria-hidden />
           Refresh
-        </button>
+        </Button>
       </div>
 
       {loaded && domains.length > 0 && (
@@ -74,25 +48,26 @@ export function IngressPage() {
       )}
 
       {error && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg border border-status-error/40 bg-status-error/10 text-status-error text-sm">
-          <AlertCircle size={15} /> {error}
+        <div role="alert" className="flex items-center gap-2 px-4 py-3 rounded-lg border border-status-error/40 bg-status-error/10 text-status-error text-sm">
+          <AlertCircle size={15} aria-hidden /> {error}
         </div>
       )}
 
       {!loaded && (
-        <div className="flex items-center gap-2 text-text-muted text-sm py-8 justify-center">
-          <RefreshCw size={14} className="animate-spin" /> Loading…
+        <div className="flex items-center gap-2 text-text-muted text-sm py-8 justify-center" role="status">
+          <RefreshCw size={14} className="animate-spin" aria-hidden /> Loading…
         </div>
       )}
 
       {loaded && domains.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 gap-3 text-text-muted">
-          <Globe size={40} className="opacity-30" />
+          <Globe size={40} className="opacity-30" aria-hidden />
           <p className="text-sm font-medium text-text-secondary">No domains defined yet</p>
           <p className="text-xs text-center max-w-xs">Add a domain to start mapping ingress points and routes.</p>
         </div>
       )}
 
+      {/* Refreshes keep the list mounted so expanded panels and half-filled forms survive. */}
       {loaded && (
         <div className="space-y-3">
           {domains.map(d => (
@@ -101,11 +76,11 @@ export function IngressPage() {
               domain={d}
               environments={environments}
               selected={selectedId === d.id}
-              onSelect={() => setSelectedId(prev => prev === d.id ? null : d.id)}
-              onChange={updated => setDomains(ds => ds.map(x => x.id === updated.id ? updated : x))}
+              onSelect={() => setPickedId(selectedId === d.id ? null : d.id)}
+              onChange={updateDomain}
             />
           ))}
-          <NewDomainForm onCreated={d => { setDomains(prev => [...prev, d]); setSelectedId(d.id) }} />
+          <NewDomainForm onCreated={d => { void addDomain(d); setPickedId(d.id) }} />
         </div>
       )}
     </div>

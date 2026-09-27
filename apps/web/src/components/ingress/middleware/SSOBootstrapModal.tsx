@@ -1,9 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
+import useSWR from 'swr'
+import { apiFetch, errorMessage } from '@/lib/api'
 import { X, RefreshCw, Lock, AlertCircle, Shield, Zap, Settings2, Play, KeyRound, UserCog } from 'lucide-react'
 import { Dialog } from '@/components/ui/Dialog'
-import { inputCls, btnPrimary, btnGhost } from '../styles'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
 
 export interface SSOProviderInfo {
   name: string
@@ -33,7 +37,6 @@ export function SSOBootstrapModal({
 }: {
   pointId: string; domainName: string; onDone: () => void; onClose: () => void
 }) {
-  const [providers, setProviders] = useState<SSOProviderInfo[]>([])
   const [provider, setProvider] = useState('authentik')
   const [hostname, setHostname] = useState('')
   const [adminPassword, setAdminPassword] = useState('')
@@ -41,7 +44,10 @@ export function SSOBootstrapModal({
   const [clusterIssuer, setClusterIssuer] = useState('letsencrypt-prod')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
+  // Provider list is optional metadata — built-in SSO_PROVIDER_TYPES cover a failure.
+  const { data: providerData, isLoading: loading } =
+    useSWR<{ providers?: SSOProviderInfo[] }>('/api/ingress/providers', { revalidateOnFocus: false, shouldRetryOnError: false })
+  const providers = providerData?.providers ?? []
 
   // Provider-specific fields
   const [oidcIssuerUrl, setOidcIssuerUrl] = useState('')
@@ -50,20 +56,6 @@ export function SSOBootstrapModal({
   const [databaseType, setDatabaseType] = useState('sqlite')
   const [redisHost, setRedisHost] = useState('')
   const [customIssuerCaSecret, setCustomIssuerCaSecret] = useState('')
-
-  useEffect(() => {
-    let cancelled = false
-    fetch('/api/ingress/providers')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (!cancelled) {
-          setProviders(data?.providers ?? [])
-          setLoading(false)
-        }
-      })
-      .catch(() => { setLoading(false) })
-    return () => { cancelled = true }
-  }, [])
 
   const providerInfo = SSO_PROVIDER_TYPES[provider]
   const remoteProvider = providers.find(p => p.name === provider)
@@ -95,18 +87,14 @@ export function SSOBootstrapModal({
 
     setSaving(true)
     try {
-      const res = await fetch(`/api/ingress/points/${pointId}/bootstrap-sso`, {
+      const started = await apiFetch<{ jobId?: string }>(`/api/ingress/points/${pointId}/bootstrap-sso`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: config,
       })
-      const data = await res.json()
-      if (!res.ok || !data.jobId) {
-        throw new Error(data.error ?? `HTTP ${res.status}`)
-      }
+      if (!started?.jobId) throw new Error('Bootstrap did not start (no job id returned)')
       onDone()
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(errorMessage(e))
     } finally {
       setSaving(false)
     }
@@ -127,7 +115,7 @@ export function SSOBootstrapModal({
             <p className="text-[11px] text-text-muted">Deploy and configure an SSO provider for your services</p>
           </div>
         </div>
-        <button onClick={onClose} className="text-text-muted hover:text-text-primary">
+        <button aria-label="Close" onClick={onClose} className="text-text-muted hover:text-text-primary">
           <X size={16} />
         </button>
       </div>
@@ -137,7 +125,7 @@ export function SSOBootstrapModal({
         {/* Provider selection */}
         <div>
           <label className="text-[11px] font-medium text-text-muted mb-1 block">Provider Type</label>
-          <select value={provider} onChange={e => setProvider(e.target.value)} className={inputCls}>
+          <Select value={provider} onChange={e => setProvider(e.target.value)}>
             {loading && providers.length === 0
               ? <option value={provider}>Loading…</option>
               : (
@@ -147,7 +135,7 @@ export function SSOBootstrapModal({
                 )
                 .concat(providers.map(p => <option key={p.name} value={p.name}>{p.displayName}</option>))
             }
-          </select>
+          </Select>
           {resolved.description && <p className="text-[10px] text-text-muted mt-1">{resolved.description}</p>}
           {remoteProvider?.source === 'remote' && <span className="text-[9px] text-text-muted opacity-50">Loaded from orion-nub</span>}
         </div>
@@ -155,12 +143,11 @@ export function SSOBootstrapModal({
         {/* Hostname */}
         <div>
           <label className="text-[11px] font-medium text-text-muted mb-1 block">Hostname</label>
-          <input
+          <Input
             autoFocus
             value={hostname}
             onChange={e => setHostname(e.target.value)}
             placeholder={`e.g. auth.${domainName}`}
-            className={inputCls}
           />
         </div>
 
@@ -168,20 +155,18 @@ export function SSOBootstrapModal({
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="text-[11px] font-medium text-text-muted mb-1 block">Namespace</label>
-            <input
+            <Input
               value={namespace}
               onChange={e => setNamespace(e.target.value)}
               placeholder="security"
-              className={inputCls}
             />
           </div>
           <div>
             <label className="text-[11px] font-medium text-text-muted mb-1 block">ClusterIssuer</label>
-            <input
+            <Input
               value={clusterIssuer}
               onChange={e => setClusterIssuer(e.target.value)}
               placeholder="letsencrypt-prod"
-              className={inputCls}
             />
           </div>
         </div>
@@ -190,12 +175,11 @@ export function SSOBootstrapModal({
         {resolved.fields.includes('adminPassword') && (
           <div>
             <label className="text-[11px] font-medium text-text-muted mb-1 block">Admin Password</label>
-            <input
+            <Input
               type="password"
               value={adminPassword}
               onChange={e => setAdminPassword(e.target.value)}
               placeholder="Set initial admin password"
-              className={inputCls}
             />
           </div>
         )}
@@ -205,31 +189,28 @@ export function SSOBootstrapModal({
           <>
             <div>
               <label className="text-[11px] font-medium text-text-muted mb-1 block">OIDC Issuer URL</label>
-              <input
+              <Input
                 value={oidcIssuerUrl}
                 onChange={e => setOidcIssuerUrl(e.target.value)}
                 placeholder="https://auth.example.com/oauth2/token"
-                className={inputCls}
               />
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-[11px] font-medium text-text-muted mb-1 block">Client ID</label>
-                <input
+                <Input
                   value={clientId}
                   onChange={e => setClientId(e.target.value)}
                   placeholder="oauth2-proxy-client"
-                  className={inputCls}
                 />
               </div>
               <div>
                 <label className="text-[11px] font-medium text-text-muted mb-1 block">Client Secret</label>
-                <input
+                <Input
                   type="password"
                   value={clientSecret}
                   onChange={e => setClientSecret(e.target.value)}
                   placeholder="client-secret-from-provider"
-                  className={inputCls}
                 />
               </div>
             </div>
@@ -240,11 +221,10 @@ export function SSOBootstrapModal({
         {provider === 'custom_oidc' && (
           <div>
             <label className="text-[11px] font-medium text-text-muted mb-1 block">Issuer CA Secret</label>
-            <input
+            <Input
               value={customIssuerCaSecret}
               onChange={e => setCustomIssuerCaSecret(e.target.value)}
               placeholder="namespace/secret-name"
-              className={inputCls}
             />
           </div>
         )}
@@ -254,19 +234,18 @@ export function SSOBootstrapModal({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="text-[11px] font-medium text-text-muted mb-1 block">Database</label>
-              <select value={databaseType} onChange={e => setDatabaseType(e.target.value)} className={inputCls}>
+              <Select value={databaseType} onChange={e => setDatabaseType(e.target.value)}>
                 <option value="sqlite">SQLite</option>
                 <option value="postgresql">PostgreSQL</option>
-              </select>
+              </Select>
             </div>
             {databaseType === 'postgresql' && (
               <div>
                 <label className="text-[11px] font-medium text-text-muted mb-1 block">Redis Host</label>
-                <input
+                <Input
                   value={redisHost}
                   onChange={e => setRedisHost(e.target.value)}
                   placeholder="redis://redis:6379"
-                  className={inputCls}
                 />
               </div>
             )}
@@ -282,13 +261,13 @@ export function SSOBootstrapModal({
 
       {/* Footer */}
       <div className="flex justify-end gap-2 px-5 py-4 border-t border-border-subtle bg-bg-raised">
-        <button onClick={onClose} className={btnGhost}>Cancel</button>
-        <button onClick={submit} disabled={saving || !hostname.trim()} className={btnPrimary}>
+        <Button onClick={onClose} variant="secondary">Cancel</Button>
+        <Button onClick={submit} disabled={saving || !hostname.trim()}>
           {saving
             ? <><RefreshCw size={11} className="animate-spin" /> Deploying…</>
             : <><Play size={11} /> Deploy Provider</>
           }
-        </button>
+        </Button>
       </div>
     </Dialog>
   )

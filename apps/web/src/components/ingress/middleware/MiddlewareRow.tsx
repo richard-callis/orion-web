@@ -40,13 +40,13 @@ export function MiddlewareRow({ mw, onToggle, onDelete }: {
       </button>
       {confirm ? (
         <span className="flex items-center gap-1">
-          <button onClick={doDelete} disabled={busy} className="text-status-error hover:opacity-70">
+          <button aria-label="Confirm delete" onClick={doDelete} disabled={busy} className="text-status-error hover:opacity-70">
             {busy ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />}
           </button>
-          <button onClick={() => setConfirm(false)} className="text-text-muted hover:text-text-primary"><X size={10} /></button>
+          <button aria-label="Cancel delete" onClick={() => setConfirm(false)} className="text-text-muted hover:text-text-primary"><X size={10} /></button>
         </span>
       ) : (
-        <button onClick={() => setConfirm(true)} className="text-text-muted hover:text-status-error transition-colors">
+        <button aria-label={`Delete middleware ${mw.name}`} onClick={() => setConfirm(true)} className="text-text-muted hover:text-status-error transition-colors">
           <Trash2 size={10} />
         </button>
       )}

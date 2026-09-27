@@ -3,8 +3,8 @@
 import { useState } from 'react'
 import { Wifi, WifiOff, Trash2, Check, X, RefreshCw, ExternalLink, Lock, Shield } from 'lucide-react'
 import { InlineEdit } from '../shared'
-import { btnPrimary, btnGhost } from '../styles'
 import type { IngressPath, IngressMiddleware, IngressRoute } from '../types'
+import { Button } from '@/components/ui/Button'
 
 export function RouteRow({ route, availableMiddlewares, onToggle, onDelete, onCommentSave, onMiddlewaresSave }: {
   route: IngressRoute
@@ -46,7 +46,7 @@ export function RouteRow({ route, availableMiddlewares, onToggle, onDelete, onCo
     }`}>
       <div className="flex items-start gap-3 px-3 py-2.5">
         {/* Toggle */}
-        <button
+        <button aria-label={route.enabled ? 'Disable route' : 'Enable route'}
           onClick={doToggle}
           disabled={toggling}
           title={route.enabled ? 'Disable route' : 'Enable route'}
@@ -111,20 +111,20 @@ export function RouteRow({ route, availableMiddlewares, onToggle, onDelete, onCo
               onClick={() => setEditMws(e => !e)}
               title="Edit middlewares"
               className={`transition-colors ${editMws ? 'text-accent' : 'text-text-muted hover:text-text-primary'}`}
-            >
+             aria-label="Edit middlewares">
               <Shield size={11} />
             </button>
           )}
           {confirmDelete ? (
             <>
               <span className="text-[10px] text-status-error">Delete?</span>
-              <button onClick={doDelete} disabled={deleting} className="text-status-error hover:opacity-70">
+              <button aria-label="Confirm delete" onClick={doDelete} disabled={deleting} className="text-status-error hover:opacity-70">
                 {deleting ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
               </button>
-              <button onClick={() => setConfirmDelete(false)} className="text-text-muted hover:text-text-primary"><X size={11} /></button>
+              <button aria-label="Cancel delete" onClick={() => setConfirmDelete(false)} className="text-text-muted hover:text-text-primary"><X size={11} /></button>
             </>
           ) : (
-            <button onClick={() => setConfirmDelete(true)} className="text-text-muted hover:text-status-error transition-colors">
+            <button aria-label="Delete route" onClick={() => setConfirmDelete(true)} className="text-text-muted hover:text-status-error transition-colors">
               <Trash2 size={11} />
             </button>
           )}
@@ -145,10 +145,10 @@ export function RouteRow({ route, availableMiddlewares, onToggle, onDelete, onCo
               {mw.name}
             </label>
           ))}
-          <button onClick={saveMws} disabled={savingMws} className={btnPrimary}>
+          <Button onClick={saveMws} disabled={savingMws}>
             {savingMws ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />} Apply
-          </button>
-          <button onClick={() => { setSelMws(route.middlewares ?? []); setEditMws(false) }} className={btnGhost}>Cancel</button>
+          </Button>
+          <Button onClick={() => { setSelMws(route.middlewares ?? []); setEditMws(false) }} variant="secondary">Cancel</Button>
         </div>
       )}
     </div>

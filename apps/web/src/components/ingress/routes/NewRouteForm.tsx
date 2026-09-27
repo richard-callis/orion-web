@@ -2,8 +2,11 @@
 
 import { useState } from 'react'
 import { Plus, RefreshCw } from 'lucide-react'
-import { inputCls, btnPrimary, btnGhost } from '../styles'
 import type { IngressMiddleware, IngressRoute } from '../types'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 
 export function NewRouteForm({
   pointId, domainName, availableMiddlewares, onCreated,
@@ -19,6 +22,7 @@ export function NewRouteForm({
   const [comment, setComment]       = useState('')
   const [selMws, setSelMws]         = useState<string[]>([])
   const [saving, setSaving]         = useState(false)
+  const toast = useToast()
 
   const toggleMw = (name: string) =>
     setSelMws(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name])
@@ -26,44 +30,47 @@ export function NewRouteForm({
   const submit = async () => {
     if (!host.trim()) return
     setSaving(true)
-    const res = await fetch(`/api/ingress/points/${pointId}/routes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        host: host.includes('.') ? host : `${host}.${domainName}`,
-        tls,
-        comment: comment || null,
-        middlewares: selMws,
-        paths: service ? [{ path: '/', service, port: Number(port) || 80, namespace }] : [],
-      }),
-    })
-    const r = await res.json()
-    onCreated(r)
-    setHost(''); setService(''); setPort('80'); setNamespace('default'); setComment(''); setSelMws([]); setOpen(false); setSaving(false)
+    try {
+      const r = await apiFetch<IngressRoute>(`/api/ingress/points/${pointId}/routes`, {
+        method: 'POST',
+        body: {
+          host: host.includes('.') ? host : `${host}.${domainName}`,
+          tls,
+          comment: comment || null,
+          middlewares: selMws,
+          paths: service ? [{ path: '/', service, port: Number(port) || 80, namespace }] : [],
+        },
+      })
+      onCreated(r)
+      setHost(''); setService(''); setPort('80'); setNamespace('default'); setComment(''); setSelMws([]); setOpen(false)
+    } catch (e) {
+      toast.error(`Failed to create route: ${errorMessage(e)}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} className={`${btnGhost} text-[11px]`}>
+      <Button onClick={() => setOpen(true)} variant="secondary" className="text-[11px]">
         <Plus size={10} /> Add route
-      </button>
+      </Button>
     )
   }
   return (
     <div className="mt-2 p-3 rounded-lg border border-border-subtle bg-bg-raised space-y-2 text-xs">
-      <input
+      <Input
         autoFocus
         value={host}
         onChange={e => setHost(e.target.value)}
         placeholder={`subdomain or full host (e.g. auth.${domainName})`}
-        className={inputCls}
       />
       <div className="grid grid-cols-3 gap-2">
-        <input value={service} onChange={e => setService(e.target.value)} placeholder="Service name" className={inputCls} />
-        <input value={port} onChange={e => setPort(e.target.value)} placeholder="Port" className={inputCls} />
-        <input value={namespace} onChange={e => setNamespace(e.target.value)} placeholder="Namespace" className={inputCls} />
+        <Input value={service} onChange={e => setService(e.target.value)} placeholder="Service name" />
+        <Input value={port} onChange={e => setPort(e.target.value)} placeholder="Port" />
+        <Input value={namespace} onChange={e => setNamespace(e.target.value)} placeholder="Namespace" />
       </div>
-      <input value={comment} onChange={e => setComment(e.target.value)} placeholder="Comment (optional)" className={inputCls} />
+      <Input value={comment} onChange={e => setComment(e.target.value)} placeholder="Comment (optional)" />
       <label className="flex items-center gap-2 cursor-pointer">
         <input type="checkbox" checked={tls} onChange={e => setTls(e.target.checked)} className="rounded" />
         <span className="text-text-secondary">TLS / HTTPS</span>
@@ -91,10 +98,10 @@ export function NewRouteForm({
         </div>
       )}
       <div className="flex gap-2">
-        <button onClick={submit} disabled={saving || !host.trim()} className={btnPrimary}>
+        <Button onClick={submit} disabled={saving || !host.trim()}>
           {saving ? <RefreshCw size={11} className="animate-spin" /> : <Plus size={11} />} Add route
-        </button>
-        <button onClick={() => setOpen(false)} className={btnGhost}>Cancel</button>
+        </Button>
+        <Button onClick={() => setOpen(false)} variant="secondary">Cancel</Button>
       </div>
     </div>
   )

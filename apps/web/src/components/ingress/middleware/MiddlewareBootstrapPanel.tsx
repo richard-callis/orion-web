@@ -1,10 +1,12 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import useSWR from 'swr'
+import type { LucideIcon } from 'lucide-react'
+import { apiFetch, errorMessage } from '@/lib/api'
 import { Check, X, RefreshCw, Lock, AlertCircle, Shield, Zap, ShieldCheck, Play, KeyRound, Bot, Gauge, Package } from 'lucide-react'
 import { Dialog } from '@/components/ui/Dialog'
-import { btnPrimary, btnGhost } from '../styles'
-import type { Domain } from '../types'
+import { Button } from '@/components/ui/Button'
 
 export interface MiddlewareNova {
   name: string
@@ -18,34 +20,20 @@ export interface MiddlewareNova {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const NOVA_ICONS: Record<string, any> = { Shield, ShieldCheck, Gauge, Lock, KeyRound, Bot, Zap, Package }
+export const NOVA_ICONS: Record<string, LucideIcon> = { Shield, ShieldCheck, Gauge, Lock, KeyRound, Bot, Zap, Package }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function getNovaIcon(iconName?: string): any {
+export function getNovaIcon(iconName?: string): LucideIcon {
   return NOVA_ICONS[iconName ?? ''] ?? Package
 }
 
 export function MiddlewareBootstrapPanel({ pointId }: { pointId: string }) {
-  const [novas, setNovas] = useState<MiddlewareNova[]>([])
-  const [loading, setLoading] = useState(true)
-  const [fetchError, setFetchError] = useState<string | null>(null)
+  const { data, error: loadError, isLoading: loading } =
+    useSWR<{ novae?: MiddlewareNova[] }>('/api/novas?tag=middleware&type=service', { revalidateOnFocus: false })
+  const novas = data?.novae ?? []
+  const fetchError = loadError ? errorMessage(loadError) : null
   const [modal, setModal] = useState<string | null>(null)
   const [running, setRunning] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ text: string; ok: boolean } | null>(null)
-
-  useEffect(() => {
-    fetch('/api/novas?tag=middleware&type=service')
-      .then(r => r.json())
-      .then(data => {
-        setNovas(data.novae ?? [])
-        setLoading(false)
-      })
-      .catch(e => {
-        setFetchError(e instanceof Error ? e.message : String(e))
-        setLoading(false)
-      })
-  }, [])
 
   // Auto-close the modal after a successful bootstrap
   useEffect(() => {
@@ -59,17 +47,15 @@ export function MiddlewareBootstrapPanel({ pointId }: { pointId: string }) {
   const runBootstrap = async (novaName: string) => {
     setRunning(novaName); setNotice(null)
     try {
-      const res = await fetch(`/api/ingress/points/${pointId}/bootstrap-middleware`, {
+      const started = await apiFetch<{ jobId?: string }>(`/api/ingress/points/${pointId}/bootstrap-middleware`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ novaName }),
+        body: { novaName },
       })
-      const data = await res.json()
-      if (!res.ok || !data.jobId) throw new Error(data.error ?? `HTTP ${res.status}`)
+      if (!started?.jobId) throw new Error('Bootstrap did not start (no job id returned)')
       const label = novas.find(n => n.name === novaName)?.displayName ?? novaName
       setNotice({ text: `${label} bootstrap started — check the Jobs panel for progress.`, ok: true })
     } catch (e) {
-      setNotice({ text: e instanceof Error ? e.message : String(e), ok: false })
+      setNotice({ text: errorMessage(e), ok: false })
     } finally {
       setRunning(null)
     }
@@ -97,7 +83,7 @@ export function MiddlewareBootstrapPanel({ pointId }: { pointId: string }) {
         {!loading && !fetchError && (
           <div className="grid grid-cols-2 gap-2">
             {novas.map(nova => {
-              const Icon = getNovaIcon((nova.config as any)?.icon)
+              const Icon = getNovaIcon(nova.config?.icon)
               const isRunning = running === nova.name
               return (
                 <button
@@ -123,8 +109,8 @@ export function MiddlewareBootstrapPanel({ pointId }: { pointId: string }) {
 
       {/* Inline middleware bootstrap modal */}
       {modal && selectedNova && (() => {
-        const Icon = getNovaIcon((selectedNova.config as any)?.icon)
-        const setupNote = (selectedNova.config as any)?.setupNote as string | undefined
+        const Icon = getNovaIcon(selectedNova.config?.icon)
+        const setupNote = selectedNova.config?.setupNote
         return (
           <Dialog
             onClose={() => setModal(null)}
@@ -139,7 +125,7 @@ export function MiddlewareBootstrapPanel({ pointId }: { pointId: string }) {
                   <p className="text-[11px] text-text-muted">{selectedNova.description}</p>
                 </div>
               </div>
-              <button onClick={() => setModal(null)} className="text-text-muted hover:text-text-primary"><X size={16} /></button>
+              <button aria-label="Close" onClick={() => setModal(null)} className="text-text-muted hover:text-text-primary"><X size={16} /></button>
             </div>
             <div className="px-5 py-4 space-y-3">
               <p className="text-xs text-text-muted">
@@ -153,17 +139,16 @@ export function MiddlewareBootstrapPanel({ pointId }: { pointId: string }) {
                 </div>
               )}
               <div className="flex gap-2">
-                <button onClick={() => setModal(null)} className={btnGhost}>Cancel</button>
-                <button
+                <Button onClick={() => setModal(null)} variant="secondary">Cancel</Button>
+                <Button
                   onClick={() => { runBootstrap(modal) }}
                   disabled={running !== null}
-                  className={btnPrimary}
                 >
                   {running === modal
                     ? <><RefreshCw size={11} className="animate-spin" /> Deploying…</>
                     : <><Play size={11} /> Deploy</>
                   }
-                </button>
+                </Button>
               </div>
             </div>
           </Dialog>

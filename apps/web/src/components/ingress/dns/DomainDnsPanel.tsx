@@ -1,11 +1,14 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
+import useSWR from 'swr'
 import { Plus, Pencil, Trash2, RefreshCw, AlertCircle, Terminal, DatabaseZap } from 'lucide-react'
 import { DnsBootstrapPanel } from './DnsBootstrapPanel'
 import { DnsRecordModal } from './DnsRecordModal'
-import { btnPrimary, btnGhost } from '../styles'
 import type { DnsRecord, Domain, Env } from '../types'
+import { Button } from '@/components/ui/Button'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 
 export function DomainDnsPanel({ domain, environments, ingressPointIp, onDomainChange }: {
   domain: Domain
@@ -13,8 +16,11 @@ export function DomainDnsPanel({ domain, environments, ingressPointIp, onDomainC
   ingressPointIp: string | null
   onDomainChange: (updates: Partial<Domain>) => void
 }) {
-  const [records, setRecords]   = useState<DnsRecord[]>([])
-  const [loading, setLoading]   = useState(true)
+  const recordsKey = `/api/ingress/domains/${domain.id}/dns/records`
+  const { data, isLoading: loading, mutate } = useSWR<DnsRecord[]>(recordsKey, { revalidateOnFocus: false })
+  const records = Array.isArray(data) ? data : []
+  const load = () => { void mutate() }
+  const toast = useToast()
   const [modal, setModal]       = useState<{ open: boolean; record?: DnsRecord }>({ open: false })
   const [deleting, setDeleting] = useState<string | null>(null)
   const [syncing, setSyncing]   = useState(false)
@@ -22,31 +28,26 @@ export function DomainDnsPanel({ domain, environments, ingressPointIp, onDomainC
     domain.coreDnsStatus === 'bootstrapped' ? 'records' : 'bootstrap'
   )
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetch(`/api/ingress/domains/${domain.id}/dns/records`)
-      const data = await res.json()
-      setRecords(Array.isArray(data) ? data : [])
-    } finally { setLoading(false) }
-  }, [domain.id])
-
-  useEffect(() => { load() }, [load])
-
   const hasWildcard = records.some(r => r.enabled && r.hostnames.some(h => h === `*.${domain.name}`))
 
   const del = async (record: DnsRecord) => {
     setDeleting(record.id)
     try {
-      await fetch(`/api/ingress/domains/${domain.id}/dns/records/${record.id}`, { method: 'DELETE' })
-      setRecords(rs => rs.filter(r => r.id !== record.id))
+      await apiFetch(`${recordsKey}/${record.id}`, { method: 'DELETE' })
+      await mutate(rs => rs?.filter(r => r.id !== record.id), { revalidate: false })
+    } catch (e) {
+      toast.error(`Failed to delete record: ${errorMessage(e)}`)
     } finally { setDeleting(null) }
   }
 
   const sync = async () => {
     setSyncing(true)
-    try { await fetch(`/api/ingress/domains/${domain.id}/dns/sync`, { method: 'POST' }) }
-    finally { setSyncing(false) }
+    try {
+      await apiFetch(`/api/ingress/domains/${domain.id}/dns/sync`, { method: 'POST' })
+      toast.success('DNS records synced to CoreDNS')
+    } catch (e) {
+      toast.error(`Sync failed: ${errorMessage(e)}`)
+    } finally { setSyncing(false) }
   }
 
   const dnsBtnCls = (t: 'records' | 'bootstrap') =>
@@ -69,13 +70,13 @@ export function DomainDnsPanel({ domain, environments, ingressPointIp, onDomainC
         {dnsTab === 'records' && (
           <div className="flex items-center gap-1.5">
             {domain.coreDnsStatus === 'bootstrapped' && (
-              <button onClick={sync} disabled={syncing} className={btnGhost} title="Force sync to CoreDNS">
+              <Button onClick={sync} disabled={syncing} variant="secondary" title="Force sync to CoreDNS">
                 <RefreshCw size={10} className={syncing ? 'animate-spin' : ''} /> Sync
-              </button>
+              </Button>
             )}
-            <button onClick={() => setModal({ open: true })} className={btnPrimary}>
+            <Button onClick={() => setModal({ open: true })}>
               <Plus size={11} /> Add Record
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -109,8 +110,8 @@ export function DomainDnsPanel({ domain, environments, ingressPointIp, onDomainC
                     ))}
                   </div>
                   {rec.comment && <span className="text-[10px] text-text-muted truncate max-w-[100px]">{rec.comment}</span>}
-                  <button onClick={() => setModal({ open: true, record: rec })} className="text-text-muted hover:text-text-primary transition-colors flex-shrink-0"><Pencil size={11} /></button>
-                  <button onClick={() => del(rec)} disabled={deleting === rec.id} className="text-text-muted hover:text-status-error transition-colors flex-shrink-0">
+                  <button aria-label={`Edit record ${rec.ip}`} onClick={() => setModal({ open: true, record: rec })} className="text-text-muted hover:text-text-primary transition-colors flex-shrink-0"><Pencil size={11} /></button>
+                  <button aria-label={`Delete record ${rec.ip}`} onClick={() => del(rec)} disabled={deleting === rec.id} className="text-text-muted hover:text-status-error transition-colors flex-shrink-0">
                     {deleting === rec.id ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} />}
                   </button>
                 </div>

@@ -40,10 +40,10 @@ export function InlineEdit({
           onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }}
           className="px-1.5 py-0.5 text-xs bg-bg-raised border border-accent rounded text-text-primary focus:outline-none w-48"
         />
-        <button onClick={save} disabled={saving} className="text-status-healthy hover:opacity-80">
+        <button aria-label="Save" onClick={save} disabled={saving} className="text-status-healthy hover:opacity-80">
           {saving ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
         </button>
-        <button onClick={() => setEditing(false)} className="text-text-muted hover:text-text-primary"><X size={11} /></button>
+        <button aria-label="Cancel" onClick={() => setEditing(false)} className="text-text-muted hover:text-text-primary"><X size={11} /></button>
       </span>
     )
   }

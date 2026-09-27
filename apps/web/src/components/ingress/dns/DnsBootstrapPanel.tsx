@@ -2,8 +2,11 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { RefreshCw, Play } from 'lucide-react'
-import { inputCls, btnPrimary } from '../styles'
 import type { Domain, Env } from '../types'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
+import { apiFetch, errorMessage, readSSE, parseSSEData } from '@/lib/api'
 
 export function DnsBootstrapPanel({ domain, environments, onDone }: {
   domain: Domain
@@ -15,35 +18,32 @@ export function DnsBootstrapPanel({ domain, environments, onDone }: {
   const [running, setRunning] = useState(false)
   const [logs, setLogs]       = useState<string[]>([])
   const [err, setErr]         = useState('')
-  const logsEndRef            = useRef<HTMLDivElement>(null)
+  const logsRef               = useRef<HTMLDivElement>(null)
 
-  useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [logs])
+  // Follow the log by scrolling its own box (scrollIntoView also scrolled the page)
+  useEffect(() => { const el = logsRef.current; if (el) el.scrollTop = el.scrollHeight }, [logs])
 
   const bootstrap = async () => {
     setErr(''); setLogs([]); setRunning(true)
-    await fetch(`/api/ingress/domains/${domain.id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ coreDnsEnvironmentId: envId || null, coreDnsIp: ip || null }),
-    })
     try {
+      await apiFetch(`/api/ingress/domains/${domain.id}`, {
+        method: 'PATCH',
+        body: { coreDnsEnvironmentId: envId || null, coreDnsIp: ip || null },
+      })
       const res = await fetch(`/api/ingress/domains/${domain.id}/dns/bootstrap`, { method: 'POST' })
       if (!res.ok) throw new Error(`Request failed: ${res.status}`)
       if (!res.body) throw new Error('No response body')
-      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        for (const line of value.split('\n')) {
-          if (!line.startsWith('data:')) continue
-          const event = JSON.parse(line.slice(5).trim())
-          if (event.type === 'log') setLogs(l => [...l, event.message])
-          if (event.type === 'done') {
-            if (event.success) onDone({ coreDnsStatus: 'bootstrapped', coreDnsEnvironmentId: envId, coreDnsIp: ip || domain.coreDnsIp })
-            else setErr(event.error ?? 'Bootstrap failed')
-          }
+      // readSSE buffers across chunk boundaries (the old per-chunk split threw on split events)
+      for await (const raw of readSSE(res.body)) {
+        const event = parseSSEData<{ type: string; message?: string; success?: boolean; error?: string }>(raw)
+        if (!event) continue
+        if (event.type === 'log' && event.message) setLogs(l => [...l, event.message!])
+        if (event.type === 'done') {
+          if (event.success) onDone({ coreDnsStatus: 'bootstrapped', coreDnsEnvironmentId: envId, coreDnsIp: ip || domain.coreDnsIp })
+          else setErr(event.error ?? 'Bootstrap failed')
         }
       }
-    } catch (e) { setErr(String(e)) }
+    } catch (e) { setErr(errorMessage(e)) }
     finally { setRunning(false) }
   }
 
@@ -58,14 +58,14 @@ export function DnsBootstrapPanel({ domain, environments, onDone }: {
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">Environment</label>
-          <select value={envId} onChange={e => setEnvId(e.target.value)} className={inputCls}>
+          <Select value={envId} onChange={e => setEnvId(e.target.value)}>
             <option value="">Select environment…</option>
             {environments.map(e => <option key={e.id} value={e.id}>{e.name} ({e.type})</option>)}
-          </select>
+          </Select>
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">LoadBalancer IP <span className="text-text-muted font-normal">(optional)</span></label>
-          <input value={ip} onChange={e => setIp(e.target.value)} placeholder="e.g. 10.2.2.53" className={inputCls} />
+          <Input value={ip} onChange={e => setIp(e.target.value)} placeholder="e.g. 10.2.2.53" />
         </div>
       </div>
       {selectedEnv && (
@@ -76,16 +76,15 @@ export function DnsBootstrapPanel({ domain, environments, onDone }: {
         </p>
       )}
       {logs.length > 0 && (
-        <div className="bg-bg-canvas border border-border-subtle rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-[11px] text-text-secondary space-y-0.5">
+        <div ref={logsRef} role="log" aria-live="polite" className="bg-bg-canvas border border-border-subtle rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-[11px] text-text-secondary space-y-0.5">
           {logs.map((l, i) => <div key={i}>{l}</div>)}
-          <div ref={logsEndRef} />
         </div>
       )}
       {err && <p className="text-xs text-status-error">{err}</p>}
-      <button onClick={bootstrap} disabled={running || !envId} className={btnPrimary}>
+      <Button onClick={bootstrap} disabled={running || !envId}>
         {running ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />}
         {running ? 'Bootstrapping…' : domain.coreDnsStatus === 'bootstrapped' ? 'Re-bootstrap' : 'Bootstrap CoreDNS'}
-      </button>
+      </Button>
     </div>
   )
 }

@@ -7,6 +7,9 @@ import { NewPointForm } from '../point/NewPointForm'
 import { PointPanel } from '../point/PointPanel'
 import { InlineEdit } from '../shared'
 import type { IngressPoint, Domain, Env, DomainTab } from '../types'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
+import { clickableProps } from '@/components/ui/clickable'
 
 export function DomainPanel({ domain, environments, selected, onSelect, onChange }: {
   domain: Domain
@@ -15,6 +18,7 @@ export function DomainPanel({ domain, environments, selected, onSelect, onChange
   onSelect: () => void
   onChange: (updated: Domain) => void
 }) {
+  const toast = useToast()
   const [points, setPoints]       = useState(domain.ingressPoints)
   const [domainTab, setDomainTab] = useState<DomainTab>('ingress')
 
@@ -43,7 +47,7 @@ export function DomainPanel({ domain, environments, selected, onSelect, onChange
     >
       <div
         className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none"
-        onClick={onSelect}
+        {...clickableProps(onSelect, { expanded: selected })}
       >
         <Globe size={15} className={`flex-shrink-0 ${domain.type === 'public' ? 'text-accent' : 'text-text-muted'}`} />
         <div className="flex-1 min-w-0">
@@ -84,10 +88,11 @@ export function DomainPanel({ domain, environments, selected, onSelect, onChange
               value={domain.notes}
               placeholder="Add notes about this domain…"
               onSave={async notes => {
-                const res = await fetch(`/api/ingress/domains/${domain.id}`, {
-                  method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes }),
-                })
-                onChange(await res.json())
+                try {
+                  onChange(await apiFetch<Domain>(`/api/ingress/domains/${domain.id}`, { method: 'PATCH', body: { notes } }))
+                } catch (e) {
+                  toast.error(`Failed to save notes: ${errorMessage(e)}`)
+                }
               }}
               className="text-xs text-text-muted"
             />

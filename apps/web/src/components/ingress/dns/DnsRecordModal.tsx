@@ -3,8 +3,10 @@
 import { useState } from 'react'
 import { Check, X, RefreshCw } from 'lucide-react'
 import { Dialog } from '@/components/ui/Dialog'
-import { inputCls, btnPrimary, btnGhost } from '../styles'
 import type { DnsRecord, Domain } from '../types'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import { apiFetch, errorMessage } from '@/lib/api'
 
 export function DnsRecordModal({ domain, initial, suggestedIp, onSave, onClose }: {
   domain: Domain
@@ -28,14 +30,12 @@ export function DnsRecordModal({ domain, initial, suggestedIp, onSave, onClose }
       const url = editing
         ? `/api/ingress/domains/${domain.id}/dns/records/${initial!.id}`
         : `/api/ingress/domains/${domain.id}/dns/records`
-      const r = await fetch(url, {
+      await apiFetch(url, {
         method: editing ? 'PATCH' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ip: ip.trim(), hostnames: hosts, comment: comment || null }),
+        body: { ip: ip.trim(), hostnames: hosts, comment: comment || null },
       })
-      if (!r.ok) throw new Error((await r.json()).error ?? 'Failed to save')
       onSave(); onClose()
-    } catch (e) { setErr(String(e)) }
+    } catch (e) { setErr(errorMessage(e, 'Failed to save')) }
     finally { setSaving(false) }
   }
 
@@ -47,36 +47,35 @@ export function DnsRecordModal({ domain, initial, suggestedIp, onSave, onClose }
     >
       <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
         <h2 className="text-sm font-semibold text-text-primary">{editing ? 'Edit DNS Record' : 'Add DNS Record'}</h2>
-        <button onClick={onClose} className="text-text-muted hover:text-text-primary"><X size={15} /></button>
+        <button aria-label="Close" onClick={onClose} className="text-text-muted hover:text-text-primary"><X size={15} /></button>
       </div>
       <div className="px-5 py-4 space-y-4">
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">IP Address</label>
-          <input value={ip} onChange={e => setIp(e.target.value)} placeholder="e.g. 10.2.2.30" autoFocus className={inputCls} />
+          <Input value={ip} onChange={e => setIp(e.target.value)} placeholder="e.g. 10.2.2.30" autoFocus />
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">Hostnames</label>
-          <input
+          <Input
             value={hostnames}
             onChange={e => setHostnames(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && save()}
             placeholder={`*.${domain.name}, app.${domain.name}`}
-            className={inputCls}
           />
           <p className="text-[11px] text-text-muted mt-1">Comma or space separated. Use <code className="font-mono">*.{domain.name}</code> for wildcard.</p>
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">Comment <span className="text-text-muted font-normal">(optional)</span></label>
-          <input value={comment} onChange={e => setComment(e.target.value)} placeholder="e.g. Wildcard for all internal services" className={inputCls} />
+          <Input value={comment} onChange={e => setComment(e.target.value)} placeholder="e.g. Wildcard for all internal services" />
         </div>
         {err && <p className="text-xs text-status-error">{err}</p>}
       </div>
       <div className="flex justify-end gap-2 px-5 py-3 border-t border-border-subtle">
-        <button onClick={onClose} className={btnGhost}>Cancel</button>
-        <button onClick={save} disabled={saving} className={btnPrimary}>
+        <Button onClick={onClose} variant="secondary">Cancel</Button>
+        <Button onClick={save} disabled={saving}>
           {saving ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
           {editing ? 'Save changes' : 'Add record'}
-        </button>
+        </Button>
       </div>
     </Dialog>
   )
