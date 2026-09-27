@@ -66,7 +66,7 @@ export function MessageBubble({ message }: { message: Message }) {
                         )
                       }
                       return (
-                        <code className="bg-bg-raised border border-border-subtle rounded px-1 py-0.5 font-mono text-[0.85em] text-accent" {...props}>
+                        <code className="bg-bg-raised border border-border-subtle rounded-sm px-1 py-0.5 font-mono text-[0.85em] text-accent" {...props}>
                           {children}
                         </code>
                       )

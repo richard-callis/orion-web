@@ -49,7 +49,7 @@ export function GitOpsPage() {
         <button
           onClick={load}
           disabled={refreshing}
-          className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded border border-border-subtle bg-bg-raised text-text-secondary hover:text-text-primary hover:border-accent transition-colors disabled:opacity-50"
+          className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-sm border border-border-subtle bg-bg-raised text-text-secondary hover:text-text-primary hover:border-accent transition-colors disabled:opacity-50"
         >
           <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} aria-hidden />
           Refresh

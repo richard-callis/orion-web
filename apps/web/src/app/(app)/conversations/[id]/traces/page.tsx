@@ -103,17 +103,17 @@ function FullContextModal({ context, onClose }: { context: string; onClose: () =
       label="Full context sent to LLM"
       className="w-full max-w-3xl max-h-[85vh] bg-bg-sidebar border border-border-subtle rounded-xl shadow-2xl overflow-hidden flex flex-col"
     >
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
         <span className="text-sm font-semibold text-text-primary">Full Context Sent to LLM</span>
         <div className="flex items-center gap-1">
           <button
             onClick={handleCopy}
-            className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
+            className="p-1.5 rounded-sm text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
             title="Copy to clipboard"
           >
             {copied ? <Check size={14} className="text-status-healthy" /> : <Copy size={14} />}
           </button>
-          <button onClick={onClose} className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors">
+          <button onClick={onClose} className="p-1.5 rounded-sm text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors">
             <X size={16} />
           </button>
         </div>
@@ -183,7 +183,7 @@ export default function TracesPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
         <div className="flex items-center gap-2">
           <Bot size={18} className="text-accent" />
           <h1 className="text-sm font-semibold text-text-primary">Trace Timeline</h1>
@@ -193,7 +193,7 @@ export default function TracesPage() {
         </div>
         <button
           onClick={load}
-          className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
+          className="p-1.5 rounded-sm text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
           title="Refresh"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -205,7 +205,7 @@ export default function TracesPage() {
 
       {/* Summary Bar */}
       {traces.length > 0 && (
-        <div className="flex items-center gap-3 px-4 py-2 border-b border-border-subtle flex-shrink-0 text-[10px]">
+        <div className="flex items-center gap-3 px-4 py-2 border-b border-border-subtle shrink-0 text-[10px]">
           <span className="flex items-center gap-1 text-blue-400">
             <Wrench size={10} />
             {typeCounts.tool_call || 0} tool_calls
@@ -235,11 +235,11 @@ export default function TracesPage() {
       )}
 
       {/* Filter */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-border-subtle shrink-0">
         <select
           value={filter}
           onChange={e => setFilter(e.target.value)}
-          className="px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+          className="px-2 py-1 text-xs rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
         >
           <option value="">All Types</option>
           <option value="tool_call">Tool Calls</option>
@@ -253,7 +253,7 @@ export default function TracesPage() {
         {Object.keys(typeCounts).length > 1 && (
           <button
             onClick={() => setFilter('')}
-            className="px-2 py-1 text-[10px] rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
+            className="px-2 py-1 text-[10px] rounded-sm text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors"
           >
             Clear Filter
           </button>
@@ -276,7 +276,7 @@ export default function TracesPage() {
                 <div key={trace.id} className="relative">
                   {/* Vertical line connector */}
                   {idx < filtered.length - 1 && (
-                    <div className="absolute left-[17px] top-8 bottom-[-1px] w-px bg-border-subtle" />
+                    <div className="absolute left-[17px] top-8 -bottom-px w-px bg-border-subtle" />
                   )}
 
                   <div
@@ -286,7 +286,7 @@ export default function TracesPage() {
                     onClick={() => toggleStep(trace.id)}
                   >
                     {/* Step number and icon */}
-                    <div className="flex flex-col items-center flex-shrink-0">
+                    <div className="flex flex-col items-center shrink-0">
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center border ${config.bg} ${config.color}`}>
                         {config.icon}
                       </div>
@@ -299,7 +299,7 @@ export default function TracesPage() {
                         <span className="text-[10px] font-medium text-text-muted w-6">
                           #{trace.step}
                         </span>
-                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${config.bg} ${config.color}`}>
+                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-sm ${config.bg} ${config.color}`}>
                           {config.label}
                         </span>
                         {trace.toolName && (
@@ -349,21 +349,21 @@ export default function TracesPage() {
                           {trace.fullContext && (
                             <button
                               onClick={e => { e.stopPropagation(); setViewingContext(trace.fullContext) }}
-                              className="flex items-center gap-1.5 text-[10px] font-medium text-accent hover:text-accent/80 bg-accent/10 hover:bg-accent/15 rounded px-2 py-1 transition-colors"
+                              className="flex items-center gap-1.5 text-[10px] font-medium text-accent hover:text-accent/80 bg-accent/10 hover:bg-accent/15 rounded-sm px-2 py-1 transition-colors"
                             >
                               <Eye size={11} />
                               View Full Context Sent to LLM ({trace.fullContext.length.toLocaleString()} chars)
                             </button>
                           )}
                           {trace.content && (
-                            <div className="text-xs text-text-secondary bg-bg-raised rounded p-2 border border-border-subtle max-h-40 overflow-auto">
+                            <div className="text-xs text-text-secondary bg-bg-raised rounded-sm p-2 border border-border-subtle max-h-40 overflow-auto">
                               {truncate(trace.content, 500)}
                             </div>
                           )}
                           {trace.toolArgs && (
                             <div>
                               <span className="text-[10px] font-medium text-text-muted">Args:</span>
-                              <pre className="text-[10px] text-text-secondary bg-bg-raised rounded p-2 border border-border-subtle mt-0.5 overflow-auto whitespace-pre-wrap max-h-40 font-mono">
+                              <pre className="text-[10px] text-text-secondary bg-bg-raised rounded-sm p-2 border border-border-subtle mt-0.5 overflow-auto whitespace-pre-wrap max-h-40 font-mono">
                                 {truncate(trace.toolArgs, 800)}
                               </pre>
                             </div>
@@ -371,7 +371,7 @@ export default function TracesPage() {
                           {trace.toolResult && (
                             <div>
                               <span className="text-[10px] font-medium text-text-muted">Result:</span>
-                              <pre className="text-[10px] text-text-secondary bg-bg-raised rounded p-2 border border-border-subtle mt-0.5 overflow-auto whitespace-pre-wrap max-h-40 font-mono">
+                              <pre className="text-[10px] text-text-secondary bg-bg-raised rounded-sm p-2 border border-border-subtle mt-0.5 overflow-auto whitespace-pre-wrap max-h-40 font-mono">
                                 {truncate(trace.toolResult, 800)}
                               </pre>
                             </div>
@@ -381,7 +381,7 @@ export default function TracesPage() {
                     </div>
 
                     {/* Expand indicator */}
-                    <div className="flex-shrink-0 mt-1 text-text-muted">
+                    <div className="shrink-0 mt-1 text-text-muted">
                       {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                     </div>
                   </div>

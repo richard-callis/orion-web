@@ -48,7 +48,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
   return (
     <div className="flex h-full overflow-hidden">
 
-      <aside className="w-64 flex-shrink-0 flex flex-col border-r border-border-subtle bg-bg-sidebar overflow-hidden" aria-label="Environments">
+      <aside className="w-64 shrink-0 flex flex-col border-r border-border-subtle bg-bg-sidebar overflow-hidden" aria-label="Environments">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
           <h2 className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Environments</h2>
           <IconButton label="New environment" onClick={() => setModal('create')} className="hover:text-accent hover:bg-bg-raised">
@@ -69,7 +69,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
                 }`}
               >
                 <span className="flex items-center gap-2">
-                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[env.status] ?? 'bg-text-muted'}`} aria-hidden />
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_DOT[env.status] ?? 'bg-text-muted'}`} aria-hidden />
                   <span className="flex items-center gap-1.5 text-xs font-medium truncate">
                     <span aria-hidden>{TYPE_ICONS[env.type]}</span>
                     {env.name}
@@ -104,7 +104,7 @@ export function EnvironmentsPage({ initialEnvironments }: { initialEnvironments:
             onEdit={() => setModal('edit')}
           />
 
-          <div role="tablist" aria-label="Environment sections" className="flex gap-0 border-b border-border-subtle flex-shrink-0 px-6">
+          <div role="tablist" aria-label="Environment sections" className="flex gap-0 border-b border-border-subtle shrink-0 px-6">
             {TABS.map(t => (
               <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}
                 className={`py-2.5 px-4 text-xs font-medium capitalize transition-colors border-b-2 -mb-px ${

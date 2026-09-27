@@ -32,11 +32,11 @@ export default function LogsPage() {
     <div className="absolute inset-0 flex flex-col p-4 lg:p-6 space-y-3">
       <div className="flex gap-2 flex-wrap">
         <input value={namespace} onChange={e => setNamespace(e.target.value)}
-          placeholder="namespace" className="px-3 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent w-36 font-mono" />
+          placeholder="namespace" className="px-3 py-1.5 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent w-36 font-mono" />
         <input value={pod} onChange={e => setPod(e.target.value)}
-          placeholder="pod name" className="px-3 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent flex-1 font-mono" />
+          placeholder="pod name" className="px-3 py-1.5 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent flex-1 font-mono" />
         <button onClick={streaming ? stop : startStream}
-          className={`px-3 py-1.5 rounded text-sm font-medium ${streaming ? 'bg-status-error/20 text-status-error' : 'bg-accent text-white hover:bg-accent/80'}`}>
+          className={`px-3 py-1.5 rounded-sm text-sm font-medium ${streaming ? 'bg-status-error/20 text-status-error' : 'bg-accent text-white hover:bg-accent/80'}`}>
           {streaming ? 'Stop' : 'Stream Logs'}
         </button>
       </div>

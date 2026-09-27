@@ -295,13 +295,13 @@ export default function NotesPage() {
 
   // Left panel
   const LeftPanel = (
-    <div className="flex flex-col h-full bg-bg-sidebar border-r border-border-subtle w-full md:w-[260px] flex-shrink-0">
+    <div className="flex flex-col h-full bg-bg-sidebar border-r border-border-subtle w-full md:w-[260px] shrink-0">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
         <span className="text-sm font-semibold text-text-primary">Notes</span>
         <button aria-label="New note"
           onClick={createNote}
-          className="p-1 rounded text-text-muted hover:text-accent transition-colors"
+          className="p-1 rounded-sm text-text-muted hover:text-accent transition-colors"
           title="New note"
         >
           <Plus size={16} />
@@ -309,14 +309,14 @@ export default function NotesPage() {
       </div>
 
       {/* Search */}
-      <div className="px-3 py-2 flex-shrink-0">
+      <div className="px-3 py-2 shrink-0">
         <div className="relative">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted" />
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search notes..."
-            className="w-full pl-8 pr-3 py-1.5 text-xs bg-bg-raised rounded border border-border-subtle text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors"
+            className="w-full pl-8 pr-3 py-1.5 text-xs bg-bg-raised rounded-sm border border-border-subtle text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-accent transition-colors"
           />
         </div>
       </div>
@@ -362,7 +362,7 @@ export default function NotesPage() {
           <p className="text-sm">Select a note or create a new one</p>
           <button
             onClick={createNote}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded border border-border-subtle hover:border-accent hover:text-accent transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-sm border border-border-subtle hover:border-accent hover:text-accent transition-colors"
           >
             <Plus size={14} />
             New Note
@@ -371,7 +371,7 @@ export default function NotesPage() {
       ) : (
         <>
           {/* Toolbar */}
-          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border-subtle flex-shrink-0 flex-wrap gap-y-1">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border-subtle shrink-0 flex-wrap gap-y-1">
             {/* Mobile back button */}
             <button
               onClick={() => setMobileView('list')}
@@ -386,7 +386,7 @@ export default function NotesPage() {
               ref={titleInputRef}
               value={localTitle}
               onChange={e => handleTitleChange(e.target.value)}
-              className="flex-1 min-w-0 text-lg font-medium bg-transparent border-none outline-none text-text-primary placeholder:text-text-muted"
+              className="flex-1 min-w-0 text-lg font-medium bg-transparent border-none outline-hidden text-text-primary placeholder:text-text-muted"
               placeholder="Note title..."
             />
 
@@ -394,7 +394,7 @@ export default function NotesPage() {
             <input
               value={localFolder}
               onChange={e => handleFolderChange(e.target.value)}
-              className="hidden sm:block w-28 text-xs bg-bg-raised border border-border-subtle rounded px-2 py-1 text-text-secondary focus:outline-none focus:border-accent transition-colors"
+              className="hidden sm:block w-28 text-xs bg-bg-raised border border-border-subtle rounded-sm px-2 py-1 text-text-secondary focus:outline-hidden focus:border-accent transition-colors"
               placeholder="Folder"
               title="Folder"
             />
@@ -413,7 +413,7 @@ export default function NotesPage() {
             </button>
 
             {/* Edit/Preview toggle */}
-            <div className="flex rounded border border-border-subtle overflow-hidden">
+            <div className="flex rounded-sm border border-border-subtle overflow-hidden">
               <button
                 onClick={() => setMode('edit')}
                 title="Edit"
@@ -438,7 +438,7 @@ export default function NotesPage() {
             <button
               onClick={() => router.push('/notes/graph')}
               title="View knowledge graph"
-              className="p-1.5 rounded text-text-muted hover:text-accent transition-colors"
+              className="p-1.5 rounded-sm text-text-muted hover:text-accent transition-colors"
             >
               <GitGraph size={15} />
             </button>
@@ -447,18 +447,18 @@ export default function NotesPage() {
             <button
               onClick={() => deleteNote(selectedNote.id)}
               title="Delete note"
-              className="p-1.5 rounded text-text-muted hover:text-status-error transition-colors"
+              className="p-1.5 rounded-sm text-text-muted hover:text-status-error transition-colors"
             >
               <Trash2 size={15} />
             </button>
           </div>
 
           {/* Folder input for mobile */}
-          <div className="sm:hidden px-4 py-1.5 border-b border-border-subtle flex-shrink-0">
+          <div className="sm:hidden px-4 py-1.5 border-b border-border-subtle shrink-0">
             <input
               value={localFolder}
               onChange={e => handleFolderChange(e.target.value)}
-              className="text-xs bg-bg-raised border border-border-subtle rounded px-2 py-1 text-text-secondary focus:outline-none focus:border-accent transition-colors w-full"
+              className="text-xs bg-bg-raised border border-border-subtle rounded-sm px-2 py-1 text-text-secondary focus:outline-hidden focus:border-accent transition-colors w-full"
               placeholder="Folder"
             />
           </div>
@@ -470,7 +470,7 @@ export default function NotesPage() {
                 value={localContent}
                 onChange={e => handleContentChange(e.target.value)}
                 placeholder="Write in markdown..."
-                className="w-full h-full resize-none bg-bg-page text-text-primary font-mono text-sm p-4 focus:outline-none placeholder:text-text-muted leading-relaxed"
+                className="w-full h-full resize-none bg-bg-page text-text-primary font-mono text-sm p-4 focus:outline-hidden placeholder:text-text-muted leading-relaxed"
                 spellCheck={false}
               />
             ) : (
@@ -526,7 +526,7 @@ export default function NotesPage() {
                           // Block code (has language class) — let rehype-highlight classes pass through
                           if (className) return <code className={className}>{children}</code>
                           // Inline code
-                          return <code className="bg-bg-raised font-mono text-sm rounded px-1 py-0.5 text-text-primary">{children}</code>
+                          return <code className="bg-bg-raised font-mono text-sm rounded-sm px-1 py-0.5 text-text-primary">{children}</code>
                         },
                         pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
                         a: ({ href, children }) => {
@@ -537,7 +537,7 @@ export default function NotesPage() {
                             return (
                               <button
                                 onClick={() => setWikilinkTarget(title)}
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors font-medium"
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors font-medium"
                               >
                                 {children}
                               </button>
@@ -586,7 +586,7 @@ export default function NotesPage() {
                               <button
                                 key={bl.id}
                                 onClick={() => selectNote(bl.id)}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors"
                               >
                                 [[{bl.title}]]
                               </button>

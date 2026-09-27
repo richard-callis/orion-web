@@ -63,11 +63,11 @@ export function AgentsTab({ env, onEnvChange }: { env: Environment; onEnvChange:
         <div className="rounded-lg border border-border-subtle bg-bg-card p-3 space-y-2">
           <p className="text-xs font-medium text-text-muted">Select an agent to link</p>
           <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search agents…" aria-label="Search agents" />
-          <div className="max-h-48 overflow-y-auto rounded border border-border-subtle divide-y divide-border-subtle">
+          <div className="max-h-48 overflow-y-auto rounded-sm border border-border-subtle divide-y divide-border-subtle">
             {candidates.map(a => (
               <button key={a.id} onClick={() => link(a.id)} disabled={linking}
                 className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-bg-raised transition-colors disabled:opacity-50">
-                <Bot size={13} className="text-text-muted flex-shrink-0" aria-hidden />
+                <Bot size={13} className="text-text-muted shrink-0" aria-hidden />
                 <span className="flex-1 min-w-0">
                   <span className="block text-xs font-medium text-text-primary">{a.name}</span>
                   <span className="block text-[11px] text-text-muted">{a.role ?? a.type}</span>
@@ -89,7 +89,7 @@ export function AgentsTab({ env, onEnvChange }: { env: Environment; onEnvChange:
         <ul className="rounded-lg border border-border-subtle bg-bg-card overflow-hidden divide-y divide-border-subtle">
           {env.agents.map(ae => (
             <li key={ae.id} className="flex items-center gap-3 px-4 py-3">
-              <Bot size={14} className="text-text-muted flex-shrink-0" aria-hidden />
+              <Bot size={14} className="text-text-muted shrink-0" aria-hidden />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-text-primary">{ae.agent.name}</p>
                 <p className="text-xs text-text-muted">{ae.agent.role ?? ae.agent.type}</p>

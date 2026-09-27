@@ -97,7 +97,7 @@ export function NodeGrid({ nodes, metrics, selectedNode, onNodeClick }: Props) {
               } ${onNodeClick ? 'hover:border-accent/60' : ''}`}
             >
               <div className="flex items-center gap-2 mb-2">
-                <Server size={14} className="flex-shrink-0" />
+                <Server size={14} className="shrink-0" />
                 <span className="text-xs font-mono font-medium truncate" title={node.name}>
                   {node.name.replace('k3s-', '').replace('homelab-', '')}
                 </span>
@@ -105,13 +105,13 @@ export function NodeGrid({ nodes, metrics, selectedNode, onNodeClick }: Props) {
 
               <div className="space-y-0.5 text-xs font-mono text-text-muted mb-2">
                 <div className="flex gap-1 items-center">
-                  <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${node.status === 'Ready' ? 'bg-status-healthy' : 'bg-status-error'}`} />
+                  <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${node.status === 'Ready' ? 'bg-status-healthy' : 'bg-status-error'}`} />
                   <span>{node.status}</span>
                 </div>
                 <div className="text-text-muted/70">{node.ip}</div>
                 <div className="flex gap-1 flex-wrap mt-1">
                   {node.role.map(r => (
-                    <span key={r} className="px-1 py-0.5 rounded bg-bg-raised text-text-muted text-[10px]">{r}</span>
+                    <span key={r} className="px-1 py-0.5 rounded-sm bg-bg-raised text-text-muted text-[10px]">{r}</span>
                   ))}
                 </div>
               </div>

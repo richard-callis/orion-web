@@ -86,7 +86,7 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
           {epicPlanningRoom && (
             <button
               onClick={() => router.push(`/messages?r=${epicPlanningRoom.id}`)}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-accent/40 text-accent text-sm hover:bg-accent/10 transition-colors"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-sm border border-accent/40 text-accent text-sm hover:bg-accent/10 transition-colors"
             >
               <MessageSquare size={14} /> Continue Planning
             </button>
@@ -95,7 +95,7 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
             <button
               onClick={handleApproveAll}
               disabled={approving}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded bg-status-healthy/15 text-status-healthy border border-status-healthy/30 text-sm hover:bg-status-healthy/25 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-sm bg-status-healthy/15 text-status-healthy border border-status-healthy/30 text-sm hover:bg-status-healthy/25 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {approving ? <Loader2 size={14} className="animate-spin" /> : <Rocket size={14} />}
               Approve All Plans ({unapprovedFeatures.length})
@@ -108,7 +108,7 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
           )}
           <button
             onClick={onDelete}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-border-subtle text-text-muted text-sm hover:border-status-error hover:text-status-error transition-colors"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-sm border border-border-subtle text-text-muted text-sm hover:border-status-error hover:text-status-error transition-colors"
           >
             <Trash2 size={14} /> Delete Epic
           </button>
@@ -121,7 +121,7 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
           value={title}
           onChange={e => setTitle(e.target.value)}
           onBlur={save}
-          className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+          className="w-full px-2.5 py-1.5 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
         />
       </div>
 
@@ -130,7 +130,7 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
         <select id="epic-status"
           value={status}
           onChange={e => { setStatus(e.target.value); onUpdate({ status: e.target.value }) }}
-          className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+          className="w-full px-2.5 py-1.5 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
         >
           <option value="active">Active</option>
           <option value="completed">Completed</option>
@@ -146,7 +146,7 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
           onBlur={save}
           rows={4}
           placeholder="What is this epic about?"
-          className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed"
+          className="w-full px-2.5 py-1.5 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent resize-none leading-relaxed"
         />
       </div>
 
@@ -158,7 +158,7 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
           onBlur={save}
           rows={6}
           placeholder="No plan yet — use 'Plan with Claude' to generate one..."
-          className="w-full px-2.5 py-1.5 text-sm rounded border border-accent/30 bg-accent/5 text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed"
+          className="w-full px-2.5 py-1.5 text-sm rounded-sm border border-accent/30 bg-accent/5 text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent resize-none leading-relaxed"
         />
       </div>
 
@@ -174,14 +174,14 @@ export function EpicDetailPanel({ epic, onUpdate, onDelete, onPlanWithClaude, on
             <div
               key={f.id}
               onClick={() => onSelectFeature(f)}
-              className="flex items-center gap-2 px-2 py-1.5 rounded border border-border-subtle bg-bg-raised hover:border-accent/40 cursor-pointer transition-colors"
+              className="flex items-center gap-2 px-2 py-1.5 rounded-sm border border-border-subtle bg-bg-raised hover:border-accent/40 cursor-pointer transition-colors"
             >
-              <GitBranch size={11} className="text-text-muted flex-shrink-0" />
+              <GitBranch size={11} className="text-text-muted shrink-0" />
               <span className="text-xs text-text-primary flex-1 truncate">{f.title}</span>
               {f.status === 'done'
-                ? <CheckCircle2 size={11} className="text-status-healthy flex-shrink-0" />
+                ? <CheckCircle2 size={11} className="text-status-healthy shrink-0" />
                 : f.planApprovedAt
-                  ? <Rocket size={11} className="text-status-healthy flex-shrink-0" />
+                  ? <Rocket size={11} className="text-status-healthy shrink-0" />
                   : null}
               <span className="text-[10px] text-text-muted">{f._count?.tasks ?? 0}</span>
             </div>

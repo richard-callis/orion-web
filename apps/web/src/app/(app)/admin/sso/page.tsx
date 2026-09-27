@@ -76,7 +76,7 @@ export default function SSOPage() {
       {/* Current mode card */}
       <div className="rounded-lg border border-status-healthy/30 bg-status-healthy/5 p-5">
         <div className="flex items-start gap-3">
-          <ShieldCheck size={20} className="text-status-healthy flex-shrink-0 mt-0.5" />
+          <ShieldCheck size={20} className="text-status-healthy shrink-0 mt-0.5" />
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-text-primary">Authentik Header Mode</span>
@@ -91,7 +91,7 @@ export default function SSOPage() {
             </p>
             <div className="pt-1 flex flex-wrap gap-2 font-mono text-xs text-text-muted">
               {['x-authentik-username', 'x-authentik-email', 'x-authentik-name', 'x-authentik-uid', 'x-authentik-groups'].map(h => (
-                <span key={h} className="bg-bg-raised px-2 py-0.5 rounded">{h}</span>
+                <span key={h} className="bg-bg-raised px-2 py-0.5 rounded-sm">{h}</span>
               ))}
             </div>
           </div>
@@ -103,9 +103,9 @@ export default function SSOPage() {
         <div className="px-4 py-3 border-b border-border-subtle">
           <h2 className="text-sm font-semibold text-text-primary">Group Mapping</h2>
           <p className="text-xs text-text-muted mt-0.5">
-            Map Authentik group names to ORION roles. Roles: <code className="bg-bg-raised px-1 rounded">admin</code>{' '}
-            <code className="bg-bg-raised px-1 rounded">user</code>{' '}
-            <code className="bg-bg-raised px-1 rounded">readonly</code>
+            Map Authentik group names to ORION roles. Roles: <code className="bg-bg-raised px-1 rounded-sm">admin</code>{' '}
+            <code className="bg-bg-raised px-1 rounded-sm">user</code>{' '}
+            <code className="bg-bg-raised px-1 rounded-sm">readonly</code>
           </p>
         </div>
         <div className="p-4 space-y-3">
@@ -114,7 +114,7 @@ export default function SSOPage() {
             onChange={e => setMappingText(e.target.value)}
             rows={8}
             spellCheck={false}
-            className="w-full font-mono text-xs px-3 py-2 bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none focus:border-accent transition-colors resize-none"
+            className="w-full font-mono text-xs px-3 py-2 bg-bg-raised border border-border-subtle rounded-sm text-text-primary focus:outline-hidden focus:border-accent transition-colors resize-none"
           />
           {mappingError && (
             <p className="text-xs text-status-error">{mappingError}</p>
@@ -123,7 +123,7 @@ export default function SSOPage() {
             <button
               onClick={handleSave}
               disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 rounded bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 rounded-sm bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
             >
               {saving ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
               {saving ? 'Saving...' : 'Save Mapping'}
@@ -151,7 +151,7 @@ export default function SSOPage() {
       <div className="rounded-lg border border-border-subtle bg-bg-card p-4 opacity-50">
         <div className="flex items-center gap-2 mb-2">
           <h2 className="text-sm font-semibold text-text-primary">Direct OIDC</h2>
-          <span className="text-xs px-2 py-0.5 rounded bg-bg-raised text-text-muted">Coming Soon</span>
+          <span className="text-xs px-2 py-0.5 rounded-sm bg-bg-raised text-text-muted">Coming Soon</span>
         </div>
         <p className="text-sm text-text-muted">
           Direct OIDC flow for non-header-auth scenarios. Useful when running ORION outside of a Traefik/Authentik

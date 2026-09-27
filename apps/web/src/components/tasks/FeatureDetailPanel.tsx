@@ -120,14 +120,14 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
           <button
             onClick={handlePlanFeature}
             disabled={creatingRoom}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-accent/40 text-accent text-sm hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-sm border border-accent/40 text-accent text-sm hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {creatingRoom ? <Loader2 size={14} className="animate-spin" /> : <MessageSquare size={14} />}
             Plan Feature
           </button>
           <button
             onClick={onDelete}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-border-subtle text-text-muted text-sm hover:border-status-error hover:text-status-error transition-colors"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-sm border border-border-subtle text-text-muted text-sm hover:border-status-error hover:text-status-error transition-colors"
           >
             <Trash2 size={14} /> Delete Feature
           </button>
@@ -140,7 +140,7 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
           value={title}
           onChange={e => setTitle(e.target.value)}
           onBlur={save}
-          className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+          className="w-full px-2.5 py-1.5 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
         />
       </div>
 
@@ -149,7 +149,7 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
         <select id="feature-status"
           value={status}
           onChange={e => { setStatus(e.target.value); onUpdate({ status: e.target.value }) }}
-          className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+          className="w-full px-2.5 py-1.5 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
         >
           <option value="active">Active</option>
           <option value="completed">Completed</option>
@@ -165,7 +165,7 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
           onBlur={save}
           rows={4}
           placeholder="What does this feature deliver?"
-          className="w-full px-2.5 py-1.5 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed"
+          className="w-full px-2.5 py-1.5 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent resize-none leading-relaxed"
         />
       </div>
 
@@ -177,7 +177,7 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
           onBlur={save}
           rows={6}
           placeholder="No plan yet — use 'Plan with Claude' to generate one..."
-          className="w-full px-2.5 py-1.5 text-sm rounded border border-accent/30 bg-accent/5 text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none leading-relaxed"
+          className="w-full px-2.5 py-1.5 text-sm rounded-sm border border-accent/30 bg-accent/5 text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent resize-none leading-relaxed"
         />
       </div>
 
@@ -195,7 +195,7 @@ export function FeatureDetailPanel({ feature, epicTitle, onUpdate, onDelete, onP
             <button
               onClick={handleApprovePlan}
               disabled={approving}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded bg-status-healthy/15 text-status-healthy border border-status-healthy/30 text-sm hover:bg-status-healthy/25 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-sm bg-status-healthy/15 text-status-healthy border border-status-healthy/30 text-sm hover:bg-status-healthy/25 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {approving ? <Loader2 size={14} className="animate-spin" /> : <Rocket size={14} />}
               Approve Plan &amp; Start Execution

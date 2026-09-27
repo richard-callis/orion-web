@@ -49,7 +49,7 @@ export function DomainPanel({ domain, environments, selected, onSelect, onChange
         className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none"
         {...clickableProps(onSelect, { expanded: selected })}
       >
-        <Globe size={15} className={`flex-shrink-0 ${domain.type === 'public' ? 'text-accent' : 'text-text-muted'}`} />
+        <Globe size={15} className={`shrink-0 ${domain.type === 'public' ? 'text-accent' : 'text-text-muted'}`} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-text-primary">{domain.name}</span>

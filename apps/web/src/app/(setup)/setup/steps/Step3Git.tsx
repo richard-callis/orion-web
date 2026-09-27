@@ -92,7 +92,7 @@ export function Step3Git({ onNext }: { onNext: () => void }) {
       <div className="space-y-4">
         <StepHeading title="Git provider" />
         <div className="flex items-center gap-3 text-sm text-text-muted" role="status">
-          <Loader2 size={16} className="animate-spin text-accent flex-shrink-0" />
+          <Loader2 size={16} className="animate-spin text-accent shrink-0" />
           Configuring bundled Gitea…
         </div>
       </div>
@@ -114,7 +114,7 @@ export function Step3Git({ onNext }: { onNext: () => void }) {
             onChange={() => { setProviderType(p.value); setUrl(''); setToken('') }}>
             <div className="min-w-0">
               <div className="text-sm font-medium text-text-primary flex items-center gap-1.5">
-                <GitBranch size={11} className="text-text-muted flex-shrink-0" />
+                <GitBranch size={11} className="text-text-muted shrink-0" />
                 {p.label}
               </div>
               <div className="text-[10px] text-text-muted truncate">{p.description}</div>

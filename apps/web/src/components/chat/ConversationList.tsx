@@ -148,11 +148,11 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
   const idleRow = 'text-text-muted hover:bg-bg-raised hover:text-text-primary'
 
   return (
-    <aside className="w-full md:w-56 h-full flex-shrink-0 flex flex-col border-r border-border-subtle bg-bg-sidebar overflow-hidden">
+    <aside className="w-full md:w-56 h-full shrink-0 flex flex-col border-r border-border-subtle bg-bg-sidebar overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-3 border-b border-border-subtle flex-shrink-0">
+      <div className="flex items-center justify-between px-3 py-3 border-b border-border-subtle shrink-0">
         <span className="text-xs font-semibold text-text-secondary">Conversations</span>
-        <button onClick={() => { onSelect?.(''); onMobileSelect?.() }} className="p-1 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New conversation">
+        <button onClick={() => { onSelect?.(''); onMobileSelect?.() }} className="p-1 rounded-sm text-text-muted hover:text-accent hover:bg-accent/10 transition-colors" title="New conversation">
           <Plus size={14} />
         </button>
       </div>
@@ -168,7 +168,7 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
             className={`group w-full text-left px-3 py-2.5 flex items-start gap-2 hover:bg-bg-raised transition-colors cursor-pointer ${activeId === c.id ? 'bg-accent/10 border-r-2 border-accent' : ''}`}
             onClick={() => { if (editingId !== c.id) { onSelect?.(c.id); onMobileSelect?.() } }}
           >
-            <MessageSquare size={14} className="flex-shrink-0 mt-0.5 text-text-muted" />
+            <MessageSquare size={14} className="shrink-0 mt-0.5 text-text-muted" />
             <div className="min-w-0 flex-1">
               {editingId === c.id ? (
                 <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
@@ -178,10 +178,10 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
                     onChange={e => setEditValue(e.target.value)}
                     onKeyDown={e => onEditKeyDown(e, c.id)}
                     onBlur={() => commitEdit(c.id)}
-                    className="flex-1 min-w-0 text-xs bg-bg-raised border border-accent rounded px-1 py-0.5 text-text-primary focus:outline-none"
+                    className="flex-1 min-w-0 text-xs bg-bg-raised border border-accent rounded-sm px-1 py-0.5 text-text-primary focus:outline-hidden"
                   />
-                  <button onClick={() => commitEdit(c.id)} className="text-green-400 hover:text-green-300 flex-shrink-0"><Check size={11} /></button>
-                  <button aria-label="Cancel" onClick={cancelEdit} className="text-text-muted hover:text-red-400 flex-shrink-0"><X size={11} /></button>
+                  <button onClick={() => commitEdit(c.id)} className="text-green-400 hover:text-green-300 shrink-0"><Check size={11} /></button>
+                  <button aria-label="Cancel" onClick={cancelEdit} className="text-text-muted hover:text-red-400 shrink-0"><X size={11} /></button>
                 </div>
               ) : (
                 <>
@@ -191,11 +191,11 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
               )}
             </div>
             {editingId !== c.id && (
-              <div className="flex-shrink-0 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
-                <button onClick={(e) => startEdit(e, c)} className="p-0.5 rounded text-text-muted hover:text-accent hover:bg-accent/10 transition-colors">
+              <div className="shrink-0 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
+                <button onClick={(e) => startEdit(e, c)} className="p-0.5 rounded-sm text-text-muted hover:text-accent hover:bg-accent/10 transition-colors">
                   <Pencil size={11} />
                 </button>
-                <button onClick={(e) => remove(e, c.id)} className="p-0.5 rounded text-text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors">
+                <button onClick={(e) => remove(e, c.id)} className="p-0.5 rounded-sm text-text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors">
                   <Trash2 size={11} />
                 </button>
               </div>
@@ -214,7 +214,7 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
               className={`${rowBase} text-text-muted hover:text-text-primary font-medium`}
             >
               {planningOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              <Layers size={12} className="flex-shrink-0 text-accent" />
+              <Layers size={12} className="shrink-0 text-accent" />
               <span className="flex-1">Planning Chats</span>
               <span className="text-[10px] text-text-muted">{planningConvos.length}</span>
             </div>
@@ -244,7 +244,7 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
                               className={`${rowBase} gap-1.5 ${activeId === c.id ? activeRow : idleRow}`}
                               title={c.title ?? undefined}
                             >
-                              <MessageSquare size={10} className="flex-shrink-0" />
+                              <MessageSquare size={10} className="shrink-0" />
                               <span className="flex-1 truncate text-[10px]">{c.title ?? 'Planning chat'}</span>
                             </div>
                           ))}
@@ -265,7 +265,7 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
                                     className={`${rowBase} gap-1.5 ml-2 ${activeId === c.id ? activeRow : idleRow}`}
                                     title={c.title ?? undefined}
                                   >
-                                    <MessageSquare size={10} className="flex-shrink-0" />
+                                    <MessageSquare size={10} className="shrink-0" />
                                     <span className="flex-1 truncate text-[10px]">{c.title ?? 'Planning chat'}</span>
                                   </div>
                                 ))}
@@ -286,7 +286,7 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
                     className={`${rowBase} gap-1.5 ml-2 ${activeId === c.id ? activeRow : idleRow}`}
                     title={c.title ?? undefined}
                   >
-                    <MessageSquare size={10} className="flex-shrink-0" />
+                    <MessageSquare size={10} className="shrink-0" />
                     <span className="flex-1 truncate text-[10px]">{c.title ?? 'Planning chat'}</span>
                   </div>
                 ))}
@@ -304,7 +304,7 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
               className={`${rowBase} text-text-muted hover:text-text-primary font-medium`}
             >
               {agentChatsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              <Bot size={12} className="flex-shrink-0 text-accent" />
+              <Bot size={12} className="shrink-0 text-accent" />
               <span className="flex-1">Agent Chats</span>
               <span className="text-[10px] text-text-muted">{agentConvos.length}</span>
             </div>
@@ -335,11 +335,11 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
                       onClick={() => { onSelect?.(c.id); onMobileSelect?.() }}
                       className={`group ${rowBase} gap-1.5 ml-2 ${activeId === c.id ? activeRow : idleRow}`}
                     >
-                      <MessageSquare size={10} className="flex-shrink-0" />
+                      <MessageSquare size={10} className="shrink-0" />
                       <span className="flex-1 truncate text-[10px]">{c.title ?? 'New agent draft'}</span>
                       <span className="text-[9px] text-text-muted italic group-hover:hidden">draft</span>
                       <button onClick={e => { e.stopPropagation(); remove(e, c.id) }}
-                        className="hidden group-hover:block p-0.5 rounded text-text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors flex-shrink-0">
+                        className="hidden group-hover:block p-0.5 rounded-sm text-text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors shrink-0">
                         <Trash2 size={10} />
                       </button>
                     </div>
@@ -366,11 +366,11 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
                                 className={`group ${rowBase} gap-1.5 ${activeId === c.id ? activeRow : idleRow}`}
                                 title={c.title ?? undefined}
                               >
-                                <MessageSquare size={10} className="flex-shrink-0" />
+                                <MessageSquare size={10} className="shrink-0" />
                                 <span className="flex-1 truncate text-[10px]">{c.title ?? (c.metadata.agentChat ? 'Chat' : 'Plan')}</span>
                                 <span className="text-[9px] text-text-muted group-hover:hidden">{c.metadata.agentChat ? 'chat' : 'plan'}</span>
                                 <button onClick={e => { e.stopPropagation(); remove(e, c.id) }}
-                                  className="hidden group-hover:block p-0.5 rounded text-text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors flex-shrink-0">
+                                  className="hidden group-hover:block p-0.5 rounded-sm text-text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors shrink-0">
                                   <Trash2 size={10} />
                                 </button>
                               </div>
@@ -387,10 +387,10 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
                       className={`group ${rowBase} gap-1.5 ml-2 ${activeId === c.id ? activeRow : idleRow}`}
                       title={c.title ?? undefined}
                     >
-                      <MessageSquare size={10} className="flex-shrink-0" />
+                      <MessageSquare size={10} className="shrink-0" />
                       <span className="flex-1 truncate text-[10px]">{c.title ?? (c.metadata.agentChat ?? c.metadata.agentTarget)!.name}</span>
                       <button onClick={e => { e.stopPropagation(); remove(e, c.id) }}
-                        className="hidden group-hover:block p-0.5 rounded text-text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors flex-shrink-0">
+                        className="hidden group-hover:block p-0.5 rounded-sm text-text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors shrink-0">
                         <Trash2 size={10} />
                       </button>
                     </div>
@@ -410,7 +410,7 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
               className={`${rowBase} text-text-muted hover:text-text-primary font-medium`}
             >
               {debugChatsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              <Bug size={12} className="flex-shrink-0 text-accent" />
+              <Bug size={12} className="shrink-0 text-accent" />
               <span className="flex-1">Debug Chats</span>
               <span className="text-[10px] text-text-muted">{debugConvos.length}</span>
             </div>
@@ -422,10 +422,10 @@ export function ConversationList({ convos, planningConvos = [], agentConvos = []
                 className={`group ${rowBase} gap-1.5 ml-2 ${activeId === c.id ? activeRow : idleRow}`}
                 title={c.title ?? undefined}
               >
-                <MessageSquare size={10} className="flex-shrink-0" />
+                <MessageSquare size={10} className="shrink-0" />
                 <span className="flex-1 truncate text-[10px]">{c.title ?? 'Debug chat'}</span>
                 <button onClick={e => { e.stopPropagation(); remove(e, c.id) }}
-                  className="hidden group-hover:block p-0.5 rounded text-text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors flex-shrink-0">
+                  className="hidden group-hover:block p-0.5 rounded-sm text-text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors shrink-0">
                   <Trash2 size={10} />
                 </button>
               </div>

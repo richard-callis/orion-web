@@ -58,15 +58,15 @@ export default function IncidentsPage() {
               onChange={e => setSearch(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && load()}
               placeholder="Search attacker key..."
-              className="w-full pl-8 pr-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+              className="w-full pl-8 pr-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-accent"
             />
           </div>
-          <button onClick={load} aria-label="Refresh incidents" className="p-1.5 rounded text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
+          <button onClick={load} aria-label="Refresh incidents" className="p-1.5 rounded-sm text-text-muted hover:text-text-primary border border-border-subtle transition-colors">
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
         <select aria-label="Status filter" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="px-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary focus:outline-none">
+          className="px-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded-sm text-text-primary focus:outline-hidden">
           <option value="">All statuses</option>
           <option value="open">Open</option>
           <option value="triaged">Triaged</option>

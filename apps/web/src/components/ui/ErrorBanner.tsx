@@ -21,7 +21,7 @@ export function ErrorBanner({
       )}
     >
       <AlertCircle size={14} className="shrink-0 mt-px text-red-400" aria-hidden="true" />
-      <div className="flex-1 break-words">{message}</div>
+      <div className="flex-1 wrap-break-word">{message}</div>
       {onRetry && (
         <button type="button" onClick={onRetry} className="text-red-300 underline hover:text-red-200 shrink-0">
           Retry

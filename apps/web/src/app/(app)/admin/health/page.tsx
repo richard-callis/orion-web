@@ -22,8 +22,8 @@ function StatusDot({ ok, label }: { ok: boolean; label: string }) {
   return (
     <div className="flex items-center gap-2">
       {ok
-        ? <CheckCircle2 size={14} className="text-emerald-400 flex-shrink-0" />
-        : <XCircle size={14} className="text-red-400 flex-shrink-0" />
+        ? <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+        : <XCircle size={14} className="text-red-400 shrink-0" />
       }
       <span className={`text-sm ${ok ? 'text-text-primary' : 'text-red-400'}`}>{label}</span>
     </div>
@@ -85,7 +85,7 @@ export default function SystemHealthPage() {
         <button
           onClick={refresh}
           disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-border-subtle text-text-muted hover:text-text-primary hover:border-border-visible transition-colors disabled:opacity-50"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-sm border border-border-subtle text-text-muted hover:text-text-primary hover:border-border-visible transition-colors disabled:opacity-50"
         >
           <RefreshCw size={11} className={loading ? 'animate-spin' : ''} /> Refresh
         </button>
@@ -114,11 +114,11 @@ export default function SystemHealthPage() {
           <Card title="Worker" icon={Bot}>
             <StatusDot ok={data.worker.active} label={data.worker.active ? 'Worker active' : 'Worker idle / no recent activity'} />
             <div className="grid grid-cols-2 gap-3 mt-1">
-              <div className="rounded bg-bg-raised border border-border-subtle px-3 py-2 text-center">
+              <div className="rounded-sm bg-bg-raised border border-border-subtle px-3 py-2 text-center">
                 <p className="text-2xl font-bold text-text-primary">{data.worker.running}</p>
                 <p className="text-[10px] text-text-muted mt-0.5">Running</p>
               </div>
-              <div className="rounded bg-bg-raised border border-border-subtle px-3 py-2 text-center">
+              <div className="rounded-sm bg-bg-raised border border-border-subtle px-3 py-2 text-center">
                 <p className="text-2xl font-bold text-text-primary">{data.worker.queued}</p>
                 <p className="text-[10px] text-text-muted mt-0.5">Queued</p>
               </div>

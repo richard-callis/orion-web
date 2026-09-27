@@ -169,18 +169,18 @@ export function BugManager({ initialBugs, users }: Props) {
       <div className="flex-1 flex flex-col overflow-hidden px-4 lg:px-6 py-4 lg:py-6">
 
         {/* Toolbar */}
-        <div className="flex items-center justify-between mb-4 flex-shrink-0">
+        <div className="flex items-center justify-between mb-4 shrink-0">
           <div className="flex items-center gap-3">
             <h2 className="text-sm font-semibold text-text-primary">Bug Tracker</h2>
             {openCount > 0 && (
-              <span className="px-1.5 py-0.5 text-[10px] rounded bg-status-error/15 text-status-error border border-status-error/30">
+              <span className="px-1.5 py-0.5 text-[10px] rounded-sm bg-status-error/15 text-status-error border border-status-error/30">
                 {openCount} open
               </span>
             )}
           </div>
           <button
             onClick={() => { setCreateError(null); setModal(true) }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-white text-xs font-medium hover:bg-accent/80 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm bg-accent text-white text-xs font-medium hover:bg-accent/80 transition-colors"
           >
             <Plus size={13} /> Report Bug
           </button>
@@ -215,7 +215,7 @@ export function BugManager({ initialBugs, users }: Props) {
                 >
                   <p className="text-xs text-text-primary leading-snug line-clamp-2 mb-1.5">{bug.title}</p>
                   <div className="flex items-center justify-between">
-                    <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border ${sev.bg} ${sev.color}`}>
+                    <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-sm border ${sev.bg} ${sev.color}`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${sev.dot}`} />
                       {sev.label}
                     </span>
@@ -238,11 +238,11 @@ export function BugManager({ initialBugs, users }: Props) {
 
       {/* ── Detail panel ────────────────────────────────────────────────────── */}
       {selectedBug && (
-        <aside className="w-80 flex-shrink-0 border-l border-border-subtle bg-bg-sidebar flex flex-col overflow-hidden">
+        <aside className="w-80 shrink-0 border-l border-border-subtle bg-bg-sidebar flex flex-col overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
             <span className="text-xs font-medium text-text-secondary">Bug Details</span>
-            <button onClick={() => setSelectedBug(null)} className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors">
+            <button onClick={() => setSelectedBug(null)} className="p-1 rounded-sm text-text-muted hover:text-text-primary hover:bg-bg-raised transition-colors">
               <X size={14} />
             </button>
           </div>
@@ -258,7 +258,7 @@ export function BugManager({ initialBugs, users }: Props) {
                 value={editTitle}
                 onChange={e => setEditTitle(e.target.value)}
                 onBlur={saveDetail}
-                className="w-full text-sm text-text-primary bg-bg-raised border border-border-visible rounded px-2 py-1.5 focus:outline-none focus:border-accent"
+                className="w-full text-sm text-text-primary bg-bg-raised border border-border-visible rounded-sm px-2 py-1.5 focus:outline-hidden focus:border-accent"
               />
             </div>
 
@@ -269,7 +269,7 @@ export function BugManager({ initialBugs, users }: Props) {
                 <select id="bug-severity"
                   value={editSev}
                   onChange={e => { setEditSev(e.target.value); updateBug(selectedBug.id, { severity: e.target.value }) }}
-                  className="w-full text-xs bg-bg-raised border border-border-visible rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
+                  className="w-full text-xs bg-bg-raised border border-border-visible rounded-sm px-2 py-1.5 text-text-primary focus:outline-hidden focus:border-accent"
                 >
                   <option value="critical">Critical</option>
                   <option value="high">High</option>
@@ -282,7 +282,7 @@ export function BugManager({ initialBugs, users }: Props) {
                 <select id="bug-status"
                   value={editStatus}
                   onChange={e => { setEditStatus(e.target.value as BugStatus); updateBug(selectedBug.id, { status: e.target.value }) }}
-                  className="w-full text-xs bg-bg-raised border border-border-visible rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
+                  className="w-full text-xs bg-bg-raised border border-border-visible rounded-sm px-2 py-1.5 text-text-primary focus:outline-hidden focus:border-accent"
                 >
                   {STATUS_COLUMNS.map(s => <option key={s} value={s}>{statusLabel[s]}</option>)}
                 </select>
@@ -297,7 +297,7 @@ export function BugManager({ initialBugs, users }: Props) {
                 onChange={e => setEditArea(e.target.value)}
                 onBlur={saveDetail}
                 placeholder="e.g. Traefik, Auth, Game Servers"
-                className="w-full text-xs bg-bg-raised border border-border-visible rounded px-2 py-1.5 text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                className="w-full text-xs bg-bg-raised border border-border-visible rounded-sm px-2 py-1.5 text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent"
               />
             </div>
 
@@ -308,7 +308,7 @@ export function BugManager({ initialBugs, users }: Props) {
                 <select id="bug-assigned-to"
                   value={editAssignee}
                   onChange={e => { setEditAssignee(e.target.value); updateBug(selectedBug.id, { assignedUserId: e.target.value || null }) }}
-                  className="w-full text-xs bg-bg-raised border border-border-visible rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
+                  className="w-full text-xs bg-bg-raised border border-border-visible rounded-sm px-2 py-1.5 text-text-primary focus:outline-hidden focus:border-accent"
                 >
                   <option value="">Unassigned</option>
                   {users.map(u => (
@@ -327,7 +327,7 @@ export function BugManager({ initialBugs, users }: Props) {
                 onBlur={saveDetail}
                 rows={6}
                 placeholder="Steps to reproduce, expected vs actual behaviour, affected versions…"
-                className="w-full text-xs bg-bg-raised border border-border-visible rounded px-2 py-1.5 text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none"
+                className="w-full text-xs bg-bg-raised border border-border-visible rounded-sm px-2 py-1.5 text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent resize-none"
               />
             </div>
 
@@ -345,7 +345,7 @@ export function BugManager({ initialBugs, users }: Props) {
           <div className="p-3 border-t border-border-subtle">
             <button
               onClick={() => deleteBug(selectedBug.id)}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-border-subtle text-text-muted text-xs hover:border-status-error hover:text-status-error transition-colors"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-sm border border-border-subtle text-text-muted text-xs hover:border-status-error hover:text-status-error transition-colors"
             >
               <Trash2 size={13} /> Delete Bug
             </button>
@@ -371,7 +371,7 @@ export function BugManager({ initialBugs, users }: Props) {
               onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
               onKeyDown={e => e.key === 'Enter' && createBug()}
               placeholder="Short description of the bug"
-              className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+              className="w-full px-3 py-2 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent"
               autoFocus
             />
           </div>
@@ -381,7 +381,7 @@ export function BugManager({ initialBugs, users }: Props) {
               <select id="bug-severity-2"
                 value={form.severity}
                 onChange={e => setForm(f => ({ ...f, severity: e.target.value }))}
-                className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
+                className="w-full px-3 py-2 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary focus:outline-hidden focus:border-accent"
               >
                 <option value="critical">Critical</option>
                 <option value="high">High</option>
@@ -395,7 +395,7 @@ export function BugManager({ initialBugs, users }: Props) {
                 value={form.area}
                 onChange={e => setForm(f => ({ ...f, area: e.target.value }))}
                 placeholder="e.g. Auth, Traefik"
-                className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                className="w-full px-3 py-2 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent"
               />
             </div>
           </div>
@@ -406,7 +406,7 @@ export function BugManager({ initialBugs, users }: Props) {
               onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
               rows={4}
               placeholder="Steps to reproduce, expected vs actual behaviour…"
-              className="w-full px-3 py-2 text-sm rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent resize-none"
+              className="w-full px-3 py-2 text-sm rounded-sm border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-hidden focus:border-accent resize-none"
             />
           </div>
         </CreateEntityModal>
