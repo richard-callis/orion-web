@@ -250,7 +250,7 @@ services:
   # Activated by bootstrap.sh when REVERSE_PROXY_TYPE=docker is set in .env.
   traefik:
     profiles: [proxy]
-    image: traefik:v3.0
+    image: traefik:v3.7
     restart: unless-stopped
     command:
       - --providers.docker=true
