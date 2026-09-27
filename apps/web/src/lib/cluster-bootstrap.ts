@@ -657,7 +657,7 @@ async function ensureElkCredentials(
 
 // ── Gateway manifest ──────────────────────────────────────────────────────────
 
-function gatewayManifest(envName: string, joinToken: string): string {
+export function gatewayManifest(envName: string, joinToken: string): string {
   const slug = envName.toLowerCase().replace(/[^a-z0-9-]/g, '-')
   const gw = gatewayImageSpec()
 
@@ -829,13 +829,13 @@ spec:
 
 // ── ESO + Vault manifests ─────────────────────────────────────────────────────
 
-interface TLSConfig {
+export interface TLSConfig {
   caBundleB64: string
   clientCertPem: string
   clientKeyPem: string
 }
 
-function esoVaultManifest(
+export function esoVaultManifest(
   roleId: string,
   secretId: string,
   vaultAddr: string,
