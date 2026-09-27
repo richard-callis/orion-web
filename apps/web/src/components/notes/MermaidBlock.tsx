@@ -1,64 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import type { Mermaid } from 'mermaid'
-
-// mermaid is several MB; load it only when a diagram is actually rendered.
-let mermaidPromise: Promise<Mermaid> | null = null
-function loadMermaid(): Promise<Mermaid> {
-  mermaidPromise ??= import('mermaid').then(({ default: mermaid }) => {
-    mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' })
-    return mermaid
-  })
-  return mermaidPromise
-}
-
-// ── SVG sanitizer for XSS prevention ─────────────────────────────────────────
-// Parses SVG string and removes dangerous elements/attributes before rendering.
-// Now redundant with securityLevel: 'strict' (which disables HTML labels and click
-// handlers in Mermaid diagrams), but kept as defense-in-depth.
-function sanitizeSvg(svgString: string): Element | null {
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(svgString, 'image/svg+xml')
-
-  // Check for parser errors
-  if (doc.documentElement.nodeName === 'parsererror') {
-    return null
-  }
-
-  // Remove dangerous elements by traversing DOM safely
-  const dangerousElements = doc.querySelectorAll(
-    'script, object, embed, iframe, form, input, textarea, button, select, link, meta'
-  )
-  dangerousElements.forEach(el => el.remove())
-
-  // Remove on* event handlers from all elements
-  const allElements = doc.querySelectorAll('*')
-  allElements.forEach(el => {
-    Array.from(el.attributes).forEach(attr => {
-      if (attr.name.toLowerCase().startsWith('on')) {
-        el.removeAttribute(attr.name)
-      }
-    })
-
-    // Neutralize dangerous URI schemes in href/src (javascript:, data:, vbscript:)
-    const href = el.getAttribute('href')
-    if (href) {
-      const lowerHref = href.toLowerCase()
-      if (lowerHref.startsWith('javascript:') || lowerHref.startsWith('data:') || lowerHref.startsWith('vbscript:')) {
-        el.setAttribute('href', '#')
-      }
-    }
-    const src = el.getAttribute('src')
-    if (src) {
-      const lowerSrc = src.toLowerCase()
-      if (lowerSrc.startsWith('javascript:') || lowerSrc.startsWith('data:') || lowerSrc.startsWith('vbscript:')) {
-        el.setAttribute('src', '#')
-      }
-    }
-  })
-
-  return doc.documentElement
-}
+import { renderMermaidSvg } from './mermaid-render'
 
 export function MermaidBlock({ code }: { code: string }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -66,17 +8,12 @@ export function MermaidBlock({ code }: { code: string }) {
 
   useEffect(() => {
     let cancelled = false
-    const id = `mermaid-${Math.random().toString(36).slice(2)}`
     setError(null)
-    loadMermaid()
-      .then(mermaid => mermaid.render(id, code))
-      .then(({ svg }) => {
+    renderMermaidSvg(code)
+      .then(sanitized => {
         if (!cancelled && ref.current) {
           // Clear previous content
           ref.current.innerHTML = ''
-
-          // Parse and sanitize SVG safely
-          const sanitized = sanitizeSvg(svg)
           if (sanitized) {
             // Import the sanitized SVG into the document and append
             const imported = document.importNode(sanitized, true)
