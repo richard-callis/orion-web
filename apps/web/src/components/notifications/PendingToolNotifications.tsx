@@ -5,6 +5,7 @@ import { PENDING_TOOLS_KEY } from '@/hooks/usePendingTools'
 import { createPortal } from 'react-dom'
 import { Clock, CheckCircle, XCircle, X, ChevronRight, Sparkles, ToggleRight, ToggleLeft } from 'lucide-react'
 import { Dialog } from '@/components/ui/Dialog'
+import { Input } from '@/components/ui/Input'
 
 interface McpTool {
   id: string
@@ -61,7 +62,6 @@ export function PendingToolNotifications() {
   const visible = tools.filter(t => !dismissed.has(t.id))
   if (visible.length === 0 && !viewTool) return null
 
-  const inputCls = 'w-full px-3 py-2 text-sm bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors'
 
   return createPortal(
     <>
@@ -174,9 +174,10 @@ export function PendingToolNotifications() {
 
             {/* Edit command before approving */}
             <div>
-              <p className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1.5">Edit Command (optional)</p>
-              <input
-                className={inputCls + ' font-mono text-xs'}
+              <label htmlFor="pending-tool-command" className="block text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1.5">Edit Command (optional)</label>
+              <Input
+                id="pending-tool-command"
+                className="font-mono text-xs"
                 defaultValue={(viewTool.execConfig as { command?: string })?.command ?? ''}
                 onChange={e => setViewTool(prev => prev ? {
                   ...prev,
