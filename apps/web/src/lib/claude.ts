@@ -664,7 +664,7 @@ async function* streamAgentChatInner(
   const kcSection = knowledgeContext ? '\n\n---\n## Relevant Knowledge Base\n\n' + knowledgeContext + '\n---' : ''
 
   if (llm.startsWith('ollama:') || llm.startsWith('ext:')) {
-    let model = ''
+    let model: string
     let baseUrl: string | undefined
     let timeoutSecs = 120
     let provider = 'ollama'

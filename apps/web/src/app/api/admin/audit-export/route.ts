@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
           },
         })
 
-        throw new Error(error)
+        throw new Error(error, { cause: err })
       }
     }
   )

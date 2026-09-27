@@ -93,7 +93,7 @@ export function makeLocalGx(kubeconfig: string) {
         })
         return result.stdout
       } catch (e) {
-        throw new Error(`helm failed: ${e instanceof Error ? e.message : String(e)}`)
+        throw new Error(`helm failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e })
       }
     }
 

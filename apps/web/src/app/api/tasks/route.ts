@@ -71,13 +71,13 @@ export async function POST(req: NextRequest) {
   // count + create in a serializable transaction to prevent TOCTOU bypass by concurrent POSTs.
   if (data.assignedAgentId) {
     const maxPending = parseInt(process.env.MAX_PENDING_TASKS_PER_AGENT ?? '50', 10)
-    let task: Awaited<ReturnType<typeof prisma.task.create>> | null = null
+    let task: Awaited<ReturnType<typeof prisma.task.create>> | null
     try {
       task = await prisma.$transaction(async (tx) => {
         const pendingCount = await tx.task.count({
           where: { assignedAgent: data.assignedAgentId, status: 'pending' },
         })
-        if (pendingCount >= maxPending) return null as any
+        if (pendingCount >= maxPending) return null
         return tx.task.create({
           data: {
             title:          data.title,

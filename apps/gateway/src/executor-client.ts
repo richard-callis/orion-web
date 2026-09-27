@@ -54,7 +54,7 @@ class ExecutorClient {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
     } catch (err) {
-      throw new Error(`Executor error: ${err instanceof Error ? err.message : String(err)}`)
+      throw new Error(`Executor error: ${err instanceof Error ? err.message : String(err)}`, { cause: err })
     }
     if (!res.ok) {
       const text = await res.text().catch(() => '')
@@ -115,7 +115,7 @@ class ExecutorClient {
         }
       } catch (error) {
         if (error instanceof ExecutorHttpError && error.status === 404) {
-          throw new Error(`Execution not found: ${executionId}`)
+          throw new Error(`Execution not found: ${executionId}`, { cause: error })
         }
         // Tolerate transient executor/network blips instead of failing the call.
         if (++consecutiveErrors >= MAX_CONSECUTIVE_POLL_ERRORS) throw error

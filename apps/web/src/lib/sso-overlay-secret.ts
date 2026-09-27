@@ -64,7 +64,8 @@ export async function syncOverlaySecret(
       data = JSON.parse(result).data?.[target.secretKey]
     } catch (err) {
       throw new Error(
-        `Unable to resolve secret placeholder for ${target.secretName}/${target.secretKey} — secret lookup failed: ${err instanceof Error ? err.message : String(err)}`
+        `Unable to resolve secret placeholder for ${target.secretName}/${target.secretKey} — secret lookup failed: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
       )
     }
     if (!data) {
