@@ -748,7 +748,7 @@ services:
   # with an HMAC-signed body. CUSTOMFIELDS injects environmentId="host" so
   # the route can attribute alerts to the Orion host (vs a managed env).
   falcosidekick:
-    image: falcosecurity/falcosidekick:2.30.0
+    image: falcosecurity/falcosidekick:2.35.0
     restart: unless-stopped
     depends_on:
       orion:
