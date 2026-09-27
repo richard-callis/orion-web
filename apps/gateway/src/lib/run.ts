@@ -43,14 +43,18 @@ export function truncateOutput(s: string, max = DEFAULT_MAX_OUTPUT): string {
  */
 export const ALLOWED_BINARIES = new Set(['kubectl', 'helm', 'docker', 'talosctl', 'velero', 'trivy', 'hostname', 'sh'])
 
-function assertSafeArgs(args: string[]): void {
-  for (const arg of args) {
-    // Reject control characters that should never appear in CLI args and can
-    // lead to unsafe or ambiguous command behavior.
-    if (typeof arg !== 'string' || /[\u0000\r\n]/.test(arg)) {
+function assertSafeArgs(bin: string, args: string[]): void {
+  args.forEach((arg, i) => {
+    // NUL is never valid in argv. CR/LF are rejected for the tool CLIs, which
+    // never take multi-line arguments — except the script passed to `sh -c`,
+    // since admin-defined shell tools may legitimately span several lines
+    // (their interpolated values are single-quoted by tool-runner).
+    const isShellScript = bin === 'sh' && i > 0 && args[i - 1] === '-c'
+    const bad = isShellScript ? /\u0000/ : /[\u0000\r\n]/
+    if (typeof arg !== 'string' || bad.test(arg)) {
       throw new Error('run(): unsafe command argument rejected')
     }
-  }
+  })
 }
 
 export function run(bin: string, args: string[], opts: RunOptions = {}): Promise<RunResult> {
@@ -58,7 +62,7 @@ export function run(bin: string, args: string[], opts: RunOptions = {}): Promise
     return Promise.reject(new Error(`run(): '${bin}' is not an allowed binary`))
   }
   try {
-    assertSafeArgs(args)
+    assertSafeArgs(bin, args)
   } catch (e) {
     return Promise.reject(e)
   }
