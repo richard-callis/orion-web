@@ -12,7 +12,7 @@
 # We copy the docker binary from the official docker:cli image rather than
 # fetching a pinned tar URL, which avoids 404s as old versions are removed
 # from the download server.
-FROM docker:27-cli AS docker-cli
+FROM docker:29-cli AS docker-cli
 
 FROM timberio/vector:0.39.0-debian
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
