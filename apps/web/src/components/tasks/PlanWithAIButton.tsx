@@ -64,7 +64,7 @@ export function PlanWithAIButton({ onSelect }: { onSelect: (modelId: string) => 
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded bg-accent text-white text-sm hover:bg-accent/80 transition-colors"
+        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-sm bg-accent text-white text-sm hover:bg-accent/80 transition-colors"
       >
         <MessageSquare size={14} /> Plan with AI
       </button>

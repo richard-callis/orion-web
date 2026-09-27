@@ -31,7 +31,7 @@ describe('parseToolArgs', () => {
   })
 
   it('throws a readable error on a type mismatch', () => {
-    expect(() => parseToolArgs(Schema, { limit: 'lots' })).toThrow(/invalid arguments — limit: Expected number/)
+    expect(() => parseToolArgs(Schema, { limit: 'lots' })).toThrow(/invalid arguments — limit: Invalid input: expected number, received string/)
   })
 })
 

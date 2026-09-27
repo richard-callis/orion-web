@@ -72,7 +72,7 @@ export function NewPointForm({
         {environments.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
       </Select>
       <label className="flex items-center gap-2 cursor-pointer">
-        <input type="checkbox" checked={form.certManager} onChange={e => set('certManager', e.target.checked)} className="rounded" />
+        <input type="checkbox" checked={form.certManager} onChange={e => set('certManager', e.target.checked)} className="rounded-sm" />
         <span className="text-text-secondary">Use cert-manager (Let&apos;s Encrypt)</span>
       </label>
       {form.certManager && (

@@ -89,7 +89,7 @@ export function WebhooksTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-text-muted">{triggers.length} trigger{triggers.length !== 1 ? 's' : ''} configured</p>
-        <button onClick={() => setShowForm(f => !f)} aria-expanded={showForm} className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-bg-primary text-sm font-medium hover:bg-accent/90 transition-colors">
+        <button onClick={() => setShowForm(f => !f)} aria-expanded={showForm} className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm bg-accent text-bg-primary text-sm font-medium hover:bg-accent/90 transition-colors">
           <Plus size={15} /> New Trigger
         </button>
       </div>
@@ -136,11 +136,11 @@ export function WebhooksTab() {
                           aria-expanded={expanded}
                           className="flex items-center gap-1.5 text-left"
                         >
-                          {expanded ? <ChevronUp size={14} className="text-text-muted flex-shrink-0" /> : <ChevronDown size={14} className="text-text-muted flex-shrink-0" />}
+                          {expanded ? <ChevronUp size={14} className="text-text-muted shrink-0" /> : <ChevronDown size={14} className="text-text-muted shrink-0" />}
                           {trigger.name}
                         </button>
                       </td>
-                      <td className="px-3 py-2.5"><span className={`px-1.5 py-0.5 rounded text-xs font-medium ${sourceBadgeCls(trigger.source)}`}>{trigger.source}</span></td>
+                      <td className="px-3 py-2.5"><span className={`px-1.5 py-0.5 rounded-sm text-xs font-medium ${sourceBadgeCls(trigger.source)}`}>{trigger.source}</span></td>
                       <td className="px-3 py-2.5 text-text-secondary">{trigger.agent?.name ?? '—'}</td>
                       <td className="px-3 py-2.5 text-xs text-text-muted">{trigger.lastFiredAt ? new Date(trigger.lastFiredAt).toLocaleString() : '—'}</td>
                       <td className="px-3 py-2.5 text-xs font-mono text-text-muted">{trigger.fireCount}</td>
@@ -171,7 +171,7 @@ export function WebhooksTab() {
                           <div className="space-y-3 text-sm">
                             <div>
                               <p className="text-xs text-text-muted mb-1 font-medium">Webhook URL</p>
-                              <div className="flex items-center gap-2 font-mono text-xs bg-bg-primary border border-border-subtle rounded px-2 py-1.5">
+                              <div className="flex items-center gap-2 font-mono text-xs bg-bg-primary border border-border-subtle rounded-sm px-2 py-1.5">
                                 <span className="flex-1 break-all text-text-primary">{webhookUrl}</span>
                                 <CopyButton text={webhookUrl} label="Copy webhook URL" />
                               </div>
@@ -179,14 +179,14 @@ export function WebhooksTab() {
                             <div>
                               <p className="text-xs text-text-muted mb-1 font-medium">Secret</p>
                               <div className="flex items-center gap-2">
-                                <div className="flex-1 flex items-center gap-2 font-mono text-xs bg-bg-primary border border-border-subtle rounded px-2 py-1.5">
+                                <div className="flex-1 flex items-center gap-2 font-mono text-xs bg-bg-primary border border-border-subtle rounded-sm px-2 py-1.5">
                                   <span className="flex-1 text-text-secondary">{revealedSecret ?? '••••••••••••••••••••••••••••••••'}</span>
                                   {revealedSecret && <CopyButton text={revealedSecret} label="Copy secret" />}
                                 </div>
                                 {pendingRegen === trigger.id ? (
                                   <ConfirmInline label="Confirm regen" onConfirm={() => void regenerate(trigger.id)} onCancel={() => setPendingRegen(null)} />
                                 ) : (
-                                  <button onClick={() => setPendingRegen(trigger.id)} className="flex items-center gap-1 px-2 py-1.5 rounded border border-border-subtle text-xs text-text-secondary hover:bg-bg-raised hover:text-text-primary transition-colors">
+                                  <button onClick={() => setPendingRegen(trigger.id)} className="flex items-center gap-1 px-2 py-1.5 rounded-sm border border-border-subtle text-xs text-text-secondary hover:bg-bg-raised hover:text-text-primary transition-colors">
                                     <RefreshCw size={12} />{revealedSecret ? 'Regenerate' : 'Reveal / Regenerate'}
                                   </button>
                                 )}
@@ -195,7 +195,7 @@ export function WebhooksTab() {
                             <div>
                               <p className="text-xs text-text-muted mb-1 font-medium">Example curl</p>
                               <div className="relative">
-                                <pre className="font-mono text-xs bg-bg-primary border border-border-subtle rounded px-3 py-2 overflow-x-auto text-text-secondary whitespace-pre">{curl}</pre>
+                                <pre className="font-mono text-xs bg-bg-primary border border-border-subtle rounded-sm px-3 py-2 overflow-x-auto text-text-secondary whitespace-pre">{curl}</pre>
                                 <div className="absolute top-1.5 right-1.5"><CopyButton text={curl} label="Copy curl example" /></div>
                               </div>
                             </div>
@@ -244,8 +244,8 @@ function NewTriggerForm({ agents, onCancel, onCreated }: { agents: Array<{ id: s
       </div>
       <label className="flex flex-col gap-1"><span className="text-xs text-text-muted">Task Description Template (optional)</span><Textarea rows={2} value={form.taskDesc} onChange={e => setForm(f => ({ ...f, taskDesc: e.target.value }))} className="px-2 py-1.5 bg-bg-primary" /></label>
       <div className="flex gap-2">
-        <button type="submit" disabled={creating} className="px-3 py-1.5 rounded bg-accent text-bg-primary text-sm font-medium hover:bg-accent/90 disabled:opacity-50">{creating ? 'Creating…' : 'Create'}</button>
-        <button type="button" onClick={onCancel} className="px-3 py-1.5 rounded border border-border-subtle text-sm text-text-secondary hover:bg-bg-raised">Cancel</button>
+        <button type="submit" disabled={creating} className="px-3 py-1.5 rounded-sm bg-accent text-bg-primary text-sm font-medium hover:bg-accent/90 disabled:opacity-50">{creating ? 'Creating…' : 'Create'}</button>
+        <button type="button" onClick={onCancel} className="px-3 py-1.5 rounded-sm border border-border-subtle text-sm text-text-secondary hover:bg-bg-raised">Cancel</button>
       </div>
     </form>
   )

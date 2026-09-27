@@ -75,7 +75,7 @@ export default function StorageStatsPanel() {
           <HardDrive size={13} className="text-accent" />
           <span className="text-sm font-semibold text-text-primary">Storage Capacity</span>
           {providerLabel && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded border border-accent/30 bg-accent/5 text-accent font-mono">
+            <span className="text-[10px] px-1.5 py-0.5 rounded-sm border border-accent/30 bg-accent/5 text-accent font-mono">
               {providerLabel}
             </span>
           )}

@@ -21,11 +21,11 @@ export const normalizedEventSchema = z.object({
   severity:    z.number().int().min(0).max(100),
   title:       z.string(),
   description: z.string().nullable().optional(),
-  rawEvent:    z.record(z.unknown()),
+  rawEvent:    z.record(z.string(), z.unknown()),
   dedupKey:    z.string(),
   sourceName:  z.string().optional(), // hostname / agent identifier
   timestamp:   z.coerce.date().optional(),
-  metadata:    z.record(z.unknown()).nullable().optional(),
+  metadata:    z.record(z.string(), z.unknown()).nullable().optional(),
 })
 
 export type NormalizedSecurityEvent = z.infer<typeof normalizedEventSchema>
@@ -53,7 +53,7 @@ export const actionRequestSchema = z.object({
   target:     z.string(),     // IP, CIDR, hostname, etc.
   incidentId: z.string().uuid().nullable().optional(),
   reason:     z.string(),     // Why this action is proposed
-  payload:    z.record(z.unknown()).nullable().optional(), // Raw action params
+  payload:    z.record(z.string(), z.unknown()).nullable().optional(), // Raw action params
 })
 
 export type ActionRequest = z.infer<typeof actionRequestSchema>

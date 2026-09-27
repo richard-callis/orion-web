@@ -88,11 +88,11 @@ export function RunLogTab({ taskId, agents }: { taskId: string; agents: Agent[] 
             return (
               <div key={ev.id} className="flex gap-3 pl-1">
                 {/* Dot */}
-                <div className="flex-shrink-0 w-3.5 h-3.5 mt-0.5 rounded-full bg-bg-sidebar border border-border-visible flex items-center justify-center z-10">
+                <div className="shrink-0 w-3.5 h-3.5 mt-0.5 rounded-full bg-bg-sidebar border border-border-visible flex items-center justify-center z-10">
                   {EVENT_ICONS[ev.eventType] ?? <div className="w-1.5 h-1.5 rounded-full bg-border-visible" />}
                 </div>
                 {/* Card */}
-                <div className={`flex-1 min-w-0 rounded border px-2.5 py-1.5 ${EVENT_BG[ev.eventType] ?? 'border-border-subtle bg-bg-raised'}`}>
+                <div className={`flex-1 min-w-0 rounded-sm border px-2.5 py-1.5 ${EVENT_BG[ev.eventType] ?? 'border-border-subtle bg-bg-raised'}`}>
                   <div className="flex items-center gap-1.5 mb-0.5">
                     <span className="text-[10px] font-semibold text-text-secondary">
                       {EVENT_LABEL[ev.eventType] ?? ev.eventType}
@@ -100,12 +100,12 @@ export function RunLogTab({ taskId, agents }: { taskId: string; agents: Agent[] 
                     {agent && (
                       <span className="text-[9px] text-text-muted">· {agent.name}</span>
                     )}
-                    <span className="ml-auto text-[9px] text-text-muted flex-shrink-0">
+                    <span className="ml-auto text-[9px] text-text-muted shrink-0">
                       {new Date(ev.createdAt).toLocaleTimeString()}
                     </span>
                   </div>
                   {displayContent && (
-                    <pre className="text-[11px] text-text-primary font-mono whitespace-pre-wrap break-words leading-relaxed">{displayContent}</pre>
+                    <pre className="text-[11px] text-text-primary font-mono whitespace-pre-wrap wrap-break-word leading-relaxed">{displayContent}</pre>
                   )}
                   {isLong && (
                     <button onClick={() => toggle(ev.id)}

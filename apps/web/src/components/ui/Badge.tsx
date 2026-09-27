@@ -2,7 +2,7 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { AlertTriangle, CheckCircle, CheckCircle2, Clock, RefreshCw, XCircle } from 'lucide-react'
 import { cn } from './cn'
 
-export const badgeVariants = cva('inline-flex items-center gap-1 rounded font-medium', {
+export const badgeVariants = cva('inline-flex items-center gap-1 rounded-sm font-medium', {
   variants: {
     tone: {
       green: 'bg-green-500/20 text-green-400 border-green-500/30',

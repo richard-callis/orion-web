@@ -59,11 +59,11 @@ export default async function AdminOverviewPage() {
           <div className="divide-y divide-border-subtle">
             {recentAudit.map((entry: any) => (
               <div key={entry.id} className="px-4 py-2.5 flex items-center gap-3 text-sm">
-                <span className="text-text-muted font-mono text-xs w-40 flex-shrink-0">
+                <span className="text-text-muted font-mono text-xs w-40 shrink-0">
                   {new Date(entry.createdAt).toLocaleString()}
                 </span>
-                <span className="text-accent text-xs w-28 flex-shrink-0 truncate">{userMap[entry.userId] ?? entry.userId?.slice(0, 8) ?? '—'}</span>
-                <span className="text-status-warning text-xs w-24 flex-shrink-0">{entry.action}</span>
+                <span className="text-accent text-xs w-28 shrink-0 truncate">{userMap[entry.userId] ?? entry.userId?.slice(0, 8) ?? '—'}</span>
+                <span className="text-status-warning text-xs w-24 shrink-0">{entry.action}</span>
                 <span className="text-text-secondary truncate">{entry.target}</span>
               </div>
             ))}

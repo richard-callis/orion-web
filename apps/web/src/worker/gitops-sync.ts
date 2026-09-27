@@ -8,7 +8,7 @@ import { log, err } from './log'
  * Runs every 60s as a fallback for when webhooks don't fire.
  */
 export async function syncGitOpsPRs() {
-  const { getGitProvider } = await import('@/lib/git-provider')
+  const { getGitProvider, isNotFound } = await import('@/lib/git-provider')
   let provider: Awaited<ReturnType<typeof getGitProvider>>
   try {
     provider = await getGitProvider()
@@ -82,6 +82,21 @@ export async function syncGitOpsPRs() {
         log(`GitOps sync: PR#${pr.prNumber} in ${gitOwner}/${gitRepo} → ${merged ? 'merged' : 'closed'}`)
       }
     } catch (e) {
+      // The PR no longer exists upstream (deleted, or the repo was recreated and
+      // numbers reset). Stop tracking it — otherwise it's retried and logged as
+      // an error every 60s forever.
+      if (isNotFound(e)) {
+        await prisma.gitOpsPR.update({
+          where: { id: pr.id },
+          data: {
+            status: 'closed',
+            reasoning: [pr.reasoning, `Closed by gitops-sync on ${new Date().toISOString()}: PR#${pr.prNumber} no longer exists in ${gitOwner}/${gitRepo} (404).`]
+              .filter(Boolean).join('\n\n'),
+          },
+        })
+        log(`GitOps sync: PR#${pr.prNumber} in ${gitOwner}/${gitRepo} not found upstream → closed`)
+        continue
+      }
       // BUG 8 fix: log with context instead of silently swallowing.
       err(`[gitops-sync] Failed to sync merge status for PR#${pr.prNumber} in ${gitOwner}/${gitRepo} (env ${pr.environmentId}): ${e instanceof Error ? e.message : e}`)
     }

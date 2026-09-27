@@ -30,7 +30,7 @@ export async function PATCH(req: NextRequest) {
     enabled: z.boolean().optional(),
     headerMode: z.boolean().optional(),
     issuerUrl: z.string().max(2000).optional(),
-    groupMapping: z.record(z.string().max(200)).refine(
+    groupMapping: z.record(z.string(), z.string().max(200)).refine(
       (val) => Object.keys(val).length <= 20,
       { message: 'Maximum 20 group mappings allowed' }
     ).optional(),

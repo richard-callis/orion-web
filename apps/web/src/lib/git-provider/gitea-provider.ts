@@ -6,6 +6,7 @@
  */
 
 import { createHmac, timingSafeEqual } from 'crypto'
+import { GitProviderHttpError } from './errors'
 import type {
   GitProvider,
   GitRepo,
@@ -55,7 +56,7 @@ export class GiteaGitProvider implements GitProvider {
     if (!res.ok) {
       let detail = ''
       try { detail = await res.text() } catch { /* ignore */ }
-      throw new Error(`Gitea ${init.method ?? 'GET'} ${path} → ${res.status}: ${detail}`)
+      throw new GitProviderHttpError(`Gitea ${init.method ?? 'GET'} ${path} → ${res.status}: ${detail}`, res.status)
     }
     // Some Gitea endpoints (e.g. POST .../merge) return HTTP 200 with an empty body
     const text = await res.text()
