@@ -51,19 +51,19 @@ function TaskCard({ task, agents, selected, onClick }: { task: Task; agents: Age
       aria-pressed={selected}
       onClick={onClick}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
-      className={`rounded-lg border p-3 cursor-pointer transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
+      className={`rounded-lg border p-3 cursor-pointer transition-all focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent/60 ${
         selected ? 'border-accent bg-accent/10' : 'border-border-subtle bg-bg-raised hover:border-border-visible'
       }`}
     >
       <div className="flex items-start justify-between gap-2">
         <p className="text-xs text-text-primary leading-snug flex-1">{task.title}</p>
-        <ChevronRight size={12} className={`flex-shrink-0 mt-0.5 text-text-muted transition-transform ${selected ? 'rotate-90' : ''}`} />
+        <ChevronRight size={12} className={`shrink-0 mt-0.5 text-text-muted transition-transform ${selected ? 'rotate-90' : ''}`} />
       </div>
       {task.description && (
         <p className="text-[10px] text-text-muted mt-1.5 line-clamp-2 leading-relaxed">{task.description}</p>
       )}
       <div className="flex items-center gap-2 mt-2">
-        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${p.dot}`} />
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${p.dot}`} />
         <span className={`text-[10px] ${p.color}`}>{p.label}</span>
         <div className="ml-auto flex items-center gap-1">
           {task.wave != null && task.wave > 0 && (

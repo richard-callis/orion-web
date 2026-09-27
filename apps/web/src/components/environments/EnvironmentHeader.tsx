@@ -39,7 +39,7 @@ export function EnvironmentHeader({ env, onBootstrap, onDeploy, onEdit }: {
   }
 
   return (
-    <div className="flex items-center gap-3 px-6 py-4 border-b border-border-subtle flex-shrink-0">
+    <div className="flex items-center gap-3 px-6 py-4 border-b border-border-subtle shrink-0">
       <span className="text-text-muted" aria-hidden>{TYPE_ICONS[env.type]}</span>
       <div className="flex-1 min-w-0">
         <h1 className="text-sm font-semibold text-text-primary">{env.name}</h1>
@@ -53,7 +53,7 @@ export function EnvironmentHeader({ env, onBootstrap, onDeploy, onEdit }: {
         {env.status}
       </span>
       {env.gatewayVersion && (
-        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-mono bg-bg-raised text-text-muted border border-border-subtle" title="Gateway version">
+        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-sm text-xs font-mono bg-bg-raised text-text-muted border border-border-subtle" title="Gateway version">
           v{env.gatewayVersion}
         </span>
       )}

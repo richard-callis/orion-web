@@ -66,7 +66,7 @@ export function ToolsTab({ env, onEnvChange, onReload }: {
       {pending.map(tool => (
         <div key={tool.id} className="rounded-lg border-2 border-orange-500 bg-orange-500/5 overflow-hidden">
           <div className="flex items-center gap-2 px-4 py-2 bg-orange-500/10 border-b border-orange-500/30">
-            <Clock size={12} className="text-orange-400 flex-shrink-0" aria-hidden />
+            <Clock size={12} className="text-orange-400 shrink-0" aria-hidden />
             <span className="text-xs font-semibold text-orange-400 flex-1">Pending Approval</span>
             {tool.proposedAt && (
               <span className="text-[10px] text-orange-400/70">{new Date(tool.proposedAt).toLocaleString()}</span>
@@ -78,19 +78,19 @@ export function ToolsTab({ env, onEnvChange, onReload }: {
                 <span className="text-sm font-medium text-text-primary font-mono">{tool.name}</span>
                 <p className="text-xs text-text-muted mt-0.5">{tool.description}</p>
                 {tool.execConfig && (
-                  <code className="mt-1.5 block text-[11px] bg-bg-raised rounded px-2 py-1 text-text-secondary font-mono truncate border border-orange-500/20">
+                  <code className="mt-1.5 block text-[11px] bg-bg-raised rounded-sm px-2 py-1 text-text-secondary font-mono truncate border border-orange-500/20">
                     {(tool.execConfig as { command?: string }).command ?? ''}
                   </code>
                 )}
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex items-center gap-2 shrink-0">
                 <button onClick={() => review(tool.id, 'reject')} disabled={approving === tool.id}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium text-status-error border border-status-error/30 hover:bg-status-error/10 transition-colors disabled:opacity-50">
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-sm text-xs font-medium text-status-error border border-status-error/30 hover:bg-status-error/10 transition-colors disabled:opacity-50">
                   <XCircle size={12} aria-hidden /> Reject
                 </button>
                 <Button variant="secondary" onClick={() => setDetailId(tool.id)}>View</Button>
                 <button onClick={() => review(tool.id, 'approve')} disabled={approving === tool.id}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium bg-status-healthy/15 text-status-healthy border border-status-healthy/30 hover:bg-status-healthy/25 transition-colors disabled:opacity-50">
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-sm text-xs font-medium bg-status-healthy/15 text-status-healthy border border-status-healthy/30 hover:bg-status-healthy/25 transition-colors disabled:opacity-50">
                   <CheckCircle size={12} aria-hidden /> {approving === tool.id ? 'Approving…' : 'Approve'}
                 </button>
               </div>
@@ -120,25 +120,25 @@ export function ToolsTab({ env, onEnvChange, onReload }: {
                 aria-label={tool.enabled ? `Disable ${tool.name}` : `Enable ${tool.name}`}
                 title={tool.enabled ? 'Disable' : 'Enable'}
                 onClick={() => toggleTool(tool)}
-                className={`mt-0.5 flex-shrink-0 transition-colors ${tool.enabled ? 'text-status-healthy' : 'text-text-muted hover:text-status-healthy'}`}>
+                className={`mt-0.5 shrink-0 transition-colors ${tool.enabled ? 'text-status-healthy' : 'text-text-muted hover:text-status-healthy'}`}>
                 {tool.enabled ? <Zap size={14} aria-hidden /> : <ZapOff size={14} aria-hidden />}
               </button>
               <button className="flex-1 min-w-0 text-left" onClick={() => setDetailId(tool.id)}>
                 <span className="flex items-center gap-2">
                   <span className="text-sm font-medium text-text-primary font-mono">{tool.name}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-raised text-text-muted border border-border-subtle">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-bg-raised text-text-muted border border-border-subtle">
                     {EXEC_TYPE_LABELS[tool.execType] ?? tool.execType}
                   </span>
                   {tool.builtIn && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/20">built-in</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-accent/10 text-accent border border-accent/20">built-in</span>
                   )}
                   {!tool.enabled && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-raised text-text-muted border border-border-subtle">disabled</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-bg-raised text-text-muted border border-border-subtle">disabled</span>
                   )}
                 </span>
                 <span className="block text-xs text-text-muted mt-0.5 truncate">{tool.description}</span>
               </button>
-              <div className="flex items-center gap-1 flex-shrink-0">
+              <div className="flex items-center gap-1 shrink-0">
                 {!tool.builtIn && (
                   <IconButton label={`Edit ${tool.name}`} onClick={() => setFormTool(tool)} className="hover:text-accent">
                     <Pencil size={12} />
@@ -147,7 +147,7 @@ export function ToolsTab({ env, onEnvChange, onReload }: {
                 {confirmDelete === tool.id ? (
                   <div className="flex items-center gap-1">
                     <button onClick={() => deleteTool(tool.id)}
-                      className="px-2 py-0.5 text-[10px] rounded bg-status-error text-white hover:bg-status-error/80">
+                      className="px-2 py-0.5 text-[10px] rounded-sm bg-status-error text-white hover:bg-status-error/80">
                       Confirm
                     </button>
                     <IconButton label="Cancel delete" onClick={() => setConfirmDelete(null)}>

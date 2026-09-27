@@ -67,7 +67,7 @@ export default function GithubSettingsPage() {
       </p>
 
       {error && (
-        <div className="mb-4 rounded border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <div className="mb-4 rounded-sm border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-700">
           {error}
         </div>
       )}
@@ -75,20 +75,20 @@ export default function GithubSettingsPage() {
       {loading ? (
         <p className="text-sm text-gray-500">Loading…</p>
       ) : status?.connected ? (
-        <div className="rounded border border-gray-200 p-4">
+        <div className="rounded-sm border border-gray-200 p-4">
           <p className="mb-4 text-sm">
             Connected as <span className="font-mono font-semibold">@{status.githubUsername}</span>
           </p>
           <button
             onClick={disconnect}
             disabled={busy}
-            className="rounded bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+            className="rounded-sm bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
           >
             {busy ? 'Disconnecting…' : 'Disconnect'}
           </button>
         </div>
       ) : (
-        <form onSubmit={connect} className="rounded border border-gray-200 p-4">
+        <form onSubmit={connect} className="rounded-sm border border-gray-200 p-4">
           <label htmlFor="github-token" className="mb-2 block text-sm font-medium">
             Personal Access Token
           </label>
@@ -99,12 +99,12 @@ export default function GithubSettingsPage() {
             value={token}
             onChange={(e) => setToken(e.target.value)}
             placeholder="ghp_… or github_pat_…"
-            className="mb-3 w-full rounded border border-gray-300 px-3 py-2 font-mono text-sm"
+            className="mb-3 w-full rounded-sm border border-gray-300 px-3 py-2 font-mono text-sm"
           />
           <button
             type="submit"
             disabled={busy || !token.trim()}
-            className="rounded bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-black disabled:opacity-50"
+            className="rounded-sm bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-black disabled:opacity-50"
           >
             {busy ? 'Connecting…' : 'Connect'}
           </button>

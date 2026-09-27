@@ -113,7 +113,7 @@ export function SettingsForm({
       </div>
 
       {error && (
-        <div className="rounded border border-status-error/40 bg-status-error/10 px-4 py-3 text-sm text-status-error">
+        <div className="rounded-sm border border-status-error/40 bg-status-error/10 px-4 py-3 text-sm text-status-error">
           {error}
         </div>
       )}
@@ -221,7 +221,7 @@ export function SettingsForm({
         <button
           onClick={handleSave}
           disabled={isPending}
-          className="flex items-center gap-2 px-4 py-2 rounded bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 px-4 py-2 rounded-sm bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-50"
         >
           {isPending ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
           {isPending ? 'Saving…' : 'Save Settings'}
@@ -231,7 +231,7 @@ export function SettingsForm({
           onClick={handleFlush}
           disabled={isFlushing}
           title="Clear all in-process caches immediately without changing settings"
-          className="flex items-center gap-2 px-4 py-2 rounded border border-border-subtle bg-bg-raised text-text-secondary text-sm font-medium hover:bg-bg-card transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 px-4 py-2 rounded-sm border border-border-subtle bg-bg-raised text-text-secondary text-sm font-medium hover:bg-bg-card transition-colors disabled:opacity-50"
         >
           {isFlushing ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
           {isFlushing ? 'Flushing…' : 'Flush Caches'}
@@ -261,7 +261,7 @@ function SettingRow({
         <p className="text-sm font-medium text-text-primary">{label}</p>
         <p className="text-xs text-text-muted mt-0.5">{description}</p>
       </div>
-      <div className="w-64 flex-shrink-0">{children}</div>
+      <div className="w-64 shrink-0">{children}</div>
     </div>
   )
 }
@@ -272,7 +272,7 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
       role="switch"
       aria-checked={value}
       onClick={() => onChange(!value)}
-      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-hidden ${
         value ? 'bg-accent' : 'bg-bg-raised border border-border-visible'
       }`}
     >

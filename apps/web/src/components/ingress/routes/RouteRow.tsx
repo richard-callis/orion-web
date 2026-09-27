@@ -50,7 +50,7 @@ export function RouteRow({ route, availableMiddlewares, onToggle, onDelete, onCo
           onClick={doToggle}
           disabled={toggling}
           title={route.enabled ? 'Disable route' : 'Enable route'}
-          className={`mt-0.5 flex-shrink-0 transition-colors ${
+          className={`mt-0.5 shrink-0 transition-colors ${
             route.enabled ? 'text-status-healthy hover:text-status-error' : 'text-text-muted hover:text-status-healthy'
           }`}
         >
@@ -71,12 +71,12 @@ export function RouteRow({ route, availableMiddlewares, onToggle, onDelete, onCo
                 route.enabled ? 'text-accent hover:underline' : 'text-text-muted line-through'
               }`}
             >
-              {route.tls && <Lock size={9} className="flex-shrink-0" />}
+              {route.tls && <Lock size={9} className="shrink-0" />}
               {route.host}
               <ExternalLink size={9} className="opacity-60" />
             </a>
             {firstPath && (
-              <span className="text-[10px] text-text-muted font-mono bg-bg-raised px-1.5 py-0.5 rounded border border-border-subtle">
+              <span className="text-[10px] text-text-muted font-mono bg-bg-raised px-1.5 py-0.5 rounded-sm border border-border-subtle">
                 → {firstPath.namespace ? `${firstPath.namespace}/` : ''}{firstPath.service}:{firstPath.port}
               </span>
             )}
@@ -89,7 +89,7 @@ export function RouteRow({ route, availableMiddlewares, onToggle, onDelete, onCo
           {(route.middlewares?.length > 0 || editMws) && (
             <div className="flex flex-wrap gap-1 pt-0.5">
               {!editMws && route.middlewares?.map(name => (
-                <span key={name} className="text-[10px] px-1.5 py-0.5 rounded border border-accent/30 bg-accent/5 text-accent font-mono">
+                <span key={name} className="text-[10px] px-1.5 py-0.5 rounded-sm border border-accent/30 bg-accent/5 text-accent font-mono">
                   {name}
                 </span>
               ))}
@@ -105,7 +105,7 @@ export function RouteRow({ route, availableMiddlewares, onToggle, onDelete, onCo
         </div>
 
         {/* Actions */}
-        <div className="flex-shrink-0 flex items-center gap-1">
+        <div className="shrink-0 flex items-center gap-1">
           {availableMiddlewares.length > 0 && (
             <button
               onClick={() => setEditMws(e => !e)}

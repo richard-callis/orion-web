@@ -30,7 +30,7 @@ export function ChatHeader({ mode, conversationId, models, currentProvider, sele
   const providerModels = models.filter(m => m.provider === currentProvider)
 
   return (
-    <div className="flex items-center justify-between px-4 py-2 border-b border-border-subtle bg-bg-sidebar flex-shrink-0">
+    <div className="flex items-center justify-between px-4 py-2 border-b border-border-subtle bg-bg-sidebar shrink-0">
       <div className="flex items-center gap-2">
         {onMobileBack && (
           <IconButton label="Back to conversations" onClick={onMobileBack} className="md:hidden p-0 mr-1">

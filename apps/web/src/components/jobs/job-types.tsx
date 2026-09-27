@@ -82,8 +82,8 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
 export function ConfirmInline({ label, onConfirm, onCancel }: { label: string; onConfirm: () => void; onCancel: () => void }) {
   return (
     <div className="flex items-center gap-1 justify-end">
-      <button onClick={onConfirm} className="px-2 py-1 text-xs text-white bg-red-500 rounded hover:bg-red-600 transition-colors">{label}</button>
-      <button onClick={onCancel} className="px-2 py-1 text-xs text-text-secondary border border-border-subtle rounded hover:bg-bg-raised transition-colors">Cancel</button>
+      <button onClick={onConfirm} className="px-2 py-1 text-xs text-white bg-red-500 rounded-sm hover:bg-red-600 transition-colors">{label}</button>
+      <button onClick={onCancel} className="px-2 py-1 text-xs text-text-secondary border border-border-subtle rounded-sm hover:bg-bg-raised transition-colors">Cancel</button>
     </div>
   )
 }

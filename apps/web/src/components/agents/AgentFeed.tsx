@@ -52,10 +52,10 @@ export function AgentFeed({ initialMessages, initialPaused = false }: { initialM
 
   return (
     <aside className="flex-1 min-h-0 flex flex-col border-l border-border-subtle bg-bg-sidebar overflow-hidden">
-      <div className="flex items-center px-4 py-3 border-b border-border-subtle flex-shrink-0 gap-2">
+      <div className="flex items-center px-4 py-3 border-b border-border-subtle shrink-0 gap-2">
         <span className="text-xs font-semibold text-text-secondary flex-1">Agent Feed</span>
         {paused && (
-          <span className="text-[10px] font-medium text-status-warning bg-status-warning/10 px-1.5 py-0.5 rounded">
+          <span className="text-[10px] font-medium text-status-warning bg-status-warning/10 px-1.5 py-0.5 rounded-sm">
             Watchers paused
           </span>
         )}
@@ -63,7 +63,7 @@ export function AgentFeed({ initialMessages, initialPaused = false }: { initialM
           onClick={togglePause}
           disabled={toggling}
           title={paused ? 'Resume watchers' : 'Pause watchers'}
-          className="flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded border border-border-subtle text-text-secondary hover:text-text-primary hover:border-border-default transition-colors disabled:opacity-50"
+          className="flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-sm border border-border-subtle text-text-secondary hover:text-text-primary hover:border-border-default transition-colors disabled:opacity-50"
         >
           {paused ? <Play size={10} /> : <Pause size={10} />}
           {paused ? 'Resume' : 'Pause'}

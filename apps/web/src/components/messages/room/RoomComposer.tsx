@@ -60,7 +60,7 @@ export function RoomComposer({ members, sending, onSend }: Props) {
   }
 
   return (
-    <div className="px-4 py-3 border-t border-border-subtle flex-shrink-0 relative">
+    <div className="px-4 py-3 border-t border-border-subtle shrink-0 relative">
       {/* @mention dropdown */}
       {mentionSearch !== null && mentionOptions.length > 0 && (
         <div role="listbox" aria-label="Mention" className="absolute bottom-full left-4 right-4 mb-1 bg-bg-sidebar border border-border-subtle rounded-lg shadow-lg overflow-hidden z-10">
@@ -73,10 +73,10 @@ export function RoomComposer({ members, sending, onSend }: Props) {
               className="w-full flex items-center gap-2 px-3 py-2 text-xs text-text-secondary hover:bg-bg-raised hover:text-text-primary transition-colors"
             >
               {m.id === EVERYONE.id
-                ? <AtSign size={11} className="text-yellow-400 flex-shrink-0" />
+                ? <AtSign size={11} className="text-yellow-400 shrink-0" />
                 : m.isAgent
-                ? <Bot size={11} className="text-accent flex-shrink-0" />
-                : <UserIcon size={11} className="text-text-muted flex-shrink-0" />}
+                ? <Bot size={11} className="text-accent shrink-0" />
+                : <UserIcon size={11} className="text-text-muted shrink-0" />}
               <span className={m.id === EVERYONE.id ? 'text-yellow-400 font-semibold' : ''}>@{m.name}</span>
               {m.id === EVERYONE.id && <span className="text-[9px] text-text-muted ml-auto">notify all agents</span>}
             </button>
@@ -103,7 +103,7 @@ export function RoomComposer({ members, sending, onSend }: Props) {
         <button
           onClick={() => void send()}
           disabled={!message.trim() || sending}
-          className="px-4 py-2 text-xs rounded bg-accent/15 text-accent hover:bg-accent/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 flex-shrink-0"
+          className="px-4 py-2 text-xs rounded-sm bg-accent/15 text-accent hover:bg-accent/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shrink-0"
         >
           <Send size={14} /><span className="hidden sm:inline">Send</span>
         </button>

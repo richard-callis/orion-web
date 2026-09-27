@@ -110,11 +110,11 @@ export function PointPanel({ point, domain, environments, onChange }: {
         {...clickableProps(() => setExpanded(e => !e), { expanded })}
       >
         <StatusDot status={point.status} />
-        <Server size={13} className="text-text-muted flex-shrink-0" />
+        <Server size={13} className="text-text-muted shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold text-text-primary">{point.name}</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-canvas border border-border-subtle text-text-muted font-mono">{point.type}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-bg-canvas border border-border-subtle text-text-muted font-mono">{point.type}</span>
             {point.environment && (
               <span className="text-[10px] text-text-muted">
                 via <span className="text-text-secondary">{point.environment.name}</span>
@@ -138,7 +138,7 @@ export function PointPanel({ point, domain, environments, onChange }: {
         </div>
 
         {/* Right-side address pills */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
           {domain.type === 'internal' && (
             <span
               className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border ${domain.coreDnsIp ? 'border-blue-500/30 bg-blue-500/5 text-blue-400' : 'border-border-subtle bg-bg-raised text-text-muted opacity-50'}`}
@@ -154,7 +154,7 @@ export function PointPanel({ point, domain, environments, onChange }: {
             <Zap size={9} /> {point.ip ? `${point.ip}:${point.port}` : `—:${point.port}`}
           </span>
           {point.status !== 'bootstrapped' && point.status !== 'active' && (
-            <span className="text-[10px] px-2 py-0.5 rounded border border-status-warning/40 bg-status-warning/10 text-status-warning font-medium">
+            <span className="text-[10px] px-2 py-0.5 rounded-sm border border-status-warning/40 bg-status-warning/10 text-status-warning font-medium">
               not bootstrapped
             </span>
           )}

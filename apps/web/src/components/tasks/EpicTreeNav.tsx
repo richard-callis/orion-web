@@ -41,13 +41,13 @@ export function EpicTreeNav({ epics, tasks, selection, onSelect, onNewEpic, onNe
     return false
   }
 
-  const rowBase = 'flex items-center gap-2 px-3 py-1.5 text-xs rounded cursor-pointer transition-colors select-none'
+  const rowBase = 'flex items-center gap-2 px-3 py-1.5 text-xs rounded-sm cursor-pointer transition-colors select-none'
   const rowActive = 'bg-accent/15 text-accent'
   const rowIdle = 'text-text-secondary hover:bg-bg-raised hover:text-text-primary'
 
   return (
-    <aside className="w-56 flex-shrink-0 flex flex-col border-r border-border-subtle bg-bg-sidebar overflow-hidden">
-      <div className="px-3 py-3 border-b border-border-subtle flex-shrink-0">
+    <aside className="w-56 shrink-0 flex flex-col border-r border-border-subtle bg-bg-sidebar overflow-hidden">
+      <div className="px-3 py-3 border-b border-border-subtle shrink-0">
         <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wide">Project Tree</span>
       </div>
 
@@ -57,7 +57,7 @@ export function EpicTreeNav({ epics, tasks, selection, onSelect, onNewEpic, onNe
           onClick={() => onSelect({ kind: 'all' })}
           className={`${rowBase} ${isActive({ kind: 'all' }) ? rowActive : rowIdle}`}
         >
-          <Layers size={13} className="flex-shrink-0" />
+          <Layers size={13} className="shrink-0" />
           <span className="flex-1">All Tasks</span>
           <span className="text-[10px] text-text-muted">{totalTasks}</span>
         </div>
@@ -73,7 +73,7 @@ export function EpicTreeNav({ epics, tasks, selection, onSelect, onNewEpic, onNe
               <div className={`${rowBase} ${isActive(epicSel) ? rowActive : rowIdle}`}>
                 <button
                   onClick={e => { e.stopPropagation(); toggle(epic.id) }}
-                  className="flex-shrink-0 -ml-0.5"
+                  className="shrink-0 -ml-0.5"
                 >
                   {isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                 </button>
@@ -98,8 +98,8 @@ export function EpicTreeNav({ epics, tasks, selection, onSelect, onNewEpic, onNe
                         className={`${rowBase} ${isActive(fSel) ? rowActive : rowIdle}`}
                       >
                         {isDone
-                          ? <Check size={11} className="flex-shrink-0 text-status-healthy" />
-                          : <GitBranch size={11} className="flex-shrink-0 text-text-muted" />}
+                          ? <Check size={11} className="shrink-0 text-status-healthy" />
+                          : <GitBranch size={11} className="shrink-0 text-text-muted" />}
                         <span className="flex-1 truncate">{f.title}</span>
                         <span className="text-[10px] text-text-muted">
                           {stats.total > 0 ? `${stats.done}/${stats.total}` : (f._count?.tasks ?? 0)}
@@ -125,7 +125,7 @@ export function EpicTreeNav({ epics, tasks, selection, onSelect, onNewEpic, onNe
           onClick={() => onSelect({ kind: 'unassigned' })}
           className={`${rowBase} ${isActive({ kind: 'unassigned' }) ? rowActive : rowIdle}`}
         >
-          <Inbox size={13} className="flex-shrink-0" />
+          <Inbox size={13} className="shrink-0" />
           <span className="flex-1">Unassigned</span>
           <span className="text-[10px] text-text-muted">{unassigned}</span>
         </div>

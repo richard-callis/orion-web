@@ -258,10 +258,10 @@ export function GraphView() {
         {/* Hover tooltip */}
         {hoverTooltip && (
           <div
-            className="pointer-events-none absolute z-50 max-w-[200px] rounded bg-slate-800 border border-slate-600 px-3 py-2 shadow-lg text-xs"
+            className="pointer-events-none absolute z-50 max-w-[200px] rounded-sm bg-slate-800 border border-slate-600 px-3 py-2 shadow-lg text-xs"
             style={{ left: hoverTooltip.x, top: hoverTooltip.y }}
           >
-            <div className="font-semibold text-text-primary leading-snug mb-1 break-words">
+            <div className="font-semibold text-text-primary leading-snug mb-1 wrap-break-word">
               {hoverTooltip.node.title}
             </div>
             <div className="space-y-0.5 text-text-muted">
@@ -285,7 +285,7 @@ export function GraphView() {
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
               placeholder="Search nodes..."
-              className="w-full pl-8 pr-8 py-2 text-sm bg-slate-800/90 backdrop-blur border border-slate-700 rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-blue-500 transition-colors"
+              className="w-full pl-8 pr-8 py-2 text-sm bg-slate-800/90 backdrop-blur-sm border border-slate-700 rounded-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-blue-500 transition-colors"
             />
             {searchTerm && (
               <button
@@ -308,7 +308,7 @@ export function GraphView() {
                 showWikilinks ? 'text-text-secondary' : 'text-text-muted opacity-40'
               }`}
             >
-              <div className="w-2 h-0.5 rounded bg-slate-600" />
+              <div className="w-2 h-0.5 rounded-sm bg-slate-600" />
               <span>Wikilink</span>
             </button>
             <button
@@ -317,7 +317,7 @@ export function GraphView() {
                 showSemantic ? 'text-text-secondary' : 'text-text-muted opacity-40'
               }`}
             >
-              <div className="w-2 h-0.5 rounded bg-cyan-500" />
+              <div className="w-2 h-0.5 rounded-sm bg-cyan-500" />
               <span>Semantic</span>
             </button>
           </div>
@@ -333,7 +333,7 @@ export function GraphView() {
         {/* Back button */}
         <button
           onClick={() => router.push('/notes')}
-          className="absolute top-3 right-3 p-2 rounded bg-slate-800/90 backdrop-blur border border-slate-700 text-text-muted hover:text-text-primary transition-colors"
+          className="absolute top-3 right-3 p-2 rounded-sm bg-slate-800/90 backdrop-blur-sm border border-slate-700 text-text-muted hover:text-text-primary transition-colors"
           title="Back to Notes"
         >
           <ArrowLeft size={16} />
@@ -342,12 +342,12 @@ export function GraphView() {
 
       {/* Node info panel */}
       {selectedNode && (
-        <div className="hidden md:flex w-56 flex-shrink-0 bg-bg-sidebar border-l border-border-subtle flex-col">
+        <div className="hidden md:flex w-56 shrink-0 bg-bg-sidebar border-l border-border-subtle flex-col">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
             <span className="text-sm font-semibold text-text-primary">Node Details</span>
             <button
               onClick={() => setSelectedNode(null)}
-              className="p-1 text-text-muted hover:text-text-primary rounded"
+              className="p-1 text-text-muted hover:text-text-primary rounded-sm"
             >
               <X size={14} />
             </button>

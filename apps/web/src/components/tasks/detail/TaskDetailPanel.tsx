@@ -90,7 +90,7 @@ export function TaskDetailPanel({ task, tasks, epics, agents, users, columns, on
         {tab === 'chat' && openRoomId && (
           <button
             onClick={() => router.push(`/messages?r=${openRoomId}`)}
-            className="ml-auto flex items-center gap-1 px-2 py-1 mb-px rounded text-[10px] border border-border-subtle bg-bg-raised text-text-muted hover:text-text-secondary hover:border-accent/40 transition-colors"
+            className="ml-auto flex items-center gap-1 px-2 py-1 mb-px rounded-sm text-[10px] border border-border-subtle bg-bg-raised text-text-muted hover:text-text-secondary hover:border-accent/40 transition-colors"
             title="Open full feature chat room"
           >
             <MessageSquare size={10} />
@@ -118,7 +118,7 @@ export function TaskDetailPanel({ task, tasks, epics, agents, users, columns, on
         <div className="p-3 border-t border-border-subtle space-y-2">
           <PlanWithAIButton onSelect={planTask} />
           <button onClick={onDelete}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-border-subtle text-text-muted text-sm hover:border-status-error hover:text-status-error transition-colors">
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-sm border border-border-subtle text-text-muted text-sm hover:border-status-error hover:text-status-error transition-colors">
             <Trash2 size={14} /> Delete Task
           </button>
         </div>

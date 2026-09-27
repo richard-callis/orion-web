@@ -77,8 +77,8 @@ export function AccessTab({ env }: { env: Environment }) {
           <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search users…" aria-label="Search users" autoFocus />
           <div className="max-h-48 overflow-y-auto space-y-1">
             {candidates.map(u => (
-              <div key={u.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-bg-raised transition-colors">
-                <Users size={12} className="text-text-muted flex-shrink-0" aria-hidden />
+              <div key={u.id} className="flex items-center gap-2 px-2 py-1.5 rounded-sm hover:bg-bg-raised transition-colors">
+                <Users size={12} className="text-text-muted shrink-0" aria-hidden />
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium text-text-primary">{u.name ?? u.username}</p>
                   <p className="text-[10px] text-text-muted">{u.username}</p>
@@ -86,7 +86,7 @@ export function AccessTab({ env }: { env: Environment }) {
                 {TIERS.map(tier => (
                   <button key={tier} onClick={() => { setTier(u.id, tier); setShowAdd(false) }}
                     aria-label={`Assign ${u.username} as ${tier}`}
-                    className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${TIER_BUTTON[tier]}`}>
+                    className={`px-2 py-0.5 rounded-sm text-[10px] font-medium border transition-colors ${TIER_BUTTON[tier]}`}>
                     {tier}
                   </button>
                 ))}
@@ -105,7 +105,7 @@ export function AccessTab({ env }: { env: Environment }) {
         <ul className="rounded-lg border border-border-subtle bg-bg-card divide-y divide-border-subtle overflow-hidden">
           {tiers.map(ut => (
             <li key={ut.userId} className="flex items-center gap-3 px-4 py-2.5">
-              <Users size={13} className="text-text-muted flex-shrink-0" aria-hidden />
+              <Users size={13} className="text-text-muted shrink-0" aria-hidden />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-text-primary">{ut.user.name ?? ut.user.username}</p>
                 <p className="text-xs text-text-muted">{ut.user.username} · ORION role: {ut.user.role}</p>

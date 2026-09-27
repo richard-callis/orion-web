@@ -178,7 +178,7 @@ export function BootstrapModal({
       onClose={() => { if (canClose) onClose() }}
       label={headerTitle}
       className="w-full max-w-2xl bg-bg-card border border-border-subtle rounded-xl shadow-2xl flex flex-col max-h-[80vh]"
-      overlayClassName="bg-transparent bg-gradient-to-br from-black/70 via-black/50 to-bg-sidebar/60"
+      overlayClassName="bg-transparent bg-linear-to-br from-black/70 via-black/50 to-bg-sidebar/60"
       closeOnBackdrop={false}
     >
 
@@ -195,7 +195,7 @@ export function BootstrapModal({
             <button
               onClick={askAgentToDeploy}
               disabled={creatingTask}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-border-subtle bg-bg-raised text-text-secondary hover:text-accent hover:border-accent/40 transition-colors disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-sm border border-border-subtle bg-bg-raised text-text-secondary hover:text-accent hover:border-accent/40 transition-colors disabled:opacity-40"
               title="Ask an AI agent to handle this"
             >
               <Bot size={13} />
@@ -261,7 +261,7 @@ export function BootstrapModal({
       {/* Footer — cluster bootstrap done */}
       {isCluster && done && (
         <div className="px-5 py-3 border-t border-border-subtle flex justify-end">
-          <button onClick={onClose} className="px-4 py-2 text-sm rounded bg-accent text-white hover:bg-accent/80 transition-colors">
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-sm bg-accent text-white hover:bg-accent/80 transition-colors">
             Close
           </button>
         </div>

@@ -19,7 +19,7 @@ interface KnowledgeSearchHit {
 
 function ScorePill({ label, value, decimals = 3 }: { label: string; value: number | null; decimals?: number }) {
   return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-bg-raised border border-border-subtle text-[10px] text-text-muted">
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm bg-bg-raised border border-border-subtle text-[10px] text-text-muted">
       {label} <span className="text-text-primary font-mono">{value != null ? value.toFixed(decimals) : '—'}</span>
     </span>
   )
@@ -81,21 +81,21 @@ export default function KnowledgeSearchPage() {
           max={50}
           value={limit}
           onChange={e => setLimit(Math.min(Math.max(parseInt(e.target.value, 10) || 10, 1), 50))}
-          className="py-1.5 w-20 flex-shrink-0"
+          className="py-1.5 w-20 shrink-0"
           aria-label="Top-K results"
           title="Top-K results"
         />
         <button
           onClick={runSearch}
           disabled={loading || !query.trim()}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors flex-shrink-0"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-sm bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors shrink-0"
         >
           {loading ? <RefreshCw size={13} className="animate-spin" /> : <Search size={13} />} Search
         </button>
       </div>
 
       {error && (
-        <div className="px-3 py-2 text-sm rounded border border-red-500/30 bg-red-500/10 text-red-400">
+        <div className="px-3 py-2 text-sm rounded-sm border border-red-500/30 bg-red-500/10 text-red-400">
           {error}
         </div>
       )}
@@ -108,7 +108,7 @@ export default function KnowledgeSearchPage() {
           </p>
 
           {results.length === 0 && (
-            <div className="text-sm text-text-muted px-3 py-6 text-center border border-dashed border-border-subtle rounded">
+            <div className="text-sm text-text-muted px-3 py-6 text-center border border-dashed border-border-subtle rounded-sm">
               No notes matched this query.
             </div>
           )}
@@ -117,13 +117,13 @@ export default function KnowledgeSearchPage() {
             <div key={r.noteId} className="rounded-lg border border-border-subtle bg-bg-card px-4 py-3 space-y-1.5">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  {r.pinned && <Pin size={12} className="text-accent flex-shrink-0" />}
-                  <FileText size={12} className="text-text-muted flex-shrink-0" />
+                  {r.pinned && <Pin size={12} className="text-accent shrink-0" />}
+                  <FileText size={12} className="text-text-muted shrink-0" />
                   <span className="text-sm font-medium text-text-primary truncate">{r.title}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-raised text-text-muted flex-shrink-0">{r.type}</span>
-                  <span className="text-[10px] text-text-muted flex-shrink-0">{r.folder}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-bg-raised text-text-muted shrink-0">{r.type}</span>
+                  <span className="text-[10px] text-text-muted shrink-0">{r.folder}</span>
                 </div>
-                <div className="flex items-center gap-1.5 flex-shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0">
                   <ScorePill label="fused" value={r.score} decimals={5} />
                   <ScorePill label="vector" value={r.vectorScore} />
                   <ScorePill label="keyword" value={r.keywordScore} />

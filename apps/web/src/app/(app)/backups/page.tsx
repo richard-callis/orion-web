@@ -28,7 +28,7 @@ export default function BackupsPage() {
         <p className="text-xs text-text-muted uppercase tracking-wide font-medium">Planned integrations</p>
         {PLANNED.map(({ icon: Icon, title, description }) => (
           <div key={title} className="flex items-start gap-3 rounded-lg border border-border-subtle bg-bg-surface px-4 py-3">
-            <Icon size={16} className="text-text-muted/60 flex-shrink-0 mt-0.5" />
+            <Icon size={16} className="text-text-muted/60 shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-medium text-text-secondary">{title}</p>
               <p className="text-xs text-text-muted mt-0.5">{description}</p>
