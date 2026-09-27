@@ -1,6 +1,8 @@
 'use client'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkEmoji from 'remark-emoji'
@@ -63,6 +65,7 @@ interface Note {
 
 export default function NotesPage() {
   const router = useRouter()
+  const toast = useToast()
   const [notes, setNotes] = useState<Note[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [mode, setMode] = useState<'edit' | 'preview'>('edit')
@@ -88,10 +91,9 @@ export default function NotesPage() {
 
   // Fetch notes on mount
   useEffect(() => {
-    fetch('/api/notes')
-      .then(r => r.json())
+    apiFetch<Note[]>('/api/notes')
       .then(setNotes)
-      .catch(console.error)
+      .catch(e => toast.error(`Failed to load notes: ${errorMessage(e)}`))
   }, [])
 
   // Handle wikilink clicks
@@ -115,27 +117,35 @@ export default function NotesPage() {
     }
   }, [selectedId]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** PUT a note and merge the server's copy into the list; toasts and returns null on failure. */
+  const saveNote = async (id: string, body: Record<string, unknown>): Promise<Note | null> => {
+    try {
+      const updated = await apiFetch<Note>(`/api/notes/${id}`, { method: 'PUT', body })
+      setNotes(prev => prev.map(n => n.id === updated.id ? updated : n))
+      return updated
+    } catch (e) {
+      toast.error(`Failed to save note: ${errorMessage(e)}`)
+      return null
+    }
+  }
+
   // Debounced save
   const scheduleSave = useCallback((id: string, title: string, content: string, folder: string) => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(async () => {
-      if (isSavingRef.current) return
+      // A save is still in flight: try again shortly rather than dropping this edit.
+      if (isSavingRef.current) { scheduleSaveRef.current(id, title, content, folder); return }
       isSavingRef.current = true
       try {
-        const res = await fetch(`/api/notes/${id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title, content, folder }),
-        })
-        if (res.ok) {
-          const updated: Note = await res.json()
-          setNotes(prev => prev.map(n => n.id === id ? updated : n))
-        }
+        await saveNote(id, { title, content, folder })
       } finally {
         isSavingRef.current = false
       }
     }, 800)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- saveNote only uses stable setters/toast
   }, [])
+  const scheduleSaveRef = useRef(scheduleSave)
+  scheduleSaveRef.current = scheduleSave
 
   const handleTitleChange = (v: string) => {
     setLocalTitle(v)
@@ -155,13 +165,8 @@ export default function NotesPage() {
   const handlePinToggle = async () => {
     if (!selectedNote) return
     const newPinned = !selectedNote.pinned
-    const res = await fetch(`/api/notes/${selectedNote.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pinned: newPinned }),
-    })
-    if (res.ok) {
-      const updated: Note = await res.json()
+    const updated = await saveNote(selectedNote.id, { pinned: newPinned })
+    if (updated) {
       setNotes(prev => {
         const mapped = prev.map(n => n.id === updated.id ? updated : n)
         return [...mapped].sort((a, b) => {
@@ -173,33 +178,35 @@ export default function NotesPage() {
   }
 
   const createNote = async () => {
-    const res = await fetch('/api/notes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Untitled Note', content: '', folder: 'General' }),
-    })
-    if (res.ok) {
-      const note: Note = await res.json()
-      setNotes(prev => [note, ...prev])
-      setSelectedId(note.id)
-      setLocalTitle(note.title)
-      setLocalContent(note.content)
-      setLocalFolder(note.folder)
-      setMode('edit')
-      setMobileView('editor')
-      setTimeout(() => titleInputRef.current?.select(), 50)
+    let note: Note
+    try {
+      note = await apiFetch<Note>('/api/notes', { method: 'POST', body: { title: 'Untitled Note', content: '', folder: 'General' } })
+    } catch (e) {
+      toast.error(`Failed to create note: ${errorMessage(e)}`)
+      return
     }
+    setNotes(prev => [note, ...prev])
+    setSelectedId(note.id)
+    setLocalTitle(note.title)
+    setLocalContent(note.content)
+    setLocalFolder(note.folder)
+    setMode('edit')
+    setMobileView('editor')
+    setTimeout(() => titleInputRef.current?.select(), 50)
   }
 
   const deleteNote = async (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation()
-    const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' })
-    if (res.ok || res.status === 204) {
-      setNotes(prev => prev.filter(n => n.id !== id))
-      if (selectedId === id) {
-        setSelectedId(null)
-        setMobileView('list')
-      }
+    try {
+      await apiFetch(`/api/notes/${id}`, { method: 'DELETE' })
+    } catch (err) {
+      toast.error(`Failed to delete note: ${errorMessage(err)}`)
+      return
+    }
+    setNotes(prev => prev.filter(n => n.id !== id))
+    if (selectedId === id) {
+      setSelectedId(null)
+      setMobileView('list')
     }
   }
 
@@ -208,14 +215,7 @@ export default function NotesPage() {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current)
       if (selectedId) {
-        fetch(`/api/notes/${selectedId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: localTitle, content: localContent, folder: localFolder }),
-        })
-          .then(r => r.ok ? r.json() : null)
-          .then(updated => updated && setNotes(prev => prev.map(n => n.id === updated.id ? updated : n)))
-          .catch(console.error)
+        void saveNote(selectedId, { title: localTitle, content: localContent, folder: localFolder })
       }
     }
     setSelectedId(id)

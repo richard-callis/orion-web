@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { apiFetch } from '@/lib/api'
 
 interface GithubStatus {
   connected: boolean
@@ -18,9 +19,7 @@ export default function GithubSettingsPage() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch('/api/github/connect')
-      if (!res.ok) throw new Error('Failed to load GitHub status')
-      setStatus(await res.json())
+      setStatus(await apiFetch<GithubStatus>('/api/github/connect'))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load status')
     } finally {
@@ -35,13 +34,7 @@ export default function GithubSettingsPage() {
     setBusy(true)
     setError(null)
     try {
-      const res = await fetch('/api/github/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error ?? 'Failed to connect')
+      const data = await apiFetch<{ githubUsername?: string | null }>('/api/github/connect', { method: 'POST', body: { token } })
       setToken('')
       setStatus({ connected: true, githubUsername: data.githubUsername ?? null })
     } catch (e) {
@@ -55,8 +48,7 @@ export default function GithubSettingsPage() {
     setBusy(true)
     setError(null)
     try {
-      const res = await fetch('/api/github/connect', { method: 'DELETE' })
-      if (!res.ok && res.status !== 204) throw new Error('Failed to disconnect')
+      await apiFetch('/api/github/connect', { method: 'DELETE' })
       setStatus({ connected: false, githubUsername: null })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to disconnect')

@@ -3,6 +3,9 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, Play, FlaskConical, ChevronRight } from 'lucide-react'
 import { RunStatusBadge } from '@/components/ui/Badge'
+import { useToast } from '@/components/ui/Toast'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useAgents } from '@/hooks/useAgents'
 
 interface EvalSuite {
   id: string
@@ -32,17 +35,13 @@ interface EvalRun {
   agent: { id: string; name: string }
 }
 
-interface Agent {
-  id: string
-  name: string
-}
-
 export default function EvalsPage() {
   const router = useRouter()
   const [tab, setTab] = useState<'suites' | 'runs'>('suites')
   const [suites, setSuites] = useState<EvalSuite[]>([])
   const [runs, setRuns] = useState<EvalRun[]>([])
-  const [agents, setAgents] = useState<Agent[]>([])
+  const { agents } = useAgents()
+  const toast = useToast()
   const [loading, setLoading] = useState(true)
   const [showNewSuite, setShowNewSuite] = useState(false)
   const [newName, setNewName] = useState('')
@@ -53,23 +52,15 @@ export default function EvalsPage() {
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [sRes, aRes] = await Promise.all([
-        fetch('/api/eval-suites'),
-        fetch('/api/agents'),
-      ])
-      if (sRes.ok) setSuites(await sRes.json())
-      if (aRes.ok) setAgents(await aRes.json())
-
-      // Load recent runs across all suites
-      const suitesData: EvalSuite[] = sRes.ok ? await sRes.clone().json().catch(() => []) : []
-      const runPromises = suitesData.slice(0, 10).map((s: EvalSuite) =>
-        fetch(`/api/eval-suites/${s.id}/runs`).then(r => r.ok ? r.json() : [])
+      const suitesData = await apiFetch<EvalSuite[]>('/api/eval-suites').catch(() => [] as EvalSuite[])
+      setSuites(suitesData)
+      // Load recent runs across the first 10 suites
+      const runArrays = await Promise.all(
+        suitesData.slice(0, 10).map(s => apiFetch<EvalRun[]>(`/api/eval-suites/${s.id}/runs`).catch(() => [] as EvalRun[])),
       )
-      const allRunArrays = await Promise.all(runPromises)
-      const allRuns = allRunArrays.flat().sort(
-        (a: EvalRun, b: EvalRun) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      )
-      setRuns(allRuns.slice(0, 50))
+      setRuns(runArrays.flat()
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 50))
     } finally {
       setLoading(false)
     }
@@ -83,18 +74,17 @@ export default function EvalsPage() {
     if (!newName.trim()) return
     setCreating(true)
     try {
-      const res = await fetch('/api/eval-suites', {
+      await apiFetch('/api/eval-suites', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: newName.trim(), description: newDesc || undefined, agentId: newAgentId || undefined }),
+        body: { name: newName.trim(), description: newDesc || undefined, agentId: newAgentId || undefined },
       })
-      if (res.ok) {
-        setShowNewSuite(false)
-        setNewName('')
-        setNewDesc('')
-        setNewAgentId('')
-        await loadData()
-      }
+      setShowNewSuite(false)
+      setNewName('')
+      setNewDesc('')
+      setNewAgentId('')
+      await loadData()
+    } catch (e) {
+      toast.error(`Failed to create suite: ${errorMessage(e)}`)
     } finally {
       setCreating(false)
     }
