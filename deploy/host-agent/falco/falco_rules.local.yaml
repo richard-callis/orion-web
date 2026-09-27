@@ -1,3 +1,17 @@
 - rule: Read sensitive file untrusted
   condition: and not (proc.name = pg_isready and fd.name = /etc/shadow)
   append: true
+
+# vault-proxy's healthcheck probes Envoy's own admin endpoint with bash
+# /dev/tcp (the envoy image has no wget/curl). That dup()s stdio onto a
+# loopback socket every 10s and matched this rule ~12x/min, flooding ORION's
+# webhook into 429s. Scoped to the envoy image talking to its local admin port.
+- rule: Redirect STDOUT/STDIN to Network Connection in Container
+  condition: and not (container.image.repository = envoyproxy/envoy and fd.sip = 127.0.0.1 and fd.sport = 9901)
+  append: true
+
+# Gitea's built-in SSH server (git over SSH) hands the session socket to its
+# children — normal operation, not a reverse shell.
+- rule: Redirect STDOUT/STDIN to Network Connection in Container
+  condition: and not (container.image.repository = gitea/gitea and proc.name startswith sshd)
+  append: true
