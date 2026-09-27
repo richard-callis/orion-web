@@ -1,6 +1,8 @@
 'use client'
 import { useState } from 'react'
 import { Search, RefreshCw, Pin, FileText } from 'lucide-react'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { Input } from '@/components/ui/Input'
 
 interface KnowledgeSearchHit {
   noteId: string
@@ -14,7 +16,6 @@ interface KnowledgeSearchHit {
   keywordScore: number | null
 }
 
-const inputCls = 'w-full px-3 py-1.5 text-sm bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors'
 
 function ScorePill({ label, value, decimals = 3 }: { label: string; value: number | null; decimals?: number }) {
   return (
@@ -38,21 +39,13 @@ export default function KnowledgeSearchPage() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch('/api/admin/knowledge-search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q, limit }),
+      const json = await apiFetch<{ modelRef: typeof modelRef; results: typeof results }>('/api/admin/knowledge-search', {
+        method: 'POST', body: { query: q, limit },
       })
-      const json = await res.json()
-      if (!res.ok) {
-        setError(json.error ?? `Request failed (${res.status})`)
-        setResults(null)
-        return
-      }
       setModelRef(json.modelRef)
       setResults(json.results)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(errorMessage(e))
       setResults(null)
     } finally {
       setLoading(false)
@@ -74,21 +67,22 @@ export default function KnowledgeSearchPage() {
       </div>
 
       <div className="flex items-start gap-2">
-        <input
+        <Input
           value={query}
           onChange={e => setQuery(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') runSearch() }}
           placeholder='Query, e.g. "CrashLoopBackOff pod-7f9" or how does the executor authenticate'
-          className={inputCls}
+          className="py-1.5"
           autoFocus
         />
-        <input
+        <Input
           type="number"
           min={1}
           max={50}
           value={limit}
           onChange={e => setLimit(Math.min(Math.max(parseInt(e.target.value, 10) || 10, 1), 50))}
-          className={`${inputCls} w-20 flex-shrink-0`}
+          className="py-1.5 w-20 flex-shrink-0"
+          aria-label="Top-K results"
           title="Top-K results"
         />
         <button

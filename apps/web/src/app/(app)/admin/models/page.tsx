@@ -1,7 +1,12 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
+import useSWR, { useSWRConfig } from 'swr'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 import { Plus, Trash2, Check, X, RefreshCw, Lock, AlertTriangle, Star } from 'lucide-react'
 import { Dialog } from '@/components/ui/Dialog'
+import { Input } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
 
 interface ExternalModel {
   id: string
@@ -77,14 +82,14 @@ const BUILT_INS = [
   },
 ]
 
-const inputCls = 'w-full px-3 py-1.5 text-sm bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors'
 
+/** Label wrapping its single control, so the control is named by the visible label. */
 function FormField({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className={className}>
-      <label className="block text-xs text-text-muted mb-1">{label}</label>
+    <label className={`block ${className ?? ''}`}>
+      <span className="block text-xs text-text-muted mb-1">{label}</span>
       {children}
-    </div>
+    </label>
   )
 }
 
@@ -129,21 +134,23 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
     setSaving(true); setError(null)
     try {
       const payload = { name: form.name, provider: form.provider, baseUrl: form.baseUrl, apiKey: form.apiKey || undefined, modelId: form.modelId, enabled: form.enabled, selfHosted: form.selfHosted, inputPricePer1M: form.inputPricePer1M, outputPricePer1M: form.outputPricePer1M, timeoutSecs: form.timeoutSecs, maxTokens: form.maxTokens, contextSize: form.contextSize, temperature: form.temperature, topP: form.topP, minP: form.minP, repeatPenalty: form.repeatPenalty, seed: form.seed }
-      const res = model
-        ? await fetch(`/api/admin/models/${model.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-        : await fetch('/api/admin/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      if (!res.ok) throw new Error(await res.text())
+      await apiFetch(model ? `/api/admin/models/${model.id}` : '/api/admin/models', { method: model ? 'PUT' : 'POST', body: payload })
       onSaved()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save')
+      setError(errorMessage(e, 'Failed to save'))
     } finally { setSaving(false) }
   }
 
   const handleDelete = async () => {
     if (!model) return
     setDeleting(true)
-    await fetch(`/api/admin/models/${model.id}`, { method: 'DELETE' })
-    onDeleted(model.id)
+    try {
+      await apiFetch(`/api/admin/models/${model.id}`, { method: 'DELETE' })
+      onDeleted(model.id)
+    } catch (e) {
+      setError(errorMessage(e, 'Failed to delete'))
+      setDeleting(false)
+    }
   }
 
   const connectionOk = model ? health?.externalModels?.[`ext:${model.id}`] : undefined
@@ -185,79 +192,79 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
 
         <div className="grid grid-cols-2 gap-4">
           <FormField label="Display Name">
-            <input
+            <Input
               value={form.name}
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
               placeholder="My GPT-4o"
-              className={inputCls}
+              className="py-1.5"
               autoFocus
             />
           </FormField>
           <FormField label="Provider">
-            <select value={form.provider} onChange={e => handleProviderChange(e.target.value)} className={inputCls}>
+            <Select value={form.provider} onChange={e => handleProviderChange(e.target.value)} className="py-1.5">
               {Object.entries(PROVIDER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
+            </Select>
           </FormField>
           <FormField label="Base URL">
-            <input
+            <Input
               value={form.baseUrl}
               onChange={e => setForm(f => ({ ...f, baseUrl: e.target.value }))}
               placeholder="https://api.openai.com/v1"
-              className={inputCls}
+              className="py-1.5"
             />
           </FormField>
           <FormField label="Model ID">
-            <input
+            <Input
               value={form.modelId}
               onChange={e => setForm(f => ({ ...f, modelId: e.target.value }))}
               placeholder="gpt-4o"
-              className={inputCls}
+              className="py-1.5"
             />
           </FormField>
           {form.provider !== 'ollama' && (
             <FormField label="API Key" className="col-span-2">
-              <input
+              <Input
                 type="password"
                 value={form.apiKey}
                 onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))}
                 placeholder={!isNew ? 'Leave blank to keep existing key' : 'sk-...'}
-                className={inputCls}
+                className="py-1.5"
                 autoComplete="off"
               />
             </FormField>
           )}
           <FormField label="Timeout (seconds)">
-            <input
+            <Input
               type="number"
               min={10}
               max={3600}
               value={form.timeoutSecs}
               onChange={e => setForm(f => ({ ...f, timeoutSecs: Math.max(10, parseInt(e.target.value) || 120) }))}
-              className={inputCls}
+              className="py-1.5"
             />
           </FormField>
           <FormField label="Output Token Limit (blank = unlimited)">
-            <input
+            <Input
               type="number"
               min={1}
               value={form.maxTokens ?? ''}
               onChange={e => setForm(f => ({ ...f, maxTokens: e.target.value ? Math.max(1, parseInt(e.target.value)) : null }))}
               placeholder="unlimited"
-              className={inputCls}
+              className="py-1.5"
             />
           </FormField>
           <FormField label="Context Limit Override (blank = auto-detect)">
-            <input
+            <Input
               type="number"
               min={1}
               value={form.contextSize ?? ''}
               onChange={e => setForm(f => ({ ...f, contextSize: e.target.value ? Math.max(1, parseInt(e.target.value)) : null }))}
               placeholder="auto-detect"
-              className={inputCls}
+              className="py-1.5"
             />
           </FormField>
           <FormField label="Temperature (blank = model default)">
-            <input
+            <Input
               type="number"
               min={0}
               max={2}
@@ -268,11 +275,11 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
                 setForm(f => ({ ...f, temperature: e.target.value === '' ? null : Math.min(2, Math.max(0, isNaN(v) ? 0 : v)) }))
               }}
               placeholder="model default"
-              className={inputCls}
+              className="py-1.5"
             />
           </FormField>
           <FormField label="Top-P (blank = model default)">
-            <input
+            <Input
               type="number"
               min={0}
               max={1}
@@ -283,11 +290,11 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
                 setForm(f => ({ ...f, topP: e.target.value === '' ? null : Math.min(1, Math.max(0, isNaN(v) ? 1 : v)) }))
               }}
               placeholder="model default"
-              className={inputCls}
+              className="py-1.5"
             />
           </FormField>
           <FormField label="Min-P — Ollama only (blank = off)">
-            <input
+            <Input
               type="number"
               min={0}
               max={1}
@@ -298,11 +305,11 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
                 setForm(f => ({ ...f, minP: e.target.value === '' ? null : Math.min(1, Math.max(0, isNaN(v) ? 0 : v)) }))
               }}
               placeholder="off"
-              className={inputCls}
+              className="py-1.5"
             />
           </FormField>
           <FormField label="Repeat Penalty — Ollama only (blank = off)">
-            <input
+            <Input
               type="number"
               min={1}
               max={2}
@@ -313,11 +320,11 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
                 setForm(f => ({ ...f, repeatPenalty: e.target.value === '' ? null : Math.min(2, Math.max(1, isNaN(v) ? 1 : v)) }))
               }}
               placeholder="off"
-              className={inputCls}
+              className="py-1.5"
             />
           </FormField>
           <FormField label="Seed (blank = random)">
-            <input
+            <Input
               type="number"
               min={0}
               value={form.seed ?? ''}
@@ -326,7 +333,7 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
                 setForm(f => ({ ...f, seed: e.target.value === '' ? null : (isNaN(v) ? null : Math.max(0, v)) }))
               }}
               placeholder="random"
-              className={inputCls}
+              className="py-1.5"
             />
           </FormField>
         </div>
@@ -351,25 +358,25 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
           </div>
           <div className="grid grid-cols-2 gap-3">
             <FormField label={form.selfHosted ? 'Cloud equivalent input $/1M tokens' : 'Input price $/1M tokens'}>
-              <input
+              <Input
                 type="number"
                 min={0}
                 step={0.01}
                 value={form.inputPricePer1M ?? ''}
                 onChange={e => setForm(f => ({ ...f, inputPricePer1M: e.target.value ? Math.max(0, parseFloat(e.target.value)) : null }))}
                 placeholder="e.g. 3.00"
-                className={inputCls}
+                className="py-1.5"
               />
             </FormField>
             <FormField label={form.selfHosted ? 'Cloud equivalent output $/1M tokens' : 'Output price $/1M tokens'}>
-              <input
+              <Input
                 type="number"
                 min={0}
                 step={0.01}
                 value={form.outputPricePer1M ?? ''}
                 onChange={e => setForm(f => ({ ...f, outputPricePer1M: e.target.value ? Math.max(0, parseFloat(e.target.value)) : null }))}
                 placeholder="e.g. 15.00"
-                className={inputCls}
+                className="py-1.5"
               />
             </FormField>
           </div>
@@ -435,50 +442,51 @@ function ModelModal({ model, health, onClose, onSaved, onDeleted }: ModelModalPr
   )
 }
 
+const NO_MODELS: ExternalModel[] = []
+
 export default function ModelsPage() {
-  const [models, setModels]           = useState<ExternalModel[]>([])
-  const [health, setHealth]           = useState<Health | null>(null)
-  const [loading, setLoading]         = useState(true)
+  const toast = useToast()
+  const { mutate: mutateGlobal } = useSWRConfig()
+  const { data: models = NO_MODELS, isLoading: loading, mutate: mutateModels } = useSWR<ExternalModel[]>('/api/admin/models')
+  const { data: health = null } = useSWR<Health>('/api/health', { shouldRetryOnError: false })
+  const { data: allModels } = useSWR<Array<{ id: string; isDefault: boolean }>>('/api/models')
+  const defaultModelId = allModels?.find(m => m.isDefault)?.id ?? null
   const [modal, setModal]             = useState<'add' | ExternalModel | null>(null)
-  const [defaultModelId, setDefaultModelId] = useState<string | null>(null)
   const [settingDefault, setSettingDefault] = useState<string | null>(null)
 
-  const load = useCallback(() => {
-    Promise.all([
-      fetch('/api/admin/models').then(r => r.json()),
-      fetch('/api/health').then(r => r.json()).catch(() => null),
-      fetch('/api/models').then(r => r.json()).catch(() => []),
-    ]).then(([data, h, allModels]) => {
-      setModels(data)
-      setHealth(h)
-      const def = (allModels as Array<{ id: string; isDefault: boolean }>).find(m => m.isDefault)
-      setDefaultModelId(def?.id ?? null)
-      setLoading(false)
-    }).catch(() => setLoading(false))
-  }, [])
+  // Model changes also affect every model picker in the app (/api/models).
+  const refresh = () => { void mutateModels(); void mutateGlobal('/api/models') }
 
-  useEffect(() => { load() }, [load])
-
-  const handleSaved = () => { load(); setModal(null) }
-  const handleDeleted = (id: string) => { setModels(m => m.filter(x => x.id !== id)); setModal(null) }
+  const handleSaved = () => { refresh(); setModal(null) }
+  const handleDeleted = (id: string) => {
+    void mutateModels(prev => (prev ?? []).filter(x => x.id !== id), { revalidate: false })
+    void mutateGlobal('/api/models')
+    setModal(null)
+  }
 
   const toggleEnabled = async (e: React.MouseEvent, m: ExternalModel) => {
     e.stopPropagation()
-    const res = await fetch(`/api/admin/models/${m.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !m.enabled }) })
-    if (res.ok) { const updated: ExternalModel = await res.json(); setModels(prev => prev.map(x => x.id === m.id ? updated : x)) }
+    try {
+      const updated = await apiFetch<ExternalModel>(`/api/admin/models/${m.id}`, { method: 'PUT', body: { enabled: !m.enabled } })
+      await mutateModels(prev => (prev ?? []).map(x => x.id === m.id ? updated : x), { revalidate: false })
+      void mutateGlobal('/api/models')
+    } catch (err) {
+      toast.error(`Failed to update model: ${errorMessage(err)}`)
+    }
   }
 
   const setDefault = async (e: React.MouseEvent, modelId: string) => {
     e.stopPropagation()
     setSettingDefault(modelId)
     const newDefault = defaultModelId === modelId ? null : modelId
-    await fetch('/api/admin/models/default', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ modelId: newDefault }),
-    }).catch((e) => console.error("[fetch]", e))
-    setDefaultModelId(newDefault)
-    setSettingDefault(null)
+    try {
+      await apiFetch('/api/admin/models/default', { method: 'PUT', body: { modelId: newDefault } })
+      await mutateGlobal('/api/models')
+    } catch (err) {
+      toast.error(`Failed to set default model: ${errorMessage(err)}`)
+    } finally {
+      setSettingDefault(null)
+    }
   }
 
   return (

@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { CheckCircle2, XCircle, RefreshCw, Activity, Database, Cloud, Bot, Cpu, Clock, type LucideIcon } from 'lucide-react'
+import { apiFetch, ApiError } from '@/lib/api'
 
 interface WorkerHealth {
   running: number
@@ -49,12 +50,16 @@ export default function SystemHealthPage() {
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/health')
-      const json = await res.json() as HealthData
-      setData(json)
+      setData(await apiFetch<HealthData>('/api/health'))
       setLastChecked(new Date())
-    } catch {
-      setData(null)
+    } catch (e) {
+      // A degraded system answers 503 but still returns its health report.
+      if (e instanceof ApiError && e.body && typeof e.body === 'object') {
+        setData(e.body as HealthData)
+        setLastChecked(new Date())
+      } else {
+        setData(null)
+      }
     } finally {
       setLoading(false)
     }

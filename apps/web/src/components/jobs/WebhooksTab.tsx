@@ -7,6 +7,9 @@ import { useAgents } from '@/hooks/useAgents'
 import { IconButton } from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { ConfirmInline, CopyButton, type WebhookTrigger } from './job-types'
+import { Textarea } from '@/components/ui/Textarea'
+import { Input } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
 
 const SOURCE_OPTIONS = [
   { value: 'github',       label: 'GitHub' },
@@ -37,8 +40,6 @@ function sourceBadgeCls(source: string) {
     default:             return 'bg-accent/20 text-accent'
   }
 }
-
-const inp = 'w-full px-2 py-1.5 rounded bg-bg-primary border border-border-subtle text-sm text-text-primary focus:outline-none focus:border-accent'
 const EMPTY_FORM = { name: '', agentId: '', source: 'custom', taskTitle: '', taskDesc: '' }
 
 export function WebhooksTab() {
@@ -236,12 +237,12 @@ function NewTriggerForm({ agents, onCancel, onCreated }: { agents: Array<{ id: s
       <h2 className="text-sm font-semibold text-text-primary">New Webhook Trigger</h2>
       {error && <p role="alert" className="text-xs text-status-error">{error}</p>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <label className="flex flex-col gap-1"><span className="text-xs text-text-muted">Name</span><input required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className={inp} placeholder="My GitHub Webhook" /></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-text-muted">Agent</span><select required value={form.agentId} onChange={e => setForm(f => ({ ...f, agentId: e.target.value }))} className={inp}><option value="">Select agent…</option>{agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-text-muted">Source</span><select value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} className={inp}>{SOURCE_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</select></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-text-muted">Task Title Template <span className="opacity-70">({SOURCE_VARS[form.source]})</span></span><input required value={form.taskTitle} onChange={e => setForm(f => ({ ...f, taskTitle: e.target.value }))} className={inp} placeholder="Push to {{repo}}/{{branch}}" /></label>
+        <label className="flex flex-col gap-1"><span className="text-xs text-text-muted">Name</span><Input required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="px-2 py-1.5 bg-bg-primary" placeholder="My GitHub Webhook" /></label>
+        <label className="flex flex-col gap-1"><span className="text-xs text-text-muted">Agent</span><Select required value={form.agentId} onChange={e => setForm(f => ({ ...f, agentId: e.target.value }))} className="px-2 py-1.5 bg-bg-primary"><option value="">Select agent…</option>{agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</Select></label>
+        <label className="flex flex-col gap-1"><span className="text-xs text-text-muted">Source</span><Select value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} className="px-2 py-1.5 bg-bg-primary">{SOURCE_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select></label>
+        <label className="flex flex-col gap-1"><span className="text-xs text-text-muted">Task Title Template <span className="opacity-70">({SOURCE_VARS[form.source]})</span></span><Input required value={form.taskTitle} onChange={e => setForm(f => ({ ...f, taskTitle: e.target.value }))} className="px-2 py-1.5 bg-bg-primary" placeholder="Push to {{repo}}/{{branch}}" /></label>
       </div>
-      <label className="flex flex-col gap-1"><span className="text-xs text-text-muted">Task Description Template (optional)</span><textarea rows={2} value={form.taskDesc} onChange={e => setForm(f => ({ ...f, taskDesc: e.target.value }))} className={inp + ' resize-none'} /></label>
+      <label className="flex flex-col gap-1"><span className="text-xs text-text-muted">Task Description Template (optional)</span><Textarea rows={2} value={form.taskDesc} onChange={e => setForm(f => ({ ...f, taskDesc: e.target.value }))} className="px-2 py-1.5 bg-bg-primary" /></label>
       <div className="flex gap-2">
         <button type="submit" disabled={creating} className="px-3 py-1.5 rounded bg-accent text-bg-primary text-sm font-medium hover:bg-accent/90 disabled:opacity-50">{creating ? 'Creating…' : 'Create'}</button>
         <button type="button" onClick={onCancel} className="px-3 py-1.5 rounded border border-border-subtle text-sm text-text-secondary hover:bg-bg-raised">Cancel</button>

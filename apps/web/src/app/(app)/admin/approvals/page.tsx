@@ -1,6 +1,9 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { ShieldAlert, CheckCircle, XCircle, Clock, RefreshCw } from 'lucide-react'
+import { apiFetch, errorMessage } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
+import { Input } from '@/components/ui/Input'
 
 interface ApprovalRequest {
   id: string
@@ -23,6 +26,7 @@ const TIER_LABELS: Record<string, string> = {
 }
 
 export default function ApprovalsPage() {
+  const toast = useToast()
   const [requests, setRequests] = useState<ApprovalRequest[]>([])
   const [loading, setLoading]   = useState(true)
   const [acting, setActing]     = useState<string | null>(null)
@@ -33,8 +37,9 @@ export default function ApprovalsPage() {
     setLoading(true)
     try {
       const params = filter === 'all' ? '?status=all' : ''
-      const data: ApprovalRequest[] = await fetch(`/api/tool-approvals${params}`).then(r => r.json())
-      setRequests(data)
+      setRequests(await apiFetch<ApprovalRequest[]>(`/api/tool-approvals${params}`))
+    } catch (e) {
+      toast.error(`Failed to load approvals: ${errorMessage(e)}`)
     } finally { setLoading(false) }
   }, [filter])
 
@@ -43,16 +48,12 @@ export default function ApprovalsPage() {
   const act = async (id: string, action: 'approve' | 'deny') => {
     setActing(id)
     try {
-      await fetch(`/api/tool-approvals/${id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, adminNote: note[id] ?? '' }),
-      })
+      await apiFetch(`/api/tool-approvals/${id}`, { method: 'POST', body: { action, adminNote: note[id] ?? '' } })
       await load()
+    } catch (e) {
+      toast.error(`Failed to ${action} request: ${errorMessage(e)}`)
     } finally { setActing(null) }
   }
-
-  const inputCls = 'w-full px-2 py-1.5 text-xs bg-bg-raised border border-border-subtle rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors'
 
   return (
     <div className="p-6 max-w-4xl space-y-6">
@@ -115,11 +116,12 @@ export default function ApprovalsPage() {
 
                 {r.status === 'pending' && (
                   <div className="flex items-center gap-2 pt-1">
-                    <input
+                    <Input
+                      aria-label="Optional note to user"
                       value={note[r.id] ?? ''}
                       onChange={e => setNote(prev => ({ ...prev, [r.id]: e.target.value }))}
                       placeholder="Optional note to user…"
-                      className={inputCls + ' flex-1'}
+                      className="px-2 py-1.5 text-xs flex-1"
                     />
                     <button onClick={() => act(r.id, 'deny')} disabled={acting === r.id}
                       className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium text-status-error border border-status-error/30 hover:bg-status-error/10 transition-colors disabled:opacity-50">

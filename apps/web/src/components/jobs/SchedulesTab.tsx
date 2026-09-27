@@ -8,8 +8,9 @@ import { IconButton } from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { CronBuilder } from './CronBuilder'
 import { ConfirmInline, formatDate, thCls, type ScheduledTask } from './job-types'
-
-const inp = 'w-full px-3 py-1.5 text-sm bg-bg-base border border-border-subtle rounded text-text-primary focus:outline-none focus:border-accent'
+import { Textarea } from '@/components/ui/Textarea'
+import { Select } from '@/components/ui/Select'
+import { Input } from '@/components/ui/Input'
 const EMPTY_FORM = { name: '', agentId: '', cronExpr: '0 9 * * *', taskTitle: '', taskDesc: '', enabled: true }
 
 export function SchedulesTab() {
@@ -140,11 +141,11 @@ function NewScheduleForm({ agents, onCancel, onCreated }: { agents: Array<{ id: 
     <div className="p-4 bg-bg-raised border border-border-subtle rounded-lg">
       <h2 className="text-sm font-semibold text-text-primary mb-4">New Scheduled Task</h2>
       <form onSubmit={submit} className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <div>{label('name', 'Schedule Name')}<input id={`${id}-name`} className={inp} placeholder="e.g. Daily health check" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required /></div>
-        <div>{label('agent', 'Agent')}<select id={`${id}-agent`} className={inp} value={form.agentId} onChange={e => setForm(f => ({ ...f, agentId: e.target.value }))} required><option value="">Select agent...</option>{agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div>
+        <div>{label('name', 'Schedule Name')}<Input id={`${id}-name`} className="py-1.5 bg-bg-base" placeholder="e.g. Daily health check" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required /></div>
+        <div>{label('agent', 'Agent')}<Select id={`${id}-agent`} className="py-1.5 bg-bg-base" value={form.agentId} onChange={e => setForm(f => ({ ...f, agentId: e.target.value }))} required><option value="">Select agent...</option>{agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</Select></div>
         <div className="md:col-span-2"><CronBuilder value={form.cronExpr} onChange={cronExpr => setForm(f => ({ ...f, cronExpr }))} /></div>
-        <div>{label('title', 'Task Title')}<input id={`${id}-title`} className={inp} placeholder="Title for each spawned task" value={form.taskTitle} onChange={e => setForm(f => ({ ...f, taskTitle: e.target.value }))} required /></div>
-        <div className="md:col-span-2">{label('desc', 'Task Description (optional)')}<textarea id={`${id}-desc`} className={inp + ' resize-none'} rows={2} value={form.taskDesc} onChange={e => setForm(f => ({ ...f, taskDesc: e.target.value }))} /></div>
+        <div>{label('title', 'Task Title')}<Input id={`${id}-title`} className="py-1.5 bg-bg-base" placeholder="Title for each spawned task" value={form.taskTitle} onChange={e => setForm(f => ({ ...f, taskTitle: e.target.value }))} required /></div>
+        <div className="md:col-span-2">{label('desc', 'Task Description (optional)')}<Textarea id={`${id}-desc`} className="py-1.5 bg-bg-base" rows={2} value={form.taskDesc} onChange={e => setForm(f => ({ ...f, taskDesc: e.target.value }))} /></div>
         <div className="md:col-span-2 flex items-center gap-4">
           <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer"><input type="checkbox" checked={form.enabled} onChange={e => setForm(f => ({ ...f, enabled: e.target.checked }))} className="accent-accent" />Enabled</label>
           {error && <span role="alert" className="text-xs text-red-400">{error}</span>}
