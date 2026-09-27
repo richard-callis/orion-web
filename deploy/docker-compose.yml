@@ -250,7 +250,7 @@ services:
   # Activated by bootstrap.sh when REVERSE_PROXY_TYPE=docker is set in .env.
   traefik:
     profiles: [proxy]
-    image: traefik:v3.0
+    image: traefik:v3.7.13
     restart: unless-stopped
     command:
       - --providers.docker=true
@@ -706,8 +706,11 @@ services:
     depends_on:
       orion:
         condition: service_healthy
+      # service_started, not _healthy: the Loki 3.7 image is distroless (only
+      # /usr/bin/loki — no shell/wget/curl), so it can't run a healthcheck.
+      # Vector's loki sink retries until Loki is ready.
       loki:
-        condition: service_healthy
+        condition: service_started
     read_only: true
     user: "1000:1000"
     group_add:
@@ -828,7 +831,7 @@ services:
           memory: 64M
 
   argocd-repo-server:
-    image: quay.io/argoproj/argocd:v3.3.8
+    image: quay.io/argoproj/argocd:v3.5.3
     restart: unless-stopped
     command: argocd-repo-server
     environment:
@@ -845,7 +848,7 @@ services:
           memory: 256M
 
   argocd-server:
-    image: quay.io/argoproj/argocd:v3.3.8
+    image: quay.io/argoproj/argocd:v3.5.3
     restart: unless-stopped
     command: argocd-server --insecure --namespace argocd
     environment:
@@ -866,7 +869,7 @@ services:
           memory: 256M
 
   argocd-application-controller:
-    image: quay.io/argoproj/argocd:v3.3.8
+    image: quay.io/argoproj/argocd:v3.5.3
     restart: unless-stopped
     command: argocd-application-controller --redis argocd-redis:6379 --namespace argocd
     environment:
@@ -926,17 +929,15 @@ services:
   # structured SecurityEvents). Orion proxies LogQL queries via /api/logs/*.
   # Not exposed publicly — Orion is the only external query path.
   loki:
-    image: grafana/loki:3.0.0
+    image: grafana/loki:3.7.8
     restart: unless-stopped
     command: ["-config.file=/etc/loki/loki.yaml"]
     volumes:
       - ./loki/loki.yaml:/etc/loki/loki.yaml:ro
       - loki-data:/loki
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    # No healthcheck: the 3.7 image is distroless (only /usr/bin/loki; no shell,
+    # wget or curl), so the old `wget …/ready` check would always fail and mark
+    # Loki unhealthy. Readiness is still exposed at http://loki:3100/ready.
     deploy:
       resources:
         limits:
