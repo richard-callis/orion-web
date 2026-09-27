@@ -1,0 +1,2205 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`tool registry characterization > exposes the same per-context tool lists 1`] = `
+{
+  "categories": [
+    "agents",
+    "environment",
+    "execution",
+    "features",
+    "gitops",
+    "knowledge",
+    "rooms",
+    "secrets",
+    "security",
+    "tasks",
+    "tools",
+  ],
+  "chat": [
+    "gitops_ls",
+    "orion_list_agents",
+    "orion_list_tasks",
+    "orion_assign_task",
+    "orion_create_agent",
+    "orion_update_agent",
+    "orion_archive_agent",
+    "orion_escalate_task",
+    "orion_get_task_events",
+    "orion_close_task",
+    "orion_reopen_task",
+    "orion_list_rooms",
+    "orion_send_message",
+    "orion_set_goal",
+    "orion_complete_goal",
+    "orion_create_feature",
+    "orion_create_task",
+    "get_cluster_api_resources",
+    "validate_manifest",
+    "orion_cluster_health",
+    "orion_request_tool_grant",
+    "orion_get_environment",
+    "orion_patch_environment",
+    "knowledge_remember",
+    "orion_bootstrap_environment",
+    "gitops_propose",
+    "gitea_merge_pr",
+    "gitea_close_pr",
+    "propose_tool",
+    "list_tool_groups",
+    "list_agent_groups",
+    "manage_tool_group_access",
+    "manage_agent_group_membership",
+    "knowledge_search",
+    "knowledge_load_context",
+    "knowledge_graph",
+    "knowledge_write",
+    "orion_list_secrets",
+    "generate_secret",
+    "list_deployment_templates",
+    "get_deployment_template",
+    "list_tools",
+    "describe_tool",
+    "approve_execution",
+    "deny_execution",
+    "security_propose_action",
+    "investigation_search",
+    "investigation_create",
+    "investigation_read",
+    "investigation_note",
+    "investigation_update",
+    "investigation_link_incident",
+    "observable_add",
+    "observable_set_verdict",
+    "timeline_add",
+  ],
+  "task": [
+    "gitops_ls",
+    "orion_list_agents",
+    "orion_list_tasks",
+    "orion_assign_task",
+    "orion_create_agent",
+    "orion_update_agent",
+    "orion_archive_agent",
+    "orion_escalate_task",
+    "orion_get_task_events",
+    "orion_close_task",
+    "orion_reopen_task",
+    "orion_list_rooms",
+    "orion_send_message",
+    "orion_set_goal",
+    "orion_complete_goal",
+    "orion_create_feature",
+    "orion_create_task",
+    "get_cluster_api_resources",
+    "validate_manifest",
+    "orion_cluster_health",
+    "orion_request_tool_grant",
+    "knowledge_remember",
+    "spawn_agent",
+    "gitops_propose",
+    "gitea_merge_pr",
+    "gitea_close_pr",
+    "propose_tool",
+    "list_tool_groups",
+    "list_agent_groups",
+    "manage_tool_group_access",
+    "manage_agent_group_membership",
+    "knowledge_search",
+    "knowledge_load_context",
+    "knowledge_graph",
+    "knowledge_write",
+    "orion_list_secrets",
+    "generate_secret",
+    "list_deployment_templates",
+    "get_deployment_template",
+    "find_specialist",
+    "list_tools",
+    "describe_tool",
+  ],
+}
+`;
+
+exports[`tool registry characterization > registers the same tools, in the same order, with the same metadata and schemas 1`] = `
+[
+  {
+    "availableIn": "both",
+    "category": "gitops",
+    "description": "List files and directories in the GitOps repo for an environment. Call this BEFORE gitops_propose to check what paths already exist so you place new files consistently with the existing structure. Defaults to the environment's watched directory (e.g. "deployments/") — pass a sub-path to drill in (e.g. "deployments/tailscale").",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "environment_id": {
+          "description": "Environment ID or name",
+          "type": "string",
+        },
+        "path": {
+          "description": "Directory path to list. Omit to list the watched directory root (e.g. "deployments/"). Pass a sub-path to drill in, e.g. "deployments/tailscale".",
+          "type": "string",
+        },
+      },
+      "required": [
+        "environment_id",
+      ],
+      "type": "object",
+    },
+    "name": "gitops_ls",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "agents",
+    "description": "List all agents on the team — their IDs, names, roles, and current busy/available status. Use this to see who is available before assigning work or creating new agents.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "include_archived": {
+          "description": "Include archived agents (default false)",
+          "type": "boolean",
+        },
+      },
+      "type": "object",
+    },
+    "name": "orion_list_agents",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "tasks",
+    "description": "List tasks filtered by status, assignment, and date. Use this to find unassigned work, check what is running, or review failed tasks.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "assigned_agent_id": {
+          "description": "Filter to tasks assigned to a specific agent ID",
+          "type": "string",
+        },
+        "since": {
+          "description": "ISO 8601 timestamp — only return tasks created or updated after this date. Use this to fetch only new work since your last review.",
+          "type": "string",
+        },
+        "status": {
+          "description": "Filter by status: pending, in_progress, pending_validation, done, failed. Defaults to pending+in_progress+failed. Use "pending_validation" to find tasks awaiting Veritas review.",
+          "type": "string",
+        },
+        "unassigned_only": {
+          "description": "Only return tasks with no agent or user assigned (default false)",
+          "type": "boolean",
+        },
+      },
+      "type": "object",
+    },
+    "name": "orion_list_tasks",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "tasks",
+    "description": "Assign a pending task to an agent. Sets the task status to pending and records the agent assignment.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "agent_id": {
+          "description": "Agent ID to assign the task to",
+          "type": "string",
+        },
+        "task_id": {
+          "description": "Task ID to assign",
+          "type": "string",
+        },
+      },
+      "required": [
+        "task_id",
+        "agent_id",
+      ],
+      "type": "object",
+    },
+    "name": "orion_assign_task",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "agents",
+    "description": "Create a new agent. Use only when no existing agent is suitable for the required work.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "description": {
+          "description": "Optional longer description",
+          "type": "string",
+        },
+        "llm": {
+          "description": "LLM to use (e.g. ext:<id>). Omit to use the system default.",
+          "type": "string",
+        },
+        "name": {
+          "description": "Unique agent name (cannot be a reserved name: human, user, system, admin)",
+          "type": "string",
+        },
+        "persistent": {
+          "description": "true = persistent agent that stays in the roster; false = transient, will be archived when its work is done (default: false)",
+          "type": "boolean",
+        },
+        "role": {
+          "description": "One-line role description",
+          "type": "string",
+        },
+        "systemPrompt": {
+          "description": "REQUIRED — full system prompt defining the agent's personality, responsibilities, and operating rules. Must be specific and actionable.",
+          "type": "string",
+        },
+        "type": {
+          "description": "Agent type for AI agents (default: claude). Do NOT use "human" — that is reserved for human users.",
+          "type": "string",
+        },
+      },
+      "required": [
+        "name",
+        "role",
+        "systemPrompt",
+      ],
+      "type": "object",
+    },
+    "name": "orion_create_agent",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "agents",
+    "description": "Update an existing agent's role, description, system prompt, LLM, or review timestamp. Use this to improve agents based on observed performance — sharpen their prompts, fix their role description, or reassign their LLM. Also call this with mentorReviewedAt to record that you have reviewed an agent even if no prompt change was needed.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "agent_id": {
+          "description": "Agent ID to update",
+          "type": "string",
+        },
+        "description": {
+          "description": "Updated longer description",
+          "type": "string",
+        },
+        "llm": {
+          "description": "Updated LLM (e.g. ext:<id>)",
+          "type": "string",
+        },
+        "mentorReviewedAt": {
+          "description": "ISO 8601 timestamp to record when Mentor last reviewed this agent. Always set this after completing a review, even if no changes were made.",
+          "type": "string",
+        },
+        "role": {
+          "description": "Updated one-line role description",
+          "type": "string",
+        },
+        "systemPrompt": {
+          "description": "Updated full system prompt",
+          "type": "string",
+        },
+      },
+      "required": [
+        "agent_id",
+      ],
+      "type": "object",
+    },
+    "name": "orion_update_agent",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "agents",
+    "description": "Soft-archive a transient agent after its work is done. Never deletes — preserves audit trail (SOC2 [A-001]).",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "agent_id": {
+          "description": "Agent ID to archive",
+          "type": "string",
+        },
+        "reason": {
+          "description": "Optional reason for archiving",
+          "type": "string",
+        },
+      },
+      "required": [
+        "agent_id",
+      ],
+      "type": "object",
+    },
+    "name": "orion_archive_agent",
+    "parallelSafe": false,
+    "tier": "destructive",
+  },
+  {
+    "availableIn": "both",
+    "category": "tasks",
+    "description": "Escalate a task to a human user. Sets the assignedUserId and status to pending.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "task_id": {
+          "description": "Task ID to escalate",
+          "type": "string",
+        },
+        "user_id": {
+          "description": "User ID to assign the task to",
+          "type": "string",
+        },
+      },
+      "required": [
+        "task_id",
+        "user_id",
+      ],
+      "type": "object",
+    },
+    "name": "orion_escalate_task",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "tasks",
+    "description": "Fetch the execution event log for a task. Returns timestamped events including tool calls, tool results, and agent output. Use this to verify whether a task was actually executed before closing it.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "description": "Maximum number of events to return (default 50)",
+          "type": "number",
+        },
+        "task_id": {
+          "description": "Task ID to fetch events for",
+          "type": "string",
+        },
+      },
+      "required": [
+        "task_id",
+      ],
+      "type": "object",
+    },
+    "name": "orion_get_task_events",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "tasks",
+    "description": "Mark a task as done after confirming the work was actually completed. Only works on tasks in pending_validation status. ONLY call this after verifying via orion_get_task_events that real tool calls were made and the outcome matches the task description.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "summary": {
+          "description": "Brief validation summary — what was confirmed and how",
+          "type": "string",
+        },
+        "task_id": {
+          "description": "Task ID to close",
+          "type": "string",
+        },
+      },
+      "required": [
+        "task_id",
+        "summary",
+      ],
+      "type": "object",
+    },
+    "name": "orion_close_task",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "tasks",
+    "description": "Reopen a pending_validation task back to pending. Use when validation reveals the task was not actually completed — e.g. agent self-reported done with zero tool calls.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "reason": {
+          "description": "Why the task is being reopened",
+          "type": "string",
+        },
+        "task_id": {
+          "description": "Task ID to reopen",
+          "type": "string",
+        },
+      },
+      "required": [
+        "task_id",
+        "reason",
+      ],
+      "type": "object",
+    },
+    "name": "orion_reopen_task",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "rooms",
+    "description": "List chat rooms. Optionally filter by feature_id to find the coordination room for a feature.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "feature_id": {
+          "description": "Filter by feature ID to find the feature coordination room",
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "orion_list_rooms",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "rooms",
+    "description": "Post a message to a chat room. Use this to communicate with other agents or report status in a feature coordination room.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "description": "Message content to post",
+          "type": "string",
+        },
+        "room_id": {
+          "description": "Chat room ID to post the message to",
+          "type": "string",
+        },
+      },
+      "required": [
+        "room_id",
+        "content",
+      ],
+      "type": "object",
+    },
+    "name": "orion_send_message",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "rooms",
+    "description": "Set an active goal for a chat room. While a goal is active, agents in the room must respond with progress rather than going silent. Use this when you want an agent to keep working until a task is explicitly done.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "goal": {
+          "description": "Clear description of what must be accomplished",
+          "type": "string",
+        },
+        "room_id": {
+          "description": "Chat room ID to set the goal in",
+          "type": "string",
+        },
+      },
+      "required": [
+        "room_id",
+        "goal",
+      ],
+      "type": "object",
+    },
+    "name": "orion_set_goal",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "rooms",
+    "description": "Mark the active goal in a chat room as complete and clear it. GUARD: Only call this after you have VERIFIED the goal is actually done — check pod status, test endpoints, confirm resources are healthy. Do NOT call this just because a PR was merged, a command was issued, or you believe the work should be done. You must have observed real evidence of success (e.g. kubectl_get_pods showing Running, HTTP 200 from the endpoint). Provide a verification_summary describing exactly what you checked.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "room_id": {
+          "description": "Chat room ID to clear the goal from",
+          "type": "string",
+        },
+        "verification_summary": {
+          "description": "What you actually checked to confirm the goal is complete. E.g. "kubectl_get_pods shows all 7 arr-stack pods Running; curl sonarr.khalisio.com returns 200". Required — vague answers will be rejected.",
+          "type": "string",
+        },
+      },
+      "required": [
+        "room_id",
+        "verification_summary",
+      ],
+      "type": "object",
+    },
+    "name": "orion_complete_goal",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "features",
+    "description": "Create a new feature under an epic. GUARD: will fail if epic.plan is null — the epic must have a saved plan before features can be created.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "description": {
+          "description": "Feature description (optional)",
+          "type": "string",
+        },
+        "epicId": {
+          "description": "ID of the parent epic",
+          "type": "string",
+        },
+        "title": {
+          "description": "Feature title",
+          "type": "string",
+        },
+      },
+      "required": [
+        "epicId",
+        "title",
+      ],
+      "type": "object",
+    },
+    "name": "orion_create_feature",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "tasks",
+    "description": "Create a new task under a feature with a step-by-step implementation plan. The plan should be numbered steps specific enough for a smaller LLM to execute without additional context. GUARD: will fail if feature.plan is null.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "dedup_key": {
+          "description": "Optional deduplication key. If an open task (pending/in_progress/pending_validation) with this exact key already exists under the same feature, creation is skipped and the existing task is returned. Use a stable identifier like "pulse:host:vault-proxy" or "pulse:node:talos-rpi2".",
+          "type": "string",
+        },
+        "depends_on": {
+          "description": "Optional list of Task IDs that must reach status "done" before this task is allowed to run. Use the IDs returned by previous orion_create_task calls to express ordering (e.g. a deploy task that depends on a build task). Execution waves are computed from these dependencies at plan-approval time.",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "description": {
+          "description": "Task description (optional)",
+          "type": "string",
+        },
+        "featureId": {
+          "description": "ID of the parent feature",
+          "type": "string",
+        },
+        "plan": {
+          "description": "Numbered step-by-step implementation plan. Each step should be specific enough for a smaller LLM to execute. E.g.:
+1. Read /path/to/file and understand X
+2. Edit Y to add Z
+3. Run the test suite
+4. Verify output matches expected",
+          "type": "string",
+        },
+        "priority": {
+          "description": "Optional task priority. Defaults to "medium". Higher-priority tasks within the same execution wave run first.",
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low",
+          ],
+          "type": "string",
+        },
+        "targetEnvironment": {
+          "description": "For deployment tasks — the target environment as designated by the Atlas. Pass as an object with keys: namespace (e.g. "apps"), hostname (e.g. "myapp.khalisio.com"), storageClass (e.g. "longhorn", if storage needed), vaultPath (e.g. "secret/data/myapp", if secrets needed), certIssuer (e.g. "letsencrypt-prod", if the Ingress is TLS-enabled — the executing agent must set this as the cert-manager.io/cluster-issuer annotation or no certificate will be issued).",
+          "type": "object",
+        },
+        "title": {
+          "description": "Task title",
+          "type": "string",
+        },
+      },
+      "required": [
+        "featureId",
+        "title",
+        "plan",
+      ],
+      "type": "object",
+    },
+    "name": "orion_create_task",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "gitops",
+    "description": "List all API resources available in the cluster — built-in Kubernetes resource types plus all installed CRDs. Use this before writing manifests to verify that the apiVersions and kinds you plan to use actually exist. Prevents ArgoCD sync failures caused by referencing non-existent CRDs.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object",
+    },
+    "name": "get_cluster_api_resources",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "gitops",
+    "description": "Validate Kubernetes manifest files against the cluster's actual API resources. Checks each document's apiVersion/kind against built-in Kubernetes resources and installed CRDs. Returns a pass/fail report. Call this before gitops_propose whenever manifests use non-standard apiVersions.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "files": {
+          "description": "Array of manifest files to validate.",
+          "items": {
+            "properties": {
+              "content": {
+                "description": "Full YAML content of the file",
+                "type": "string",
+              },
+              "path": {
+                "description": "File path (for display in the report)",
+                "type": "string",
+              },
+            },
+            "required": [
+              "path",
+              "content",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "files",
+      ],
+      "type": "object",
+    },
+    "name": "validate_manifest",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "environment",
+    "description": "Comprehensive health check across all ORION-managed systems: (1) all enabled IngressRoutes — HTTP reachability and SSL cert validity; (2) Kubernetes cluster node readiness and pod issues (CrashLoopBackOff, OOMKilled, Failed, Pending); (3) all registered environment gateways; (4) ORION system services (Gitea, Vault, ORION itself). Each degraded item includes a canonical taskKey field — pass this as dedup_key when calling orion_create_task to prevent duplicate fix tasks.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "namespace": {
+          "description": "Limit check to a specific namespace (optional — omit to check all namespaces)",
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "orion_cluster_health",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "tools",
+    "description": "Request explicit authorization to call a destructive-tier tool. Creates an approval request that a human admin must review in the ORION UI (Administration → Approvals). Once approved, a one-time grant is created and the next call to the tool will succeed. Use this when a tool call was denied with "destructive tool requires explicit authorization".",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "reason": {
+          "description": "Why this destructive tool is needed for the current task — be specific",
+          "type": "string",
+        },
+        "tool_name": {
+          "description": "Exact name of the destructive tool being requested (e.g. "orion_archive_agent")",
+          "type": "string",
+        },
+      },
+      "required": [
+        "tool_name",
+        "reason",
+      ],
+      "type": "object",
+    },
+    "name": "orion_request_tool_grant",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "chat",
+    "category": "environment",
+    "description": "Get the configuration and status of an ORION environment, including whether kubeconfig is stored.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "environment_id": {
+          "description": "Environment ID",
+          "type": "string",
+        },
+      },
+      "required": [
+        "environment_id",
+      ],
+      "type": "object",
+    },
+    "name": "orion_get_environment",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "chat",
+    "category": "environment",
+    "description": "Update fields on an ORION environment (e.g. save kubeconfig, update gatewayUrl). Requires a ToolExecutionGrant because kubeconfig writes grant cluster admin to whoever controls the kubeconfig.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "body": {
+          "description": "Fields to update, e.g. {"kubeconfig": "<base64>"}",
+          "type": "object",
+        },
+        "environment_id": {
+          "description": "Environment ID",
+          "type": "string",
+        },
+      },
+      "required": [
+        "environment_id",
+        "body",
+      ],
+      "type": "object",
+    },
+    "name": "orion_patch_environment",
+    "parallelSafe": false,
+    "tier": "destructive",
+  },
+  {
+    "availableIn": "both",
+    "category": "knowledge",
+    "description": "Save an important fact, decision, or learned pattern to your persistent agent memory. It will be injected into your context on every future turn so you can recall it without tool calls. Use for: namespace locations, cluster quirks, decisions made, operator configurations, etc.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "context": {
+          "description": "Why this is important (optional)",
+          "type": "string",
+        },
+        "key": {
+          "description": "Short descriptive title (e.g. "tailscale-operator-namespace", "cluster-quirk-no-gpu")",
+          "type": "string",
+        },
+        "value": {
+          "description": "The fact or insight to remember",
+          "type": "string",
+        },
+      },
+      "required": [
+        "key",
+        "value",
+      ],
+      "type": "object",
+    },
+    "name": "knowledge_remember",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "chat",
+    "category": "environment",
+    "description": "Trigger the bootstrap process for a Kubernetes cluster environment. Deploys ArgoCD and ORION Gateway into the cluster.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "environment_id": {
+          "description": "Environment ID",
+          "type": "string",
+        },
+      },
+      "required": [
+        "environment_id",
+      ],
+      "type": "object",
+    },
+    "name": "orion_bootstrap_environment",
+    "parallelSafe": false,
+    "tier": "destructive",
+  },
+  {
+    "availableIn": "task",
+    "category": "agents",
+    "description": "Run an ephemeral sub-agent in-process and return its output as a string.
+
+Use this when the current task needs to delegate a focused sub-problem to a separate agent loop — for example, to gather information, draft content, or execute a short specialised workflow — without creating a new Task in the database or waiting for the worker poll cycle.
+
+The sub-agent runs with the same gateway/environment connection as the parent, inherits management tools, and uses the same or an overridden model. Results are returned synchronously to the caller.
+
+Guidelines:
+- Keep prompts concise and focused on a single outcome
+- Prefer this over orion_create_task when you need the answer immediately
+- Do NOT spawn sub-agents recursively — depth is capped at 1",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "max_turns": {
+          "description": "Maximum tool-calling turns (default 8, max 15)",
+          "type": "number",
+        },
+        "model": {
+          "description": "Optional model ID override (e.g. "claude:claude-haiku-4-5-20251001"). Defaults to parent agent's model.",
+          "type": "string",
+        },
+        "prompt": {
+          "description": "The task/question for the sub-agent to answer or complete",
+          "type": "string",
+        },
+        "system_prompt": {
+          "description": "Optional system prompt override. Defaults to the parent agent's system prompt.",
+          "type": "string",
+        },
+      },
+      "required": [
+        "prompt",
+      ],
+      "type": "object",
+    },
+    "name": "spawn_agent",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "gitops",
+    "description": "Propose a GitOps change. Creates a branch, commits files, opens a PR in the environment's git repo, and auto-merges if policy allows. Use this for ALL cluster/infrastructure changes — never apply kubectl manifests directly.
+
+BEFORE proposing: call gitops_ls to check what paths already exist so you match the existing structure exactly.
+
+Path conventions: pass service-relative paths (e.g. "tailscale/deployment.yaml") — the tool automatically prepends the correct watched directory (e.g. "deployments/"). Paths that escape the watched directory are REJECTED.
+
+To delete files: set delete: true on the change item and omit content. You can mix deletions and upserts in a single PR (e.g. remove an old service and add a replacement atomically).
+
+For Kubernetes manifests: always include namespace, use pinned image tags, include CrowdSec + Authentik middleware on all public ingresses.
+For Docker Compose: use self-contained services (no host bind mounts for config files).",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "changes": {
+          "items": {
+            "properties": {
+              "content": {
+                "description": "Full file content. Required unless delete is true.",
+                "type": "string",
+              },
+              "delete": {
+                "description": "Set to true to delete this file from the repo. Omit content when deleting.",
+                "type": "boolean",
+              },
+              "path": {
+                "description": "Service-relative file path — do NOT include the watched directory prefix. E.g. "tailscale/deployment.yaml", not "deployments/tailscale/deployment.yaml". The tool places it under the correct directory automatically.",
+                "type": "string",
+              },
+            },
+            "required": [
+              "path",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "environment_id": {
+          "description": "Environment ID or name (e.g. "Talos Cluster", "localhost")",
+          "type": "string",
+        },
+        "operation_description": {
+          "description": "Plain-language summary: e.g. "add new service", "update image tag", "remove service"",
+          "type": "string",
+        },
+        "reasoning": {
+          "description": "Why this change is needed",
+          "type": "string",
+        },
+        "title": {
+          "description": "Short PR title, e.g. "feat: deploy Tailscale Operator"",
+          "type": "string",
+        },
+      },
+      "required": [
+        "environment_id",
+        "title",
+        "reasoning",
+        "operation_description",
+        "changes",
+      ],
+      "type": "object",
+    },
+    "name": "gitops_propose",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "gitops",
+    "description": "Merge an open Gitea pull request into its target branch. The PR must be in a mergeable state.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "environment_id": {
+          "description": "Environment ID or name (e.g. "Talos Cluster")",
+          "type": "string",
+        },
+        "merge_message": {
+          "description": "Optional commit message for the merge commit",
+          "type": "string",
+        },
+        "pr_number": {
+          "description": "The PR number to merge",
+          "type": "number",
+        },
+      },
+      "required": [
+        "environment_id",
+        "pr_number",
+      ],
+      "type": "object",
+    },
+    "name": "gitea_merge_pr",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "gitops",
+    "description": "Close an open Gitea pull request without merging it. Use this to clean up duplicate, superseded, or unwanted PRs.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "environment_id": {
+          "description": "Environment ID or name (e.g. "Talos Cluster")",
+          "type": "string",
+        },
+        "pr_number": {
+          "description": "The PR number to close",
+          "type": "number",
+        },
+        "reason": {
+          "description": "Short reason for closing (e.g. "superseded by PR #95")",
+          "type": "string",
+        },
+      },
+      "required": [
+        "environment_id",
+        "pr_number",
+      ],
+      "type": "object",
+    },
+    "name": "gitea_close_pr",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "tools",
+    "description": "Propose a new MCP tool for admin review. Use this when you need a capability that isn't in your current tool list. The admin will be notified to approve or reject the proposal.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "description": {
+          "description": "Clear one-sentence description of what the tool does",
+          "type": "string",
+        },
+        "environment_id": {
+          "description": "Environment to associate the tool with (optional — inferred from context if omitted)",
+          "type": "string",
+        },
+        "execConfig": {
+          "description": "Execution config: shell={command}, http={url,method}",
+          "type": "object",
+        },
+        "execType": {
+          "description": "How the tool is executed",
+          "enum": [
+            "shell",
+            "http",
+            "builtin",
+          ],
+          "type": "string",
+        },
+        "inputSchema": {
+          "description": "JSON Schema for the tool inputs (type: object, properties, required)",
+          "type": "object",
+        },
+        "name": {
+          "description": "snake_case tool name",
+          "type": "string",
+        },
+      },
+      "required": [
+        "name",
+        "description",
+        "inputSchema",
+      ],
+      "type": "object",
+    },
+    "name": "propose_tool",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "tools",
+    "description": "List every tool group, the tools it bundles, and which agent groups currently have access to it. Use this to see the full tool landscape before deciding who should be granted access to what. This tool only reports state — it never executes any of the listed tools.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "environment_id": {
+          "description": "Filter to one environment (optional)",
+          "type": "string",
+        },
+      },
+      "required": [],
+      "type": "object",
+    },
+    "name": "list_tool_groups",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "tools",
+    "description": "List every agent group, its member agents, and which tool groups it has been granted access to. Use this before granting or revoking tool access, or before deciding which group a specialist agent should join.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object",
+    },
+    "name": "list_agent_groups",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "tools",
+    "description": "Grant or revoke an agent group's access to a tool group. This changes WHO CAN use a set of tools — it does not execute any tool. Use list_tool_groups and list_agent_groups first to find the right IDs or names. Requires membership in the "Access Admins" agent group.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "action": {
+          "description": "Whether to grant or revoke access",
+          "enum": [
+            "grant",
+            "revoke",
+          ],
+          "type": "string",
+        },
+        "agentGroup": {
+          "description": "Agent group id or exact name (globally unique)",
+          "type": "string",
+        },
+        "environment": {
+          "description": "Environment id or name, used only to disambiguate toolGroup when referring to it by name (optional)",
+          "type": "string",
+        },
+        "toolGroup": {
+          "description": "Tool group id or exact name. Tool group names are only unique per environment — if the name matches groups in more than one environment, also pass "environment".",
+          "type": "string",
+        },
+      },
+      "required": [
+        "action",
+        "agentGroup",
+        "toolGroup",
+      ],
+      "type": "object",
+    },
+    "name": "manage_tool_group_access",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "tools",
+    "description": "Add or remove an agent from an agent group. Use this to put a specialist agent into a group so it inherits that group's tool-group access, before or after granting the group access with manage_tool_group_access. Requires membership in the "Access Admins" agent group.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "action": {
+          "description": "Whether to add or remove the agent",
+          "enum": [
+            "add",
+            "remove",
+          ],
+          "type": "string",
+        },
+        "agent": {
+          "description": "Agent id or exact name",
+          "type": "string",
+        },
+        "agentGroup": {
+          "description": "Agent group id or exact name",
+          "type": "string",
+        },
+      },
+      "required": [
+        "action",
+        "agentGroup",
+        "agent",
+      ],
+      "type": "object",
+    },
+    "name": "manage_agent_group_membership",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "knowledge",
+    "description": "Semantically search the knowledge base (notes, runbooks, wiki pages) for content relevant to a query. Returns notes ranked by similarity.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "includeContent": {
+          "description": "Whether to include full note content (default true)",
+          "type": "boolean",
+        },
+        "limit": {
+          "description": "Max results to return (1-20, default 5)",
+          "type": "number",
+        },
+        "query": {
+          "description": "Natural language search query",
+          "type": "string",
+        },
+      },
+      "required": [
+        "query",
+      ],
+      "type": "object",
+    },
+    "name": "knowledge_search",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "knowledge",
+    "description": "Progressively load additional relevant knowledge-base context mid-task. Only the top 3 most-relevant notes are injected up front to keep the initial prompt small — call this when you need MORE background on a specific sub-topic. Returns formatted, sanitized note content ready to reason over.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "description": "Max additional notes to load (1-10, default 5)",
+          "type": "number",
+        },
+        "query": {
+          "description": "Natural language description of the context you need",
+          "type": "string",
+        },
+      },
+      "required": [
+        "query",
+      ],
+      "type": "object",
+    },
+    "name": "knowledge_load_context",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "knowledge",
+    "description": "Get the full knowledge graph — all notes with their types, wikilink dependencies, and semantic connections. Use this to understand what documentation exists and how topics relate.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "includeContent": {
+          "description": "Include a short content snippet per note (default false)",
+          "type": "boolean",
+        },
+        "threshold": {
+          "description": "Minimum similarity score for semantic edges (0.0-1.0, default 0.5)",
+          "type": "number",
+        },
+      },
+      "type": "object",
+    },
+    "name": "knowledge_graph",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "knowledge",
+    "description": "Write a lesson, pattern, or finding to the shared knowledge base. Automatically embedded into the vector index so all agents can find it via knowledge_search.
+
+Use this after completing or investigating any task. Structure content for maximum searchability:
+
+  ## Context
+  [When does this apply? What task/domain/service?]
+
+  ## Problem
+  [What went wrong, or what needed to be done?]
+
+  ## Root Cause
+  [Why did it happen?]
+
+  ## Solution
+  [Exact steps, commands, or approach that worked]
+
+  ## Rules for Next Time
+  - [Specific do/don't rules derived from this experience]",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "description": "Structured lesson — use the Context/Problem/Root Cause/Solution/Rules format for best search retrieval",
+          "type": "string",
+        },
+        "folder": {
+          "description": ""Success Patterns" | "Failure Patterns" | "Cluster Quirks" | "Tool Usage" | "Agent Lessons" (default: "Agent Lessons")",
+          "type": "string",
+        },
+        "tags": {
+          "description": "Domain tags for filtering, e.g. ["tailscale", "networking", "kubernetes"]",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "title": {
+          "description": "Short searchable title — include service/domain name and the key lesson. E.g. "Tailscale: namespace must exist before operator deploy"",
+          "type": "string",
+        },
+      },
+      "required": [
+        "title",
+        "content",
+      ],
+      "type": "object",
+    },
+    "name": "knowledge_write",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "secrets",
+    "description": "List Vault secrets registered in ORION as managed ExternalSecrets. Returns metadata only — Vault path, target K8s Secret name, the K8s key names you can reference in pod specs, and sync status. Never returns actual secret values or Vault-internal key names.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "environment": {
+          "description": "Filter by environment name (partial match). Omit for all environments.",
+          "type": "string",
+        },
+        "namespace": {
+          "description": "Filter by Kubernetes namespace.",
+          "type": "string",
+        },
+        "status": {
+          "description": "Filter by sync status: draft, applied, error.",
+          "type": "string",
+        },
+        "tag": {
+          "description": "Filter by a single tag value.",
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "orion_list_secrets",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "secrets",
+    "description": "Generate cryptographically secure random values server-side for a draft secret and write them directly to Vault. Use this for secrets whose values should be auto-generated (encryption keys, passwords, tokens) — the values are never returned and never appear in this conversation. Only works on secrets in draft status. Refuses to overwrite already-applied secrets.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "keyNames": {
+          "description": "Specific key names to generate values for. If omitted, generates values for all keys in the secret.",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "secretId": {
+          "description": "The ORION secret id (from orion_list_secrets). Must be in draft status.",
+          "type": "string",
+        },
+      },
+      "required": [
+        "secretId",
+      ],
+      "type": "object",
+    },
+    "name": "generate_secret",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "both",
+    "category": "gitops",
+    "description": "List all available deployment templates (Kubernetes and Docker Compose). Each template is a generic YAML starting point with {{ PLACEHOLDER }} fields the agent fills in before proposing to Gitea via gitops_propose.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "category": {
+          "description": "Filter by category (optional). Omit to list all templates. Use "docker" for Docker Compose templates.",
+          "enum": [
+            "core",
+            "workload",
+            "networking",
+            "storage",
+            "secrets",
+            "gitops",
+            "docker",
+          ],
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "list_deployment_templates",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "gitops",
+    "description": "Get the full YAML content of a deployment template by name. Fill in all {{ PLACEHOLDER }} fields, remove commented-out sections you do not need, then use gitops_propose to open a PR.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "description": "Template name (from list_deployment_templates). e.g. "deployment", "ingress-public", "externalsecret".",
+          "type": "string",
+        },
+      },
+      "required": [
+        "name",
+      ],
+      "type": "object",
+    },
+    "name": "get_deployment_template",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "task",
+    "category": "agents",
+    "description": "Discover which specialist agent should handle a given task. Searches AgentProfile records by domain, tags, and confidence scoring. Returns ranked results with agentId, domain, description, and confidence. Use this before delegate() when you are unsure which agent should handle a task.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "environment": {
+          "description": "Optional environment name to filter by.",
+          "type": "string",
+        },
+        "limit": {
+          "default": 3,
+          "description": "Maximum number of results (1-5, default 3).",
+          "type": "number",
+        },
+        "minConfidence": {
+          "default": 0.3,
+          "description": "Minimum confidence threshold (0.0-1.0, default 0.3).",
+          "type": "number",
+        },
+        "query": {
+          "description": "Description of the task or problem to find a specialist for.",
+          "type": "string",
+        },
+      },
+      "required": [
+        "query",
+      ],
+      "type": "object",
+    },
+    "name": "find_specialist",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "tools",
+    "description": "List available tools by category. Call this to discover what you can actually do before attempting an operation. Pass a category to narrow the results. ORION categories: tasks, agents, rooms, features, gitops, knowledge, environment, secrets, tools. Gateway categories (when linked): cluster-ops, docker, talos, localhost, security, discovery. Omit category to list everything.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "category": {
+          "description": "Optional category filter. ORION: tasks, agents, rooms, features, gitops, knowledge, environment, secrets, tools. Gateway: cluster-ops, docker, talos, localhost, security, discovery. Omit to list all.",
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "list_tools",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "both",
+    "category": "tools",
+    "description": "Get the full description and input schema for a specific tool. Use this when list_tools gives you a tool name but you need to understand its parameters before calling it. If the tool is not found, this will also check registered Novas (custom tool bundles) and suggest next steps.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "description": "Exact tool name to describe, e.g. "orion_close_task"",
+          "type": "string",
+        },
+      },
+      "required": [
+        "name",
+      ],
+      "type": "object",
+    },
+    "name": "describe_tool",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "chat",
+    "category": "execution",
+    "description": "Approve a pending tool execution that is waiting for review. Human admins only — agents cannot approve executions. The execution will proceed immediately after approval.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "executionId": {
+          "description": "The ORION execution id (from the notification in system.room.execution)",
+          "type": "string",
+        },
+        "reason": {
+          "description": "Why this execution is approved (logged to audit trail)",
+          "type": "string",
+        },
+      },
+      "required": [
+        "executionId",
+        "reason",
+      ],
+      "type": "object",
+    },
+    "name": "approve_execution",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "chat",
+    "category": "execution",
+    "description": "Deny a pending tool execution. Human admins only. The calling agent will receive an error. Use when the command looks suspicious, out of scope, or unsafe.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "executionId": {
+          "description": "The ORION execution id",
+          "type": "string",
+        },
+        "reason": {
+          "description": "Why this execution is denied (sent back to the calling agent)",
+          "type": "string",
+        },
+      },
+      "required": [
+        "executionId",
+        "reason",
+      ],
+      "type": "object",
+    },
+    "name": "deny_execution",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "chat",
+    "category": "security",
+    "description": "Propose a security action (ban IP, active response, firewall block). Routes through the policy-gated action-service: auto-tier executes immediately, approve/escalate-tier queues for operator review.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "actionType": {
+          "enum": [
+            "crowdsec_decision_create",
+            "crowdsec_decision_delete",
+            "wazuh_active_response",
+            "firewall_block",
+            "investigate",
+            "incident_close",
+            "suppression_add",
+          ],
+          "type": "string",
+        },
+        "incidentId": {
+          "description": "Incident ID this action is in response to",
+          "type": "string",
+        },
+        "payload": {
+          "description": "Additional action parameters (duration, command, scope, etc.)",
+          "type": "object",
+        },
+        "reason": {
+          "description": "Why this action is proposed",
+          "type": "string",
+        },
+        "target": {
+          "description": "IP address, decision ID, agent name, or CIDR",
+          "type": "string",
+        },
+      },
+      "required": [
+        "actionType",
+        "target",
+        "reason",
+      ],
+      "type": "object",
+    },
+    "name": "security_propose_action",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "chat",
+    "category": "security",
+    "description": "Search investigations by status, severity, or name.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "search": {
+          "type": "string",
+        },
+        "severity": {
+          "type": "number",
+        },
+        "status": {
+          "enum": [
+            "open",
+            "active",
+            "suspended",
+            "resolved",
+            "closed",
+          ],
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "investigation_search",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "chat",
+    "category": "security",
+    "description": "Create a new investigation case. Optionally link an incident.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "incidentId": {
+          "type": "string",
+        },
+        "name": {
+          "type": "string",
+        },
+        "severity": {
+          "type": "number",
+        },
+        "tags": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "tlp": {
+          "enum": [
+            "white",
+            "green",
+            "amber",
+            "red",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "name",
+      ],
+      "type": "object",
+    },
+    "name": "investigation_create",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "chat",
+    "category": "security",
+    "description": "Read full details of an investigation.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "investigationId": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "investigationId",
+      ],
+      "type": "object",
+    },
+    "name": "investigation_read",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+  {
+    "availableIn": "chat",
+    "category": "security",
+    "description": "Add a note to an investigation.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "type": "string",
+        },
+        "investigationId": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "investigationId",
+        "content",
+      ],
+      "type": "object",
+    },
+    "name": "investigation_note",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "chat",
+    "category": "security",
+    "description": "Update investigation status, severity, or TLP. Cannot set resolved/closed.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "investigationId": {
+          "type": "string",
+        },
+        "severity": {
+          "type": "number",
+        },
+        "status": {
+          "enum": [
+            "open",
+            "active",
+            "suspended",
+          ],
+          "type": "string",
+        },
+        "tlp": {
+          "enum": [
+            "white",
+            "green",
+            "amber",
+            "red",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "investigationId",
+      ],
+      "type": "object",
+    },
+    "name": "investigation_update",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "chat",
+    "category": "security",
+    "description": "Link an incident to an investigation.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "incidentId": {
+          "type": "string",
+        },
+        "investigationId": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "investigationId",
+        "incidentId",
+      ],
+      "type": "object",
+    },
+    "name": "investigation_link_incident",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "chat",
+    "category": "security",
+    "description": "Add an observable (IP, domain, hash, URL) to an investigation.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "category": {
+          "enum": [
+            "ipv4",
+            "ipv6",
+            "domain",
+            "url",
+            "file_hash_md5",
+            "file_hash_sha1",
+            "file_hash_sha256",
+            "mac_address",
+            "email",
+            "username",
+            "file_path",
+            "registry_key",
+            "mutex",
+            "asn",
+          ],
+          "type": "string",
+        },
+        "confidence": {
+          "type": "number",
+        },
+        "context": {
+          "type": "string",
+        },
+        "investigationId": {
+          "type": "string",
+        },
+        "role": {
+          "enum": [
+            "ioc",
+            "artifact",
+            "infrastructure",
+          ],
+          "type": "string",
+        },
+        "value": {
+          "type": "string",
+        },
+        "verdict": {
+          "enum": [
+            "malicious",
+            "suspicious",
+            "benign",
+            "unknown",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "investigationId",
+        "value",
+        "category",
+      ],
+      "type": "object",
+    },
+    "name": "observable_add",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "chat",
+    "category": "security",
+    "description": "Set verdict on an observable. Requires confidence >= 80 for malicious.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "confidence": {
+          "type": "number",
+        },
+        "context": {
+          "type": "string",
+        },
+        "observableId": {
+          "type": "string",
+        },
+        "verdict": {
+          "enum": [
+            "malicious",
+            "suspicious",
+            "benign",
+            "unknown",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "observableId",
+        "verdict",
+      ],
+      "type": "object",
+    },
+    "name": "observable_set_verdict",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "chat",
+    "category": "security",
+    "description": "Add a timeline entry to an investigation.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "description": {
+          "type": "string",
+        },
+        "eventTime": {
+          "description": "ISO 8601",
+          "type": "string",
+        },
+        "eventType": {
+          "type": "string",
+        },
+        "investigationId": {
+          "type": "string",
+        },
+        "title": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "investigationId",
+        "eventTime",
+        "eventType",
+        "title",
+      ],
+      "type": "object",
+    },
+    "name": "timeline_add",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "room",
+    "category": "tasks",
+    "description": "Create a new task in ORION. Use this when a user asks you to log, track, or create a task.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "description": {
+          "description": "Detailed description of what needs to be done",
+          "type": "string",
+        },
+        "priority": {
+          "description": "Task priority (default: medium)",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+          ],
+          "type": "string",
+        },
+        "status": {
+          "description": "Initial status (default: pending)",
+          "enum": [
+            "pending",
+            "in_progress",
+            "done",
+            "blocked",
+          ],
+          "type": "string",
+        },
+        "title": {
+          "description": "Short task title",
+          "type": "string",
+        },
+      },
+      "required": [
+        "title",
+      ],
+      "type": "object",
+    },
+    "name": "create_task",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "room",
+    "category": "tasks",
+    "description": "Update an existing task. Use this to change status, title, or description.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "description": {
+          "description": "New description (optional)",
+          "type": "string",
+        },
+        "priority": {
+          "description": "New priority (optional)",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+          ],
+          "type": "string",
+        },
+        "status": {
+          "description": "New status (optional)",
+          "enum": [
+            "pending",
+            "in_progress",
+            "done",
+            "blocked",
+          ],
+          "type": "string",
+        },
+        "taskId": {
+          "description": "The ID of the task to update",
+          "type": "string",
+        },
+        "title": {
+          "description": "New title (optional)",
+          "type": "string",
+        },
+      },
+      "required": [
+        "taskId",
+      ],
+      "type": "object",
+    },
+    "name": "update_task",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "room",
+    "category": "tasks",
+    "description": "Assign a task to an agent, update its status, or append a feed note.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "assignedAgent": {
+          "description": "Agent ID to assign the task to (optional)",
+          "type": "string",
+        },
+        "note": {
+          "description": "Feed note to append to the task (optional)",
+          "type": "string",
+        },
+        "status": {
+          "description": "New status (optional)",
+          "enum": [
+            "pending",
+            "in_progress",
+            "done",
+            "blocked",
+          ],
+          "type": "string",
+        },
+        "taskId": {
+          "description": "Task ID to act on",
+          "type": "string",
+        },
+      },
+      "required": [
+        "taskId",
+      ],
+      "type": "object",
+    },
+    "name": "orion_manage_task",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "room",
+    "category": "agents",
+    "description": "Create a new AI agent and automatically invite it to the current chat room. Use this when asked to spin up, create, or add a new agent.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "llm": {
+          "description": "LLM identifier to use. Leave blank to use the same model as you.",
+          "type": "string",
+        },
+        "name": {
+          "description": "Unique name for the agent (cannot be a reserved name: human, user, system, admin)",
+          "type": "string",
+        },
+        "role": {
+          "description": "Role or job title (e.g. "Creative Writer", "QA Engineer")",
+          "type": "string",
+        },
+        "systemPrompt": {
+          "description": "Full system prompt defining the agent's personality and behavior (20–10,000 characters)",
+          "type": "string",
+        },
+      },
+      "required": [
+        "name",
+        "systemPrompt",
+      ],
+      "type": "object",
+    },
+    "name": "create_agent",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "room",
+    "category": "secrets",
+    "description": "Create a skeleton External Secret in ORION backed by Vault. Writes PLACEHOLDER values to Vault so the human can fill in the real values inside ORION (Infrastructure > External Secrets > pencil icon). Use this when asked to scaffold, create, or set up a secret for a deployment.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "description": {
+          "description": "What this secret is for and who uses it (optional)",
+          "type": "string",
+        },
+        "environmentName": {
+          "description": "Name of the ORION environment to create the secret in.",
+          "type": "string",
+        },
+        "keyNames": {
+          "description": "List of secret key names to scaffold (e.g. ["DB_PASSWORD", "DB_USER"]). PLACEHOLDER values will be written to Vault.",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "name": {
+          "description": "Human-readable label for the ExternalSecret (e.g. "gitea-db-secret")",
+          "type": "string",
+        },
+        "namespace": {
+          "description": "Kubernetes namespace where the Secret will live (default: "default")",
+          "type": "string",
+        },
+        "refreshInterval": {
+          "description": "ESO sync interval, e.g. "1h", "15m" (default: "1h")",
+          "type": "string",
+        },
+        "targetSecretName": {
+          "description": "K8s Secret name (defaults to the ExternalSecret name)",
+          "type": "string",
+        },
+        "vaultPath": {
+          "description": "Vault KV v2 path relative to the "secret" mount (e.g. "gitea/db"). No "secret/data/" prefix.",
+          "type": "string",
+        },
+      },
+      "required": [
+        "environmentName",
+        "name",
+        "vaultPath",
+        "keyNames",
+      ],
+      "type": "object",
+    },
+    "name": "write_secret",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "room",
+    "category": "secrets",
+    "description": "Update metadata on an existing ORION-managed secret — namespace, description, key names, or Vault path. Use this to correct a secret that was created with the wrong namespace or other wrong values. Get the secret id from orion_list_secrets.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "description": {
+          "description": "New description",
+          "type": "string",
+        },
+        "keyNames": {
+          "description": "Replace the list of secret key names",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "namespace": {
+          "description": "New Kubernetes namespace",
+          "type": "string",
+        },
+        "refreshInterval": {
+          "description": "New ESO sync interval (e.g. "1h")",
+          "type": "string",
+        },
+        "secretId": {
+          "description": "The ORION secret id (from orion_list_secrets)",
+          "type": "string",
+        },
+        "targetSecretName": {
+          "description": "New K8s Secret name",
+          "type": "string",
+        },
+        "vaultPath": {
+          "description": "New Vault KV v2 path (no "secret/data/" prefix)",
+          "type": "string",
+        },
+      },
+      "required": [
+        "secretId",
+      ],
+      "type": "object",
+    },
+    "name": "update_secret",
+    "parallelSafe": false,
+    "tier": "write",
+  },
+  {
+    "availableIn": "room",
+    "category": "secrets",
+    "description": "Delete an ORION-managed secret record. Only deletes the ORION metadata — does NOT delete the Vault secret or the K8s Secret. Use when a secret was created with wrong parameters and needs to be recreated, or when it is genuinely no longer needed. Get the secret id from orion_list_secrets. Requires a one-time tool grant.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "force": {
+          "description": "Required to delete an applied (live) secret record",
+          "type": "boolean",
+        },
+        "reason": {
+          "description": "Why this secret is being deleted (for the audit log)",
+          "type": "string",
+        },
+        "secretId": {
+          "description": "The ORION secret id (from orion_list_secrets)",
+          "type": "string",
+        },
+      },
+      "required": [
+        "secretId",
+      ],
+      "type": "object",
+    },
+    "name": "delete_secret",
+    "parallelSafe": false,
+    "tier": "destructive",
+  },
+  {
+    "availableIn": "room",
+    "category": "security",
+    "description": "Propose merging two investigations. Requires analyst confirmation — Warden can only suggest.",
+    "hasHandler": true,
+    "inputSchema": {
+      "properties": {
+        "reason": {
+          "description": "Why these investigations should be merged",
+          "type": "string",
+        },
+        "sourceId": {
+          "description": "The source investigation (merged into target)",
+          "type": "string",
+        },
+        "targetId": {
+          "description": "The target investigation (survives the merge)",
+          "type": "string",
+        },
+      },
+      "required": [
+        "targetId",
+        "sourceId",
+        "reason",
+      ],
+      "type": "object",
+    },
+    "name": "investigation_merge",
+    "parallelSafe": true,
+    "tier": "read",
+  },
+]
+`;
