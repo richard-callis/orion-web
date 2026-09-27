@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { Check, Code2, RefreshCw, Sparkles } from 'lucide-react'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
-import { Input } from '@/components/ui/Input'
+import { Input, labelClass } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Textarea } from '@/components/ui/Textarea'
 import { apiFetch, errorMessage } from '@/lib/api'
@@ -23,8 +23,6 @@ const DEFAULT_INPUT_SCHEMA = `{
 const EMPTY_TOOL: ToolForm = { name: '', description: '', inputSchema: DEFAULT_INPUT_SCHEMA, execType: 'shell', execConfig: '' }
 
 interface GeneratedTool { name: string; description: string; inputSchema: object; execType: string; execConfig: object }
-
-const labelCls = 'block text-xs text-text-muted mb-1'
 
 export function ToolFormModal({ env, tool, onClose, onSaved }: {
   env: Environment
@@ -123,15 +121,15 @@ export function ToolFormModal({ env, tool, onClose, onSaved }: {
         )}
 
         <div>
-          <label htmlFor={f('name')} className={labelCls}>Tool Name * <span className="text-text-muted">(snake_case, e.g. run_script)</span></label>
+          <label htmlFor={f('name')} className={labelClass}>Tool Name * <span className="text-text-muted">(snake_case, e.g. run_script)</span></label>
           <Input id={f('name')} value={form.name} onChange={set('name')} placeholder="run_script" className="font-mono" autoFocus />
         </div>
         <div>
-          <label htmlFor={f('desc')} className={labelCls}>Description *</label>
+          <label htmlFor={f('desc')} className={labelClass}>Description *</label>
           <Input id={f('desc')} value={form.description} onChange={set('description')} placeholder="What this tool does" />
         </div>
         <div>
-          <label htmlFor={f('exec')} className={labelCls}>Execution Type</label>
+          <label htmlFor={f('exec')} className={labelClass}>Execution Type</label>
           <Select id={f('exec')} value={form.execType} onChange={set('execType')}>
             <option value="shell">Shell command</option>
             <option value="http">HTTP request</option>
@@ -139,7 +137,7 @@ export function ToolFormModal({ env, tool, onClose, onSaved }: {
           </Select>
         </div>
         <div>
-          <label htmlFor={f('schema')} className={labelCls}>
+          <label htmlFor={f('schema')} className={labelClass}>
             <Code2 size={10} className="inline mr-1" aria-hidden />
             Input Schema <span className="text-text-muted">(JSON Schema)</span>
           </label>
@@ -147,7 +145,7 @@ export function ToolFormModal({ env, tool, onClose, onSaved }: {
             placeholder='{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}' />
         </div>
         <div>
-          <label htmlFor={f('config')} className={labelCls}>
+          <label htmlFor={f('config')} className={labelClass}>
             Exec Config <span className="text-text-muted">(JSON — shell: {`{"command":"..."}`}, http: {`{"url":"..."}`})</span>
           </label>
           <Textarea id={f('config')} value={form.execConfig} onChange={set('execConfig')} rows={3} className="font-mono text-xs resize-none"

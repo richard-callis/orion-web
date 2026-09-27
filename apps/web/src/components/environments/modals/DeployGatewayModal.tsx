@@ -5,15 +5,13 @@ import { createPortal } from 'react-dom'
 import { CheckCheck, Copy, RefreshCw, Rocket, Server, Terminal } from 'lucide-react'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
-import { Input } from '@/components/ui/Input'
+import { Input, labelClass } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { useToast } from '@/components/ui/Toast'
 import { apiFetch, errorMessage } from '@/lib/api'
 import { useSSEStream } from '@/hooks/useSSE'
 import { BootstrapLogView, ModalHeader, errorLog, isTerminalLog, modalPanel } from '../shared'
 import type { BootstrapLog, Environment, JoinResult } from '../types'
-
-const labelCls = 'block text-xs text-text-muted mb-1'
 
 function CopyBlock({ label, icon, text, wrap }: { label: string; icon: React.ReactNode; text: string; wrap?: boolean }) {
   const [copied, setCopied] = useState(false)
@@ -114,7 +112,7 @@ export function DeployGatewayModal({ env, onClose, onDeployed }: {
               Generate a one-time join token. The gateway uses it on first boot to register itself — no manual credential copying needed.
             </p>
             <div>
-              <label htmlFor={`${id}-type`} className={labelCls}>Gateway Type</label>
+              <label htmlFor={`${id}-type`} className={labelClass}>Gateway Type</label>
               <Select id={`${id}-type`} value={gatewayType} onChange={e => setGatewayType(e.target.value)}>
                 <option value="cluster">Cluster (kubectl)</option>
                 <option value="docker">Docker Node</option>
@@ -122,7 +120,7 @@ export function DeployGatewayModal({ env, onClose, onDeployed }: {
               </Select>
             </div>
             <div>
-              <label htmlFor={`${id}-url`} className={labelCls}>Gateway URL <span className="text-text-muted">(how ORION will reach this gateway after deployment)</span></label>
+              <label htmlFor={`${id}-url`} className={labelClass}>Gateway URL <span className="text-text-muted">(how ORION will reach this gateway after deployment)</span></label>
               <Input id={`${id}-url`} value={gatewayUrl} onChange={e => setGatewayUrl(e.target.value)}
                 placeholder="http://10.2.2.84:3001 or http://orion-gateway.management.svc.cluster.local:3001" />
             </div>

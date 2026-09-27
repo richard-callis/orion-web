@@ -5,14 +5,12 @@ import { createPortal } from 'react-dom'
 import { Check, RefreshCw } from 'lucide-react'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
-import { Input } from '@/components/ui/Input'
+import { Input, labelClass } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { useToast } from '@/components/ui/Toast'
 import { apiFetch, errorMessage } from '@/lib/api'
 import { ModalHeader, modalPanel } from '../shared'
 import type { ToolGroup } from '../types'
-
-const labelCls = 'block text-xs text-text-muted mb-1'
 
 export function ToolGroupModal({ envId, group, onClose, onSaved }: {
   envId: string
@@ -50,15 +48,15 @@ export function ToolGroupModal({ envId, group, onClose, onSaved }: {
       <ModalHeader title={group ? `Edit · ${group.name}` : 'New Tool Group'} onClose={onClose} />
       <div className="p-5 space-y-3">
         <div>
-          <label htmlFor={`${id}-name`} className={labelCls}>Name *</label>
+          <label htmlFor={`${id}-name`} className={labelClass}>Name *</label>
           <Input id={`${id}-name`} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Kubernetes Read-only" autoFocus />
         </div>
         <div>
-          <label htmlFor={`${id}-desc`} className={labelCls}>Description</label>
+          <label htmlFor={`${id}-desc`} className={labelClass}>Description</label>
           <Input id={`${id}-desc`} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Optional" />
         </div>
         <div>
-          <label htmlFor={`${id}-tier`} className={labelCls}>Minimum tier to run without approval</label>
+          <label htmlFor={`${id}-tier`} className={labelClass}>Minimum tier to run without approval</label>
           <Select id={`${id}-tier`} value={form.minimumTier} onChange={e => setForm(f => ({ ...f, minimumTier: e.target.value }))}>
             <option value="viewer">viewer — anyone</option>
             <option value="operator">operator — operators and above</option>

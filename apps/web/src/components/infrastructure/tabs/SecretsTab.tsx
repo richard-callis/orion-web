@@ -10,6 +10,9 @@ import { RefreshCw, ServerCrash, KeyRound, Plus, X, Trash2, ChevronDown, Chevron
 import { Dialog } from '@/components/ui/Dialog'
 import type { ManagedSecret } from '../types'
 
+import { Input } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
+import { Textarea } from '@/components/ui/Textarea'
 export const BLANK_FORM = {
   name: '',
   namespace: 'default',
@@ -163,16 +166,16 @@ export function SecretsTab({ envId }: { envId: string }) {
   const updateValueRow = (i: number, f: 'vaultKey' | 'value' | 'k8sKey', val: string) =>
     setSecretValues(prev => prev.map((r, idx) => idx === i ? { ...r, [f]: val } : r))
 
+  // The control sits inside the <label>, so the label is associated without ids
   const field = (label: string, node: React.ReactNode, hint?: string) => (
     <div className="space-y-1">
-      <label className="block text-xs font-medium text-text-secondary">{label}</label>
-      {node}
+      <label className="block space-y-1">
+        <span className="block text-xs font-medium text-text-secondary">{label}</span>
+        {node}
+      </label>
       {hint && <p className="text-[10px] text-text-muted">{hint}</p>}
     </div>
   )
-
-  const inputCls = 'w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent'
-  const selectCls = inputCls
 
   return (
     <div className="space-y-4">
@@ -350,16 +353,14 @@ export function SecretsTab({ envId }: { envId: string }) {
                 </div>
                 {editValues.map((row, i) => (
                   <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
-                    <input
-                      className="w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                    <Input
                       placeholder="password"
                       value={row.vaultKey}
                       readOnly={row.existing}
                       aria-label="Vault key"
                       onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, vaultKey: e.target.value } : r))}
                     />
-                    <input
-                      className="w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                    <Input
                       type="password"
                       placeholder={row.existing ? 'unchanged' : 'value (required)'}
                       aria-label={`New value for ${row.vaultKey || 'new key'}`}
@@ -367,9 +368,9 @@ export function SecretsTab({ envId }: { envId: string }) {
                       onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, value: e.target.value } : r))}
                       autoComplete="new-password"
                     />
-                    <input
-                      className="w-full px-2.5 py-1.5 rounded border border-border-visible bg-bg-raised text-xs text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+                    <Input
                       placeholder={row.vaultKey || 'DB_PASSWORD'}
+                      aria-label={`Kubernetes key for ${row.vaultKey || 'new key'}`}
                       value={row.k8sKey}
                       onChange={e => setEditValues(prev => prev.map((r, idx) => idx === i ? { ...r, k8sKey: e.target.value } : r))}
                     />
@@ -453,18 +454,18 @@ export function SecretsTab({ envId }: { envId: string }) {
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Identity</p>
               <div className="grid grid-cols-2 gap-3">
                 {field('Secret Name *',
-                  <input className={inputCls} placeholder="my-app-db-secret" value={form.name}
+                  <Input placeholder="my-app-db-secret" value={form.name}
                     onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />,
                   'ExternalSecret CRD name. Also becomes the K8s Secret name unless overridden below.'
                 )}
                 {field('Namespace *',
-                  <input className={inputCls} placeholder="default" value={form.namespace}
+                  <Input placeholder="default" value={form.namespace}
                     onChange={e => setForm(f => ({ ...f, namespace: e.target.value }))} />,
                   'Kubernetes namespace where the Secret will be created.'
                 )}
               </div>
               {field('Description',
-                <textarea className={`${inputCls} resize-none`} rows={2} placeholder="What does this secret contain? Who uses it?"
+                <Textarea className="resize-none" rows={2} placeholder="What does this secret contain? Who uses it?"
                   value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
               )}
             </div>
@@ -474,20 +475,20 @@ export function SecretsTab({ envId }: { envId: string }) {
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Vault / Secret Store</p>
               <div className="grid grid-cols-2 gap-3">
                 {field('Secret Store Name',
-                  <input className={inputCls} placeholder="vault-backend" value={form.secretStore}
+                  <Input placeholder="vault-backend" value={form.secretStore}
                     onChange={e => setForm(f => ({ ...f, secretStore: e.target.value }))} />,
                   'Name of the SecretStore or ClusterSecretStore resource in the cluster.'
                 )}
                 {field('Store Kind',
-                  <select className={selectCls} value={form.secretStoreKind}
+                  <Select value={form.secretStoreKind}
                     onChange={e => setForm(f => ({ ...f, secretStoreKind: e.target.value as typeof form.secretStoreKind }))}>
                     <option value="ClusterSecretStore">ClusterSecretStore</option>
                     <option value="SecretStore">SecretStore</option>
-                  </select>
+                  </Select>
                 )}
               </div>
               {field('Vault Path *',
-                <input className={inputCls} placeholder="myapp/db" value={form.remoteRef}
+                <Input placeholder="myapp/db" value={form.remoteRef}
                   onChange={e => setForm(f => ({ ...f, remoteRef: e.target.value }))} />,
                 'KV v2 path relative to the "secret" mount (e.g. "myapp/db"). Values will be written here.'
               )}
@@ -498,12 +499,12 @@ export function SecretsTab({ envId }: { envId: string }) {
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Sync Options</p>
               <div className="grid grid-cols-2 gap-3">
                 {field('Target K8s Secret Name',
-                  <input className={inputCls} placeholder={form.name || 'same as name above'} value={form.targetSecretName}
+                  <Input placeholder={form.name || 'same as name above'} value={form.targetSecretName}
                     onChange={e => setForm(f => ({ ...f, targetSecretName: e.target.value }))} />,
                   'Leave blank to use the same name as the ExternalSecret.'
                 )}
                 {field('Refresh Interval',
-                  <select className={selectCls} value={form.refreshInterval}
+                  <Select value={form.refreshInterval}
                     onChange={e => setForm(f => ({ ...f, refreshInterval: e.target.value }))}>
                     <option value="5m">5 minutes</option>
                     <option value="15m">15 minutes</option>
@@ -511,7 +512,7 @@ export function SecretsTab({ envId }: { envId: string }) {
                     <option value="6h">6 hours</option>
                     <option value="24h">24 hours</option>
                     <option value="168h">1 week</option>
-                  </select>,
+                  </Select>,
                   'How often ESO re-syncs from Vault.'
                 )}
               </div>
@@ -537,12 +538,12 @@ export function SecretsTab({ envId }: { envId: string }) {
                 </div>
                 {secretValues.map((row, i) => (
                   <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
-                    <input className={inputCls} placeholder="password" value={row.vaultKey}
+                    <Input aria-label={`Vault key ${i + 1}`} placeholder="password" value={row.vaultKey}
                       onChange={e => updateValueRow(i, 'vaultKey', e.target.value)} />
-                    <input className={inputCls} type="password" placeholder="••••••••" value={row.value}
+                    <Input aria-label={`Value for ${row.vaultKey || `key ${i + 1}`}`} type="password" placeholder="••••••••" value={row.value}
                       onChange={e => updateValueRow(i, 'value', e.target.value)}
                       autoComplete="new-password" />
-                    <input className={inputCls} placeholder={row.vaultKey || 'DB_PASSWORD'} value={row.k8sKey}
+                    <Input aria-label={`Kubernetes key for ${row.vaultKey || `key ${i + 1}`}`} placeholder={row.vaultKey || 'DB_PASSWORD'} value={row.k8sKey}
                       onChange={e => updateValueRow(i, 'k8sKey', e.target.value)} />
                     <button aria-label="Remove row" onClick={() => removeValueRow(i)} disabled={secretValues.length === 1}
                       className="p-1 rounded text-text-muted hover:text-status-error transition-colors disabled:opacity-30">
@@ -555,7 +556,7 @@ export function SecretsTab({ envId }: { envId: string }) {
 
             {/* Tags */}
             {field('Tags',
-              <input className={inputCls} placeholder="database, production, myapp" value={form.tags}
+              <Input placeholder="database, production, myapp" value={form.tags}
                 onChange={e => setForm(f => ({ ...f, tags: e.target.value }))} />,
               'Comma-separated labels for filtering and discovery.'
             )}

@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { Check, Globe, Link2, RefreshCw, Server, Trash2 } from 'lucide-react'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
-import { Input } from '@/components/ui/Input'
+import { Input, labelClass } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Textarea } from '@/components/ui/Textarea'
 import { apiFetch, errorMessage } from '@/lib/api'
@@ -40,8 +40,6 @@ function formFromEnv(env: Environment): EnvForm {
     hubUrl: env.hubUrl ?? '',
   }
 }
-
-const labelCls = 'block text-xs text-text-muted mb-1'
 
 export function EnvironmentFormModal({
   mode, env, onClose, onSaved, onDeleted,
@@ -132,11 +130,11 @@ export function EnvironmentFormModal({
         {error && <ErrorNote>{error}</ErrorNote>}
 
         <div>
-          <label htmlFor={f('name')} className={labelCls}>Name *</label>
+          <label htmlFor={f('name')} className={labelClass}>Name *</label>
           <Input id={f('name')} value={form.name} onChange={set('name')} placeholder="K3s Cluster" autoFocus />
         </div>
         <div>
-          <label htmlFor={f('type')} className={labelCls}>Type</label>
+          <label htmlFor={f('type')} className={labelClass}>Type</label>
           <Select id={f('type')} value={form.type} onChange={set('type')}>
             <option value="cluster">Cluster (kubectl)</option>
             <option value="docker">Docker Node</option>
@@ -144,24 +142,24 @@ export function EnvironmentFormModal({
           </Select>
         </div>
         <div>
-          <label htmlFor={f('desc')} className={labelCls}>Description</label>
+          <label htmlFor={f('desc')} className={labelClass}>Description</label>
           <Input id={f('desc')} value={form.description} onChange={set('description')} placeholder="Main K3s homelab cluster" />
         </div>
         <div>
-          <label htmlFor={f('gwurl')} className={labelCls}>
+          <label htmlFor={f('gwurl')} className={labelClass}>
             <Link2 size={10} className="inline mr-1" aria-hidden />
             Gateway URL
           </label>
           <Input id={f('gwurl')} value={form.gatewayUrl} onChange={set('gatewayUrl')} placeholder="http://gateway.khalis.corp:3001" />
         </div>
         <div>
-          <label htmlFor={f('gwtoken')} className={labelCls}>Gateway Token (leave blank to keep existing)</label>
+          <label htmlFor={f('gwtoken')} className={labelClass}>Gateway Token (leave blank to keep existing)</label>
           <Input id={f('gwtoken')} type="password" value={form.gatewayToken} onChange={set('gatewayToken')} placeholder="••••••••" autoComplete="off" />
         </div>
         {form.type === 'cluster' && (
           <>
             <div>
-              <label htmlFor={f('nodeip')} className={labelCls}>
+              <label htmlFor={f('nodeip')} className={labelClass}>
                 <Server size={10} className="inline mr-1" aria-hidden />
                 Control plane node IP
                 <span className="text-text-muted ml-1">(used to auto-fetch kubeconfig)</span>
@@ -172,14 +170,14 @@ export function EnvironmentFormModal({
               </p>
             </div>
             <div>
-              <label htmlFor={f('kubeconfig')} className={labelCls}>
+              <label htmlFor={f('kubeconfig')} className={labelClass}>
                 Kubeconfig <span className="text-text-muted">(optional override — leave blank to auto-fetch)</span>
               </label>
               <Textarea id={f('kubeconfig')} value={form.kubeconfig} onChange={set('kubeconfig')}
                 placeholder={'apiVersion: v1\nkind: Config\nclusters:\n  ...'} rows={4} className="font-mono text-[11px]" />
             </div>
             <div>
-              <label htmlFor={f('talos')} className={labelCls}>
+              <label htmlFor={f('talos')} className={labelClass}>
                 Talos Config{' '}
                 <span className="text-text-muted">
                   {mode === 'edit' && env?.hasTalosConfig
@@ -205,7 +203,7 @@ export function EnvironmentFormModal({
           </p>
           <div className="space-y-3">
             <div>
-              <label htmlFor={f('fedrole')} className={labelCls}>Role</label>
+              <label htmlFor={f('fedrole')} className={labelClass}>Role</label>
               <Select id={f('fedrole')} value={form.federationRole} onChange={set('federationRole')}>
                 <option value="standalone">Standalone (no federation)</option>
                 <option value="hub">Hub (dispatch tasks to spokes)</option>
@@ -213,7 +211,7 @@ export function EnvironmentFormModal({
               </Select>
             </div>
             <div>
-              <label htmlFor={f('fedtoken')} className={labelCls}>
+              <label htmlFor={f('fedtoken')} className={labelClass}>
                 Federation Token
                 {mode === 'edit' && env?.hasFederationToken && <span className="text-text-muted"> (set — leave blank to keep existing)</span>}
               </label>
@@ -226,11 +224,11 @@ export function EnvironmentFormModal({
             {form.federationRole === 'spoke' && (
               <>
                 <div>
-                  <label htmlFor={f('spoke')} className={labelCls}>Spoke URL <span className="text-text-muted">(this instance&apos;s base URL, reachable by the hub)</span></label>
+                  <label htmlFor={f('spoke')} className={labelClass}>Spoke URL <span className="text-text-muted">(this instance&apos;s base URL, reachable by the hub)</span></label>
                   <Input id={f('spoke')} value={form.spokeUrl} onChange={set('spokeUrl')} placeholder="https://spoke-orion.example.com" />
                 </div>
                 <div>
-                  <label htmlFor={f('hub')} className={labelCls}>Hub URL <span className="text-text-muted">(URL of the hub instance)</span></label>
+                  <label htmlFor={f('hub')} className={labelClass}>Hub URL <span className="text-text-muted">(URL of the hub instance)</span></label>
                   <Input id={f('hub')} value={form.hubUrl} onChange={set('hubUrl')} placeholder="https://hub-orion.example.com" />
                 </div>
               </>

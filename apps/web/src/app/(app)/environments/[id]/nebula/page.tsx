@@ -395,6 +395,9 @@ function SettingsTab({
           {/* Installed/active toggle — approves a pending (e.g. Dream-crafted,
               isInstalled:false) skill or deactivates an installed one. */}
           <button
+            role="switch"
+            aria-checked={inst.isInstalled}
+            aria-label={`${inst.name} installed`}
             onClick={() => onToggle(inst.name, !inst.isInstalled)}
             title={inst.isInstalled ? 'Installed — click to deactivate' : 'Pending review — click to install'}
             className={`relative w-10 h-5 rounded-full transition-colors ${
