@@ -383,6 +383,41 @@ describe('streamClaudeResponse', () => {
   })
 })
 
+// ── Intended changes from the engine consolidation ───────────────────────────
+
+describe('engine consolidation — intended behaviour', () => {
+  it('Ollama chat propose_tool (legacy schema) runs through the permission gate and the registry', async () => {
+    withGateway(['kubectl_get'])
+    http.route('/api/chat',
+      ollamaChat({ tool_calls: [{ name: 'propose_tool', arguments: {
+        name: 'get pods', description: 'list pods', command: 'kubectl get pods -n {ns}',
+        parameters: { ns: { type: 'string', description: 'namespace' } }, reason: 'need it',
+      } }] }),
+      ollamaChat({ content: 'proposed' }),
+    )
+    const chunks = await collectUntilTerminal(streamOllamaChat('x', 'c1', [], 'llama3', undefined, undefined, 'u1'))
+    expect(chunks[1]).toEqual({ type: 'tool_result', tool: 'propose_tool', output: 'registry:propose_tool' })
+    expect(h.executeRegisteredTool).toHaveBeenCalledWith('propose_tool', {
+      name: 'get_pods', description: 'list pods',
+      inputSchema: { type: 'object', properties: { ns: { type: 'string', description: 'namespace' } }, required: ['ns'] },
+      execType: 'shell', execConfig: { command: 'kubectl get pods -n {ns}' },
+    }, expect.objectContaining({ userId: 'u1', environmentId: 'env-1', conversationId: 'c1' }))
+  })
+
+  it('Claude chat sends structured history with the stable system prompt split from volatile context', async () => {
+    http.route('/run', stream(sidecarNDJSON([{ type: 'result', subtype: 'success', result: 'ok' }])))
+    await collectUntilTerminal(streamClaudeResponse('now?', 'c1', [{ role: 'user', content: 'before' }], null, undefined, undefined, undefined, 'NOTES'))
+    const body = http.callsTo('/run')[0].body as Record<string, unknown>
+    expect(body.system).toBe('[system.main.no-gateway]')
+    expect(body.context).toContain('## Relevant Knowledge Base')
+    expect(body.context).toContain('NOTES')
+    expect(body.messages).toEqual([{ role: 'user', content: 'before' }, { role: 'user', content: 'now?' }])
+    expect(body.transcript).toBe('chat')
+    // Old sidecars still get the combined prompt
+    expect(body.systemPrompt).toBe(`${body.system}${body.context}`)
+  })
+})
+
 // ── Agent chat (budget + provider routing) ───────────────────────────────────
 
 describe('streamAgentChat', () => {
