@@ -1,51 +1,19 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Send, Loader2, ClipboardCheck, Check, ChevronLeft, Bot, Square, Server, Eye } from 'lucide-react'
-
-const PROVIDER_CONFIG: Record<string, { label: string; activeClass: string; modelClass: string }> = {
-  anthropic: { label: 'Claude',  activeClass: 'bg-blue-500/20 text-blue-400 border-blue-500/40',     modelClass: 'bg-blue-500/10 text-blue-300 border-blue-500/30' },
-  ollama:    { label: 'Ollama',  activeClass: 'bg-orange-500/20 text-orange-400 border-orange-500/40', modelClass: 'bg-orange-500/10 text-orange-300 border-orange-500/30' },
-  google:    { label: 'Gemini',  activeClass: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40',       modelClass: 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30' },
-  openai:    { label: 'OpenAI',  activeClass: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40', modelClass: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' },
-  custom:    { label: 'Custom',  activeClass: 'bg-purple-500/20 text-purple-400 border-purple-500/40', modelClass: 'bg-purple-500/10 text-purple-300 border-purple-500/30' },
-}
-const PROVIDER_ORDER = ['anthropic', 'google', 'ollama', 'openai', 'custom']
+import useSWR from 'swr'
+import { Loader2 } from 'lucide-react'
 import { MessageBubble } from './MessageBubble'
-import type { StreamChunk } from '@/lib/claude'
-import { readSSE } from '@/lib/api'
+import { apiFetch, errorMessage } from '@/lib/api'
 import { useToast } from '@/components/ui/Toast'
-
-interface Message {
-  role: 'user' | 'assistant'
-  content: string
-  toolCalls?: Array<{ tool: string; input: string; output?: string }>
-  streaming?: boolean
-}
-
-/** Return a new array with the trailing assistant message replaced by `update(msg)`. */
-function withLastAssistant(prev: Message[], update: (msg: Message) => Message): Message[] {
-  const last = prev[prev.length - 1]
-  if (!last || last.role !== 'assistant') return prev
-  return [...prev.slice(0, -1), update(last)]
-}
-
-const CONVERSATION_CHANGED = 'conversation-changed'
-
-interface AppModel { id: string; name: string; provider: string; builtIn: boolean; modelId: string; isDefault: boolean }
-
-interface Conversation {
-  id: string
-  title: string | null
-  createdAt: string
-  _count: { messages: number }
-}
-
-interface PlanTarget { type: 'task' | 'feature' | 'epic'; id: string }
-interface AgentTarget { id: string; name: string }
-interface AgentChat   { id: string; name: string }
-interface AgentDraftForm { name: string; role: string; type: string }
-interface Environment { id: string; name: string; type: string; status: string }
+import { useChatStream } from './useChatStream'
+import { ChatHeader } from './ChatHeader'
+import { ChatBanners, ChatEmptyState, type AgentDraftForm } from './ChatBanners'
+import { ChatComposer } from './ChatComposer'
+import {
+  modeFromMetadata, PROVIDER_CONFIG,
+  type AppModel, type ChatEnvironment, type ChatMode, type Conversation, type ConversationMetadata, type ToolCall,
+} from './chat-types'
 
 interface Props {
   conversationId: string | null
@@ -53,102 +21,61 @@ interface Props {
   onMobileBack?: () => void
 }
 
+type StoredMessage = { role: string; content: string; metadata?: { toolCalls?: ToolCall[] } }
+
+const PLAIN: ChatMode = { kind: 'plain' }
+const NO_MODELS: AppModel[] = []
+
 export function ChatWindow({ conversationId, onConversationCreated, onMobileBack }: Props) {
   const router = useRouter()
   const toast = useToast()
-  const [messages, setMessages] = useState<Message[]>([])
-  const [input, setInput] = useState('')
-  const [planTarget, setPlanTarget] = useState<PlanTarget | null>(null)
-  const [agentTarget, setAgentTarget] = useState<AgentTarget | null>(null)
-  const [agentChat,   setAgentChat]   = useState<AgentChat | null>(null)
-  const [agentDraft, setAgentDraft] = useState(false)
-  const [draftForm, setDraftForm] = useState<AgentDraftForm>({ name: '', role: '', type: 'claude' })
-  const [creatingAgent, setCreatingAgent] = useState(false)
-  const [ollamaModel, setOllamaModel] = useState<string | null>(null)
-  const ollamaModelRef = useRef<string | null>(null)
-  const [availableModels, setAvailableModels] = useState<AppModel[]>([])
-  useEffect(() => {
-    fetch('/api/models')
-      .then(r => r.json())
-      .then((models: AppModel[]) => {
-        setAvailableModels(models)
-        // Apply default model to the selector if nothing is explicitly set
-        if (ollamaModelRef.current === null) {
-          const def = models.find(m => m.isDefault)
-          if (def) {
-            const id = def.provider === 'anthropic' ? null : def.id
-            setOllamaModel(id)
-            ollamaModelRef.current = id
-          }
-        }
-      })
-      .catch((e) => console.error("[fetch]", e))
-  }, [])
-
-  // Resolve which provider/model is active
-  const currentProvider = ollamaModel === null
-    ? 'anthropic'
-    : availableModels.find(m => m.provider === 'ollama' && m.modelId === ollamaModel)?.provider
-      ?? availableModels.find(m => m.id === ollamaModel)?.provider
-      ?? 'anthropic'
-  const uniqueProviders = PROVIDER_ORDER.filter(p => availableModels.some(m => m.provider === p))
-  const currentProviderModels = availableModels.filter(m => m.provider === currentProvider)
-  // Resolve which model within the current provider is selected
-  const selectedModelId = currentProvider === 'anthropic'
-    ? 'claude'
-    : (availableModels.find(m => m.id === ollamaModel)?.id ?? currentProviderModels[0]?.id ?? '')
-  // @mention environment picker state
-  const [environments, setEnvironments] = useState<Environment[]>([])
-  const [mentionQuery, setMentionQuery] = useState<string | null>(null) // null = picker hidden
-  const [mentionStart, setMentionStart] = useState(0) // index of '@' in input
-  const [mentionEnv, setMentionEnv] = useState<Environment | null>(null) // confirmed target environment
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-
-  useEffect(() => {
-    fetch('/api/environments')
-      .then(r => r.json())
-      .then((envs: Environment[]) => setEnvironments(envs.filter((e: Environment) => e.status === 'connected')))
-      .catch((e) => console.error("[fetch]", e))
-  }, [])
-
-  const mentionMatches = mentionQuery !== null
-    ? environments.filter(e => e.name.toLowerCase().includes(mentionQuery.toLowerCase()))
-    : []
-
-  const [streaming, setStreaming] = useState(false)
+  const { messages, setMessages, streaming, send, stop, abandon } = useChatStream()
+  const [mode, setMode] = useState<ChatMode>(PLAIN)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [creatingAgent, setCreatingAgent] = useState(false)
+
+  // Selected non-Claude model id; null = Claude. Mirrored in a ref for async code.
+  const [ollamaModel, setOllamaModel] = useState<string | null>(null)
+  const ollamaModelRef = useRef<string | null>(null)
+  const setModel = useCallback((id: string | null) => { setOllamaModel(id); ollamaModelRef.current = id }, [])
+
+  const { data: availableModels = NO_MODELS } = useSWR<AppModel[]>('/api/models', { revalidateOnFocus: false })
+  const { data: allEnvironments } = useSWR<ChatEnvironment[]>('/api/environments', { revalidateOnFocus: false })
+  const environments = (allEnvironments ?? []).filter(e => e.status === 'connected')
+
+  // Apply the default model once, if nothing was explicitly chosen.
+  const defaultAppliedRef = useRef(false)
+  useEffect(() => {
+    if (defaultAppliedRef.current || availableModels.length === 0) return
+    defaultAppliedRef.current = true
+    if (ollamaModelRef.current !== null) return
+    const def = availableModels.find(m => m.isDefault)
+    if (def) setModel(def.provider === 'anthropic' ? null : def.id)
+  }, [availableModels, setModel])
+
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const nearBottomRef = useRef(true)
   const scrollFrameRef = useRef<number | null>(null)
   const skipNextFetchRef = useRef(false)
   const autoSendRef = useRef<string | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
-  const [saved, setSaved] = useState(false)
 
   // Load conversation metadata + messages when conversationId changes
   useEffect(() => {
     const justCreated = skipNextFetchRef.current
     // A stream started in another conversation must not keep writing into this
     // one. The exception is the conversation we just created from send().
-    if (!justCreated && abortRef.current) {
-      abortRef.current.abort(CONVERSATION_CHANGED)
-      abortRef.current = null
-      setStreaming(false)
-    }
+    if (!justCreated) abandon()
     if (!conversationId) {
       setMessages([])
-      setInput('')
-      setPlanTarget(null)
-      setAgentTarget(null)
-      setAgentChat(null)
-      setAgentDraft(false)
-      setOllamaModel(null)
+      setMode(PLAIN)
+      setModel(null)
       setLoadError(null)
       return
     }
-    if (skipNextFetchRef.current) {
+    if (justCreated) {
       skipNextFetchRef.current = false
       return
     }
@@ -157,60 +84,21 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
     setLoading(true)
     setLoadError(null)
     Promise.all([
-      fetch(`/api/chat/conversations/${conversationId}`, { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
-      fetch(`/api/chat/conversations/${conversationId}/messages`, { cache: 'no-store' }).then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return r.json()
-      }),
+      apiFetch<{ metadata?: ConversationMetadata }>(`/api/chat/conversations/${conversationId}`, { cache: 'no-store' }).catch(() => null),
+      apiFetch<StoredMessage[]>(`/api/chat/conversations/${conversationId}/messages`, { cache: 'no-store' }),
     ])
-      .then(([convo, msgs]: [{ metadata?: { initialContext?: string; planTarget?: PlanTarget; agentTarget?: AgentTarget; agentChat?: AgentChat; agentDraft?: boolean; ollamaModel?: string } } | null, Array<{ role: string; content: string; metadata?: { toolCalls?: Array<{ tool: string; input: string; output?: string }> } }>]) => {
+      .then(([convo, msgs]) => {
         if (cancelled) return
-        const mapped = msgs.map(m => ({
-          role: m.role as 'user' | 'assistant',
-          content: m.content,
-          toolCalls: m.metadata?.toolCalls,
-        }))
+        const mapped = msgs.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content, toolCalls: m.metadata?.toolCalls }))
         setMessages(mapped)
-        if (mapped.length === 0 && convo?.metadata?.initialContext) {
-          autoSendRef.current = convo.metadata.initialContext
-        }
-        const loadedModel = convo?.metadata?.ollamaModel ?? null
-        setOllamaModel(loadedModel)
-        ollamaModelRef.current = loadedModel
-        if (convo?.metadata?.planTarget) {
-          setPlanTarget(convo.metadata.planTarget)
-          setAgentTarget(null)
-          setAgentChat(null)
-          setAgentDraft(false)
-        } else if (convo?.metadata?.agentChat) {
-          setAgentChat(convo.metadata.agentChat)
-          setPlanTarget(null)
-          setAgentTarget(null)
-          setAgentDraft(false)
-        } else if (convo?.metadata?.agentTarget) {
-          setAgentTarget(convo.metadata.agentTarget)
-          setPlanTarget(null)
-          setAgentChat(null)
-          setAgentDraft(false)
-        } else if (convo?.metadata?.agentDraft) {
-          setAgentDraft(true)
-          setPlanTarget(null)
-          setAgentTarget(null)
-          setAgentChat(null)
-        } else {
-          setPlanTarget(null)
-          setAgentTarget(null)
-          setAgentChat(null)
-          setAgentDraft(false)
-        }
+        if (mapped.length === 0 && convo?.metadata?.initialContext) autoSendRef.current = convo.metadata.initialContext
+        setModel(convo?.metadata?.ollamaModel ?? null)
+        setMode(modeFromMetadata(convo?.metadata))
       })
-      .catch(err => { if (!cancelled) setLoadError(err.message) })
+      .catch(err => { if (!cancelled) setLoadError(errorMessage(err)) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [conversationId])
-
-  // Abort any in-flight stream on unmount.
-  useEffect(() => () => { abortRef.current?.abort() }, [])
+  }, [conversationId, abandon, setMessages, setModel])
 
   // Follow new content only while the user is already near the bottom, and at
   // most once per animation frame (streaming updates arrive per token).
@@ -232,509 +120,174 @@ export function ChatWindow({ conversationId, onConversationCreated, onMobileBack
     nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120
   }, [])
 
-  // Fire auto-send once loading is done and there's a pending initialContext
-  useEffect(() => {
-    if (!loading && autoSendRef.current) {
-      const prompt = autoSendRef.current
-      autoSendRef.current = null
-      send(prompt)
-    }
-  }, [loading])
-
-  const createConversation = async () => {
-    const r = await fetch('/api/chat/conversations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    })
-    const c: Conversation = await r.json()
+  const resolveConversationId = async (): Promise<string> => {
+    if (conversationId) return conversationId
+    const c = await apiFetch<Conversation>('/api/chat/conversations', { method: 'POST', body: {} })
     skipNextFetchRef.current = true
     onConversationCreated(c)
     return c.id
   }
 
-  const send = async (promptOverride?: string) => {
-    const prompt = (promptOverride ?? input).trim()
-    if (!prompt || streaming) return
-
-    if (!promptOverride) setInput('')
-    setStreaming(true)
-    setMentionQuery(null)
-
-    const abort = new AbortController()
-    abortRef.current = abort
-
-    // Parse @mentions from the prompt — last one wins as target environment
-    const mentionRegex = /@([\w-]+)/g
-    let match: RegExpExecArray | null
-    let targetEnvironmentId: string | undefined
-    while ((match = mentionRegex.exec(prompt)) !== null) {
-      const envName = match[1]
-      const found = environments.find(e => e.name.toLowerCase() === envName.toLowerCase())
-      if (found) targetEnvironmentId = found.id
-    }
-    // Also use the confirmed mentionEnv if set (even if text was edited away)
-    if (!targetEnvironmentId && mentionEnv) targetEnvironmentId = mentionEnv.id
-
-    const userMsg: Message = { role: 'user', content: prompt }
-    const assistantMsg: Message = { role: 'assistant', content: '', toolCalls: [], streaming: true }
+  const sendPrompt = (prompt: string, targetEnvironmentId?: string) => {
     nearBottomRef.current = true
-    setMessages(prev => [...prev, userMsg, assistantMsg])
-
-    try {
-      const convId = conversationId ?? await createConversation()
-
-      const resp = await fetch(`/api/chat/conversations/${convId}/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt,
-          ...(ollamaModelRef.current && !agentChat ? { ollamaModel: ollamaModelRef.current } : {}),
-          ...(targetEnvironmentId ? { targetEnvironmentId } : {}),
-        }),
-        signal: abort.signal,
-      })
-
-      if (!resp.ok) throw new Error(`Chat request failed: ${resp.status}`)
-      if (!resp.body) throw new Error('No response body')
-
-      for await (const evt of readSSE(resp.body, abort.signal)) {
-        if (abort.signal.aborted) break
-        const event = evt.event as StreamChunk['type']
-        let data: StreamChunk
-        try { data = JSON.parse(evt.data) } catch { continue }
-
-        setMessages(prev => withLastAssistant(prev, last => {
-          if (event === 'text' && data.content) {
-            return { ...last, content: last.content + data.content }
-          }
-          if (event === 'tool_call') {
-            return { ...last, toolCalls: [...(last.toolCalls ?? []), { tool: data.tool!, input: data.input! }] }
-          }
-          if (event === 'tool_result') {
-            const calls = last.toolCalls ?? []
-            if (calls.length === 0) return last
-            const lastCall = calls[calls.length - 1]
-            return { ...last, toolCalls: [...calls.slice(0, -1), { ...lastCall, output: data.output }] }
-          }
-          if (event === 'done') return { ...last, streaming: false }
-          if (event === 'error') {
-            const raw = data.error ?? ''
-            const msg = raw.includes('authentication_error') || raw.includes('Invalid API key') || raw.includes('401')
-              ? 'Authentication error — credentials need to be refreshed. Please contact your admin.'
-              : raw.includes('exited with code')
-              ? raw.replace(/^.*?(Invalid .+?)\s*·.*$/, '$1').trim() || 'Claude process failed — please try again.'
-              : raw
-            return { ...last, streaming: false, content: last.content + `\n\n⚠ ${msg}` }
-          }
-          return last
-        }))
-      }
-    } catch (err) {
-      // Ignore aborts — the user pressed Stop or switched conversation.
-      if (!abort.signal.aborted && !(err instanceof Error && err.name === 'AbortError')) {
-        setMessages(prev => withLastAssistant(prev, last => ({
-          ...last,
-          streaming: false,
-          content: last.content + `\n\n⚠ Error: ${err instanceof Error ? err.message : String(err)}`,
-        })))
-      }
-    } finally {
-      // If the conversation changed, this stream no longer owns the view.
-      if (abort.signal.reason !== CONVERSATION_CHANGED) {
-        if (abortRef.current === abort) abortRef.current = null
-        setStreaming(false)
-        setMessages(prev => withLastAssistant(prev, last => (last.streaming ? { ...last, streaming: false } : last)))
-      }
-    }
+    void send({
+      prompt,
+      conversationId: resolveConversationId,
+      body: {
+        ...(ollamaModelRef.current && mode.kind !== 'agentChat' ? { ollamaModel: ollamaModelRef.current } : {}),
+        ...(targetEnvironmentId ? { targetEnvironmentId } : {}),
+      },
+    })
   }
+
+  // Fire auto-send once loading is done and there's a pending initialContext
+  useEffect(() => {
+    if (!loading && autoSendRef.current) {
+      const prompt = autoSendRef.current
+      autoSendRef.current = null
+      sendPrompt(prompt)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when a load finishes
+  }, [loading])
+
+  // ── Mode actions ─────────────────────────────────────────────────────────────
+
+  const lastAnswer = () => [...messages].reverse().find(m => m.role === 'assistant')
 
   const savePlan = async () => {
-    if (!planTarget) return
-    const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant')
-    if (!lastAssistant) return
-    const urlMap: Record<string, string> = {
-      task:    `/api/tasks/${planTarget.id}`,
-      epic:    `/api/epics/${planTarget.id}`,
-      feature: `/api/features/${planTarget.id}`,
+    if (mode.kind !== 'plan') return
+    const answer = lastAnswer()
+    if (!answer) return
+    const { type, id } = mode.target
+    try {
+      await apiFetch(`/api/${type === 'epic' ? 'epics' : type === 'feature' ? 'features' : 'tasks'}/${id}`, {
+        method: 'PUT', body: { plan: answer.content },
+      })
+    } catch (e) {
+      toast.error(`Failed to save plan: ${errorMessage(e)}`)
+      return
     }
-    await fetch(urlMap[planTarget.type], {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan: lastAssistant.content }),
-    })
     setSaved(true)
-    const dest =
-      planTarget.type === 'epic'    ? `/tasks?epicId=${planTarget.id}` :
-      planTarget.type === 'feature' ? `/tasks?featureId=${planTarget.id}` :
-                                      `/tasks?taskId=${planTarget.id}`
-    router.push(dest)
+    router.push(type === 'epic' ? `/tasks?epicId=${id}` : type === 'feature' ? `/tasks?featureId=${id}` : `/tasks?taskId=${id}`)
   }
 
-  const createAgent = async () => {
-    if (!draftForm.name.trim() || !conversationId) return
+  const createAgent = async (form: AgentDraftForm) => {
+    if (!form.name.trim() || !conversationId) return
     setCreatingAgent(true)
     try {
-      const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant')
-      const agentRes = await fetch('/api/agents', {
+      const answer = lastAnswer()?.content?.trim()
+      const agent = await apiFetch<{ id: string; name: string }>('/api/agents', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: draftForm.name,
-          type: (draftForm.type === 'custom' ? 'claude' : draftForm.type),
-          role: draftForm.role || null,
-          metadata: lastAssistant?.content?.trim() ? { systemPrompt: lastAssistant.content.trim() } : undefined,
-        }),
+        body: {
+          name: form.name,
+          type: form.type === 'custom' ? 'claude' : form.type,
+          role: form.role || null,
+          metadata: answer ? { systemPrompt: answer } : undefined,
+        },
       })
-      if (!agentRes.ok) {
-        const err = await agentRes.json().catch(() => ({}))
-        throw new Error(err.error ?? 'Failed to create agent')
-      }
-      const agent = await agentRes.json()
       // Link this conversation to the new agent
-      await fetch(`/api/chat/conversations/${conversationId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ metadata: { agentTarget: { id: agent.id, name: agent.name } } }),
+      await apiFetch(`/api/chat/conversations/${conversationId}`, {
+        method: 'PATCH', body: { metadata: { agentTarget: { id: agent.id, name: agent.name } } },
       })
       router.push('/agents')
     } catch (err) {
-      console.error('Failed to create agent:', err)
-      toast.error(`Failed to create agent: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      toast.error(`Failed to create agent: ${errorMessage(err, 'Unknown error')}`)
       setCreatingAgent(false)
     }
   }
 
   const saveToAgent = async () => {
-    if (!agentTarget) return
-    const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant')
-    if (!lastAssistant) return
-    await fetch(`/api/agents/${agentTarget.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ metadata: { systemPrompt: lastAssistant.content } }),
-    })
+    if (mode.kind !== 'agentTarget') return
+    const answer = lastAnswer()
+    if (!answer) return
+    try {
+      await apiFetch(`/api/agents/${mode.agent.id}`, { method: 'PUT', body: { metadata: { systemPrompt: answer.content } } })
+    } catch (e) {
+      toast.error(`Failed to save to agent: ${errorMessage(e)}`)
+      return
+    }
     setSaved(true)
-    setTimeout(() => {
-      router.push('/agents')
-    }, 800)
+    setTimeout(() => router.push('/agents'), 800)
   }
 
-  const switchModel = async (model: string | null) => {
-    setOllamaModel(model)
-    ollamaModelRef.current = model
+  const switchModel = (model: string | null) => {
+    setModel(model)
     if (conversationId) {
-      await fetch(`/api/chat/conversations/${conversationId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ metadata: { ollamaModel: model ?? undefined } }),
-      }).catch((e) => console.error("[fetch]", e))
+      apiFetch(`/api/chat/conversations/${conversationId}`, {
+        method: 'PATCH', body: { metadata: { ollamaModel: model ?? undefined } },
+      }).catch(() => { /* preference only; the next send still uses the chosen model */ })
     }
   }
 
-  const onInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const val = e.target.value
-    setInput(val)
-    const cursor = e.target.selectionStart ?? val.length
-    // Detect if cursor is inside an @mention sequence
-    const textBefore = val.slice(0, cursor)
-    const atMatch = textBefore.match(/@([\w-]*)$/)
-    if (atMatch) {
-      setMentionQuery(atMatch[1])
-      setMentionStart(cursor - atMatch[0].length)
-    } else {
-      setMentionQuery(null)
-    }
-  }
+  // Resolve which provider/model is active
+  const currentProvider = ollamaModel === null
+    ? 'anthropic'
+    : availableModels.find(m => m.provider === 'ollama' && m.modelId === ollamaModel)?.provider
+      ?? availableModels.find(m => m.id === ollamaModel)?.provider
+      ?? 'anthropic'
+  const selectedModelId = currentProvider === 'anthropic'
+    ? 'claude'
+    : (availableModels.find(m => m.id === ollamaModel)?.id ?? availableModels.find(m => m.provider === currentProvider)?.id ?? '')
 
-  const selectMention = (env: Environment) => {
-    // Replace the @<partial> with @EnvName
-    const before = input.slice(0, mentionStart)
-    const after = input.slice(mentionStart + 1 + (mentionQuery?.length ?? 0))
-    const newInput = `${before}@${env.name}${after.startsWith(' ') ? '' : ' '}${after}`
-    setInput(newInput)
-    setMentionEnv(env)
-    setMentionQuery(null)
-    setTimeout(() => textareaRef.current?.focus(), 0)
-  }
+  const placeholder =
+    mode.kind === 'agentChat'   ? `Message ${mode.agent.name}...` :
+    mode.kind === 'agentTarget' ? `Describe what ${mode.agent.name} should do...` :
+    currentProvider !== 'anthropic' ? `Ask ${PROVIDER_CONFIG[currentProvider]?.label ?? currentProvider}... (Enter to send)` :
+    'Ask Claude about your cluster... Type @ to target an environment'
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (mentionQuery !== null && mentionMatches.length > 0) {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        setMentionQuery(null)
-        return
-      }
-    }
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      if (mentionQuery !== null && mentionMatches.length === 1) {
-        selectMention(mentionMatches[0])
-        return
-      }
-      send()
-    }
-  }
+  const hasAnswer = messages.some(m => m.role === 'assistant')
 
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
-      {/* Title header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border-subtle bg-bg-sidebar flex-shrink-0">
-        <div className="flex items-center gap-2">
-          {onMobileBack && (
-            <button onClick={onMobileBack} className="md:hidden flex items-center gap-1 text-xs text-text-muted hover:text-text-primary mr-1">
-              <ChevronLeft size={16} />
-            </button>
-          )}
-          <span className="text-xs font-medium text-text-primary">
-            {agentChat ? agentChat.name : agentTarget ? `Agent: ${agentTarget.name}` : planTarget ? `Planning: ${planTarget.type}` : 'AI Chat'}
-          </span>
-          {conversationId && (
-            <button
-              onClick={() => router.push(`/conversations/${conversationId}/traces`)}
-              className="p-1 rounded text-text-muted hover:text-accent hover:bg-bg-raised transition-colors"
-              title="View full context sent to the LLM"
-            >
-              <Eye size={13} />
-            </button>
-          )}
-        </div>
-        {!agentChat && !agentTarget && !planTarget && availableModels.length > 0 && (
-          <div className="flex flex-col items-end gap-1">
-            {/* Provider buttons */}
-            <div className="flex items-center gap-1">
-              {uniqueProviders.map(provider => {
-                const cfg = PROVIDER_CONFIG[provider]
-                const isActive = currentProvider === provider
-                return (
-                  <button
-                    key={provider}
-                    onClick={() => {
-                      if (provider === currentProvider) return
-                      if (provider === 'anthropic') {
-                        switchModel(null)
-                      } else {
-                        const first = availableModels.find(m => m.provider === provider)
-                        if (first) switchModel(first.id)
-                      }
-                    }}
-                    className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors ${
-                      isActive ? cfg.activeClass : 'bg-bg-raised border-border-subtle text-text-muted hover:text-text-primary'
-                    }`}
-                  >
-                    {cfg?.label ?? provider}
-                  </button>
-                )
-              })}
-            </div>
-            {/* Model picker — shown when the active provider has selectable models */}
-            {currentProvider !== 'anthropic' && currentProviderModels.length > 0 && (
-              <div className="flex items-center gap-1">
-                {currentProviderModels.map(m => {
-                  const isSelected = m.id === selectedModelId
-                  const cfg = PROVIDER_CONFIG[currentProvider]
-                  return (
-                    <button
-                      key={m.id}
-                      onClick={() => switchModel(m.id)}
-                      className={`px-2 py-0.5 rounded text-xs border transition-colors ${
-                        isSelected
-                          ? cfg.modelClass
-                          : 'bg-bg-raised border-border-subtle text-text-muted hover:text-text-secondary'
-                      }`}
-                    >
-                      {m.name}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-      {/* Task planning banner */}
-      {planTarget && (
-        <div className="flex items-center justify-between px-4 py-2 border-b border-border-subtle bg-accent/5 flex-shrink-0">
-          <span className="text-xs text-accent">Planning mode — linked to {planTarget.type}</span>
-          <button
-            onClick={savePlan}
-            disabled={!messages.some(m => m.role === 'assistant') || streaming}
-            className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-accent/15 text-accent hover:bg-accent/30"
-          >
-            {saved ? <><Check size={12} /> Saved!</> : <><ClipboardCheck size={12} /> Save plan to {planTarget.type}</>}
-          </button>
-        </div>
-      )}
-      {/* Agent draft banner — shown while planning a new agent */}
-      {agentDraft && (
-        <div className="border-b border-border-subtle bg-accent/5 flex-shrink-0">
-          <div className="flex items-center gap-2 px-4 py-2">
-            <Bot size={13} className="text-accent flex-shrink-0" />
-            <span className="text-xs text-accent flex-1">Agent creation mode — chat with Claude to define your agent</span>
-          </div>
-          {messages.some(m => m.role === 'assistant') && (
-            <div className="flex items-center gap-2 px-4 pb-2.5">
-              <input
-                value={draftForm.name}
-                onChange={e => setDraftForm(f => ({ ...f, name: e.target.value }))}
-                placeholder="Agent name *"
-                className="flex-1 min-w-0 px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
-              />
-              <input
-                value={draftForm.role}
-                onChange={e => setDraftForm(f => ({ ...f, role: e.target.value }))}
-                placeholder="Role (e.g. DevOps)"
-                className="flex-1 min-w-0 px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
-              />
-              <select
-                value={draftForm.type}
-                onChange={e => setDraftForm(f => ({ ...f, type: e.target.value }))}
-                className="px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
-              >
-                <option value="claude">Claude</option>
-                <option value="human">Human</option>
-                <option value="custom">Custom</option>
-              </select>
-              <button
-                onClick={createAgent}
-                disabled={!draftForm.name.trim() || creatingAgent}
-                className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium bg-accent/15 text-accent hover:bg-accent/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-              >
-                {creatingAgent ? <><Loader2 size={11} className="animate-spin" /> Creating…</> : <><Check size={11} /> Create Agent</>}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-      {/* Agent chat banner */}
-      {agentChat && (
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-border-subtle bg-accent/5 flex-shrink-0">
-          <Bot size={13} className="text-accent flex-shrink-0" />
-          <span className="text-xs text-accent font-medium">Chatting with {agentChat.name}</span>
-        </div>
-      )}
-      {/* Agent planning banner */}
-      {agentTarget && (
-        <div className="flex items-center justify-between px-4 py-2 border-b border-border-subtle bg-accent/5 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <Bot size={13} className="text-accent" />
-            <span className="text-xs text-accent">Agent planning — {agentTarget.name}</span>
-          </div>
-          <button
-            onClick={saveToAgent}
-            disabled={!messages.some(m => m.role === 'assistant') || streaming}
-            className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-accent/15 text-accent hover:bg-accent/30"
-          >
-            {saved ? <><Check size={12} /> Saved!</> : <><ClipboardCheck size={12} /> Save to agent</>}
-          </button>
-        </div>
-      )}
+      <ChatHeader
+        mode={mode}
+        conversationId={conversationId}
+        models={availableModels}
+        currentProvider={currentProvider}
+        selectedModelId={selectedModelId}
+        onMobileBack={onMobileBack}
+        onOpenTraces={() => router.push(`/conversations/${conversationId}/traces`)}
+        onSwitchModel={switchModel}
+      />
+      <ChatBanners
+        key={conversationId ?? 'new'}
+        mode={mode}
+        hasAnswer={hasAnswer}
+        streaming={streaming}
+        saved={saved}
+        creatingAgent={creatingAgent}
+        onSavePlan={() => void savePlan()}
+        onSaveToAgent={() => void saveToAgent()}
+        onCreateAgent={form => void createAgent(form)}
+      />
+
       {/* Messages */}
-      <div ref={scrollRef} onScroll={onScroll} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
+      <div ref={scrollRef} onScroll={onScroll} role="log" aria-live="polite" aria-busy={streaming} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
         {loading && (
           <div className="flex items-center justify-center h-full text-text-muted">
             <Loader2 size={20} className="animate-spin" />
           </div>
         )}
         {!loading && loadError && (
-          <div className="flex items-center justify-center h-full text-red-400 text-sm">
+          <div role="alert" className="flex items-center justify-center h-full text-red-400 text-sm">
             Failed to load messages: {loadError}
           </div>
         )}
-        {!loading && !loadError && messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-center text-text-muted">
-            {agentChat ? (
-              <>
-                <div className="w-12 h-12 rounded-full bg-accent/20 flex items-center justify-center mb-4">
-                  <Bot size={22} className="text-accent" />
-                </div>
-                <p className="text-sm font-medium">{agentChat.name}</p>
-                <p className="text-xs mt-1 opacity-60">Send a message to start the conversation.</p>
-              </>
-            ) : agentDraft ? (
-              <>
-                <div className="w-12 h-12 rounded-full bg-accent/20 flex items-center justify-center mb-4">
-                  <Bot size={22} className="text-accent" />
-                </div>
-                <p className="text-sm">Creating a new agent</p>
-                <p className="text-xs mt-1 opacity-60">Describe what you need — Claude will help define the role, responsibilities, and system prompt.</p>
-              </>
-            ) : agentTarget ? (
-              <>
-                <div className="w-12 h-12 rounded-full bg-accent/20 flex items-center justify-center mb-4">
-                  <Bot size={22} className="text-accent" />
-                </div>
-                <p className="text-sm">Planning agent: <span className="text-accent">{agentTarget.name}</span></p>
-                <p className="text-xs mt-1 opacity-60">Describe what this agent should do, its responsibilities, and how it should behave.</p>
-              </>
-            ) : (
-              <>
-                <div className="w-12 h-12 rounded-full bg-accent/20 flex items-center justify-center mb-4">
-                  <span className="text-accent font-bold">AI</span>
-                </div>
-                <p className="text-sm">Ask anything about your cluster.</p>
-                <p className="text-xs mt-1 opacity-60">Claude can run kubectl get, describe, and logs.</p>
-              </>
-            )
-          }
-          </div>
-        )}
+        {!loading && !loadError && messages.length === 0 && <ChatEmptyState mode={mode} />}
         {!loading && !loadError && messages.map((msg, i) => (
           <MessageBubble key={i} message={msg} />
         ))}
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
-      <div className="border-t border-border-subtle p-4">
-        <div className="relative flex gap-2 items-end">
-          {/* @mention environment picker popup */}
-          {mentionQuery !== null && mentionMatches.length > 0 && (
-            <div className="absolute bottom-full left-0 mb-2 bg-bg-overlay border border-border-visible rounded-lg shadow-lg z-50 min-w-48 max-w-72 overflow-hidden">
-              <div className="px-2 py-1.5 border-b border-border-subtle">
-                <span className="text-xs text-text-muted">Target environment</span>
-              </div>
-              {mentionMatches.map(env => (
-                <button
-                  key={env.id}
-                  onMouseDown={e => { e.preventDefault(); selectMention(env) }}
-                  className="w-full flex items-center gap-2 px-3 py-2 hover:bg-bg-raised text-left transition-colors"
-                >
-                  <Server size={13} className="text-text-muted flex-shrink-0" />
-                  <span className="text-sm text-text-primary truncate">{env.name}</span>
-                  <span className="ml-auto text-xs text-text-muted flex-shrink-0">{env.type}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={onInputChange}
-            onKeyDown={onKeyDown}
-            placeholder={agentChat ? `Message ${agentChat.name}...` : agentTarget ? `Describe what ${agentTarget.name} should do...` : currentProvider !== 'anthropic' ? `Ask ${PROVIDER_CONFIG[currentProvider]?.label ?? currentProvider}... (Enter to send)` : 'Ask Claude about your cluster... Type @ to target an environment'}
-            rows={2}
-            className="flex-1 resize-none rounded-lg border border-border-visible bg-bg-raised text-text-primary placeholder-text-muted text-sm px-3 py-2 focus:outline-none focus:border-accent"
-          />
-          {streaming ? (
-            <button
-              onClick={() => abortRef.current?.abort()}
-              title="Stop generation"
-              className="p-2.5 rounded-lg bg-status-error/15 text-status-error hover:bg-status-error/30 transition-colors flex-shrink-0"
-            >
-              <Square size={18} />
-            </button>
-          ) : (
-            <button
-              onClick={() => send()}
-              disabled={!input.trim()}
-              className="p-2.5 rounded-lg bg-accent text-white hover:bg-accent/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
-            >
-              <Send size={18} />
-            </button>
-          )}
-        </div>
-      </div>
+      <ChatComposer
+        conversationId={conversationId}
+        environments={environments}
+        placeholder={placeholder}
+        streaming={streaming}
+        onSend={sendPrompt}
+        onStop={stop}
+      />
     </div>
   )
 }
