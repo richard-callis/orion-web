@@ -342,7 +342,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-[10px] font-medium text-text-muted mb-1">Name (ID)</label>
-            <input
+            <input aria-label="Name"
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="my-service"
@@ -351,7 +351,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
           </div>
           <div>
             <label className="block text-[10px] font-medium text-text-muted mb-1">Display Name</label>
-            <input
+            <input aria-label="Display Name"
               value={displayName}
               onChange={e => setDisplayName(e.target.value)}
               placeholder="My Service"
@@ -363,7 +363,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
         {/* Description */}
         <div>
           <label className="block text-[10px] font-medium text-text-muted mb-1">Description</label>
-          <input
+          <input aria-label="Description"
             value={description}
             onChange={e => setDescription(e.target.value)}
             placeholder="What does this service do?"
@@ -375,7 +375,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-[10px] font-medium text-text-muted mb-1">Category</label>
-            <select
+            <select aria-label="Category"
               value={category}
               onChange={e => setCategory(e.target.value as NovaCategory)}
               className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
@@ -387,7 +387,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
           </div>
           <div>
             <label className="block text-[10px] font-medium text-text-muted mb-1">Type</label>
-            <select
+            <select aria-label="Type"
               value={type}
               onChange={e => setType(e.target.value as NovaType)}
               className="w-full px-2 py-1.5 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
@@ -404,7 +404,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
           <label className="block text-[10px] font-medium text-text-muted mb-1">
             Tags <span className="text-text-muted">(comma separated)</span>
           </label>
-          <input
+          <input aria-label="Tags"
             value={tags}
             onChange={e => setTags(e.target.value)}
             placeholder="monitoring, grafana, metrics"
@@ -415,7 +415,7 @@ function NovaFormModal({ initial, onClose, onSave }: {
         {/* Config JSON */}
         <div>
           <label className="block text-[10px] font-medium text-text-muted mb-1">Config (JSON)</label>
-          <textarea
+          <textarea aria-label="Config"
             value={configStr}
             onChange={e => setConfigStr(e.target.value)}
             rows={12}

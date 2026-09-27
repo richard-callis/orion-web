@@ -125,7 +125,7 @@ export function SSOBootstrapModal({
         {/* Provider selection */}
         <div>
           <label className="text-[11px] font-medium text-text-muted mb-1 block">Provider Type</label>
-          <Select value={provider} onChange={e => setProvider(e.target.value)}>
+          <Select aria-label="Provider Type" value={provider} onChange={e => setProvider(e.target.value)}>
             {loading && providers.length === 0
               ? <option value={provider}>Loading…</option>
               : (
@@ -143,7 +143,7 @@ export function SSOBootstrapModal({
         {/* Hostname */}
         <div>
           <label className="text-[11px] font-medium text-text-muted mb-1 block">Hostname</label>
-          <Input
+          <Input aria-label="Hostname"
             autoFocus
             value={hostname}
             onChange={e => setHostname(e.target.value)}
@@ -155,7 +155,7 @@ export function SSOBootstrapModal({
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="text-[11px] font-medium text-text-muted mb-1 block">Namespace</label>
-            <Input
+            <Input aria-label="Namespace"
               value={namespace}
               onChange={e => setNamespace(e.target.value)}
               placeholder="security"
@@ -163,7 +163,7 @@ export function SSOBootstrapModal({
           </div>
           <div>
             <label className="text-[11px] font-medium text-text-muted mb-1 block">ClusterIssuer</label>
-            <Input
+            <Input aria-label="ClusterIssuer"
               value={clusterIssuer}
               onChange={e => setClusterIssuer(e.target.value)}
               placeholder="letsencrypt-prod"
@@ -175,7 +175,7 @@ export function SSOBootstrapModal({
         {resolved.fields.includes('adminPassword') && (
           <div>
             <label className="text-[11px] font-medium text-text-muted mb-1 block">Admin Password</label>
-            <Input
+            <Input aria-label="Admin Password"
               type="password"
               value={adminPassword}
               onChange={e => setAdminPassword(e.target.value)}
@@ -189,7 +189,7 @@ export function SSOBootstrapModal({
           <>
             <div>
               <label className="text-[11px] font-medium text-text-muted mb-1 block">OIDC Issuer URL</label>
-              <Input
+              <Input aria-label="OIDC Issuer URL"
                 value={oidcIssuerUrl}
                 onChange={e => setOidcIssuerUrl(e.target.value)}
                 placeholder="https://auth.example.com/oauth2/token"
@@ -198,7 +198,7 @@ export function SSOBootstrapModal({
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-[11px] font-medium text-text-muted mb-1 block">Client ID</label>
-                <Input
+                <Input aria-label="Client ID"
                   value={clientId}
                   onChange={e => setClientId(e.target.value)}
                   placeholder="oauth2-proxy-client"
@@ -206,7 +206,7 @@ export function SSOBootstrapModal({
               </div>
               <div>
                 <label className="text-[11px] font-medium text-text-muted mb-1 block">Client Secret</label>
-                <Input
+                <Input aria-label="Client Secret"
                   type="password"
                   value={clientSecret}
                   onChange={e => setClientSecret(e.target.value)}
@@ -221,7 +221,7 @@ export function SSOBootstrapModal({
         {provider === 'custom_oidc' && (
           <div>
             <label className="text-[11px] font-medium text-text-muted mb-1 block">Issuer CA Secret</label>
-            <Input
+            <Input aria-label="Issuer CA Secret"
               value={customIssuerCaSecret}
               onChange={e => setCustomIssuerCaSecret(e.target.value)}
               placeholder="namespace/secret-name"
@@ -234,7 +234,7 @@ export function SSOBootstrapModal({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="text-[11px] font-medium text-text-muted mb-1 block">Database</label>
-              <Select value={databaseType} onChange={e => setDatabaseType(e.target.value)}>
+              <Select aria-label="Database" value={databaseType} onChange={e => setDatabaseType(e.target.value)}>
                 <option value="sqlite">SQLite</option>
                 <option value="postgresql">PostgreSQL</option>
               </Select>
@@ -242,7 +242,7 @@ export function SSOBootstrapModal({
             {databaseType === 'postgresql' && (
               <div>
                 <label className="text-[11px] font-medium text-text-muted mb-1 block">Redis Host</label>
-                <Input
+                <Input aria-label="Redis Host"
                   value={redisHost}
                   onChange={e => setRedisHost(e.target.value)}
                   placeholder="redis://redis:6379"

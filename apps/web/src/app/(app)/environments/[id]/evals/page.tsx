@@ -289,7 +289,7 @@ export default function EvalsPage() {
             <div className="flex items-center gap-3 flex-wrap">
               <div>
                 <label className="text-[10px] text-text-muted mr-2">Type:</label>
-                <select
+                <select aria-label="Eval type"
                   value={evalType}
                   onChange={e => setEvalType(e.target.value as EvalType)}
                   className="px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"
@@ -302,7 +302,7 @@ export default function EvalsPage() {
               </div>
               <div>
                 <label className="text-[10px] text-text-muted mr-2">Window:</label>
-                <select
+                <select aria-label="Time window"
                   value={window}
                   onChange={e => setWindow(parseInt(e.target.value, 10) as Window)}
                   className="px-2 py-1 text-xs rounded border border-border-visible bg-bg-raised text-text-primary focus:outline-none focus:border-accent"

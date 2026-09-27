@@ -52,11 +52,11 @@ export function DnsRecordModal({ domain, initial, suggestedIp, onSave, onClose }
       <div className="px-5 py-4 space-y-4">
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">IP Address</label>
-          <Input value={ip} onChange={e => setIp(e.target.value)} placeholder="e.g. 10.2.2.30" autoFocus />
+          <Input aria-label="IP Address" value={ip} onChange={e => setIp(e.target.value)} placeholder="e.g. 10.2.2.30" autoFocus />
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">Hostnames</label>
-          <Input
+          <Input aria-label="Hostnames"
             value={hostnames}
             onChange={e => setHostnames(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && save()}
@@ -66,7 +66,7 @@ export function DnsRecordModal({ domain, initial, suggestedIp, onSave, onClose }
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">Comment <span className="text-text-muted font-normal">(optional)</span></label>
-          <Input value={comment} onChange={e => setComment(e.target.value)} placeholder="e.g. Wildcard for all internal services" />
+          <Input aria-label="Comment" value={comment} onChange={e => setComment(e.target.value)} placeholder="e.g. Wildcard for all internal services" />
         </div>
         {err && <p className="text-xs text-status-error">{err}</p>}
       </div>

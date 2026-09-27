@@ -58,14 +58,14 @@ export function DnsBootstrapPanel({ domain, environments, onDone }: {
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">Environment</label>
-          <Select value={envId} onChange={e => setEnvId(e.target.value)}>
+          <Select aria-label="Environment" value={envId} onChange={e => setEnvId(e.target.value)}>
             <option value="">Select environment…</option>
             {environments.map(e => <option key={e.id} value={e.id}>{e.name} ({e.type})</option>)}
           </Select>
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">LoadBalancer IP <span className="text-text-muted font-normal">(optional)</span></label>
-          <Input value={ip} onChange={e => setIp(e.target.value)} placeholder="e.g. 10.2.2.53" />
+          <Input aria-label="LoadBalancer IP" value={ip} onChange={e => setIp(e.target.value)} placeholder="e.g. 10.2.2.53" />
         </div>
       </div>
       {selectedEnv && (
