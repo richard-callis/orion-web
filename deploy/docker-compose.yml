@@ -378,7 +378,9 @@ services:
         echo "vault-proxy: certs ready, starting Envoy"
         exec /usr/local/bin/envoy -c /etc/envoy/envoy.yaml
     healthcheck:
-      test: ["CMD-SHELL", "wget -qo- http://localhost:9901/ready 2>/dev/null || exit 1"]
+      # The envoy image ships neither wget nor curl (the old wget check always
+      # failed → permanently "unhealthy"). Probe the admin /ready endpoint with bash.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9901 && printf 'GET /ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '^HTTP/1.1 200' <&3"]
       interval: 10s
       timeout: 5s
       retries: 5
