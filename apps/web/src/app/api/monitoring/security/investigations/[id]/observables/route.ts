@@ -49,7 +49,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const id = (await params).id
   const body = createSchema.safeParse(await req.json())
   if (!body.success) {
-    return NextResponse.json({ error: body.error.errors }, { status: 400 })
+    return NextResponse.json({ error: body.error.issues }, { status: 400 })
   }
 
   const { value, displayValue, category, role, verdict, confidence, severity, context } = body.data
