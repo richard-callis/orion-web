@@ -1,9 +1,8 @@
 import * as k8s from '@kubernetes/client-node'
 import * as net from 'net'
-import { kubeConfig } from './k8s'
+import { coreApi } from './k8s'
+import { isK8sConflict, isK8sNotFound } from './k8s-errors'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const coreApi: any = kubeConfig.makeApiClient(k8s.CoreV1Api)
 const MAX_RETRIES = 3
 
 export interface DnsEntry {
@@ -13,15 +12,18 @@ export interface DnsEntry {
 
 // ── CoreDNS ConfigMap access ──────────────────────────────────────────────────
 
-async function getConfigMap(name: string, ns = 'kube-system') {
-  const res = await coreApi.readNamespacedConfigMap(name, ns)
-  return res.body as k8s.V1ConfigMap
+async function getConfigMap(name: string, ns = 'kube-system'): Promise<k8s.V1ConfigMap> {
+  return coreApi.readNamespacedConfigMap({ name, namespace: ns })
 }
 
+// resourceVersion in the patch makes the API server reject a stale write with
+// 409, which the callers below retry.
 async function patchConfigMap(name: string, ns: string, data: Record<string, string>, resourceVersion: string) {
-  const patch = { metadata: { resourceVersion }, data }
-  const options = { headers: { 'Content-Type': 'application/merge-patch+json' } }
-  await coreApi.patchNamespacedConfigMap(name, ns, patch, undefined, undefined, undefined, undefined, options)
+  const body = { metadata: { resourceVersion }, data }
+  await coreApi.patchNamespacedConfigMap(
+    { name, namespace: ns, body },
+    k8s.setHeaderOptions('Content-Type', k8s.PatchStrategy.MergePatch),
+  )
 }
 
 // ── NodeHosts (built-in CoreDNS hosts entries) ────────────────────────────────
@@ -71,7 +73,7 @@ export async function upsertNodeHost(ip: string, hostnames: string[]): Promise<v
       await patchConfigMap('coredns', 'kube-system', { ...cm.data, NodeHosts: serializeNodeHosts(entries) }, cm.metadata!.resourceVersion!)
       return
     } catch (err: unknown) {
-      if ((err as { response?: { statusCode?: number } })?.response?.statusCode === 409 && i < MAX_RETRIES - 1) continue
+      if (isK8sConflict(err) && i < MAX_RETRIES - 1) continue
       throw err
     }
   }
@@ -87,7 +89,7 @@ export async function deleteNodeHost(ip: string): Promise<boolean> {
       await patchConfigMap('coredns', 'kube-system', { ...cm.data, NodeHosts: serializeNodeHosts(filtered) }, cm.metadata!.resourceVersion!)
       return true
     } catch (err: unknown) {
-      if ((err as { response?: { statusCode?: number } })?.response?.statusCode === 409 && i < MAX_RETRIES - 1) continue
+      if (isK8sConflict(err) && i < MAX_RETRIES - 1) continue
       throw err
     }
   }
@@ -118,15 +120,24 @@ export function serializeCustomHosts(entries: DnsEntry[]): string {
 
 async function getOrCreateCustomConfigMap(): Promise<k8s.V1ConfigMap> {
   try {
-    const res = await coreApi.readNamespacedConfigMap('coredns-custom', 'kube-system')
-    return res.body as k8s.V1ConfigMap
-  } catch {
-    await coreApi.createNamespacedConfigMap('kube-system', {
-      metadata: { name: 'coredns-custom', namespace: 'kube-system' },
-      data: { 'custom.server': serializeCustomHosts([]) },
-    })
-    const res = await coreApi.readNamespacedConfigMap('coredns-custom', 'kube-system')
-    return res.body as k8s.V1ConfigMap
+    return await getConfigMap('coredns-custom')
+  } catch (err) {
+    // Only create when it genuinely doesn't exist — auth/network errors must
+    // surface, not trigger a create attempt.
+    if (!isK8sNotFound(err)) throw err
+    try {
+      await coreApi.createNamespacedConfigMap({
+        namespace: 'kube-system',
+        body: {
+          metadata: { name: 'coredns-custom', namespace: 'kube-system' },
+          data: { 'custom.server': serializeCustomHosts([]) },
+        },
+      })
+    } catch (createErr) {
+      // Another request created it concurrently — fine, read it below.
+      if (!isK8sConflict(createErr)) throw createErr
+    }
+    return getConfigMap('coredns-custom')
   }
 }
 
@@ -147,7 +158,7 @@ export async function upsertCustomRecord(ip: string, hostnames: string[]): Promi
       await patchConfigMap('coredns-custom', 'kube-system', { 'custom.server': serializeCustomHosts(entries) }, cm.metadata!.resourceVersion!)
       return
     } catch (err: unknown) {
-      if ((err as { response?: { statusCode?: number } })?.response?.statusCode === 409 && i < MAX_RETRIES - 1) continue
+      if (isK8sConflict(err) && i < MAX_RETRIES - 1) continue
       throw err
     }
   }
@@ -163,7 +174,7 @@ export async function deleteCustomRecord(ip: string): Promise<boolean> {
       await patchConfigMap('coredns-custom', 'kube-system', { 'custom.server': serializeCustomHosts(filtered) }, cm.metadata!.resourceVersion!)
       return true
     } catch (err: unknown) {
-      if ((err as { response?: { statusCode?: number } })?.response?.statusCode === 409 && i < MAX_RETRIES - 1) continue
+      if (isK8sConflict(err) && i < MAX_RETRIES - 1) continue
       throw err
     }
   }
