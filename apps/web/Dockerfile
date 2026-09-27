@@ -8,7 +8,7 @@
 # reproducible. Dependabot (docker ecosystem) proposes version/digest bumps.
 
 # ── Dependencies (lockfile-enforced) ─────────────────────────────────────────
-FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS deps
+FROM node:26.10.0-alpine3.24@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS deps
 WORKDIR /app
 # OpenSSL for Prisma; toolchain for any native module builds
 RUN apk add --no-cache openssl make g++
@@ -32,7 +32,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 # ── CLI tools (pinned + checksum-verified) ───────────────────────────────────
-FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS tools
+FROM node:26.10.0-alpine3.24@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS tools
 ARG TARGETARCH
 ARG KUBECTL_VERSION=1.33.1
 ARG HELM_VERSION=4.2.0
@@ -59,7 +59,7 @@ RUN apk add --no-cache curl \
  && install -m 0755 kubectl helm talosctl /out/
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
-FROM node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS runner
+FROM node:26.10.0-alpine3.24@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
