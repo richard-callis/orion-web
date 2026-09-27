@@ -172,7 +172,7 @@ export const ALLOWED_TOOLS = [
 
 function readClusterContext(): string {
   const claudeMdPath = process.env.CLAUDE_MD_PATH ?? '/claude-config/CLAUDE.md'
-  try { return fs.readFileSync(claudeMdPath, 'utf8') } catch { return '# Homelab cluster — no context file mounted' }
+  try { return fs.readFileSync(/*turbopackIgnore: true*/ claudeMdPath, 'utf8') } catch { return '# Homelab cluster — no context file mounted' }
 }
 
 /**

@@ -20,8 +20,9 @@ export async function GET() {
   try {
     const { existsSync, readFileSync } = await import('fs')
     const credPath = process.env.CLAUDE_CREDENTIALS_PATH ?? '/claude-creds/.credentials.json'
-    if (existsSync(credPath)) {
-      const raw = readFileSync(credPath, 'utf8')
+    // turbopackIgnore: runtime-mounted file outside the project — don't trace
+    if (existsSync(/*turbopackIgnore: true*/ credPath)) {
+      const raw = readFileSync(/*turbopackIgnore: true*/ credPath, 'utf8')
       const parsed = JSON.parse(raw)
       // Valid if it has a non-empty claudeAiOauth or oauthToken
       const token = parsed?.claudeAiOauth?.accessToken ?? parsed?.oauthToken ?? parsed?.accessToken ?? ''

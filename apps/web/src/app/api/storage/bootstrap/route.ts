@@ -115,7 +115,7 @@ async function autoFetchTalosConfig(
 ): Promise<string | null> {
   for (const p of TALOS_CONFIG_PATHS) {
     try {
-      const raw = fs.readFileSync(p, 'utf8').trim()
+      const raw = fs.readFileSync(/*turbopackIgnore: true*/ p, 'utf8').trim()
       if (!raw) continue
       const b64 = Buffer.from(raw).toString('base64')
       // Persist back to environment metadata so future runs skip this step
