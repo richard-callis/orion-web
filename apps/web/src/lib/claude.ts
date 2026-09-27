@@ -497,7 +497,10 @@ async function* streamOpenAIChatCore(
     tools,
     maxTurns: 10,
     signal: abortSignal,
-    toolCtx: { userId, environmentId: gw.environmentId, conversationId: run.conversationId, gateway: gw.client, validate: true },
+    toolCtx: {
+      userId, environmentId: gw.environmentId, conversationId: run.conversationId, gateway: gw.client,
+      validate: true, gatewaySchemas: new Map(gw.tools.map(t => [t.name, t.inputSchema])),
+    },
     runCap: {
       cap,
       before: msgs => estimateTokens(JSON.stringify(msgs)),

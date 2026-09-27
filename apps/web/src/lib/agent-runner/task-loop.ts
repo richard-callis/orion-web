@@ -8,7 +8,7 @@ import { GatewayClient } from './gateway-client'
 import { agentActor } from '../gateway-headers'
 import { describeRunnerError } from './abort'
 import { buildTaskPrompt } from './task-prompt'
-import { validateToolArgs } from '@/lib/tool-registry'
+import { validateToolCallArgs } from '@/lib/tool-args-validation'
 import { checkToolPermission } from '@/lib/tool-permissions'
 import { runToolLoop, withTrimmedHistory } from './engine/loop'
 import type { ChatProvider, ToolCallRequest, ToolSpec } from './engine/types'
@@ -23,7 +23,13 @@ const PARALLEL_SAFE = new Set([
 ])
 
 /** Run one task tool call under the task policy. `step` is the call's 1-based position in the run. */
-async function runTaskTool(ctx: TaskRunContext, gateway: GatewayClient | null, call: ToolCallRequest, step: number): Promise<string> {
+async function runTaskTool(
+  ctx: TaskRunContext,
+  gateway: GatewayClient | null,
+  gatewaySchemas: ReadonlyMap<string, unknown>,
+  call: ToolCallRequest,
+  step: number,
+): Promise<string> {
   // Replay a checkpointed step from a previous run instead of repeating its side effects.
   const checkpoint = ctx.checkpoints?.get(step)
   if (checkpoint && checkpoint.toolName === call.name) {
@@ -32,12 +38,16 @@ async function runTaskTool(ctx: TaskRunContext, gateway: GatewayClient | null, c
 
   let parsedArgs: unknown
   try { parsedArgs = JSON.parse(call.argsRaw || '{}') } catch { parsedArgs = {} }
-  const validation = validateToolArgs(call.name, parsedArgs)
+  // Registry tools validate against the registry, gateway tools against the
+  // schema their gateway published (previously every gateway tool was rejected
+  // here as an "Unknown tool").
+  const validation = validateToolCallArgs(call.name, parsedArgs, gatewaySchemas)
   if (!validation.valid) {
     return `Tool validation failed for ${call.name}: ${validation.errors.join(', ')}. Check the tool schema and retry with correct arguments.`
   }
 
-  // Permission check — must pass before any tool execution
+  // Permission check — must pass before any tool execution. Gateway tools need
+  // an active agent and an admin grant (see tool-permissions.ts).
   const permission = await checkToolPermission(call.name, ctx.agentId ?? null, ctx.environmentId ?? null, undefined, { taskId: ctx.taskId })
   if (!permission.allowed) {
     return `Permission denied for tool '${call.name}': ${permission.reason ?? 'Tool not permitted for this agent'}. Contact an admin to grant access.`
@@ -81,6 +91,7 @@ export async function* runTask(
   ]
 
   const taskPrompt = await buildTaskPrompt(ctx)
+  const gatewaySchemas = new Map<string, unknown>(gatewayTools.map(t => [t.name, t.inputSchema]))
 
   try {
     for await (const ev of runToolLoop({
@@ -94,7 +105,7 @@ export async function* runTask(
       signal: ctx.signal,
       emitTextWithToolCalls: true,
       ...(opts.parallel && { parallelSafe: (name: string) => PARALLEL_SAFE.has(name) }),
-      hooks: { runTool: (call, step) => runTaskTool(ctx, gateway, call, step) },
+      hooks: { runTool: (call, step) => runTaskTool(ctx, gateway, gatewaySchemas, call, step) },
     })) {
       switch (ev.type) {
         case 'text':        yield { type: 'text', content: ev.content }; break

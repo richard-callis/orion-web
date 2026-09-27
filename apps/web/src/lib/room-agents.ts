@@ -39,6 +39,7 @@ import { sidecarCollect, renderLegacyPrompt, type SidecarCollectResult } from '.
 import { createOpenAIProvider } from './agent-runner/engine/providers/openai'
 import { runToolLoop, type LoopUsage, type LoopEndReason } from './agent-runner/engine/loop'
 import { ProviderHttpError, type EngineMessage, type ToolCallRequest, type ToolSpec } from './agent-runner/engine/types'
+import { validateArgsAgainstSchema } from './tool-args-validation'
 
 // ── Tool name fuzzy resolution ────────────────────────────────────────────────
 
@@ -408,6 +409,25 @@ export async function callOpenAIChat(
     return out
   }
 
+  // Gateway tools follow the same rule as task agents: active agent + admin
+  // grant (tool-permissions.ts), and arguments valid against the gateway schema.
+  // Previously room agents ran any gateway tool with no permission check.
+  const gatewaySchemas = new Map<string, unknown>((gatewayTools ?? []).map(t => [t.name, t.inputSchema]))
+  const runGatewayTool = async (name: string, args: Record<string, unknown>): Promise<string> => {
+    const perm = await checkToolPermission(name, toolContext?.agentId ?? null, gateway?.environmentId ?? null)
+    if (!perm.allowed) {
+      if (toolContext?.agentId) auditToolCall({ toolName: name, args, agentId: toolContext.agentId, agentName, outcome: 'denied' })
+      return `Permission denied: ${perm.reason ?? `tool '${name}' is not permitted for this agent`}`
+    }
+    const validation = validateArgsAgainstSchema(gatewaySchemas.get(name), args)
+    if (!validation.valid) {
+      return `Tool validation failed for ${name}: ${validation.errors.join(', ')}. Check the tool schema and retry with correct arguments.`
+    }
+    const out = await gateway!.client.executeTool(name, args)
+    if (toolContext?.agentId) auditToolCall({ toolName: name, args, agentId: toolContext.agentId, agentName, outcome: 'executed' })
+    return out
+  }
+
   // Per-session tool result cache — keyed by (toolName, args), evicted by TTL
   const toolCache = new Map<string, CacheEntry>()
 
@@ -433,8 +453,7 @@ export async function callOpenAIChat(
       } else if (registryToolNames.has(call.name)) {
         result = await runRegistryTool(call.name, args)
       } else if (gateway && gatewayToolNames.has(call.name)) {
-        result = await gateway.client.executeTool(call.name, args)
-        if (toolContext?.agentId) auditToolCall({ toolName: call.name, args, agentId: toolContext.agentId, agentName, outcome: 'executed' })
+        result = await runGatewayTool(call.name, args)
       } else {
         // Hallucinated or unknown tool name — attempt fuzzy resolution before giving up.
         const resolved = resolveToolName(call.name, allKnownToolNames)
@@ -446,8 +465,9 @@ export async function callOpenAIChat(
           } else if (registryToolNames.has(resolved.name)) {
             // Same guarded path as a direct call — fuzzy resolution must not bypass it
             result = await runRegistryTool(resolved.name, args)
-          } else if (gateway) {
-            result = await gateway.client.executeTool(resolved.name, args)
+          } else if (gateway && gatewayToolNames.has(resolved.name)) {
+            // Same guarded path as a direct gateway call
+            result = await runGatewayTool(resolved.name, args)
           } else {
             result = `[Auto-corrected "${call.name}" → "${resolved.name}" but still could not execute]`
           }

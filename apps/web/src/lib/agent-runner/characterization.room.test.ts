@@ -178,6 +178,22 @@ describe('callOpenAIChat (room)', () => {
     expect(outputs).toEqual(['pod-a', '[Cached result — fetched earlier this session]\npod-a'])
   })
 
+  it('gateway tools go through the agent permission check (grant rule) — denied ones never reach the gateway', async () => {
+    const client = new GatewayClient('http://gw.test', 'gwt')
+    h.checkToolPermission.mockResolvedValue({ allowed: false, reason: '`kubectl_delete` has not been granted to agent "Bot".' })
+    http.route('/v1/chat/completions',
+      openaiCompletion({ tool_calls: [{ id: 'a', name: 'kubectl_delete', arguments: '{"r":"x"}' }] }),
+      openaiCompletion({ content: 'cannot' }),
+    )
+    await callOpenAIChat('Bot', 'P', [], [], 'x', 'm', 'http://llm.test', null, toolCtx,
+      { url: 'http://gw.test', token: 'gwt', client, environmentId: 'env-1' },
+      [{ name: 'kubectl_delete', description: 'delete', inputSchema: { type: 'object' } }])
+    expect(h.checkToolPermission).toHaveBeenCalledWith('kubectl_delete', 'agent-1', 'env-1')
+    expect(http.callsTo('/tools/execute')).toHaveLength(0)
+    const out = (h.prisma.chatMessage.create.mock.calls[0][0] as { data: { attachments: { output: string } } }).data.attachments.output
+    expect(out).toBe('Permission denied: `kubectl_delete` has not been granted to agent "Bot".')
+  })
+
   it('tool rounds exhausted → forced final turn without tools, cut-off notice', async () => {
     h.prisma.systemSetting.findUnique.mockResolvedValue({ value: '1' })
     http.route('/v1/chat/completions',

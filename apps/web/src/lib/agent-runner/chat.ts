@@ -8,7 +8,8 @@
  * never consumed twice), then dispatches to the tool registry or the gateway.
  */
 import { prisma } from '../db'
-import { executeRegisteredTool, validateToolArgs } from '../tool-registry'
+import { executeRegisteredTool } from '../tool-registry'
+import { validateToolCallArgs } from '../tool-args-validation'
 import { MANAGEMENT_TOOL_DEFS } from '../management-tools'
 import { checkChatToolPermission } from '../chat-tool-policy'
 import type { GatewayClient } from './gateway-client'
@@ -154,8 +155,10 @@ export interface ChatToolContext {
   environmentId?: string
   conversationId: string
   gateway: GatewayClient | null
-  /** Validate arguments against the registry schema first (OpenAI-compatible path). */
+  /** Validate arguments first (OpenAI-compatible path): registry schema, or the gateway tool's own schema. */
   validate: boolean
+  /** inputSchema of each gateway tool offered in this chat, by name. */
+  gatewaySchemas?: ReadonlyMap<string, unknown>
   /** Extra names dispatched to the registry even if not in the chat set. */
   registryNames?: ReadonlySet<string>
   /** Rewrite model arguments for a tool before dispatch (legacy local tool schemas). */
@@ -175,7 +178,7 @@ export async function runChatTool(call: ToolCallRequest, ctx: ChatToolContext): 
   let args = parseArgs(call.argsRaw)
 
   if (ctx.validate) {
-    const validation = validateToolArgs(call.name, args)
+    const validation = validateToolCallArgs(call.name, args, ctx.gatewaySchemas ?? new Map())
     if (!validation.valid) {
       return `Tool validation failed for ${call.name}: ${validation.errors.join(', ')}. Check the tool schema and retry with correct arguments.`
     }

@@ -22,7 +22,12 @@ vi.mock('@/lib/system-prompts', () => ({
   getPrompt: vi.fn(async () => 'TASK {{taskTitle}}{{taskDescription}}{{taskPlan}}'),
   interpolate: (t: string, v: Record<string, string>) => t.replace(/\{\{(\w+)\}\}/g, (_, k) => v[k] ?? ''),
 }))
-vi.mock('@/lib/tool-registry', () => ({ validateToolArgs: h.validateToolArgs }))
+// Registry stub: the management tools in these tests are registry tools; any
+// other name is a gateway tool (validated against its gateway schema).
+vi.mock('@/lib/tool-registry', () => ({
+  validateToolArgs: h.validateToolArgs,
+  getToolDefinition: (name: string) => name.startsWith('orion_') ? { name } : undefined,
+}))
 vi.mock('@/lib/tool-permissions', () => ({ checkToolPermission: h.checkToolPermission }))
 vi.mock('@/lib/db', () => ({ prisma: h.prisma }))
 vi.mock('@/lib/encryption', () => ({ decryptStrict: (v: string) => `dec(${v})` }))
