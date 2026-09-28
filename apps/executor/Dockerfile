@@ -19,13 +19,18 @@ COPY apps/executor/src apps/executor/src
 RUN npm run build --workspace apps/executor
 
 FROM manifests AS prod-deps
-RUN npm ci --workspace apps/executor --include-workspace-root=false --omit=dev
+RUN npm ci --workspace apps/executor --include-workspace-root=false --omit=dev \
+ && mkdir -p apps/executor/node_modules
 
 FROM node:26.10.0-alpine3.24@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80
 
 WORKDIR /app
 
 COPY --from=prod-deps /app/node_modules ./node_modules
+# When a workspace needs a different version than the one hoisted to the root
+# (e.g. gateway pino 10 while fastify 5 pulls pino 9 to the root), npm nests
+# it under apps/executor/node_modules. Overlay those so the runtime resolves them.
+COPY --from=prod-deps /app/apps/executor/node_modules ./node_modules
 COPY apps/executor/package.json ./package.json
 COPY --from=builder /app/apps/executor/dist ./dist
 COPY apps/executor/config ./config
