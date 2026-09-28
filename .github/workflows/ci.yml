@@ -127,3 +127,13 @@ jobs:
           code=$?
           cat worker-boot.log | head -40
           if [ "$code" -ne 124 ]; then echo "::error::worker.js exited with $code during startup"; exit 1; fi
+
+  # CI green ≠ containers boot. On 2026-09-27 a green CI shipped a gateway/executor
+  # image missing modules and Falco/Vector configs their new versions rejected.
+  # Build and boot/validate each against the real Dockerfiles and configs.
+  container-smoke:
+    name: Container smoke (gateway, executor, Vector, Falco)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: scripts/container-smoke.sh
