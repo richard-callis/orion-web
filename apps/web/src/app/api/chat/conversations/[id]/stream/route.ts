@@ -6,7 +6,7 @@ import { streamClaudeResponse, streamAgentChat, streamOllamaChat, streamGeminiCh
 import { retrieveKnowledgeContext } from '@/lib/embeddings'
 import { prisma } from '@/lib/db'
 import { getPrompt } from '@/lib/system-prompts'
-import { getToken } from 'next-auth/jwt'
+import { getSessionToken } from '@/lib/session-token'
 import { getChatUserRole, canUseTools } from '@/lib/chat-tool-policy'
 
 export const dynamic = 'force-dynamic'
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (ownerCheck instanceof NextResponse) return ownerCheck
 
   // Get the current user from session (used for permission checks in tool loop)
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+  const token = await getSessionToken(req)
   const userId = token?.sub as string | undefined
   // readonly users may chat but never run tools. The lib loops enforce this per
   // call; the Claude sidecar path is enforced here via allowedTools: [].
