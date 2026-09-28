@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "node server.ts",
     "build": "prisma generate && next build && npm run build:worker",
-    "build:worker": "esbuild src/worker.ts --bundle --platform=node --outfile=worker.js --external:@prisma/client --external:@anthropic-ai/claude-code --external:@anthropic-ai/sdk --log-level=warning",
+    "build:worker": "esbuild src/worker.ts --bundle --platform=node --outfile=worker.js --external:@prisma/client --external:@anthropic-ai/sdk --log-level=warning",
     "start": "NODE_ENV=production node server.js",
     "lint": "eslint .",
     "db:generate": "prisma generate",
@@ -15,9 +15,8 @@
     "gen:prompts": "node scripts/gen-prompts.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^1.0.0",
     "@anthropic-ai/sdk": "^0.128.0",
-    "@aws-sdk/client-s3": "^3.1139.0",
+    "@aws-sdk/client-s3": "^3.1140.0",
     "@fontsource-variable/inter": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@kubernetes/client-node": "^2.0.0",
@@ -32,7 +31,7 @@
     "ioredis": "^6.0.0",
     "jose": "^6.2.12",
     "lucide-react": "^1.48.0",
-    "mermaid": "^11.13.0",
+    "mermaid": "^12.0.0",
     "next": "^15.5.16",
     "next-auth": "^4.24.15",
     "node-cron": "4.2.1",
@@ -54,7 +53,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
-    "@types/node": "^22.10.1",
+    "@types/node": "^26.6.3",
     "@types/node-cron": "^3.0.11",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",

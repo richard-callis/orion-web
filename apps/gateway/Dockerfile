@@ -7,7 +7,8 @@
 # binary is pinned and sha256-verified.
 
 # npm ci validates every workspace in the lockfile, so all manifests are copied;
-# only apps/gateway's dependencies are installed (all hoisted to /app/node_modules).
+# only apps/gateway's dependencies are installed (hoisted to /app/node_modules,
+# plus any nested version-split packages under apps/gateway/node_modules).
 FROM node:26.10.0-alpine3.24@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS manifests
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -22,7 +23,8 @@ COPY apps/gateway/src apps/gateway/src
 RUN npm run build --workspace apps/gateway
 
 FROM manifests AS prod-deps
-RUN npm ci --workspace apps/gateway --include-workspace-root=false --omit=dev --legacy-peer-deps
+RUN npm ci --workspace apps/gateway --include-workspace-root=false --omit=dev --legacy-peer-deps \
+ && mkdir -p apps/gateway/node_modules
 
 # ── CLI tools (pinned + checksum-verified) ───────────────────────────────────
 FROM node:26.10.0-alpine3.24@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS tools
@@ -74,6 +76,10 @@ RUN apk add --no-cache curl docker-cli bash
 COPY --from=tools /out/ /usr/local/bin/
 
 COPY --from=prod-deps /app/node_modules ./node_modules
+# When a workspace needs a different version than the one hoisted to the root
+# (e.g. gateway pino 10 while fastify 5 pulls pino 9 to the root), npm nests
+# it under apps/gateway/node_modules. Overlay those so the runtime resolves them.
+COPY --from=prod-deps /app/apps/gateway/node_modules ./node_modules
 COPY apps/gateway/package.json ./package.json
 COPY --from=builder /app/apps/gateway/dist ./dist
 

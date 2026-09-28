@@ -821,7 +821,7 @@ services:
   # KUBECONFIG=/kubeconfig/config maps /root/.kube/config from the host.
 
   argocd-redis:
-    image: redis:8.0-alpine
+    image: redis:8.10-alpine
     restart: unless-stopped
     command: redis-server --save "" --appendonly no
     deploy:
