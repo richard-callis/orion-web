@@ -9,7 +9,7 @@ function claudeAvailable(): boolean {
   if (process.env.ANTHROPIC_API_KEY) return true
   // OAuth via orion-claude sidecar — check credentials file on shared volume
   const credPath = process.env.CLAUDE_CREDENTIALS_PATH ?? '/claude-creds/.credentials.json'
-  return existsSync(credPath)
+  return existsSync(/*turbopackIgnore: true*/ credPath)
 }
 
 export interface AppModel {

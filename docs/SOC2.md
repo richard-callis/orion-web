@@ -40,7 +40,7 @@ Phase 1 remediation complete (~95%). Phase 2/3 SIEM (PRs #436–#444) reviewed 2
 
 | File | Purpose |
 |------|---------|
-| `apps/web/src/middleware.ts` | Rate limiting + CSP headers |
+| `apps/web/src/proxy.ts` (Next 16 `proxy`, formerly `middleware.ts`) | Rate limiting + CSP headers |
 | `apps/web/src/lib/rate-limit-redis.ts` | Redis sliding-window rate limiter |
 | `apps/web/src/lib/auth.ts` | NextAuth config + SSO HMAC validation |
 | `apps/web/src/lib/redact.ts` | Secret redaction patterns |
@@ -240,7 +240,7 @@ Failures logged as `user_login_failure` / `target: sso-header-auth` / `detail.re
 
 ## RATE-001 — Distributed Rate Limiting
 
-**Status**: COMPLETE | **Files**: `apps/web/src/lib/rate-limit-redis.ts`, `apps/web/src/middleware.ts`
+**Status**: COMPLETE | **Files**: `apps/web/src/lib/rate-limit-redis.ts`, `apps/web/src/proxy.ts`
 
 Redis sliding-window rate limiter applied to all `/api/*` routes via middleware. Falls back to in-memory Map if Redis is unavailable (not shared across instances).
 

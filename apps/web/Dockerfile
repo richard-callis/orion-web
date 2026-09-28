@@ -92,6 +92,18 @@ COPY --from=builder /app/apps/web/prisma.config.mjs ./prisma.config.mjs
 # the prisma CLI used by entrypoint.sh and the generated Prisma client.
 COPY --from=builder /app/node_modules ./node_modules
 
+# Next 16 builds with Turbopack, which loads serverExternalPackages through
+# hashed aliases (.next/node_modules/@prisma/client-<hash>, pg-<hash>, …) that
+# are relative symlinks into the monorepo root node_modules. Flattening
+# standalone/apps/web to /app leaves them pointing above /app, so re-point each
+# at /app/node_modules. Fail the build if any link still doesn't resolve.
+RUN if [ -d .next/node_modules ]; then \
+      for l in $(find .next/node_modules -type l); do \
+        t=$(readlink "$l"); ln -sfn "/app/node_modules/${t##*node_modules/}" "$l"; \
+        [ -e "$l" ] || { echo "Unresolved Turbopack external: $l -> $t" >&2; exit 1; }; \
+      done; \
+    fi
+
 COPY --from=builder /app/apps/web/worker.js ./worker.js
 COPY apps/web/entrypoint.sh ./entrypoint.sh
 RUN chmod +x entrypoint.sh

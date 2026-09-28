@@ -253,7 +253,9 @@ function timingSafeCompare(a: string, b: string): boolean {
   return result === 0
 }
 
-export async function middleware(req: NextRequest) {
+// Next 16 renamed the `middleware` file convention to `proxy` (always Node.js
+// runtime — this file already required it for ioredis/crypto).
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl
 
   // ── Generate per-request nonce (SOC2: CSP-001) ────────────────────────────
@@ -403,5 +405,4 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
-  runtime: 'nodejs',
 }

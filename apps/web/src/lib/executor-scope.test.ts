@@ -68,8 +68,8 @@ describe('middleware with x-executor-token', () => {
   })
 
   async function call(method: string, path: string, token = EXECUTOR_TOKEN) {
-    const { middleware } = await import('../middleware')
-    return middleware(new NextRequest(`http://orion.test${path}`, {
+    const { proxy } = await import('../proxy')
+    return proxy(new NextRequest(`http://orion.test${path}`, {
       method,
       headers: { 'x-executor-token': token },
     }))
