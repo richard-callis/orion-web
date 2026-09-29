@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server'
 // Describes every available endpoint, method, params, and response shape
 export async function GET() {
   const schema = {
-    baseUrl: 'https://orion.khalisio.com',
+    baseUrl: process.env.NEXTAUTH_URL ?? null,
     description: 'ORION API — use these endpoints instead of reading source files or the database directly',
     endpoints: {
       agents: {

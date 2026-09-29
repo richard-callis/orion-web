@@ -150,7 +150,7 @@ export function EnvironmentFormModal({
             <Link2 size={10} className="inline mr-1" aria-hidden />
             Gateway URL
           </label>
-          <Input id={f('gwurl')} value={form.gatewayUrl} onChange={set('gatewayUrl')} placeholder="http://gateway.khalis.corp:3001" />
+          <Input id={f('gwurl')} value={form.gatewayUrl} onChange={set('gatewayUrl')} placeholder="http://gateway.example.internal:3001" />
         </div>
         <div>
           <label htmlFor={f('gwtoken')} className={labelClass}>Gateway Token (leave blank to keep existing)</label>
@@ -164,7 +164,7 @@ export function EnvironmentFormModal({
                 Control plane node IP
                 <span className="text-text-muted ml-1">(used to auto-fetch kubeconfig)</span>
               </label>
-              <Input id={f('nodeip')} value={form.nodeIp} onChange={set('nodeIp')} placeholder="10.2.2.100" />
+              <Input id={f('nodeip')} value={form.nodeIp} onChange={set('nodeIp')} placeholder="192.168.1.100" />
               <p className="text-[10px] text-text-muted mt-1">
                 ORION probes this IP to detect Talos (port 50000) or K3s (port 6443) and fetches credentials automatically.
               </p>

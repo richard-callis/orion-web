@@ -518,7 +518,7 @@ exports[`tool registry characterization > registers the same tools, in the same 
           "type": "string",
         },
         "verification_summary": {
-          "description": "What you actually checked to confirm the goal is complete. E.g. "kubectl_get_pods shows all 7 arr-stack pods Running; curl sonarr.khalisio.com returns 200". Required — vague answers will be rejected.",
+          "description": "What you actually checked to confirm the goal is complete. E.g. "kubectl_get_pods shows all 7 arr-stack pods Running; curl sonarr.example.com returns 200". Required — vague answers will be rejected.",
           "type": "string",
         },
       },
@@ -607,7 +607,7 @@ exports[`tool registry characterization > registers the same tools, in the same 
           "type": "string",
         },
         "targetEnvironment": {
-          "description": "For deployment tasks — the target environment as designated by the Atlas. Pass as an object with keys: namespace (e.g. "apps"), hostname (e.g. "myapp.khalisio.com"), storageClass (e.g. "longhorn", if storage needed), vaultPath (e.g. "secret/data/myapp", if secrets needed), certIssuer (e.g. "letsencrypt-prod", if the Ingress is TLS-enabled — the executing agent must set this as the cert-manager.io/cluster-issuer annotation or no certificate will be issued).",
+          "description": "For deployment tasks — the target environment as designated by the Atlas. Pass as an object with keys: namespace (e.g. "apps"), hostname (e.g. "myapp.example.com"), storageClass (e.g. "longhorn", if storage needed), vaultPath (e.g. "secret/data/myapp", if secrets needed), certIssuer (e.g. "letsencrypt-prod", if the Ingress is TLS-enabled — the executing agent must set this as the cert-manager.io/cluster-issuer annotation or no certificate will be issued).",
           "type": "object",
         },
         "title": {

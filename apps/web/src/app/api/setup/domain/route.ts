@@ -15,7 +15,7 @@ const DOMAIN_RE = /^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9](
 function validateDomain(domain: string): string {
   if (!DOMAIN_RE.test(domain)) {
     throw new Error(
-      'Invalid domain name — must be a valid RFC 1035 domain (e.g. "khalis.corp")'
+      'Invalid domain name — must be a valid RFC 1035 domain (e.g. "example.internal")'
     )
   }
   return domain
@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
   }
   if (publicDomain?.trim() && !DOMAIN_RE.test(publicDomain.trim().toLowerCase())) {
     return NextResponse.json(
-      { error: 'Public domain must be a valid RFC 1035 domain (e.g. "khalisio.com")' },
+      { error: 'Public domain must be a valid RFC 1035 domain (e.g. "example.com")' },
       { status: 400 }
     )
   }
@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
   const validated = validateDomain(domain)
   if (validated !== domain) {
     return NextResponse.json(
-      { error: 'Invalid domain name — must be a valid RFC 1035 domain (e.g. "khalis.corp")' },
+      { error: 'Invalid domain name — must be a valid RFC 1035 domain (e.g. "example.internal")' },
       { status: 400 }
     )
   }

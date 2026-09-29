@@ -1,3 +1,9 @@
 vault-unseal-keys/
 vault-proxy/certs/
 vector-data/
+vault-proxy/envoy.yaml
+# CoreDNS runtime state written by the setup wizard (templates stay tracked)
+coredns/Corefile
+coredns/zones/*.db
+!coredns/zones/example.corp.db
+docker-compose.override.yml

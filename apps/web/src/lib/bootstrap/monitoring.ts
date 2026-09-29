@@ -1,4 +1,4 @@
-import { writeFile, rm, mkdir, mkdtemp } from 'fs/promises'
+import { writeFile, readFile, rm, mkdir, mkdtemp } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
@@ -76,6 +76,8 @@ export async function deployMonitoringStack(
         kenv,
         msg => emit({ type: 'log', message: msg }),
       )
+
+      await applyMonitoringIngresses(kenv, emit)
     }
 
     const namespacesToWait = stack === 'full'
@@ -101,6 +103,40 @@ export async function deployMonitoringStack(
     })
 
     emit({ type: 'done', message: `Monitoring stack (${stack}) deployed successfully.` })
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true })
+  }
+}
+
+// ── Ingress routes for the monitoring UIs ────────────────────────────────────
+
+const MONITORING_INGRESS_TEMPLATES = [
+  '/opt/orion/deploy/monitoring/elk/kibana-ingress.yaml.tmpl',
+  '/opt/orion/deploy/monitoring/elastiflow/ingress.yaml.tmpl',
+]
+
+/**
+ * Apply the Kibana/Elastiflow IngressRoutes on the internal domain configured
+ * in ORION (Ingress → Domains). Hostnames are never hardcoded; with no internal
+ * domain the routes are skipped and the UIs stay reachable via their Services.
+ */
+export async function applyMonitoringIngresses(
+  kenv: Record<string, string>,
+  emit: (event: BootstrapEvent) => void,
+): Promise<void> {
+  const domain = await prisma.domain.findFirst({ where: { type: 'internal' }, orderBy: { createdAt: 'asc' } })
+  if (!domain) {
+    emit({ type: 'log', message: 'No internal domain configured — skipping monitoring ingress routes' })
+    return
+  }
+  const tmpDir = await mkdtemp(join(tmpdir(), 'orion-monitoring-ingress-'))
+  try {
+    for (const tmpl of MONITORING_INGRESS_TEMPLATES) {
+      const rendered = (await readFile(tmpl, 'utf8')).replaceAll('__INTERNAL_DOMAIN__', domain.name)
+      const out = join(tmpDir, tmpl.split('/').slice(-2).join('-').replace(/\.tmpl$/, ''))
+      await writeFile(out, rendered)
+      await runCommand('kubectl', ['apply', '-f', out], kenv, msg => emit({ type: 'log', message: msg }))
+    }
   } finally {
     await rm(tmpDir, { recursive: true, force: true })
   }
@@ -188,6 +224,8 @@ export async function deployBootstrapMonitoring(
         kenv,
         msg => emit({ type: 'log', message: msg }),
       )
+
+      await applyMonitoringIngresses(kenv, emit)
     }
 
     // Wait for monitoring pods

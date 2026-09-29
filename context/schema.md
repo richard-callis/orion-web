@@ -742,7 +742,7 @@
 | Field | Type | Attributes | Notes |
 |---|---|---|---|
 | id | String | `@id @default(cuid())` |  |
-| name | String | `@unique` | e.g. "khalisio.com" |
+| name | String | `@unique` | e.g. "example.com" |
 | type | String | `@default("public")` | "public" \| "internal" |
 | notes | String? | `@db.Text` |  |
 | coreDnsEnvironmentId | String? |  |  |

@@ -44,7 +44,7 @@ export async function POST(
   const domainByName = new Map(domains.map((d: any) => [d.name.toLowerCase(), d]))
 
   // Build a lookup: suffix (parent domain) -> domain record
-  // e.g. "khalisio.com" -> domain record, "khalis.corp" -> domain record
+  // e.g. "example.com" -> domain record, "example.internal" -> domain record
   const parentDomainLookup = new Map<string, { id: string; name: string }>()
   for (const d of domains) {
     const name = d.name.toLowerCase()
@@ -86,7 +86,7 @@ export async function POST(
     const host = rule.host.trim().toLowerCase()
     if (!host) continue
 
-    // Match host to a parent domain (e.g. "auth.khalisio.com" -> "khalisio.com")
+    // Match host to a parent domain (e.g. "auth.example.com" -> "example.com")
     const parts = host.split('.')
     let matchedDomain: { id: string; name: string } | undefined
     for (let i = 1; i < parts.length; i++) {

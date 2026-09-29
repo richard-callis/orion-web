@@ -96,23 +96,3 @@ spec:
       port: 4739
       targetPort: 4739
       protocol: UDP
----
-# IngressRoute for Elastiflow web UI
-apiVersion: traefik.containo.us/v1alpha1
-kind: IngressRoute
-metadata:
-  name: elastiflow
-  namespace: monitoring
-  labels:
-    app: elastiflow
-spec:
-  entryPoints:
-    - web
-    - websecure
-  routes:
-    - match: Host(`netflow.khalis.corp`)
-      kind: Rule
-      services:
-        - name: elastiflow
-          port: 8080
-          namespace: monitoring

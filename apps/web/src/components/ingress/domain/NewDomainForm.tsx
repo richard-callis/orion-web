@@ -44,7 +44,7 @@ export function NewDomainForm({ onCreated }: { onCreated: (d: Domain) => void })
         value={name}
         onChange={e => setName(e.target.value)}
         onKeyDown={e => e.key === 'Enter' && submit()}
-        placeholder="khalisio.com"
+        placeholder="example.com"
       />
       <Select value={type} onChange={e => setType(e.target.value)}>
         <option value="public">Public</option>

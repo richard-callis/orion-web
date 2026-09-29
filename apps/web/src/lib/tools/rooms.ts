@@ -213,7 +213,7 @@ export const orionCompleteGoalTool: ToolDefinition = {
     type: 'object',
     properties: {
       room_id:              { type: 'string', description: 'Chat room ID to clear the goal from' },
-      verification_summary: { type: 'string', description: 'What you actually checked to confirm the goal is complete. E.g. "kubectl_get_pods shows all 7 arr-stack pods Running; curl sonarr.khalisio.com returns 200". Required — vague answers will be rejected.' },
+      verification_summary: { type: 'string', description: 'What you actually checked to confirm the goal is complete. E.g. "kubectl_get_pods shows all 7 arr-stack pods Running; curl sonarr.example.com returns 200". Required — vague answers will be rejected.' },
     },
     required: ['room_id', 'verification_summary'],
   },

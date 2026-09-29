@@ -11,7 +11,7 @@
  *   GATEWAY_TOKEN          — Auth token stored in Environment.gatewayToken (gateway → ORION,
  *                            and ORION → gateway unless GATEWAY_INBOUND_TOKEN is set)
  *   GATEWAY_INBOUND_TOKEN  — Optional separate token ORION must present to this gateway
- *   GATEWAY_URL            — This gateway's own URL (reported to ORION), e.g. http://10.2.2.9:3001
+ *   GATEWAY_URL            — This gateway's own URL (reported to ORION), e.g. http://192.168.1.10:3001
  *   PORT                   — Port to listen on (default 3001)
  *   GATEWAY_TYPE           — "cluster" | "docker" | "localhost" (controls built-in tools)
  *   GATEWAY_CREDS_FILE     — Path to persist credentials for restart resilience (localhost mode)

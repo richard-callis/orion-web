@@ -1,3 +1,6 @@
+# Template — bootstrap.sh renders this to envoy.yaml (gitignored), filling the
+# allow-lan principals with one remote_ip entry per CIDR in VAULT_ALLOWED_CIDRS
+# (deploy/.env). Edit this file, not envoy.yaml.
 static_resources:
 
   listeners:
@@ -29,9 +32,7 @@ static_resources:
                 permissions:
                 - any: true
                 principals:
-                - remote_ip:
-                    address_prefix: 10.2.2.0
-                    prefix_len: 24
+                __VAULT_ALLOWED_PRINCIPALS__
               allow-docker:
                 permissions:
                 - any: true

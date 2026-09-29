@@ -122,7 +122,7 @@ export function DeployGatewayModal({ env, onClose, onDeployed }: {
             <div>
               <label htmlFor={`${id}-url`} className={labelClass}>Gateway URL <span className="text-text-muted">(how ORION will reach this gateway after deployment)</span></label>
               <Input id={`${id}-url`} value={gatewayUrl} onChange={e => setGatewayUrl(e.target.value)}
-                placeholder="http://10.2.2.84:3001 or http://orion-gateway.management.svc.cluster.local:3001" />
+                placeholder="http://192.168.1.84:3001 or http://orion-gateway.management.svc.cluster.local:3001" />
             </div>
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="secondary" onClick={onClose}>Cancel</Button>

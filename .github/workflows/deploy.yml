@@ -56,9 +56,17 @@ jobs:
       - name: Sync /opt/orion to origin/main
         run: |
           cd /opt/orion
+          # CoreDNS config/zones are runtime state written by the setup wizard.
+          # Keep the live copies across the reset (they were once tracked, so a
+          # checkout would otherwise delete or revert them). --update=none: never clobber
+          # files git just checked out, so tracked templates stay current.
+          COREDNS_KEEP=$(mktemp -d)
+          cp -a deploy/coredns/. "$COREDNS_KEEP/" 2>/dev/null || true
           git fetch --depth 1 origin main
           git reset --hard HEAD
           git checkout -B main origin/main
+          cp -a --update=none "$COREDNS_KEEP/." deploy/coredns/
+          rm -rf "$COREDNS_KEEP"
 
       - name: Pin the image that was just built
         # Each build workflow tags its image with the commit SHA. Only the

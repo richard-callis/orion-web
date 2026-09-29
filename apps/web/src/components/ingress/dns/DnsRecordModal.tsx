@@ -52,7 +52,7 @@ export function DnsRecordModal({ domain, initial, suggestedIp, onSave, onClose }
       <div className="px-5 py-4 space-y-4">
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">IP Address</label>
-          <Input aria-label="IP Address" value={ip} onChange={e => setIp(e.target.value)} placeholder="e.g. 10.2.2.30" autoFocus />
+          <Input aria-label="IP Address" value={ip} onChange={e => setIp(e.target.value)} placeholder="e.g. 192.168.1.30" autoFocus />
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">Hostnames</label>

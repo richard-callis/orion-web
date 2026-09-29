@@ -12,7 +12,7 @@ Orion-Web manages this homelab's infrastructure via AI agents. Security must be 
 
 ## Repo
 
-`/home/rkhalis/orion-web` — monorepo with `apps/web` (Next.js + Prisma) and `apps/gateway` (tool execution).
+The repo root — monorepo with `apps/web` (Next.js + Prisma) and `apps/gateway` (tool execution).
 
 ## Current state (verified by file read)
 

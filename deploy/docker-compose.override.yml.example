@@ -1,0 +1,10 @@
+# Site-specific compose additions. Copy to docker-compose.override.yml (gitignored);
+# bootstrap.sh includes it automatically when present.
+#
+# Example: your SSO provider sits behind a CDN bot-challenge that rejects Gitea's
+# server-to-server OIDC requests — route Gitea straight to your ingress instead.
+#
+# services:
+#   gitea:
+#     extra_hosts:
+#       - "auth.example.com:192.168.1.101"

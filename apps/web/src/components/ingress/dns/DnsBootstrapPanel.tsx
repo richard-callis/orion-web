@@ -65,7 +65,7 @@ export function DnsBootstrapPanel({ domain, environments, onDone }: {
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">LoadBalancer IP <span className="text-text-muted font-normal">(optional)</span></label>
-          <Input aria-label="LoadBalancer IP" value={ip} onChange={e => setIp(e.target.value)} placeholder="e.g. 10.2.2.53" />
+          <Input aria-label="LoadBalancer IP" value={ip} onChange={e => setIp(e.target.value)} placeholder="e.g. 192.168.1.53" />
         </div>
       </div>
       {selectedEnv && (

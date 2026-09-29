@@ -14,8 +14,10 @@ spec:
       labels:
         app: ntopng
     spec:
+      # Runs on the node(s) that see your network traffic — label them first:
+      #   kubectl label node <node> orion.io/ntopng=true
       nodeSelector:
-        kubernetes.io/hostname: homelab-master
+        orion.io/ntopng: "true"
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       containers:

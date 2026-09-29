@@ -1,0 +1,10 @@
+# Template — bootstrap.sh copies this to Corefile (gitignored) on first run.
+# The setup wizard then adds a block for your internal domain and writes its
+# zone file under zones/. Both are runtime state and are never committed.
+. {
+    forward . 1.1.1.1 8.8.8.8
+    cache 30
+    errors
+    log
+    reload
+}
