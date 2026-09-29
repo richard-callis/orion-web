@@ -1,6 +1,7 @@
 {
   "name": "orion-gateway",
   "version": "1.0.0",
+  "license": "MIT",
   "description": "MCP Gateway — bridges AI agents to cluster/docker environments",
   "type": "module",
   "main": "dist/index.js",

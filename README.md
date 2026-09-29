@@ -244,4 +244,4 @@ See `deploy/.env.example` for the full list.
 
 ## License
 
-MIT
+[MIT](LICENSE) © Richard Callis
