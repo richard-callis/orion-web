@@ -23,6 +23,7 @@
  * Config (env):
  *   ORION_INJECTION_CLASSIFIER            on | off                 (default on)
  *   ORION_INJECTION_CLASSIFIER_THRESHOLD  0..1                     (default DEFAULT_THRESHOLD)
+ *   ORION_INJECTION_CLASSIFIER_MIN_RULE_SCORE  integer >= 0        (default DEFAULT_MIN_RULE_SCORE)
  *   ORION_MODEL_CACHE_DIR                 model file directory     (default ./.cache/models)
  *   ORION_ONNX_BACKEND                    auto | node | web        (default auto)
  */
@@ -47,6 +48,14 @@ export const MODEL = {
  */
 export const DEFAULT_THRESHOLD = 0.5
 
+/**
+ * Corroboration: the model's verdict only counts when the rule layer found at
+ * least this much (sub-threshold) evidence. The model alone over-flags
+ * runbook-style ops notes, so this trades a little recall for precision.
+ * Calibrated on the dev split only, like DEFAULT_THRESHOLD.
+ */
+export const DEFAULT_MIN_RULE_SCORE = 0
+
 const WINDOW_TOKENS = 510 // + [CLS] and [SEP] = the model's 512 limit
 const STRIDE_TOKENS = 384
 const MAX_WINDOWS = 24
@@ -59,6 +68,11 @@ export function classifierEnabled(): boolean {
 export function classifierThreshold(): number {
   const v = Number(process.env.ORION_INJECTION_CLASSIFIER_THRESHOLD)
   return Number.isFinite(v) && v > 0 && v < 1 ? v : DEFAULT_THRESHOLD
+}
+
+export function classifierMinRuleScore(): number {
+  const v = Number(process.env.ORION_INJECTION_CLASSIFIER_MIN_RULE_SCORE)
+  return Number.isInteger(v) && v >= 0 ? v : DEFAULT_MIN_RULE_SCORE
 }
 
 function cacheDir(): string {

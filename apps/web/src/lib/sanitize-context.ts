@@ -18,7 +18,7 @@
  *      can't enumerate. If the model is unavailable or too slow, the rules
  *      alone decide (fail-open to the rule layer, logged).
  */
-import { classifierThreshold, classifyInjection } from './injection-classifier'
+import { classifierMinRuleScore, classifierThreshold, classifyInjection } from './injection-classifier'
 
 const MAX_NOTE_LENGTH = 8000
 export const FLAG_THRESHOLD = 3
@@ -187,6 +187,8 @@ function classifierTimeoutMs(): number {
 export async function sanitizeContextNoteAsync(title: string, content: string): Promise<string> {
   const ruled = sanitizeContextNote(title, content)
   if (ruled === QUARANTINE_NOTICE) return ruled
+  // The model only decides notes the rules found some (sub-threshold) evidence in.
+  if (assessInjection(`${title}\n${content}`).score < classifierMinRuleScore()) return ruled
 
   const timeoutMs = classifierTimeoutMs()
   let timer: ReturnType<typeof setTimeout> | undefined
