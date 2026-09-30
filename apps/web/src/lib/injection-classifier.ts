@@ -16,10 +16,6 @@
  *   - Long notes are split into overlapping 512-token windows; the note's
  *     score is the highest window score, so an injection buried mid-note still
  *     counts.
- *   - The model sees only the note's prose (see proseView): fenced code,
- *     markdown tables, KEY=value lines and inline code are removed first. The
- *     model was trained on natural-language prompts and flags runbook config
- *     and shell snippets as injections; the rule layer still scans the full note.
  *   - Scores are cached by content hash; notes rarely change.
  *   - Anything that fails (download, load, inference) disables the layer and
  *     logs once. The rule layer keeps running (fail-open to rules only).
@@ -224,35 +220,12 @@ async function scoreWindow(m: Loaded, ids: number[]): Promise<number> {
   return softmaxAt(out[m.session.outputNames[0]].data, m.injectionIndex)
 }
 
-const MIN_PROSE_CHARS = 12
-
 /**
- * The natural-language part of a note: what the model is scored on.
- * Removes fenced code blocks, markdown table rows, shell/env-style lines and
- * inline code spans, then collapses blank runs.
- */
-export function proseView(text: string): string {
-  return text
-    .replace(/```[\s\S]*?(```|$)/g, '\n')                        // fenced code (incl. unterminated)
-    .split('\n')
-    .filter((line) => !/^\s*\|/.test(line))                          // table rows
-    .filter((line) => !/^\s*(export\s+)?[A-Z][A-Z0-9_]*\s*=/.test(line)) // KEY=value / env lines
-    .filter((line) => !/^\s*(\$ |# ?[a-z-]+ |sudo |kubectl |docker |npm |npx |curl |git )/.test(line)) // shell lines
-    .join('\n')
-    .replace(/`[^`\n]*`/g, 'code')                                  // inline code spans
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-}
-
-/**
- * P(injection) for a piece of text: the maximum over the token windows of its
- * prose view. Returns 0 for text with no prose, and null when the classifier
- * is disabled or unavailable.
+ * P(injection) for a piece of text: the maximum over its token windows.
+ * Returns null when the classifier is disabled or unavailable.
  */
 export async function classifyInjection(text: string): Promise<number | null> {
   if (!classifierEnabled()) return null
-  text = proseView(text)
-  if (text.length < MIN_PROSE_CHARS) return 0
   const key = createHash('sha256').update(text).digest('hex')
   const cached = cache.get(key)
   if (cached !== undefined) return cached
