@@ -21,7 +21,21 @@ import path from 'node:path'
 import { sanitizeContextNote } from '../../src/lib/sanitize-context.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const dataset = JSON.parse(readFileSync(path.join(here, 'dataset.json'), 'utf8'))
+const full = JSON.parse(readFileSync(path.join(here, 'dataset.json'), 'utf8'))
+
+// Held-out split. Tune changes on --split=dev only; report on --split=test,
+// which the sanitizer's author never inspects case by case. The split is a
+// deterministic ~50/50 by content hash.
+const split = (process.argv.find((a) => a.startsWith('--split=')) ?? '--split=all').slice(8)
+if (!['dev', 'test', 'all'].includes(split)) throw new Error(`unknown split: ${split}`)
+const bucket = (s) => (parseInt(createHash('sha1').update('orion-eval:' + s).digest('hex').slice(0, 8), 16) % 2 === 0 ? 'dev' : 'test')
+const inSplit = (s) => split === 'all' || bucket(s) === split
+const dataset = {
+  meta: full.meta,
+  attacks: full.attacks.filter((a) => inSplit(a.text)),
+  benign: full.benign.filter((b) => inSplit(b.text)),
+  hardBenign: (full.hard_benign ?? []).filter((b) => inSplit(b.text)),
+}
 
 // Count sanitizer warnings instead of printing them.
 let warnings = 0
@@ -42,6 +56,9 @@ const survives = (attack, out) => lines(attack).some((l) => out.includes(l.slice
 // ── Benign notes ─────────────────────────────────────────────────────────
 const benign = dataset.benign.map((b) => ({ ...b, ...run(b.text) }))
 const falsePositives = benign.filter((b) => b.flagged)
+// Stress set: ORION's own agent/system prompts. Legitimate but instruction-heavy.
+const hardBenign = dataset.hardBenign.map((b) => ({ ...b, ...run(b.text) }))
+const hardFlagged = hardBenign.filter((b) => b.flagged)
 
 // Carrier notes for embedded attacks: 20 benign doc notes the filter does NOT
 // flag (so a detection is caused by the attack, not the carrier), chosen
@@ -100,25 +117,31 @@ const macro = (key, placement) => {
 }
 
 const results = {
+  split,
   dataset: dataset.meta,
   attacks: dataset.attacks.length,
   attack_cases: rows.length,
   benign_notes: benign.length,
   false_positive_pct: pct(falsePositives.length, benign.length),
   false_positives: falsePositives.map((b) => ({ source: b.source, excerpt: b.text.slice(0, 120) })),
+  hard_benign_notes: hardBenign.length,
+  hard_benign_flagged_pct: pct(hardFlagged.length, hardBenign.length),
+  hard_benign_flagged: hardFlagged.map((b) => b.source),
   overall: overall(),
   by_placement: Object.fromEntries(placements.map((p) => [p, { ...overall(p), macro_detected_pct: macro('detected_pct', p), macro_removed_pct: macro('removed_pct', p) }])),
   macro_detected_pct: macro('detected_pct'),
   macro_removed_pct: macro('removed_pct'),
   by_category: summary,
 }
-writeFileSync(path.join(here, 'results.json'), JSON.stringify(results, null, 2) + '\n')
+writeFileSync(path.join(here, split === 'all' ? 'results.json' : `results.${split}.json`), JSON.stringify(results, null, 2) + '\n')
 
 // ── Report ───────────────────────────────────────────────────────────────
 const out = []
+out.push(`Split: ${split}`)
 out.push(`Attacks: ${results.attacks} (${results.attack_cases} cases across ${placements.length} placements) · Benign notes: ${results.benign_notes}`)
 out.push(`Overall: detected ${results.overall.detected_pct}% · fully removed ${results.overall.removed_pct}% · category-balanced detected ${results.macro_detected_pct}% / removed ${results.macro_removed_pct}%`)
 out.push(`False positives: ${results.false_positive_pct}% (${falsePositives.length}/${benign.length})`)
+out.push(`Stress set (ORION agent prompts) flagged: ${results.hard_benign_flagged_pct}% (${hardFlagged.length}/${hardBenign.length})`)
 out.push('')
 out.push('| Category | Placement | n | Detected | Fully removed |')
 out.push('| --- | --- | ---: | ---: | ---: |')

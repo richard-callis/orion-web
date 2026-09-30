@@ -87,6 +87,21 @@ def benign_notes(garak_dir):
     return notes
 
 
+def hard_benign():
+    """ORION's own agent/system prompts (apps/web/src/prompts/**/*.md).
+
+    Legitimate, instruction-heavy text ("You are ...", "never ...", "respond
+    with ...") - the hardest negatives available without writing them by hand.
+    Reported separately from the headline false-positive rate.
+    """
+    out = []
+    for f in sorted(glob.glob(os.path.join(REPO, "apps", "web", "src", "prompts", "**", "*.md"), recursive=True)):
+        text = open(f, encoding="utf-8").read().strip()
+        if text:
+            out.append({"source": os.path.relpath(f, REPO), "text": text})
+    return out
+
+
 def main():
     garak_dir = sys.argv[1]
     attacks = []
@@ -106,11 +121,12 @@ def main():
         },
         "attacks": attacks,
         "benign": benign_notes(garak_dir),
+        "hard_benign": hard_benign(),
     }
     out = os.path.join(HERE, "dataset.json")
     json.dump(dataset, open(out, "w"), indent=1, ensure_ascii=False)
     from collections import Counter
-    print(out, Counter(a["category"] for a in attacks), "benign:", len(dataset["benign"]))
+    print(out, Counter(a["category"] for a in attacks), "benign:", len(dataset["benign"]), "hard_benign:", len(dataset["hard_benign"]))
 
 
 if __name__ == "__main__":

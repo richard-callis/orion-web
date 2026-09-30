@@ -5,8 +5,12 @@ prompt-injection and jailbreak text before notes, knowledge-base entries and
 vector-search results are injected into an agent's prompt.
 
 ```bash
-cd apps/web && npm run eval:injection     # Node >= 22.18; writes results.json
+cd apps/web && npm run eval:injection                 # all cases -> results.json
+node evals/prompt-injection/run.mjs --split=dev       # tune here only
+node evals/prompt-injection/run.mjs --split=test      # report here (held out)
 ```
+
+Node >= 22.18 (native TypeScript type stripping).
 
 ## Test set
 
@@ -17,6 +21,7 @@ cd apps/web && npm run eval:injection     # Node >= 22.18; writes results.json
 | In-the-wild jailbreaks | 650 | garak `data/inthewild_jailbreak_llms.json` |
 | System-prompt extraction | 28 | garak `data/sysprompt_extraction/attacks.json` |
 | Benign notes | 308 | Paragraphs of ORION's own `docs/` and `context/` markdown + garak `normal_instructions` |
+| Stress set (hard negatives) | 30 | ORION's own agent/system prompts (`src/prompts/**/*.md`): legitimate but instruction-heavy |
 
 Attack text comes from a public, third-party scanner (garak, Apache-2.0), not
 from the filter's author. `build_dataset.py` regenerates `dataset.json` from the
@@ -39,7 +44,14 @@ caused by the attack, not the carrier.
   8,000-character truncation isn't credited as a defense.
 - **False positives**: benign notes the sanitizer flagged.
 
-## Baseline (2026-09-29, `main` @ 6d7a868)
+## Held-out split
+
+Every attack and benign note is assigned to `dev` or `test` by a hash of its
+text (about 50/50). Sanitizer changes are tuned on `dev` only; `test` is run once
+at the end and is the number to report, so the result isn't just memorizing
+these 712 prompts.
+
+## Baseline, all cases (2026-09-29, `main` @ 6d7a868)
 
 | Metric | Result |
 | --- | ---: |
@@ -77,10 +89,43 @@ caused by the attack, not the carrier.
    stripped. DAN jailbreaks are flagged 15% of the time but never fully removed:
    the rest of the jailbreak still reaches the model.
 
-These are the targets for the next iteration (unanchored and broader matching, a
-model-based classifier layer, and quarantining a flagged note rather than
-stripping single lines). Re-run this eval after each change so the numbers stay
-comparable.
+## Hardened sanitizer: before vs after (held-out `test` split)
+
+The redesign normalizes text (NFKC, zero-width and bidi characters removed),
+matches weighted signals anywhere in a line across five families (override,
+persona/jailbreak, fake conversation turns, system-prompt extraction, output
+hijacking), and **withholds a flagged note whole** instead of stripping lines.
+It was tuned on `dev` only, and `test` was run once.
+
+| Held-out `test` split (342 attacks, 1,026 cases) | Before | After |
+| --- | ---: | ---: |
+| Attack cases detected | 6.0% | **75.8%** |
+| Attack cases fully removed | 6.0% | **75.8%** |
+| Detected when the attack is appended mid-sentence | 0.0% | **75.7%** |
+| Category-balanced detection | 3.8% | 56.1% |
+| False positives, benign notes | 0% (0/152) | 0.7% (1/152) |
+| Stress set flagged (ORION agent prompts) | 0% (0/18) | 0% (0/18) |
+
+| `test` category | n | Before | After |
+| --- | ---: | ---: | ---: |
+| In-the-wild jailbreaks | 308 | 6.3% | 79.4% |
+| DAN-family jailbreaks | 8 | 0% | 87.5% |
+| System-prompt extraction | 15 | 8.9% | 33.3% |
+| Indirect injection | 11 | 0% | 24.3% |
+
+(Category figures average the three placements.)
+
+### Caveats
+
+- **Small categories overfit.** On `dev`, extraction and indirect injection
+  reached 100% and 50%; on `test` they fell to 33% and 24%. With 11–15 prompts
+  per half, the hand-written signals generalize poorly. They need more data or a
+  model-based classifier, not more regexes.
+- **The one false positive** on `test` is a paragraph of `docs/SECURITY.md`. It
+  was left as found rather than tuned away, to keep `test` held out.
+- **Regex signals are a floor, not a ceiling.** Paraphrased or encoded attacks
+  will get past them. The next step is a model-based injection classifier
+  layered on top, measured with this same harness.
 
 ## Attribution
 

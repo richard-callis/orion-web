@@ -1,137 +1,137 @@
 {
-  "split": "all",
+  "split": "test",
   "dataset": {
     "attack_source": "NVIDIA garak 0.17.0 (Apache-2.0) https://github.com/NVIDIA/garak",
     "benign_source": "ORION docs/ and context/ markdown + garak normal_instructions",
     "trigger": "Haha pwned!"
   },
-  "attacks": 712,
-  "attack_cases": 2136,
-  "benign_notes": 308,
-  "false_positive_pct": 0.3,
+  "attacks": 342,
+  "attack_cases": 1026,
+  "benign_notes": 152,
+  "false_positive_pct": 0.7,
   "false_positives": [
     {
       "source": "docs/SECURITY.md",
       "excerpt": "### Misconfiguration Guards\n\n- If a webhook endpoint is deployed without a configured secret, `warnMissingWebhookSecret("
     }
   ],
-  "hard_benign_notes": 30,
+  "hard_benign_notes": 18,
   "hard_benign_flagged_pct": 0,
   "hard_benign_flagged": [],
   "overall": {
-    "n": 2136,
-    "detected_pct": 78.6,
-    "removed_pct": 78.6
+    "n": 1026,
+    "detected_pct": 75.8,
+    "removed_pct": 75.8
   },
   "by_placement": {
     "standalone": {
-      "n": 712,
-      "detected_pct": 78.4,
-      "removed_pct": 78.4,
-      "macro_detected_pct": 68.7,
-      "macro_removed_pct": 68.7
+      "n": 342,
+      "detected_pct": 75.7,
+      "removed_pct": 75.7,
+      "macro_detected_pct": 56.8,
+      "macro_removed_pct": 56.8
     },
     "own_line": {
-      "n": 712,
-      "detected_pct": 78.8,
-      "removed_pct": 78.8,
-      "macro_detected_pct": 68.8,
-      "macro_removed_pct": 68.8
+      "n": 342,
+      "detected_pct": 76,
+      "removed_pct": 76,
+      "macro_detected_pct": 56.9,
+      "macro_removed_pct": 56.9
     },
     "inline": {
-      "n": 712,
-      "detected_pct": 78.7,
-      "removed_pct": 78.7,
-      "macro_detected_pct": 67.6,
-      "macro_removed_pct": 67.6
+      "n": 342,
+      "detected_pct": 75.7,
+      "removed_pct": 75.7,
+      "macro_detected_pct": 54.6,
+      "macro_removed_pct": 54.6
     }
   },
-  "macro_detected_pct": 68.4,
-  "macro_removed_pct": 68.4,
+  "macro_detected_pct": 56.1,
+  "macro_removed_pct": 56.1,
   "by_category": [
     {
       "category": "indirect_injection",
       "placement": "standalone",
-      "n": 21,
-      "detected_pct": 38.1,
-      "removed_pct": 38.1
+      "n": 11,
+      "detected_pct": 27.3,
+      "removed_pct": 27.3
     },
     {
       "category": "indirect_injection",
       "placement": "own_line",
-      "n": 21,
-      "detected_pct": 38.1,
-      "removed_pct": 38.1
+      "n": 11,
+      "detected_pct": 27.3,
+      "removed_pct": 27.3
     },
     {
       "category": "indirect_injection",
       "placement": "inline",
-      "n": 21,
+      "n": 11,
+      "detected_pct": 18.2,
+      "removed_pct": 18.2
+    },
+    {
+      "category": "jailbreak_dan",
+      "placement": "standalone",
+      "n": 8,
+      "detected_pct": 87.5,
+      "removed_pct": 87.5
+    },
+    {
+      "category": "jailbreak_dan",
+      "placement": "own_line",
+      "n": 8,
+      "detected_pct": 87.5,
+      "removed_pct": 87.5
+    },
+    {
+      "category": "jailbreak_dan",
+      "placement": "inline",
+      "n": 8,
+      "detected_pct": 87.5,
+      "removed_pct": 87.5
+    },
+    {
+      "category": "jailbreak_in_the_wild",
+      "placement": "standalone",
+      "n": 308,
+      "detected_pct": 79.2,
+      "removed_pct": 79.2
+    },
+    {
+      "category": "jailbreak_in_the_wild",
+      "placement": "own_line",
+      "n": 308,
+      "detected_pct": 79.5,
+      "removed_pct": 79.5
+    },
+    {
+      "category": "jailbreak_in_the_wild",
+      "placement": "inline",
+      "n": 308,
+      "detected_pct": 79.5,
+      "removed_pct": 79.5
+    },
+    {
+      "category": "sysprompt_extraction",
+      "placement": "standalone",
+      "n": 15,
       "detected_pct": 33.3,
       "removed_pct": 33.3
     },
     {
-      "category": "jailbreak_dan",
-      "placement": "standalone",
-      "n": 13,
-      "detected_pct": 92.3,
-      "removed_pct": 92.3
-    },
-    {
-      "category": "jailbreak_dan",
-      "placement": "own_line",
-      "n": 13,
-      "detected_pct": 92.3,
-      "removed_pct": 92.3
-    },
-    {
-      "category": "jailbreak_dan",
-      "placement": "inline",
-      "n": 13,
-      "detected_pct": 92.3,
-      "removed_pct": 92.3
-    },
-    {
-      "category": "jailbreak_in_the_wild",
-      "placement": "standalone",
-      "n": 650,
-      "detected_pct": 80,
-      "removed_pct": 80
-    },
-    {
-      "category": "jailbreak_in_the_wild",
-      "placement": "own_line",
-      "n": 650,
-      "detected_pct": 80.5,
-      "removed_pct": 80.5
-    },
-    {
-      "category": "jailbreak_in_the_wild",
-      "placement": "inline",
-      "n": 650,
-      "detected_pct": 80.5,
-      "removed_pct": 80.5
-    },
-    {
-      "category": "sysprompt_extraction",
-      "placement": "standalone",
-      "n": 28,
-      "detected_pct": 64.3,
-      "removed_pct": 64.3
-    },
-    {
       "category": "sysprompt_extraction",
       "placement": "own_line",
-      "n": 28,
-      "detected_pct": 64.3,
-      "removed_pct": 64.3
+      "n": 15,
+      "detected_pct": 33.3,
+      "removed_pct": 33.3
     },
     {
       "category": "sysprompt_extraction",
       "placement": "inline",
-      "n": 28,
-      "detected_pct": 64.3,
-      "removed_pct": 64.3
+      "n": 15,
+      "detected_pct": 33.3,
+      "removed_pct": 33.3
     }
   ]
 }
