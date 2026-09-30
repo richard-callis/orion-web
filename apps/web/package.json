@@ -13,7 +13,8 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate deploy",
     "test": "vitest run",
-    "gen:prompts": "node scripts/gen-prompts.mjs"
+    "gen:prompts": "node scripts/gen-prompts.mjs",
+    "eval:injection": "node evals/prompt-injection/run.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
