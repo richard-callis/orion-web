@@ -21,6 +21,9 @@ COPY apps/executor/package.json apps/executor/package.json
 # npm ci fails if the lockfile is out of sync with package.json. The runtime
 # image needs the prisma CLI (a devDependency) for migrations, so dev
 # dependencies are kept rather than pruned.
+# onnxruntime-node would otherwise download CUDA/TensorRT libraries on x64;
+# ORION runs the injection classifier on CPU.
+ENV ONNXRUNTIME_NODE_INSTALL=skip
 RUN npm ci --workspace apps/web --include-workspace-root=false --legacy-peer-deps
 
 # ── Build ────────────────────────────────────────────────────────────────────
@@ -65,7 +68,9 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # OpenSSL (Prisma), bash, curl (healthcheck), git, openssh-client
-RUN apk add --no-cache openssl libc6-compat bash curl git openssh-client
+# libstdc++: onnxruntime-node's native binding (injection classifier); if it
+# still can't load on musl, the classifier falls back to WebAssembly.
+RUN apk add --no-cache openssl libc6-compat libstdc++ bash curl git openssh-client
 
 # Create non-root user for security (SOC2)
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
@@ -110,6 +115,11 @@ RUN chmod +x entrypoint.sh
 EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+
+# Prompt-injection model cache (SOC2 C-001). Mount a volume here so the
+# 739 MB model downloads once, not on every container start.
+RUN mkdir -p /models && chown nextjs:nodejs /models
+ENV ORION_MODEL_CACHE_DIR=/models
 
 USER nextjs
 CMD ["sh", "entrypoint.sh"]

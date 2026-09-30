@@ -41,6 +41,7 @@ vi.mock('./ssrf-guard', () => ({
 
 vi.mock('./sanitize-context', () => ({
   sanitizeContextNote: (title: string, content: string) => content,
+  sanitizeContextNoteAsync: async (title: string, content: string) => content,
 }))
 
 import {

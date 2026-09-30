@@ -1,0 +1,229 @@
+{
+  "source": {
+    "ci_run": "https://github.com/richard-callis/orion-web/actions/runs/36652371441",
+    "commit": "18415a0",
+    "note": "Copied from the CI run's check annotations (by_category condensed to [category, placement, n, detected_pct]). Regenerate with: npm run eval:injection -- --split=<dev|test> --layer=layered"
+  },
+  "sweep": [
+    {
+      "r": 0,
+      "t": 0.5,
+      "detected": 88.5,
+      "macro": 92,
+      "fp": 2.6,
+      "fpN": 4,
+      "hard": 0
+    },
+    {
+      "r": 0,
+      "t": 0.7,
+      "detected": 88.5,
+      "macro": 92,
+      "fp": 2.6,
+      "fpN": 4,
+      "hard": 0
+    },
+    {
+      "r": 0,
+      "t": 0.9,
+      "detected": 88.2,
+      "macro": 92,
+      "fp": 2.6,
+      "fpN": 4,
+      "hard": 0
+    },
+    {
+      "r": 0,
+      "t": 0.95,
+      "detected": 88,
+      "macro": 91.9,
+      "fp": 2.6,
+      "fpN": 4,
+      "hard": 0
+    },
+    {
+      "r": 0,
+      "t": 0.99,
+      "detected": 86.4,
+      "macro": 89.9,
+      "fp": 2.6,
+      "fpN": 4,
+      "hard": 0
+    },
+    {
+      "r": 0,
+      "t": 0.995,
+      "detected": 86.1,
+      "macro": 89.8,
+      "fp": 2.6,
+      "fpN": 4,
+      "hard": 0
+    },
+    {
+      "r": 0,
+      "t": 0.999,
+      "detected": 84.6,
+      "macro": 89.4,
+      "fp": 1.3,
+      "fpN": 2,
+      "hard": 0
+    },
+    {
+      "r": 0,
+      "t": 0.9995,
+      "detected": 84.4,
+      "macro": 89.3,
+      "fp": 1.3,
+      "fpN": 2,
+      "hard": 0
+    },
+    {
+      "r": 1,
+      "t": 0.5,
+      "detected": 85,
+      "macro": 83.8,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 1,
+      "t": 0.7,
+      "detected": 85,
+      "macro": 83.8,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 1,
+      "t": 0.9,
+      "detected": 84.7,
+      "macro": 83.7,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 1,
+      "t": 0.95,
+      "detected": 84.7,
+      "macro": 83.7,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 1,
+      "t": 0.99,
+      "detected": 83.6,
+      "macro": 83.4,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 1,
+      "t": 0.995,
+      "detected": 83.5,
+      "macro": 83.4,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 1,
+      "t": 0.999,
+      "detected": 83,
+      "macro": 83.3,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 1,
+      "t": 0.9995,
+      "detected": 83,
+      "macro": 83.3,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 2,
+      "t": 0.5,
+      "detected": 83.5,
+      "macro": 83.4,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 2,
+      "t": 0.7,
+      "detected": 83.5,
+      "macro": 83.4,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 2,
+      "t": 0.9,
+      "detected": 83.2,
+      "macro": 83.3,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 2,
+      "t": 0.95,
+      "detected": 83.2,
+      "macro": 83.3,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 2,
+      "t": 0.99,
+      "detected": 82.3,
+      "macro": 83.1,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 2,
+      "t": 0.995,
+      "detected": 82.2,
+      "macro": 83,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 2,
+      "t": 0.999,
+      "detected": 81.9,
+      "macro": 83,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    },
+    {
+      "r": 2,
+      "t": 0.9995,
+      "detected": 81.9,
+      "macro": 83,
+      "fp": 0,
+      "fpN": 0,
+      "hard": 0
+    }
+  ],
+  "recommended": {
+    "threshold": 0.5,
+    "min_rule_score": 1
+  }
+}

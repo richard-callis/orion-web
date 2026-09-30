@@ -1,4 +1,5 @@
 {
+  "split": "all",
   "dataset": {
     "attack_source": "NVIDIA garak 0.17.0 (Apache-2.0) https://github.com/NVIDIA/garak",
     "benign_source": "ORION docs/ and context/ markdown + garak normal_instructions",
@@ -7,122 +8,130 @@
   "attacks": 712,
   "attack_cases": 2136,
   "benign_notes": 308,
-  "false_positive_pct": 0,
-  "false_positives": [],
+  "false_positive_pct": 0.3,
+  "false_positives": [
+    {
+      "source": "docs/SECURITY.md",
+      "excerpt": "### Misconfiguration Guards\n\n- If a webhook endpoint is deployed without a configured secret, `warnMissingWebhookSecret("
+    }
+  ],
+  "hard_benign_notes": 30,
+  "hard_benign_flagged_pct": 0,
+  "hard_benign_flagged": [],
   "overall": {
     "n": 2136,
-    "detected_pct": 5.9,
-    "removed_pct": 5.6
+    "detected_pct": 78.6,
+    "removed_pct": 78.6
   },
   "by_placement": {
     "standalone": {
       "n": 712,
-      "detected_pct": 8.7,
-      "removed_pct": 8.4,
-      "macro_detected_pct": 9,
-      "macro_removed_pct": 5.2
+      "detected_pct": 78.4,
+      "removed_pct": 78.4,
+      "macro_detected_pct": 68.7,
+      "macro_removed_pct": 68.7
     },
     "own_line": {
       "n": 712,
-      "detected_pct": 8.7,
-      "removed_pct": 8.4,
-      "macro_detected_pct": 9,
-      "macro_removed_pct": 5.2
+      "detected_pct": 78.8,
+      "removed_pct": 78.8,
+      "macro_detected_pct": 68.8,
+      "macro_removed_pct": 68.8
     },
     "inline": {
       "n": 712,
-      "detected_pct": 0.3,
-      "removed_pct": 0,
-      "macro_detected_pct": 3.9,
-      "macro_removed_pct": 0
+      "detected_pct": 78.7,
+      "removed_pct": 78.7,
+      "macro_detected_pct": 67.6,
+      "macro_removed_pct": 67.6
     }
   },
-  "macro_detected_pct": 7.3,
-  "macro_removed_pct": 3.5,
+  "macro_detected_pct": 68.4,
+  "macro_removed_pct": 68.4,
   "by_category": [
     {
       "category": "indirect_injection",
       "placement": "standalone",
       "n": 21,
-      "detected_pct": 4.8,
-      "removed_pct": 4.8
+      "detected_pct": 38.1,
+      "removed_pct": 38.1
     },
     {
       "category": "indirect_injection",
       "placement": "own_line",
       "n": 21,
-      "detected_pct": 4.8,
-      "removed_pct": 4.8
+      "detected_pct": 38.1,
+      "removed_pct": 38.1
     },
     {
       "category": "indirect_injection",
       "placement": "inline",
       "n": 21,
-      "detected_pct": 0,
-      "removed_pct": 0
+      "detected_pct": 33.3,
+      "removed_pct": 33.3
     },
     {
       "category": "jailbreak_dan",
       "placement": "standalone",
       "n": 13,
-      "detected_pct": 15.4,
-      "removed_pct": 0
+      "detected_pct": 92.3,
+      "removed_pct": 92.3
     },
     {
       "category": "jailbreak_dan",
       "placement": "own_line",
       "n": 13,
-      "detected_pct": 15.4,
-      "removed_pct": 0
+      "detected_pct": 92.3,
+      "removed_pct": 92.3
     },
     {
       "category": "jailbreak_dan",
       "placement": "inline",
       "n": 13,
-      "detected_pct": 15.4,
-      "removed_pct": 0
+      "detected_pct": 92.3,
+      "removed_pct": 92.3
     },
     {
       "category": "jailbreak_in_the_wild",
       "placement": "standalone",
       "n": 650,
-      "detected_pct": 8.8,
-      "removed_pct": 8.8
+      "detected_pct": 80,
+      "removed_pct": 80
     },
     {
       "category": "jailbreak_in_the_wild",
       "placement": "own_line",
       "n": 650,
-      "detected_pct": 8.8,
-      "removed_pct": 8.8
+      "detected_pct": 80.5,
+      "removed_pct": 80.5
     },
     {
       "category": "jailbreak_in_the_wild",
       "placement": "inline",
       "n": 650,
-      "detected_pct": 0,
-      "removed_pct": 0
+      "detected_pct": 80.5,
+      "removed_pct": 80.5
     },
     {
       "category": "sysprompt_extraction",
       "placement": "standalone",
       "n": 28,
-      "detected_pct": 7.1,
-      "removed_pct": 7.1
+      "detected_pct": 64.3,
+      "removed_pct": 64.3
     },
     {
       "category": "sysprompt_extraction",
       "placement": "own_line",
       "n": 28,
-      "detected_pct": 7.1,
-      "removed_pct": 7.1
+      "detected_pct": 64.3,
+      "removed_pct": 64.3
     },
     {
       "category": "sysprompt_extraction",
       "placement": "inline",
       "n": 28,
-      "detected_pct": 0,
-      "removed_pct": 0
+      "detected_pct": 64.3,
+      "removed_pct": 64.3
     }
   ]
 }
