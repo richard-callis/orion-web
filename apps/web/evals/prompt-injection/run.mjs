@@ -179,7 +179,7 @@ function aggregate(t) {
     attack_cases: rows.length,
     benign_notes: benign.length,
     false_positive_pct: pct(fps.length, benign.length),
-    false_positives: fps.map((b) => ({ source: b.source, excerpt: b.text.slice(0, 120) })),
+    false_positives: fps.map((b) => ({ source: b.source, by: b.rulesFlagged ? 'rules' : `model p=${b.score?.toFixed(4)}`, excerpt: b.text.slice(0, 160) })),
     hard_benign_notes: hardBenign.length,
     hard_benign_flagged_pct: pct(hard.length, hardBenign.length),
     hard_benign_flagged: hard.map((b) => b.source),

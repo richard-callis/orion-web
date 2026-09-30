@@ -75,7 +75,7 @@ jobs:
           # Same numbers as check annotations, readable through the checks API.
           for f in results.test.json results.layered.dev.json results.layered.test.json calibration.dev.json; do
             [ -f "$f" ] || continue
-            node -e "const r=require('./$f');const {false_positives,by_category,...rest}=r;const o=r.sweep?r:{...rest,by_category:by_category?.map(c=>[c.category,c.placement,c.n,c.detected_pct])};console.log('::notice title=$f::'+JSON.stringify(o).replace(/%/g,'%25'))"
+            node -e "const r=require('./$f');const {false_positives,by_category,...rest}=r;const o=r.sweep?r:{...rest,by_category:by_category?.map(c=>[c.category,c.placement,c.n,c.detected_pct])};if(r.split==='dev')o.false_positives=false_positives;console.log('::notice title=$f::'+JSON.stringify(o).replace(/%/g,'%25'))"
           done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
