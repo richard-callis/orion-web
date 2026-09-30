@@ -5,12 +5,16 @@ prompt-injection and jailbreak text before notes, knowledge-base entries and
 vector-search results are injected into an agent's prompt.
 
 ```bash
-cd apps/web && npm run eval:injection                 # all cases -> results.json
-node evals/prompt-injection/run.mjs --split=dev       # tune here only
-node evals/prompt-injection/run.mjs --split=test      # report here (held out)
+cd apps/web
+npm run eval:injection                                            # rules, all cases
+npm run eval:injection -- --split=dev  --layer=layered --calibrate  # tune here only
+npm run eval:injection -- --split=test --layer=layered              # report here (held out)
+npx tsx evals/prompt-injection/smoke.mjs                          # model backend + latency on this host
 ```
 
-Node >= 22.18 (native TypeScript type stripping).
+`--layer=layered` downloads the pinned DeBERTa model (~739 MB) on first run.
+CI runs all of this in `.github/workflows/injection-eval.yml` and posts the
+numbers as check annotations.
 
 ## Test set
 
@@ -115,7 +119,7 @@ It was tuned on `dev` only, and `test` was run once.
 
 (Category figures average the three placements.)
 
-### Caveats
+### Caveats (rule layer)
 
 - **Small categories overfit.** On `dev`, extraction and indirect injection
   reached 100% and 50%; on `test` they fell to 33% and 24%. With 11–15 prompts
@@ -133,3 +137,38 @@ Attack prompts in `dataset.json` are from NVIDIA garak 0.17.0, licensed under
 Apache-2.0 (https://github.com/NVIDIA/garak/blob/main/LICENSE). The jailbreak
 text is adversarial by design. It is test data only and is never loaded into
 ORION at runtime.
+
+## Layer 2: DeBERTa classifier (held-out `test` split)
+
+Notes the rules pass are scored by
+[protectai/deberta-v3-base-prompt-injection-v2](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2)
+(Apache-2.0, pinned revision, SHA-256 verified). The model's verdict counts only
+when the rules found at least a weak signal (minimum rule score 1). On its own,
+the model withheld runbook-style ops notes (config blocks, key-rotation steps)
+with >99% confidence.
+
+Calibration (dev only): the most sensitive setting with dev false positives
+<= 1% and at most one ORION agent prompt flagged was threshold 0.5 with a
+minimum rule score of 1. Rejected alternatives: no corroboration (88.5% dev
+detection, but 4/156 benign notes flagged), and scoring only a note's prose
+(32% dev false positives).
+
+| Held-out `test` (342 attacks, 1,026 cases) | Original | Rules | **Rules + model** |
+| --- | ---: | ---: | ---: |
+| Attack cases detected | 6.0% | 75.8% | **80.8%** |
+| Category-balanced detection | 3.8% | 56.1% | **67.8%** |
+| Indirect injection | 0% | 24.3% | **54.5%** |
+| DAN-family jailbreaks | 0% | 87.5% | **100%** |
+| In-the-wild jailbreaks | 6.3% | 79.4% | **83.6%** |
+| System-prompt extraction | 8.9% | 33.3% | 33.3% |
+| Benign false positives | 0/152 | 1/152 | 1/152 |
+| ORION agent prompts flagged | 0/18 | 0/18 | 1/18 |
+
+On the Alpine runtime image (CI, `node:26-alpine`), the classifier runs on the
+WebAssembly backend: about 3 s to load and about 200–260 ms per note, with
+4/4 smoke samples correct. On glibc hosts it uses onnxruntime-node.
+
+Remaining gaps: system-prompt extraction didn't improve (the corroboration
+requirement filters out many of the model's catches), and one ORION agent
+prompt is now flagged. Without corroboration, the dev split suggests recall
+would rise, at the cost of withholding some runbook notes.

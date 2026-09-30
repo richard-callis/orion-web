@@ -12,7 +12,13 @@
  *      has a weight; a note is flagged when its score reaches FLAG_THRESHOLD.
  *   3. Quarantine: a flagged note is withheld whole, not line-stripped. Removing
  *      only the matching line leaves the rest of a jailbreak in the prompt.
+ *   4. Classify (async path only): notes the rules pass are scored by a
+ *      DeBERTa prompt-injection model (injection-classifier.ts). Rules catch
+ *      jailbreak framing; the model catches injected instructions the rules
+ *      can't enumerate. If the model is unavailable or too slow, the rules
+ *      alone decide (fail-open to the rule layer, logged).
  */
+import { classifierMinRuleScore, classifierThreshold, classifyInjection } from './injection-classifier'
 
 const MAX_NOTE_LENGTH = 8000
 export const FLAG_THRESHOLD = 3
@@ -145,6 +151,14 @@ export function assessInjection(text: string): InjectionAssessment {
   return { score, flagged: score >= FLAG_THRESHOLD, families: [...byFamily.keys()] }
 }
 
+function finishNote(content: string): string {
+  if (content.length > MAX_NOTE_LENGTH) {
+    content = content.slice(0, MAX_NOTE_LENGTH) + '\n\n[Note truncated]'
+  }
+  return content.replace(/^---+$/, '---')
+}
+
+/** Rule layer only (synchronous). Prefer sanitizeContextNoteAsync on prompt paths. */
 export function sanitizeContextNote(title: string, content: string): string {
   const assessment = assessInjection(`${title}\n${content}`)
   if (assessment.flagged) {
@@ -153,11 +167,44 @@ export function sanitizeContextNote(title: string, content: string): string {
     )
     return QUARANTINE_NOTICE
   }
+  return finishNote(content)
+}
 
-  if (content.length > MAX_NOTE_LENGTH) {
-    content = content.slice(0, MAX_NOTE_LENGTH) + '\n\n[Note truncated]'
+/** How long a retrieval waits on the model before falling back to rules only. */
+const DEFAULT_CLASSIFIER_TIMEOUT_MS = 10_000
+
+function classifierTimeoutMs(): number {
+  const v = Number(process.env.ORION_INJECTION_CLASSIFIER_TIMEOUT_MS)
+  return Number.isFinite(v) && v >= 0 ? v : DEFAULT_CLASSIFIER_TIMEOUT_MS
+}
+
+/**
+ * Rule layer + model layer. A note is withheld if either layer flags it.
+ * A timeout of 0 (ORION_INJECTION_CLASSIFIER_TIMEOUT_MS=0) waits indefinitely,
+ * which the eval uses; on prompt paths the default keeps a cold model (still
+ * downloading or loading) from stalling an agent.
+ */
+export async function sanitizeContextNoteAsync(title: string, content: string): Promise<string> {
+  const ruled = sanitizeContextNote(title, content)
+  if (ruled === QUARANTINE_NOTICE) return ruled
+  // The model only decides notes the rules found some (sub-threshold) evidence in.
+  if (assessInjection(`${title}\n${content}`).score < classifierMinRuleScore()) return ruled
+
+  const timeoutMs = classifierTimeoutMs()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const scored = classifyInjection(`${title}\n${content}`).catch((e: Error) => {
+    console.warn(`[C-001] injection classifier error, rule layer only: ${e.message}`)
+    return null
+  })
+  const score =
+    timeoutMs === 0
+      ? await scored
+      : await Promise.race([scored, new Promise<null>((r) => { timer = setTimeout(() => r(null), timeoutMs) })])
+  if (timer) clearTimeout(timer)
+
+  if (score !== null && score >= classifierThreshold()) {
+    console.warn(`[C-001] Model flagged prompt injection in note "${title}" (p=${score.toFixed(3)}) — note withheld`)
+    return QUARANTINE_NOTICE
   }
-
-  content = content.replace(/^---+$/, '---')
-  return content
+  return ruled
 }

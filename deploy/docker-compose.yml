@@ -86,6 +86,7 @@ x-orion-volumes: &orion-volumes
   - /root/.kube:/root/.kube:ro
   - /root/.talos:/root/.talos:ro
   - ./vault-proxy/certs:/vault-proxy-certs:ro
+  - orion-models:/models   # prompt-injection classifier weights (C-001)
 
 services:
 
@@ -951,6 +952,7 @@ volumes:
   postgres-data:
   vault-data:
   orion-claude-creds:
+  orion-models:
   gateway-creds:
   minio-data:
   redis-master-data:
