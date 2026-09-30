@@ -44,7 +44,10 @@ export const MODEL = {
 
 /**
  * Decision threshold on P(injection). Calibrated on the eval's dev split only
- * (apps/web/evals/prompt-injection, `--layer=layered --calibrate`).
+ * (apps/web/evals/prompt-injection, `--layer=layered --calibrate`): the most
+ * sensitive setting with dev false positives <= 1% and at most one ORION agent
+ * prompt flagged. Dev result: 85.0% of attack cases detected (rules alone:
+ * 81.0%), 0/156 benign notes and 0/12 agent prompts flagged.
  */
 export const DEFAULT_THRESHOLD = 0.5
 
@@ -54,7 +57,9 @@ export const DEFAULT_THRESHOLD = 0.5
  * runbook-style ops notes, so this trades a little recall for precision.
  * Calibrated on the dev split only, like DEFAULT_THRESHOLD.
  */
-export const DEFAULT_MIN_RULE_SCORE = 0
+export const DEFAULT_MIN_RULE_SCORE = 1
+// Without corroboration (ORION_INJECTION_CLASSIFIER_MIN_RULE_SCORE=0) dev detection is 88.5%
+// but 4/156 benign runbook notes are withheld; choose that only where recall matters more.
 
 const WINDOW_TOKENS = 510 // + [CLS] and [SEP] = the model's 512 limit
 const STRIDE_TOKENS = 384
