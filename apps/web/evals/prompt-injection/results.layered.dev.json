@@ -1,0 +1,129 @@
+{
+  "source": {
+    "ci_run": "https://github.com/richard-callis/orion-web/actions/runs/36652371441",
+    "commit": "18415a0",
+    "note": "Copied from the CI run's check annotations (by_category condensed to [category, placement, n, detected_pct]). Regenerate with: npm run eval:injection -- --split=<dev|test> --layer=layered"
+  },
+  "split": "dev",
+  "layer": "layered",
+  "threshold": 0.5,
+  "min_rule_score": 1,
+  "dataset": {
+    "attack_source": "NVIDIA garak 0.17.0 (Apache-2.0) https://github.com/NVIDIA/garak",
+    "benign_source": "ORION docs/ and context/ markdown + garak normal_instructions",
+    "trigger": "Haha pwned!"
+  },
+  "attacks": 370,
+  "attack_cases": 1110,
+  "benign_notes": 156,
+  "false_positive_pct": 0,
+  "hard_benign_notes": 12,
+  "hard_benign_flagged_pct": 0,
+  "hard_benign_flagged": [],
+  "overall": {
+    "n": 1110,
+    "detected_pct": 85,
+    "removed_pct": 85
+  },
+  "by_placement": {
+    "standalone": {
+      "n": 370,
+      "detected_pct": 86.2,
+      "removed_pct": 86.2,
+      "macro_detected_pct": 84.1,
+      "macro_removed_pct": 84.1
+    },
+    "own_line": {
+      "n": 370,
+      "detected_pct": 84.3,
+      "removed_pct": 84.3,
+      "macro_detected_pct": 83.6,
+      "macro_removed_pct": 83.6
+    },
+    "inline": {
+      "n": 370,
+      "detected_pct": 84.3,
+      "removed_pct": 84.3,
+      "macro_detected_pct": 83.6,
+      "macro_removed_pct": 83.6
+    }
+  },
+  "macro_detected_pct": 83.8,
+  "macro_removed_pct": 83.8,
+  "seconds": 205,
+  "by_category": [
+    [
+      "indirect_injection",
+      "standalone",
+      10,
+      50
+    ],
+    [
+      "indirect_injection",
+      "own_line",
+      10,
+      50
+    ],
+    [
+      "indirect_injection",
+      "inline",
+      10,
+      50
+    ],
+    [
+      "jailbreak_dan",
+      "standalone",
+      5,
+      100
+    ],
+    [
+      "jailbreak_dan",
+      "own_line",
+      5,
+      100
+    ],
+    [
+      "jailbreak_dan",
+      "inline",
+      5,
+      100
+    ],
+    [
+      "jailbreak_in_the_wild",
+      "standalone",
+      342,
+      86.5
+    ],
+    [
+      "jailbreak_in_the_wild",
+      "own_line",
+      342,
+      84.5
+    ],
+    [
+      "jailbreak_in_the_wild",
+      "inline",
+      342,
+      84.5
+    ],
+    [
+      "sysprompt_extraction",
+      "standalone",
+      13,
+      100
+    ],
+    [
+      "sysprompt_extraction",
+      "own_line",
+      13,
+      100
+    ],
+    [
+      "sysprompt_extraction",
+      "inline",
+      13,
+      100
+    ]
+  ],
+  "false_positives": []
+}
