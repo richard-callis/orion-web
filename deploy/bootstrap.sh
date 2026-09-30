@@ -295,6 +295,19 @@ if [[ ! -f "$DEPLOY_DIR/coredns/Corefile" ]]; then
   echo "Created coredns/Corefile from Corefile.example."
 fi
 
+# ── Remove retired services ───────────────────────────────────────────────────
+# The docker-compose ArgoCD "hub" was dropped (ArgoCD runs in-cluster). `up -d`
+# leaves containers of removed services running, so remove them explicitly.
+# The argocd-data volume is left in place; delete it by hand if unwanted.
+PROJECT="${COMPOSE_PROJECT_NAME:-$(basename "$DEPLOY_DIR")}"
+for svc in argocd-server argocd-application-controller argocd-repo-server argocd-redis; do
+  ids=$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT" \
+                      --filter "label=com.docker.compose.service=$svc")
+  if [[ -n "$ids" ]]; then
+    docker rm -f $ids >/dev/null && echo "Removed retired service container: $svc"
+  fi
+done
+
 # ── Pull latest images ────────────────────────────────────────────────────────
 echo ""
 echo "Pulling images..."

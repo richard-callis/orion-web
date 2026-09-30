@@ -1,8 +1,7 @@
-import { readFile } from 'fs/promises'
 import { ARGOCD_SERVER, ARGOCD_PASSWORD } from './config'
 
 export async function argocdLogin(): Promise<string> {
-  if (!ARGOCD_PASSWORD) return ''
+  if (!ARGOCD_SERVER || !ARGOCD_PASSWORD) return ''
   const res = await fetch(`${ARGOCD_SERVER}/api/v1/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -37,15 +36,9 @@ export function extractKubeconfigServer(kubeconfig: string): string | null {
   return match?.[1]?.trim() ?? null
 }
 
-/** Register the Talos cluster with the local ArgoCD server. */
-export async function argocdRegisterCluster(token: string, envName: string): Promise<void> {
+/** Register the environment's cluster (via its stored kubeconfig) with the ArgoCD hub. */
+export async function argocdRegisterCluster(token: string, envName: string, kubeconfig: string): Promise<void> {
   if (!token) return
-  // Read the Talos kubeconfig
-  const kubeconfig = await readFile('/root/.kube/config', 'utf-8').catch(() => '')
-  if (!kubeconfig) {
-    console.warn('[bootstrap] No kubeconfig found — skipping cluster registration')
-    return
-  }
 
   const clusterServer = extractKubeconfigServer(kubeconfig)
   if (!clusterServer) {

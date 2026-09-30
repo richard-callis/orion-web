@@ -22,7 +22,14 @@ chmod 700 "$BACKUP_DIR"
 # Keeps the newest PREDEPLOY_KEEP dumps. Fails the deploy
 # if the dump fails; skips (exit 0) when no database is running yet.
 if [[ "${1:-}" == "--pre-deploy" ]]; then
-  if [[ -z "$($COMPOSE ps -q --status running postgres 2>/dev/null)" ]]; then
+  # A broken compose config (e.g. a missing required .env var) must fail the
+  # deploy, not read as "postgres not running" and silently skip the backup.
+  if ! COMPOSE_ERR=$($COMPOSE config -q 2>&1); then
+    echo "ERROR: Pre-deploy backup: docker compose config is invalid — refusing to deploy without a backup:"
+    echo "$COMPOSE_ERR"
+    exit 1
+  fi
+  if [[ -z "$($COMPOSE ps -q --status running postgres)" ]]; then
     echo "Pre-deploy backup: postgres is not running (fresh install?) — skipping."
     exit 0
   fi

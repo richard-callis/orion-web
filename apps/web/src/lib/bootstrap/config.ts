@@ -1,6 +1,6 @@
 /** Process-level settings shared by the bootstrap flows (resolved at module load). */
 
-export const ARGOCD_SERVER = process.env.ARGOCD_SERVER ?? 'http://host.docker.internal:8083'
+export const ARGOCD_SERVER = process.env.ARGOCD_SERVER || undefined
 export const ARGOCD_PASSWORD = process.env.ARGOCD_AUTH_TOKEN
 
 export const ORION_URL       = (

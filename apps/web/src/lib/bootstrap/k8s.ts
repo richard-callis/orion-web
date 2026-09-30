@@ -37,12 +37,12 @@ export async function bootstrapK8sCluster(
     if (!gitInfo) return
 
     // 3. Register with local ArgoCD
-    emit({ type: 'step', message: 'Registering with local ArgoCD...' })
+    emit({ type: 'step', message: 'Registering with ArgoCD hub...' })
     const argocdToken = await argocdLogin()
     if (argocdToken) {
       const clusterServer = extractKubeconfigServer(kubeconfigYaml)
       if (clusterServer) {
-        await argocdRegisterCluster(argocdToken, env.name)
+        await argocdRegisterCluster(argocdToken, env.name, kubeconfigYaml)
         if (gitInfo.healthy && argocdToken) {
           await argocdConfigureApp(argocdToken, env.name, gitInfo.url, clusterServer)
         }
