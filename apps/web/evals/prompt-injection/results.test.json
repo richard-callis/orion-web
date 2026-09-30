@@ -1,5 +1,7 @@
 {
   "split": "test",
+  "layer": "rules",
+  "threshold": null,
   "dataset": {
     "attack_source": "NVIDIA garak 0.17.0 (Apache-2.0) https://github.com/NVIDIA/garak",
     "benign_source": "ORION docs/ and context/ markdown + garak normal_instructions",
@@ -133,5 +135,6 @@
       "detected_pct": 33.3,
       "removed_pct": 33.3
     }
-  ]
+  ],
+  "seconds": 0
 }

@@ -18,6 +18,7 @@
 
 import { prisma } from './lib/db'
 import { startDream, stopDream } from './lib/dream'
+import { warmInjectionClassifier } from './lib/injection-classifier'
 import { healUnencryptedSettings } from './lib/encrypted-settings'
 import { recoverStalledJobs } from './lib/job-runner'
 import { registerScheduledJobs, stopScheduledJobs } from './jobs/scheduled-jobs'
@@ -83,6 +84,10 @@ async function main() {
   //   pruning (every 24h): reviews notes older than 7 days, flags or deletes stale ones.
   //   model: configurable via dream.model SystemSetting (falls back to system default).
   startDream()
+
+  // SOC2 C-001: download/load the prompt-injection model in the background so
+  // the first context retrieval isn't blocked by it (no-op when disabled).
+  warmInjectionClassifier()
 
   // Daily vuln scan: run now if the worker restarted and missed 02:00.
   catchUpDailyScan()

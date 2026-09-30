@@ -1,0 +1,102 @@
+name: Prompt-injection eval
+
+# Measures ORION's context sanitizer (SOC2 C-001) against public attack prompts
+# (NVIDIA garak) on the held-out split, and gates regressions. Also proves the
+# DeBERTa classifier loads and runs inside the Alpine runtime image.
+# GitHub-hosted runners only (pull requests must never reach the self-hosted runner).
+
+on:
+  pull_request:   # any base branch, so stacked PRs are measured too
+    paths:
+      - apps/web/src/lib/sanitize-context.ts
+      - apps/web/src/lib/injection-classifier.ts
+      - apps/web/evals/prompt-injection/**
+      - .github/workflows/injection-eval.yml
+  push:
+    branches: [main]
+    paths:
+      - apps/web/src/lib/sanitize-context.ts
+      - apps/web/src/lib/injection-classifier.ts
+      - apps/web/evals/prompt-injection/**
+  workflow_dispatch:
+
+concurrency:
+  group: injection-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '26'
+  ONNXRUNTIME_NODE_INSTALL: skip   # no CUDA/TensorRT download; CPU inference only
+  ORION_MODEL_CACHE_DIR: ${{ github.workspace }}/.model-cache
+  ORION_INJECTION_CLASSIFIER_TIMEOUT_MS: '0'
+  # Bump with MODEL.revision in apps/web/src/lib/injection-classifier.ts
+  MODEL_CACHE_KEY: deberta-v3-base-prompt-injection-v2-90c9989b1a342275dd0d1a95aad283c04e075671
+
+jobs:
+  eval:
+    name: Held-out eval (rules + classifier)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .model-cache
+          key: ${{ env.MODEL_CACHE_KEY }}
+
+      - name: Rule layer, held-out test (gate)
+        working-directory: apps/web
+        run: npm run eval:injection -- --split=test --layer=rules --min-detected=70 --max-fp=1
+
+      - name: Layered, dev split (threshold calibration)
+        working-directory: apps/web
+        run: npm run eval:injection -- --split=dev --layer=layered --calibrate
+
+      - name: Job summary
+        if: always()
+        working-directory: apps/web/evals/prompt-injection
+        run: |
+          {
+            echo '## Prompt-injection eval'
+            for f in results.test.json results.layered.dev.json; do
+              [ -f "$f" ] || continue
+              node -e "const r=require('./$f');console.log('**'+r.layer+' / '+r.split+(r.threshold?' @ '+r.threshold:'')+'**: detected '+r.overall.detected_pct+'% · category-balanced '+r.macro_detected_pct+'% · benign FP '+r.false_positive_pct+'% · agent prompts flagged '+r.hard_benign_flagged.length+'/'+r.hard_benign_notes+' · '+r.seconds+'s\n')"
+            done
+            [ -f calibration.dev.json ] && { echo '### Dev threshold sweep'; echo '```json'; cat calibration.dev.json; echo '```'; }
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: injection-eval-results
+          path: apps/web/evals/prompt-injection/*.json
+          if-no-files-found: ignore
+
+  alpine:
+    name: Classifier on the Alpine runtime image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .model-cache
+          key: ${{ env.MODEL_CACHE_KEY }}
+      # Same base image and runtime packages as apps/web/Dockerfile's runner stage.
+      # JavaScript actions can't run inside Alpine, so run the steps via docker.
+      - name: Smoke test inside node:26-alpine
+        run: |
+          mkdir -p .model-cache
+          docker run --rm -v "$PWD:/w" -w /w \
+            -e ONNXRUNTIME_NODE_INSTALL=skip -e ORION_MODEL_CACHE_DIR=/w/.model-cache \
+            node:26.10.0-alpine3.24@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 \
+            sh -c 'apk add --no-cache libc6-compat libstdc++ >/dev/null && npm ci --no-audit --no-fund >/dev/null && cd apps/web && npx tsx evals/prompt-injection/smoke.mjs' \
+            | tee smoke.txt
+          { echo '## Classifier on Alpine'; echo '```'; cat smoke.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
