@@ -8,6 +8,7 @@ interface OIDCConfig {
   name: string
   enabled: boolean
   headerMode: boolean
+  issuerUrl?: string | null
   groupMapping: Record<string, string> | null
 }
 
@@ -35,6 +36,11 @@ export default function SSOPage() {
       })
       .catch(() => setLoading(false))
   }, [])
+
+  // Admin link comes from the configured issuer — nothing is hardcoded per install.
+  const ssoOrigin = (() => {
+    try { return config?.issuerUrl ? new URL(config.issuerUrl).origin : null } catch { return null }
+  })()
 
   const handleSave = async () => {
     setMappingError(null)
@@ -134,18 +140,20 @@ export default function SSOPage() {
       </div>
 
       {/* Links */}
-      <div className="rounded-lg border border-border-subtle bg-bg-card p-4 space-y-3">
-        <h2 className="text-sm font-semibold text-text-primary">Links</h2>
-        <a
-          href="https://auth.khalisio.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2 text-sm text-accent hover:underline"
-        >
-          <ExternalLink size={13} />
-          Authentik Admin Panel
-        </a>
-      </div>
+      {ssoOrigin && (
+        <div className="rounded-lg border border-border-subtle bg-bg-card p-4 space-y-3">
+          <h2 className="text-sm font-semibold text-text-primary">Links</h2>
+          <a
+            href={ssoOrigin}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 text-sm text-accent hover:underline"
+          >
+            <ExternalLink size={13} />
+            {config?.name ?? 'SSO'} Admin Panel
+          </a>
+        </div>
+      )}
 
       {/* Coming soon section */}
       <div className="rounded-lg border border-border-subtle bg-bg-card p-4 opacity-50">

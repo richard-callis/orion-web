@@ -65,7 +65,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 const PROVIDER_DEFAULTS: Record<string, Partial<ModelForm>> = {
   openai:    { baseUrl: 'https://api.openai.com/v1', modelId: 'gpt-4o' },
-  ollama:    { baseUrl: 'http://10.2.2.34:30068', modelId: 'llama3.2:3b' },
+  ollama:    { baseUrl: 'http://localhost:11434', modelId: 'llama3.2:3b' },
   anthropic: { baseUrl: 'https://api.anthropic.com', modelId: 'claude-sonnet-4-6' },
   custom:    { baseUrl: '', modelId: '' },
 }

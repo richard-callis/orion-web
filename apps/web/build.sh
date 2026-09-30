@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Build ORION Docker image on homelab-master and distribute to all cluster nodes.
+# Build ORION Docker image on a k3s control-plane node and distribute to all cluster nodes.
 # Usage: ./build.sh [tag]
 #
 # Why this script does what it does:
@@ -17,13 +17,10 @@ set -e
 TAG=${1:-$(git rev-parse --short HEAD 2>/dev/null || echo "dev")}
 IMAGE="orion:$TAG"
 
-# All amd64 nodes that can run the pod (RPi nodes are arm64 and won't be scheduled)
-NODES=(
-  "ubuntu@10.2.2.242"  # k3s-ubuntu-worker1 (CP)
-  "ubuntu@10.2.2.78"   # k3s-ubuntu-worker2 (CP)
-  "ubuntu@10.2.2.128"  # k3s-ubuntu-worker3 (worker)
-  "ubuntu@10.2.2.210"  # k3s-ubuntu-worker4 (worker)
-)
+# All amd64 nodes that can run the pod, as space-separated ssh targets, e.g.
+#   ORION_BUILD_NODES="ubuntu@192.168.1.21 ubuntu@192.168.1.22" ./build.sh
+: "${ORION_BUILD_NODES:?Set ORION_BUILD_NODES to the ssh targets of your amd64 cluster nodes}"
+read -r -a NODES <<< "$ORION_BUILD_NODES"
 
 echo "==> Building $IMAGE"
 cd "$(dirname "$0")"
@@ -38,9 +35,9 @@ echo "==> Saving image to tarball..."
 TARBALL=$(mktemp /tmp/orion-XXXXXX.tar)
 docker save orion:latest > "$TARBALL"
 
-# Import into THIS node's k3s containerd (homelab-master)
+# Import into THIS node's k3s containerd
 # K3s CP nodes use /run/k3s/containerd/containerd.sock — not the system containerd
-echo "==> Importing into local k3s containerd (homelab-master)"
+echo "==> Importing into local k3s containerd"
 sudo ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images import - < "$TARBALL"
 
 # Distribute to all other amd64 nodes in parallel

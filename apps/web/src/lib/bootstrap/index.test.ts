@@ -1,20 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const { findUnique, docker, runQuiet, runCommand } = vi.hoisted(() => ({
+const { findUnique, domainFindFirst, readFile, docker, runQuiet, runCommand } = vi.hoisted(() => ({
   findUnique: vi.fn(),
+  domainFindFirst: vi.fn(),
+  readFile: vi.fn(),
   docker: vi.fn(),
   runQuiet: vi.fn(async () => ({ ok: true, out: '' })),
   runCommand: vi.fn(async () => {}),
 }))
 
-vi.mock('../db', () => ({ prisma: { environment: { findUnique, update: vi.fn() } } }))
+vi.mock('../db', () => ({ prisma: { environment: { findUnique, update: vi.fn() }, domain: { findFirst: domainFindFirst } } }))
+vi.mock('fs/promises', async (orig) => ({ ...(await orig<typeof import('fs/promises')>()), readFile }))
 vi.mock('./docker', () => ({ bootstrapDockerEnvironment: docker }))
 vi.mock('./swarm', () => ({ bootstrapSwarmEnvironment: vi.fn() }))
 vi.mock('./k8s', () => ({ bootstrapK8sCluster: vi.fn() }))
 vi.mock('./shell', () => ({ runQuiet, runCommand }))
 
 import { bootstrapCluster } from './index'
-import { deployBootstrapMonitoring } from './monitoring'
+import { deployBootstrapMonitoring, applyMonitoringIngresses } from './monitoring'
 import type { BootstrapEnvironment } from './types'
 
 const emit = vi.fn()
@@ -71,6 +74,28 @@ describe('deployBootstrapMonitoring', () => {
   it('does nothing when no stack is configured', async () => {
     await deployBootstrapMonitoring({ monitoringConfig: null } as unknown as BootstrapEnvironment, {}, emit)
     expect(runQuiet).not.toHaveBeenCalled()
+    expect(runCommand).not.toHaveBeenCalled()
+  })
+})
+
+describe('applyMonitoringIngresses', () => {
+  it('renders ingress hosts on the configured internal domain', async () => {
+    domainFindFirst.mockResolvedValue({ name: 'corp.test' })
+    readFile.mockResolvedValue('match: Host(`siem.__INTERNAL_DOMAIN__`)')
+    const { readFile: realReadFile } = await vi.importActual<typeof import('fs/promises')>('fs/promises')
+    const rendered: string[] = []
+    runCommand.mockImplementation(async (_cmd: string, args: string[]) => {
+      rendered.push(await realReadFile(args[2], 'utf8'))
+    })
+    await applyMonitoringIngresses({}, emit)
+    expect(rendered).toHaveLength(2)
+    for (const r of rendered) expect(r).toBe('match: Host(`siem.corp.test`)')
+    runCommand.mockReset().mockImplementation(async () => {})
+  })
+
+  it('skips ingress routes when no internal domain is configured', async () => {
+    domainFindFirst.mockResolvedValue(null)
+    await applyMonitoringIngresses({}, emit)
     expect(runCommand).not.toHaveBeenCalled()
   })
 })

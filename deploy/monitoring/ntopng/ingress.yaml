@@ -1,3 +1,4 @@
+# Not applied automatically — set the host to your internal domain, then kubectl apply.
 apiVersion: traefik.containo.us/v1alpha1
 kind: IngressRoute
 metadata:
@@ -10,7 +11,7 @@ spec:
     - web
     - websecure
   routes:
-    - match: Host(`ntopng.khalis.corp`)
+    - match: Host(`ntopng.example.internal`)
       kind: Rule
       services:
         - name: ntopng

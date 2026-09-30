@@ -277,7 +277,7 @@ export function PointPanel({ point, domain, environments, onChange }: {
                     <span>LoadBalancer IP (MetalLB):</span>
                     <InlineEdit
                       value={point.ip ?? ''}
-                      placeholder="e.g. 10.2.2.200"
+                      placeholder="e.g. 192.168.1.200"
                       onSave={ip => patchPoint({ ip: ip || null })}
                     />
                     {!point.ip && (

@@ -26,7 +26,7 @@ Before planning any feature or task that depends on external software or service
 - Traefik (ingress controller, kube-system namespace)
 - Longhorn (storage, kube-system namespace, StorageClass: longhorn)
 - cert-manager + Let's Encrypt via Cloudflare DNS-01 (security namespace)
-- Authentik SSO (security namespace, auth.khalisio.com)
+- Authentik SSO (security namespace)
 - CrowdSec bouncer middleware (security namespace)
 - MetalLB (load balancer, kube-system namespace)
 - Victoria Metrics + Grafana (monitoring namespace)

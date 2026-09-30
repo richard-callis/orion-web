@@ -13,7 +13,6 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 
 const CERTS_DIR   = process.env.VAULT_PROXY_CERTS_DIR ?? '/vault-proxy-certs'
-const MANAGEMENT_IP = process.env.MANAGEMENT_IP ?? '10.2.2.9'
 
 function runOpenssl(args: string[]): Promise<{ ok: boolean; out: string }> {
   return new Promise((resolve) => {
@@ -39,6 +38,12 @@ export async function generateVaultProxyCerts(): Promise<void> {
   const alreadyExists = await access(caCertPath).then(() => true).catch(() => false)
   if (alreadyExists) return
 
+  // Deployment-specific — must come from the environment (deploy/.env), never a baked-in default.
+  const managementIp = process.env.MANAGEMENT_IP
+  const vaultDomain  = process.env.VAULT_DOMAIN
+  if (!managementIp) throw new Error('MANAGEMENT_IP is not set — required for the vault-proxy certificate SAN')
+  if (!vaultDomain)  throw new Error('VAULT_DOMAIN is not set — required for the vault-proxy certificate SAN')
+
   await mkdir(CERTS_DIR, { recursive: true })
 
   const tmpDir  = await mkdtemp(join(tmpdir(), 'vault-proxy-certs-'))
@@ -50,8 +55,8 @@ export async function generateVaultProxyCerts(): Promise<void> {
       '[req_ext]',
       'subjectAltName = @alt_names',
       '[alt_names]',
-      `IP.1  = ${MANAGEMENT_IP}`,
-      'DNS.1 = vault.khalis.corp',
+      `IP.1  = ${managementIp}`,
+      `DNS.1 = ${vaultDomain}`,
       'DNS.2 = vault',
       'DNS.3 = localhost',
     ].join('\n'))

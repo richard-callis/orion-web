@@ -64,7 +64,7 @@ export function NewPointForm({
         </Select>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <Input value={form.ip} onChange={e => set('ip', e.target.value)} placeholder="VIP / IP (e.g. 10.2.2.200)" />
+        <Input value={form.ip} onChange={e => set('ip', e.target.value)} placeholder="VIP / IP (e.g. 192.168.1.200)" />
         <Input value={form.port} onChange={e => set('port', e.target.value)} placeholder="Port (443)" />
       </div>
       <Select value={form.environmentId} onChange={e => set('environmentId', e.target.value)}>

@@ -26,7 +26,12 @@ if [[ "$REVERSE_PROXY_TYPE" == "docker" ]]; then
   PROFILE_FLAGS="$PROFILE_FLAGS --profile proxy"
 fi
 
-COMPOSE="docker compose -f $DEPLOY_DIR/docker-compose.yml --env-file $DEPLOY_DIR/.env $PROFILE_FLAGS"
+COMPOSE_FILES="-f $DEPLOY_DIR/docker-compose.yml"
+# Site-specific additions (extra_hosts, etc.) live in an untracked override file.
+if [[ -f "$DEPLOY_DIR/docker-compose.override.yml" ]]; then
+  COMPOSE_FILES="$COMPOSE_FILES -f $DEPLOY_DIR/docker-compose.override.yml"
+fi
+COMPOSE="docker compose $COMPOSE_FILES --env-file $DEPLOY_DIR/.env $PROFILE_FLAGS"
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 RESET=false
@@ -246,6 +251,14 @@ eval "$VERSION_OVERRIDES"
 MISSING=()
 [[ -z "${GITHUB_ORG:-}" ]]        && MISSING+=("GITHUB_ORG")
 [[ -z "${POSTGRES_PASSWORD:-}" ]] && MISSING+=("POSTGRES_PASSWORD")
+# Deployment-specific network identity — no baked-in defaults.
+[[ -z "${MANAGEMENT_IP:-}" ]]       && MISSING+=("MANAGEMENT_IP")
+[[ -z "${ORION_DOMAIN:-}" ]]        && MISSING+=("ORION_DOMAIN")
+[[ -z "${VAULT_DOMAIN:-}" ]]        && MISSING+=("VAULT_DOMAIN")
+[[ -z "${VAULT_ALLOWED_CIDRS:-}" ]] && MISSING+=("VAULT_ALLOWED_CIDRS")
+if [[ "$GIT_PROVIDER" == "gitea-bundled" && -z "${GITEA_DOMAIN:-}" ]]; then
+  MISSING+=("GITEA_DOMAIN (required when GIT_PROVIDER=gitea-bundled)")
+fi
 
 if [[ ${#MISSING[@]} -gt 0 ]]; then
   echo ""
@@ -253,6 +266,33 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
   for v in "${MISSING[@]}"; do echo "  - $v"; done
   echo "Edit $DEPLOY_DIR/.env and re-run."
   exit 1
+fi
+
+# ── Render vault-proxy Envoy config ───────────────────────────────────────────
+# envoy.yaml.tmpl → envoy.yaml with one allow-lan principal per CIDR in
+# VAULT_ALLOWED_CIDRS (comma-separated, e.g. "192.168.1.0/24,10.0.0.0/16").
+ENVOY_PRINCIPALS=""
+IFS=',' read -r -a VAULT_CIDRS <<< "$VAULT_ALLOWED_CIDRS"
+for cidr in "${VAULT_CIDRS[@]}"; do
+  cidr="${cidr// /}"
+  [[ -z "$cidr" ]] && continue
+  if [[ ! "$cidr" =~ ^([0-9]{1,3}(\.[0-9]{1,3}){3})/([0-9]{1,2})$ ]]; then
+    echo "ERROR: VAULT_ALLOWED_CIDRS entry '$cidr' is not an IPv4 CIDR (a.b.c.d/n)." && exit 1
+  fi
+  ENVOY_PRINCIPALS+="- remote_ip:\n                    address_prefix: ${BASH_REMATCH[1]}\n                    prefix_len: ${BASH_REMATCH[3]}\n                "
+done
+ENVOY_PRINCIPALS="${ENVOY_PRINCIPALS%\\n                }"
+awk -v p="$(printf '%b' "$ENVOY_PRINCIPALS")" '{ sub(/__VAULT_ALLOWED_PRINCIPALS__/, p); print }' \
+  "$DEPLOY_DIR/vault-proxy/envoy.yaml.tmpl" > "$DEPLOY_DIR/vault-proxy/envoy.yaml"
+echo "Rendered vault-proxy/envoy.yaml (allowing ${VAULT_ALLOWED_CIDRS})."
+
+# ── Seed CoreDNS config ───────────────────────────────────────────────────────
+# Corefile is runtime state (the setup wizard adds the internal-domain block);
+# only seed it from the template when absent.
+if [[ ! -f "$DEPLOY_DIR/coredns/Corefile" ]]; then
+  cp "$DEPLOY_DIR/coredns/Corefile.example" "$DEPLOY_DIR/coredns/Corefile"
+  chown 1001:1001 "$DEPLOY_DIR/coredns/Corefile" 2>/dev/null || true
+  echo "Created coredns/Corefile from Corefile.example."
 fi
 
 # ── Pull latest images ────────────────────────────────────────────────────────
@@ -460,7 +500,7 @@ if [[ -n "${SETUP_TOKEN:-}" ]]; then
   echo "========================================"
   echo "  ORION is ready for first-run setup"
   echo "  Visit: http://$(hostname -I | awk '{print $1}'):3000"
-  echo "  Or:    https://${ORION_DOMAIN:-orion.khalis.corp}"
+  echo "  Or:    https://${ORION_DOMAIN}"
   if [[ -z "${CI:-}" ]]; then echo "  Setup token: $SETUP_TOKEN"; fi
   echo "========================================"
 else

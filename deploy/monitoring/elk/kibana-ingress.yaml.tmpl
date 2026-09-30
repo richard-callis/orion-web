@@ -1,0 +1,21 @@
+# Rendered by lib/bootstrap/monitoring.ts: __INTERNAL_DOMAIN__ is replaced with
+# the internal domain configured in ORION (Ingress → Domains). Skipped if none.
+# IngressRoute for Kibana — Traefik IngressRoute
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kibana-internal
+  namespace: elk
+  labels:
+    app: kibana
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - match: Host(`siem.__INTERNAL_DOMAIN__`)
+      kind: Rule
+      services:
+        - name: kibana
+          port: 5601
+          namespace: elk

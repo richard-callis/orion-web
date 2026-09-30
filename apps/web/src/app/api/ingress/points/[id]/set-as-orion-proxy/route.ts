@@ -41,8 +41,8 @@ export async function POST(
   })
   if (!point) return NextResponse.json({ error: 'IngressPoint not found' }, { status: 404 })
 
-  // point.domain.name is the apex domain (e.g. "khalisio.com").
-  // The actual Orion hostname may be a subdomain (e.g. "orion.khalisio.com") configured
+  // point.domain.name is the apex domain (e.g. "example.com").
+  // The actual Orion hostname may be a subdomain (e.g. "orion.example.com") configured
   // in the IngressRoute. For now we use the apex; the user can override publicUrl in .env.
   const publicUrl = `https://${point.domain.name}`
 

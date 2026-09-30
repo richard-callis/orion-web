@@ -235,7 +235,7 @@ export function ClusterPreflightFlow({ envId, onReady }: Props) {
                 id={`${envId}-nodeip`}
                 value={inlineNodeIp}
                 onChange={e => setInlineNodeIp(e.target.value)}
-                placeholder="10.2.2.100"
+                placeholder="192.168.1.100"
                 className="text-xs"
               />
             </>

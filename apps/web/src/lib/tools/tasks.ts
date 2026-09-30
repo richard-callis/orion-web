@@ -430,7 +430,7 @@ export const orionCreateTaskTool: ToolDefinition = {
       plan:              { type: 'string', description: 'Numbered step-by-step implementation plan. Each step should be specific enough for a smaller LLM to execute. E.g.:\n1. Read /path/to/file and understand X\n2. Edit Y to add Z\n3. Run the test suite\n4. Verify output matches expected' },
       targetEnvironment: {
         type: 'object',
-        description: 'For deployment tasks — the target environment as designated by the Atlas. Pass as an object with keys: namespace (e.g. "apps"), hostname (e.g. "myapp.khalisio.com"), storageClass (e.g. "longhorn", if storage needed), vaultPath (e.g. "secret/data/myapp", if secrets needed), certIssuer (e.g. "letsencrypt-prod", if the Ingress is TLS-enabled — the executing agent must set this as the cert-manager.io/cluster-issuer annotation or no certificate will be issued).',
+        description: 'For deployment tasks — the target environment as designated by the Atlas. Pass as an object with keys: namespace (e.g. "apps"), hostname (e.g. "myapp.example.com"), storageClass (e.g. "longhorn", if storage needed), vaultPath (e.g. "secret/data/myapp", if secrets needed), certIssuer (e.g. "letsencrypt-prod", if the Ingress is TLS-enabled — the executing agent must set this as the cert-manager.io/cluster-issuer annotation or no certificate will be issued).',
       },
       dedup_key: {
         type: 'string',

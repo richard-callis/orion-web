@@ -20,7 +20,7 @@ interface GiteaProviderOptions {
   url: string
   token: string
   webhookSecret?: string
-  /** Public-facing base URL used for PR links in the UI (e.g. https://gitea.khalisio.com).
+  /** Public-facing base URL used for PR links in the UI (e.g. https://gitea.example.com).
    *  Defaults to `url` when omitted. Needed when ORION calls Gitea via an internal
    *  Docker/K8s hostname — Gitea echoes that hostname back in html_url. */
   publicUrl?: string
