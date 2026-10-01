@@ -17,7 +17,11 @@
 import { prisma } from './db'
 import { setTyping, clearTyping } from './typing-state'
 import { TOOLS_SYSTEM_ADDENDUM } from './agent-tools'
-import { executeRegisteredTool } from './tool-registry'
+import { executeRegisteredTool, getToolDefinition } from './tool-registry'
+// Side-effect import: registers siem_*/github_*/skill tools into the registry
+// above. See tool-registry-bootstrap.ts for why this must be imported here,
+// at the actual tool-dispatch chokepoint, rather than left implicit.
+import './tool-registry-bootstrap'
 import { buildRoomToolSchemas } from './room-tools'
 import { checkToolPermission } from './tool-permissions'
 import { publishChatMessage } from './chat-redis'
@@ -40,6 +44,38 @@ import { createOpenAIProvider } from './agent-runner/engine/providers/openai'
 import { runToolLoop, type LoopUsage, type LoopEndReason } from './agent-runner/engine/loop'
 import { ProviderHttpError, type EngineMessage, type ToolCallRequest, type ToolSpec } from './agent-runner/engine/types'
 import { validateArgsAgainstSchema } from './tool-args-validation'
+
+// ── LLM provider retry (transient network/5xx only) ───────────────────────────
+
+/**
+ * Bounded retry for transient provider failures. Previously both provider
+ * call paths failed fast on the first network/HTTP error, silently dropping
+ * the agent's turn — for Warden specifically, a dropped triage with no
+ * automatic recovery. Mirrors the exponential-backoff shape already used for
+ * the gateway's own reconnect loop (apps/gateway/src/index.ts withRetry),
+ * bounded here since this guards a single request/response, not a
+ * long-lived connection.
+ *
+ * Safe to retry runToolLoop() wholesale: it mutates the shared `messages`
+ * array in place as it goes (engine/loop.ts), so a retried call resumes from
+ * the current conversation state — it does not re-run tool calls that already
+ * completed in an earlier, failed attempt.
+ */
+const LLM_RETRY_MAX_ATTEMPTS = 3
+const LLM_RETRY_BASE_DELAY_MS = 1_000
+
+/** undefined status = no response at all (network/timeout); 5xx = transient server issue. 4xx is not retried. */
+function isRetryableProviderStatus(status: number | undefined): boolean {
+  return status === undefined || status >= 500
+}
+
+function llmRetryDelayMs(attempt: number): number {
+  return LLM_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
 
 // ── Tool name fuzzy resolution ────────────────────────────────────────────────
 
@@ -242,12 +278,25 @@ export async function callClaude(
     ...(useMcp ? { agentId, roomId, maxTurns: hasTools ? 6 : 3 } : { maxTurns: 1 }),
     ...(modelId ? { model: modelId } : {}),
   }
-  let r: SidecarCollectResult
-  try {
-    // MCP tool calls can take longer — allow 5 min for tool-using sessions
-    r = await sidecarCollect(request, { timeoutMs: useMcp ? 300_000 : 120_000 })
-  } catch (e) {
-    console.error(`[room-agents] orion-claude fetch failed: ${e instanceof Error ? e.message : String(e)}`)
+  let r: SidecarCollectResult | null = null
+  let networkError: string | null = null
+  for (let attempt = 1; attempt <= LLM_RETRY_MAX_ATTEMPTS; attempt++) {
+    networkError = null
+    try {
+      // MCP tool calls can take longer — allow 5 min for tool-using sessions
+      r = await sidecarCollect(request, { timeoutMs: useMcp ? 300_000 : 120_000 })
+    } catch (e) {
+      networkError = e instanceof Error ? e.message : String(e)
+      r = null
+    }
+    const retryable = r ? isRetryableProviderStatus(r.status) : true
+    if ((r && r.ok) || !retryable || attempt === LLM_RETRY_MAX_ATTEMPTS) break
+    const delay = llmRetryDelayMs(attempt)
+    console.warn(`[room-agents] orion-claude attempt ${attempt} failed (${networkError ?? `HTTP ${r?.status}`}) — retrying in ${delay}ms`)
+    await sleep(delay)
+  }
+  if (!r) {
+    console.error(`[room-agents] orion-claude fetch failed after ${LLM_RETRY_MAX_ATTEMPTS} attempts: ${networkError}`)
     return { text: null, error: 'service unreachable', inputTokens: 0, outputTokens: 0 }
   }
   if (!r.ok) {
@@ -463,10 +512,22 @@ export async function callOpenAIChat(
             // The per-agent allowlist applies to auto-corrected names too
             result = `Permission denied: tool '${resolved.name}' is not in this agent's allowed tool list.`
           } else if (registryToolNames.has(resolved.name)) {
-            // Same guarded path as a direct call — fuzzy resolution must not bypass it
-            result = await runRegistryTool(resolved.name, args)
+            // Word-overlap matching has no notion of which tool mutates state — only
+            // auto-execute a fuzzy match when the resolved tool is read-only. A
+            // hallucinated name landing on a real write/destructive tool must be
+            // confirmed by the model calling it explicitly, not silently executed.
+            const tier = getToolDefinition(resolved.name)?.tier
+            if (tier !== 'read') {
+              result = `[Auto-corrected "${call.name}" → "${resolved.name}" but did not execute: that tool is tier="${tier ?? 'unknown'}" — ` +
+                `write/destructive tools are never auto-executed on a fuzzy name match. Call "${resolved.name}" explicitly if that's what you meant.]`
+            } else {
+              // Same guarded path as a direct call — fuzzy resolution must not bypass it
+              result = await runRegistryTool(resolved.name, args)
+            }
           } else if (gateway && gatewayToolNames.has(resolved.name)) {
-            // Same guarded path as a direct gateway call
+            // Gateway tools carry no tier metadata at this layer (listTools() returns
+            // name/description/category/inputSchema only) — the read/write gate above
+            // can't be applied here. Known residual gap, not closed by this change.
             result = await runGatewayTool(resolved.name, args)
           } else {
             result = `[Auto-corrected "${call.name}" → "${resolved.name}" but still could not execute]`
@@ -531,44 +592,56 @@ export async function callOpenAIChat(
     ({ reply, tokensUsed: usage.lastInputTokens ?? 0, contextLimit, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens })
 
   let endReason: LoopEndReason = 'max_turns'
-  try {
-    for await (const ev of runToolLoop({
-      provider: providerFor(hasTools),
-      messages,
-      tools,
-      maxTurns: MAX_TOOL_ROUNDS,
-      usage,
-      assistantContent: t => t,
-      toolMessageName: true,
-      toolCallsRequireFinishReason: true,
-      runCap: {
-        cap,
-        after: (r, msgs) => (r.usage?.inputTokens ?? estimateTokens(JSON.stringify(msgs))) + (r.usage?.outputTokens ?? 0),
-      },
-      hooks: {
-        runTool: call => runRoomTool(call),
-        reviewFinal: text => {
-          const replyText = text?.trim() || null
-          if (!replyText || !isFakeToolCall(replyText)) return null
-          // The model wrote a tool call as prose instead of using tool_calls
-          console.warn(`[room-agents] ${agentName}: detected fake tool call in text reply: "${replyText}" — injecting correction`)
-          return {
-            assistant: replyText,
-            user: `Your last reply looked like a tool call written as plain text ("${replyText}"). ` +
-              `Do NOT write tool names in your reply text. ` +
-              `Use the JSON tool_calls mechanism to call tools, or write a real text reply if you have an answer.`,
-          }
+  let lastProviderError: ProviderHttpError | null = null
+  for (let attempt = 1; attempt <= LLM_RETRY_MAX_ATTEMPTS; attempt++) {
+    lastProviderError = null
+    try {
+      for await (const ev of runToolLoop({
+        provider: providerFor(hasTools),
+        messages,
+        tools,
+        maxTurns: MAX_TOOL_ROUNDS,
+        usage,
+        assistantContent: t => t,
+        toolMessageName: true,
+        toolCallsRequireFinishReason: true,
+        runCap: {
+          cap,
+          after: (r, msgs) => (r.usage?.inputTokens ?? estimateTokens(JSON.stringify(msgs))) + (r.usage?.outputTokens ?? 0),
         },
-      },
-    })) {
-      if (ev.type !== 'end') continue
-      if (ev.reason === 'final') return result(ev.empty ? null : ev.finalText?.trim() || null)
-      endReason = ev.reason
-      if (endReason === 'cap') console.warn(`[room-agents] ${agentName}: ${cap.message}`)
+        hooks: {
+          runTool: call => runRoomTool(call),
+          reviewFinal: text => {
+            const replyText = text?.trim() || null
+            if (!replyText || !isFakeToolCall(replyText)) return null
+            // The model wrote a tool call as prose instead of using tool_calls
+            console.warn(`[room-agents] ${agentName}: detected fake tool call in text reply: "${replyText}" — injecting correction`)
+            return {
+              assistant: replyText,
+              user: `Your last reply looked like a tool call written as plain text ("${replyText}"). ` +
+                `Do NOT write tool names in your reply text. ` +
+                `Use the JSON tool_calls mechanism to call tools, or write a real text reply if you have an answer.`,
+            }
+          },
+        },
+      })) {
+        if (ev.type !== 'end') continue
+        if (ev.reason === 'final') return result(ev.empty ? null : ev.finalText?.trim() || null)
+        endReason = ev.reason
+        if (endReason === 'cap') console.warn(`[room-agents] ${agentName}: ${cap.message}`)
+      }
+      break
+    } catch (e) {
+      if (!(e instanceof ProviderHttpError)) throw e
+      lastProviderError = e
+      if (!isRetryableProviderStatus(e.status) || attempt === LLM_RETRY_MAX_ATTEMPTS) break
+      const delay = llmRetryDelayMs(attempt)
+      console.warn(`[room-agents] ${agentName}: OpenAI-compat ${baseUrl} HTTP ${e.status} on attempt ${attempt} — retrying in ${delay}ms`)
+      await sleep(delay)
     }
-  } catch (e) {
-    if (!(e instanceof ProviderHttpError)) throw e
-    console.error(`[room-agents] OpenAI-compat ${baseUrl} returned HTTP ${e.status}`)
+  }
+  if (lastProviderError) {
+    console.error(`[room-agents] OpenAI-compat ${baseUrl} returned HTTP ${lastProviderError.status} after ${LLM_RETRY_MAX_ATTEMPTS} attempt(s)`)
     return result(null)
   }
 
@@ -576,19 +649,26 @@ export async function callOpenAIChat(
   // so the agent always replies with what it learned, never silently disappears.
   console.warn(`[room-agents] ${agentName} hit ${endReason === 'cap' ? 'the run token cap' : 'MAX_TOOL_ROUNDS'} — forcing final response turn`)
   let finalReply: string | null = null
-  try {
-    for await (const ev of providerFor(false).turn({ messages, tools: [] })) {
-      if (ev.type !== 'end') continue
-      const u = ev.result.usage
-      if (u) {
-        usage.lastInputTokens = u.inputTokens
-        usage.inputTokens += u.inputTokens
-        usage.outputTokens += u.outputTokens
+  for (let attempt = 1; attempt <= LLM_RETRY_MAX_ATTEMPTS; attempt++) {
+    try {
+      for await (const ev of providerFor(false).turn({ messages, tools: [] })) {
+        if (ev.type !== 'end') continue
+        const u = ev.result.usage
+        if (u) {
+          usage.lastInputTokens = u.inputTokens
+          usage.inputTokens += u.inputTokens
+          usage.outputTokens += u.outputTokens
+        }
+        finalReply = ev.result.text?.trim() || null
       }
-      finalReply = ev.result.text?.trim() || null
+      break
+    } catch (e) {
+      const status = e instanceof ProviderHttpError ? e.status : undefined
+      if (!isRetryableProviderStatus(status) || attempt === LLM_RETRY_MAX_ATTEMPTS) return result(null)
+      const delay = llmRetryDelayMs(attempt)
+      console.warn(`[room-agents] ${agentName}: forced final turn failed on attempt ${attempt} — retrying in ${delay}ms`)
+      await sleep(delay)
     }
-  } catch {
-    return result(null)
   }
   // Prepend a visible notice so the user knows the agent was cut off mid-work.
   const cutoffNotice = `> ⚠️ **Tool round limit reached** (${MAX_TOOL_ROUNDS} rounds). The agent was cut off before completing all steps. Summary of progress so far:\n\n`
