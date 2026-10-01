@@ -19,6 +19,19 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/db'
 import { registerTool, type ToolExecutionContext } from '@/lib/tool-registry'
+import { sanitizeContextNote } from '@/lib/sanitize-context'
+
+/**
+ * rootCauseSummary and event title/description are derived from raw
+ * Falco/CrowdSec/Wazuh payloads — attacker-influenced strings — and this
+ * tool's output lands directly in Warden's LLM context. Run each through
+ * the same rule-layer sanitizer already used on the knowledge/notes path
+ * (embeddings.ts) before returning it. Empty/missing fields pass through.
+ */
+function sanitizeField(label: string, value: string | null): string | null {
+  if (!value) return value
+  return sanitizeContextNote(label, value)
+}
 
 // Incident status lifecycle — forward-only transitions enforced by siem_update_incident_status.
 const INCIDENT_STATUS_ORDER = ['open', 'triaged', 'contained', 'closed'] as const
@@ -124,7 +137,7 @@ async function siemGetIncident(args: unknown, _ctx: ToolExecutionContext): Promi
     id: incident.id,
     status: incident.status,
     severity: incident.severity,
-    rootCauseSummary: incident.rootCauseSummary,
+    rootCauseSummary: sanitizeField('incident.rootCauseSummary', incident.rootCauseSummary),
     attackerKey: incident.attackerKey,
     hostKey: incident.hostKey,
     openedAt: incident.openedAt,
@@ -134,8 +147,8 @@ async function siemGetIncident(args: unknown, _ctx: ToolExecutionContext): Promi
       type: e.type,
       source: e.source,
       severity: e.severity,
-      title: e.title,
-      description: e.description,
+      title: sanitizeField(`event.title (${e.id})`, e.title),
+      description: sanitizeField(`event.description (${e.id})`, e.description),
       createdAt: e.createdAt,
     })),
   }, null, 2)
