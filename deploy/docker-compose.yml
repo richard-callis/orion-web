@@ -547,7 +547,7 @@ services:
   # ── Redis Sentinel cluster (3 sentinels for HA + distributed rate limiting) ──
   # Master node (port 6379)
   redis-master:
-    image: redis:8.10.0-alpine
+    image: redis:8.10.2-alpine
     restart: unless-stopped
     command: redis-server --appendonly yes --dir /data --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set} --masterauth ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
     environment:
@@ -576,7 +576,7 @@ services:
   # Replica of redis-master. Without one, Sentinel had nothing to promote, so
   # "HA" could never fail over. Sentinels discover it automatically.
   redis-replica:
-    image: redis:8.10.0-alpine
+    image: redis:8.10.2-alpine
     restart: unless-stopped
     depends_on:
       redis-master:
@@ -601,7 +601,7 @@ services:
           memory: 512M
 
   redis-sentinel-1:
-    image: redis:8.10.0-alpine
+    image: redis:8.10.2-alpine
     restart: unless-stopped
     depends_on:
       redis-master:
@@ -632,7 +632,7 @@ services:
 
   # ── Redis Sentinel 2 (port 26380) ──────────────────────────────────────────
   redis-sentinel-2:
-    image: redis:8.10.0-alpine
+    image: redis:8.10.2-alpine
     restart: unless-stopped
     depends_on:
       redis-master:
@@ -663,7 +663,7 @@ services:
 
   # ── Redis Sentinel 3 (port 26381) ──────────────────────────────────────────
   redis-sentinel-3:
-    image: redis:8.10.0-alpine
+    image: redis:8.10.2-alpine
     restart: unless-stopped
     depends_on:
       redis-master:
