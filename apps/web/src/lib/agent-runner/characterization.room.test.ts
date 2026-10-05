@@ -23,7 +23,17 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/db', () => ({ prisma: h.prisma }))
 vi.mock('@/lib/typing-state', () => ({ setTyping: vi.fn(), clearTyping: vi.fn() }))
 vi.mock('@/lib/agent-tools', () => ({ TOOLS_SYSTEM_ADDENDUM: '\n\n[TOOLS ADDENDUM]' }))
-vi.mock('@/lib/tool-registry', () => ({ executeRegisteredTool: h.executeRegisteredTool }))
+// registerTool: room-agents.ts now side-effect-imports tool-registry-bootstrap.ts,
+// which calls registerTool() at module load (siem/github/skill tool registration)
+// — a no-op here is fine, this suite only exercises dispatch, not registration.
+// getToolDefinition: only consulted on the fuzzy auto-correction path, to gate
+// auto-execution to tier==='read' tools. orion_list_secrets really is tier:'read'
+// in production (tools/secrets.ts) — this mock mirrors that, not just satisfies it.
+vi.mock('@/lib/tool-registry', () => ({
+  executeRegisteredTool: h.executeRegisteredTool,
+  registerTool: vi.fn(),
+  getToolDefinition: vi.fn(() => ({ tier: 'read' })),
+}))
 vi.mock('@/lib/room-tools', () => ({
   buildRoomToolSchemas: vi.fn(async () => [
     { type: 'function', function: { name: 'orion_list_secrets', description: 'list secrets', parameters: { type: 'object' } } },
@@ -34,7 +44,7 @@ vi.mock('@/lib/tool-permissions', () => ({ checkToolPermission: h.checkToolPermi
 vi.mock('@/lib/chat-redis', () => ({ publishChatMessage: h.publishChatMessage }))
 vi.mock('@/lib/agent-gateway', () => ({ resolveAgentGateway: vi.fn() }))
 vi.mock('@/lib/claude', () => ({ matchAndInjectSkills: vi.fn() }))
-vi.mock('@/lib/skill-tools', () => ({ resolveAgentPrimaryEnvironmentId: vi.fn() }))
+vi.mock('@/lib/skill-tools', () => ({ resolveAgentPrimaryEnvironmentId: vi.fn(), registerSkillTools: vi.fn() }))
 vi.mock('@/lib/agent-context', () => ({
   buildAgentContext: vi.fn(), buildAgentLocalContext: vi.fn(), buildRoomLocalContext: vi.fn(),
   invalidateSnapshotCache: vi.fn(), getModelContextLimit: vi.fn(async () => 32768), getClaudeContextLimit: vi.fn(() => 200000),
@@ -208,11 +218,12 @@ describe('callOpenAIChat (room)', () => {
     expect((http.callsTo('/v1/chat/completions')[1].body as Record<string, unknown>).tools).toBeUndefined()
   })
 
-  it('HTTP error → null reply', async () => {
-    http.route('/v1/chat/completions', text('x', 500))
+  it('HTTP error → null reply (retries 5xx up to LLM_RETRY_MAX_ATTEMPTS, then gives up)', async () => {
+    http.route('/v1/chat/completions', text('x', 500), text('x', 500), text('x', 500))
     expect(await callOpenAIChat('Bot', 'P', [], [], 'x', 'm', 'http://llm.test')).toEqual({
       reply: null, tokensUsed: 0, contextLimit: 32768, inputTokens: 0, outputTokens: 0,
     })
+    expect(http.callsTo('/v1/chat/completions')).toHaveLength(3)
   })
 })
 
@@ -237,7 +248,15 @@ describe('callClaude (room)', () => {
   })
 
   it('errors are mapped to user-facing hints', async () => {
-    http.route('/run/collect', json({ error: 'OAuth token expired' }), text('ENOENT claude', 500))
+    // A sidecar-reported app error (no HTTP status) is never retried — one
+    // queued response is enough. A real 5xx is retried up to 3x; in
+    // production a persistent failure like a missing binary returns the
+    // same error every attempt, so the final mapped message is unchanged —
+    // queue the same response 3x to mirror that (not a workaround).
+    http.route('/run/collect',
+      json({ error: 'OAuth token expired' }),
+      text('ENOENT claude', 500), text('ENOENT claude', 500), text('ENOENT claude', 500),
+    )
     expect(await callClaude('Bot', 'P', [], [], 'hi')).toEqual({ text: null, error: 'authentication issue', inputTokens: 0, outputTokens: 0 })
     expect(await callClaude('Bot', 'P', [], [], 'hi')).toEqual({ text: null, error: 'claude binary not installed', inputTokens: 0, outputTokens: 0 })
   })

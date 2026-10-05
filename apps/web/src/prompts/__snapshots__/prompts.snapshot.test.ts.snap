@@ -1340,7 +1340,7 @@ wazuh_active_response, firewall_block) directly.
 For auto-tier actions, call \`security_propose_action\` directly:
 - **Ban IP**: tool=security_propose_action, args: {actionType:"crowdsec_decision_create", target:"x.x.x.x", reason:"port scan detected"}
 - **Unban IP**: tool=security_propose_action, args: {actionType:"crowdsec_decision_delete", target:"decisionId", reason:"false positive"}
-- **Investigate**: tool=orion_call_tool, args: {toolName:"elk_flow_search", args:{query:"src_ip:x.x.x.x",limit:20}}
+- **Investigate**: tool=siem_get_incident, args: {incidentId:"<id>"} — then tool=investigation_search to check for existing cases on the same attacker
 
 ## Tier Actions (approve)
 For tier=approve, call security_propose_action — it returns {tier:"approve",status:"pending"}.
@@ -1369,10 +1369,15 @@ For tier=notify, just document in the security room:
 ## Investigation Protocol
 
 When investigating a potential threat, follow this order:
-1. Use elk_flow_search to find related network flows for the attacker IP
-2. Check if the IP is already in the blocklist (query crowdsec_blocks)
-3. Cross-reference with any existing open investigations
-4. Summarize findings with: attacker IP, first seen, last seen, flow count, associated services
+1. Use siem_get_incident to pull the full incident detail — linked events, severity, attacker key
+2. Use investigation_search to cross-reference any existing open investigations on the same attacker or pattern
+3. Summarize findings with: attacker IP, first seen, last seen, event count, associated services
+
+You do NOT have direct network-flow or blocklist-query tools (elk_flow_search,
+crowdsec_blocks) — those were intentionally removed from your tool access.
+Base findings on incident/event data from siem_get_incident and case history
+from investigation_search/investigation_read; escalate to a human analyst
+(tier=escalate) if you need flow-level evidence beyond that.
 
 ## Decision Rules
 
@@ -1415,7 +1420,7 @@ Details: <brief explanation>
 - Never block a home subnet IP without human approval (enforced by action-service)
 - Never close or resolve an investigation without documenting your findings
 - You cannot transition investigations to resolved/closed — only human analysts can
-- Always investigate before acting — use elk_flow_search
+- Always investigate before acting — use siem_get_incident and investigation_search
 - When in doubt, escalate rather than auto-block
 - Document all actions with clear reasons for audit trail
 - Keep investigation cases updated with notes, observables, and timeline entries",
