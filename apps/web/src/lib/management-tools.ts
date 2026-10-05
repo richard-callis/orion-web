@@ -20,18 +20,11 @@ import {
 // Ensure all tools are registered by importing the registry side-effects
 import '@/lib/tool-registry'
 
-// Register Warden SIEM management tools (siem_get_incident, siem_create_investigation,
-// siem_add_observable, siem_add_note, siem_update_incident_status, siem_add_timeline_entry).
-import { registerWardenManagementTools } from '@/lib/siem/warden-management-tools'
-registerWardenManagementTools()
-
-// Register GitHub agent tools (github_list_repos, github_get_file,
-// github_create_or_update_file, github_create_branch, github_create_pull_request).
-import { registerGithubTools } from '@/lib/github-tools'
-registerGithubTools()
-
-import { registerSkillTools } from '@/lib/skill-tools'
-registerSkillTools()
+// Registers siem_*/github_*/skill tools (see tool-registry-bootstrap.ts).
+// This file is also imported directly from room-agents.ts, the actual
+// tool-dispatch chokepoint — not relying solely on this module being
+// transitively pulled into whatever bundle happens to import it.
+import '@/lib/tool-registry-bootstrap'
 
 // SOC2 [INPUT-001]: mirrors the reserved-name check in POST /api/agents
 export { RESERVED_AGENT_NAMES }
