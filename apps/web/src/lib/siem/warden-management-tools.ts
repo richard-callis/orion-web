@@ -138,7 +138,7 @@ async function siemGetIncident(args: unknown, _ctx: ToolExecutionContext): Promi
     status: incident.status,
     severity: incident.severity,
     rootCauseSummary: sanitizeField('incident.rootCauseSummary', incident.rootCauseSummary),
-    attackerKey: incident.attackerKey,
+    attackerKey: sanitizeField('incident.attackerKey', incident.attackerKey),
     hostKey: incident.hostKey,
     openedAt: incident.openedAt,
     investigationId: incident.investigationId,

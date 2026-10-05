@@ -278,9 +278,18 @@ export async function callClaude(
     ...(useMcp ? { agentId, roomId, maxTurns: hasTools ? 6 : 3 } : { maxTurns: 1 }),
     ...(modelId ? { model: modelId } : {}),
   }
+  // A useMcp session runs tool calls (including writes) server-side inside
+  // the sidecar before returning — it is not safe to retry wholesale like
+  // the OpenAI-compat tool loop below (which mutates a local `messages`
+  // array we can see). If a useMcp call fails after already executing some
+  // tools server-side, retrying from scratch resubmits the original
+  // history/latestMessage with no visibility into what already ran,
+  // risking a double-executed write. Retry is scoped to plain-completion
+  // (non-MCP) calls only, where a failed attempt provably did no work.
   let r: SidecarCollectResult | null = null
   let networkError: string | null = null
-  for (let attempt = 1; attempt <= LLM_RETRY_MAX_ATTEMPTS; attempt++) {
+  const maxAttempts = useMcp ? 1 : LLM_RETRY_MAX_ATTEMPTS
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     networkError = null
     try {
       // MCP tool calls can take longer — allow 5 min for tool-using sessions
@@ -289,10 +298,16 @@ export async function callClaude(
       networkError = e instanceof Error ? e.message : String(e)
       r = null
     }
-    const retryable = r ? isRetryableProviderStatus(r.status) : true
-    if ((r && r.ok) || !retryable || attempt === LLM_RETRY_MAX_ATTEMPTS) break
+    // Thrown exception (no response at all) is always retryable. A response
+    // with ok:false and a real HTTP status is retryable only on 5xx. A
+    // response with ok:false and no status is a sidecar-reported
+    // application error (claude-sidecar.ts: `if (data.error) return { ok:
+    // false, error }`) — deterministic, not transient, never retried.
+    const retryable = r ? (!r.ok && r.status !== undefined && isRetryableProviderStatus(r.status)) : true
+    if ((r && r.ok) || !retryable || attempt === maxAttempts) break
     const delay = llmRetryDelayMs(attempt)
-    console.warn(`[room-agents] orion-claude attempt ${attempt} failed (${networkError ?? `HTTP ${r?.status}`}) — retrying in ${delay}ms`)
+    const failureDesc = networkError ?? (r && !r.ok ? `HTTP ${r.status}` : 'unknown error')
+    console.warn(`[room-agents] orion-claude attempt ${attempt} failed (${failureDesc}) — retrying in ${delay}ms`)
     await sleep(delay)
   }
   if (!r) {
@@ -663,8 +678,10 @@ export async function callOpenAIChat(
       }
       break
     } catch (e) {
-      const status = e instanceof ProviderHttpError ? e.status : undefined
-      if (!isRetryableProviderStatus(status) || attempt === LLM_RETRY_MAX_ATTEMPTS) return result(null)
+      // Only a provider HTTP failure is worth retrying here — match the
+      // original behavior for any other exception (immediate give-up).
+      if (!(e instanceof ProviderHttpError)) return result(null)
+      if (!isRetryableProviderStatus(e.status) || attempt === LLM_RETRY_MAX_ATTEMPTS) return result(null)
       const delay = llmRetryDelayMs(attempt)
       console.warn(`[room-agents] ${agentName}: forced final turn failed on attempt ${attempt} — retrying in ${delay}ms`)
       await sleep(delay)

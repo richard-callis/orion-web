@@ -8,8 +8,8 @@
  * tool-scope.ts) that import management-tools.ts — not because anything in
  * the actual agent tool-call path (room-agents.ts → tool-registry.ts)
  * asked for them. That's an implicit, bundling-order-dependent dependency:
- * split the worker into separate processes/bundles and siem_*/github_*/
- * skill tools silently stop existing, with no error — indistinguishable
+ * split the worker into separate processes/bundles and the siem_, github_
+ * and skill tools silently stop existing, with no error — indistinguishable
  * from "the agent has nothing to work with."
  *
  * Import this module for its side effects from wherever tool-registry.ts's

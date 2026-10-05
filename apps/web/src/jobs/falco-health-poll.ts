@@ -15,11 +15,20 @@
  *
  * Falco runs once, on the Orion host itself (type="localhost" Environment) —
  * see the webhook route's 'host' → localhost-environment resolution.
+ *
+ * Deliberately a DIFFERENT source key ("falco_process") than the webhook's
+ * ("falco"). The webhook's EnvironmentSourceHealth row reflects the whole
+ * delivery path (Falco rule fires -> Falcosidekick -> HMAC'd webhook POST);
+ * this poller only confirms the Falco process itself answers /healthz. If
+ * both bumped the same row, this poller would mask a broken delivery path
+ * (wrong secret, Falcosidekick down, webhook rejecting) behind a process
+ * that's merely alive — the exact kind of silent failure this file exists
+ * to catch, just one hop further along.
  */
 import { prisma } from '@/lib/db'
 
 const FALCO_HEALTHZ_URL = process.env.FALCO_HEALTHZ_URL ?? 'http://falco:8765/healthz'
-const FALCO_SOURCE = 'falco'
+const FALCO_PROCESS_SOURCE = 'falco_process'
 const FALCO_STALE_AFTER_MS = 300_000 // matches the webhook route's threshold
 const HEALTHZ_TIMEOUT_MS = 5_000
 
@@ -58,12 +67,12 @@ export async function runFalcoHealthPollAll(): Promise<FalcoHealthPollResult> {
 
   await prisma.environmentSourceHealth.upsert({
     where: {
-      environmentId_source: { environmentId: hostEnv.id, source: FALCO_SOURCE },
+      environmentId_source: { environmentId: hostEnv.id, source: FALCO_PROCESS_SOURCE },
     },
     update: { lastSeenAt: new Date() },
     create: {
       environmentId: hostEnv.id,
-      source: FALCO_SOURCE,
+      source: FALCO_PROCESS_SOURCE,
       lastSeenAt: new Date(),
       lastWatermark: null,
       staleAfterMs: FALCO_STALE_AFTER_MS,
