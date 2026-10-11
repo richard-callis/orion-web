@@ -8,6 +8,7 @@ import { recoverStalledJobs } from '@/lib/job-runner'
 import { syncCrowdSecDecisions } from '@/lib/security/crowdsec-bouncer'
 import { runCorrelator } from '@/workers/security-correlator'
 import { runK8sPollerAll } from '@/jobs/security-poll-k8s'
+import { runFalcoHealthPollAll } from '@/jobs/falco-health-poll'
 import { runElkPollerAll } from '@/jobs/security-poll-elk'
 import { runNtopngPollerAll } from '@/jobs/security-poll-ntopng'
 import { runEventTriggeredScan } from '@/jobs/security-scan-vulns'
@@ -57,6 +58,10 @@ export function workerJobs(): ScheduledJob[] {
     // Security correlator — uncorrelated events.
     { name: 'Security correlator',          intervalMs: 30_000, fn: runCorrelator },
     { name: 'K8s poller',                   intervalMs: 30_000, fn: runK8sPollerAll },
+    // Falco process liveness — see jobs/falco-health-poll.ts. Independent of
+    // the webhook route's own health bump: this is the only signal that Falco
+    // is still running when its rules legitimately have nothing to alert on.
+    { name: 'Falco health poll',            intervalMs: MINUTE, fn: runFalcoHealthPollAll },
     // No-ops if ELK_URL / NTOPNG_URL are not set.
     { name: 'ELK poller',                   intervalMs: 15_000, fn: runElkPollerAll },
     { name: 'ntopng poller',                intervalMs: 30_000, fn: runNtopngPollerAll },

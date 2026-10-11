@@ -7,8 +7,9 @@
 #
 # Output: Falco POSTs JSON to Falcosidekick on port 2801 (http_output).
 # Falcosidekick then forwards to the Orion webhook with retries and
-# CUSTOMFIELDS injection. gRPC output is disabled — Falcosidekick 2.x
-# in its default mode receives HTTP POSTs from Falco, not gRPC streams.
+# CUSTOMFIELDS injection. Falcosidekick 2.x in its default mode receives
+# HTTP POSTs from Falco, not gRPC streams (gRPC output/server was removed
+# from Falco entirely in 0.44.0, so this isn't a mode choice anymore).
 
 # ── Rule files ──────────────────────────────────────────────────────────────
 rules_file:
@@ -81,13 +82,20 @@ http_output:
 stdout_output:
   enabled: true
 
+# gRPC output/server was removed from Falco entirely in 0.44.0 (this image
+# is 0.45.0) — there is no `grpc`/`grpc_output` config schema left to set,
+# so those keys are omitted rather than left in as dead config.
+
+# webserver: liveness/readiness for the ORION host-agent — see
+# apps/web/src/jobs/falco-health-poll.ts, which polls this every ~60s and
+# bumps EnvironmentSourceHealth so a dead/never-started Falco process is
+# distinguishable from a healthy one that simply has nothing to alert on.
+webserver:
+  enabled: true
+  listen_port: 8765
+  k8s_healthz_endpoint: /healthz
+
 # Disable outputs we don't use.
-grpc:
-  enabled: false
-
-grpc_output:
-  enabled: false
-
 file_output:
   enabled: false
 

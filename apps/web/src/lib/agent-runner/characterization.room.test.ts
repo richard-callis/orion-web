@@ -18,23 +18,40 @@ const h = vi.hoisted(() => ({
   publishChatMessage: vi.fn(async () => {}),
   auditToolCall: vi.fn(),
   getRunTokenCap: vi.fn(async () => 400_000),
+  // Default tier:'read' matches orion_list_secrets (tools/secrets.ts), the
+  // tool the existing auto-correction test resolves to. Override per-test
+  // (mockReturnValueOnce) to exercise the write/destructive-blocking branch.
+  getToolDefinition: vi.fn(() => ({ tier: 'read' as const })),
 }))
 
 vi.mock('@/lib/db', () => ({ prisma: h.prisma }))
 vi.mock('@/lib/typing-state', () => ({ setTyping: vi.fn(), clearTyping: vi.fn() }))
 vi.mock('@/lib/agent-tools', () => ({ TOOLS_SYSTEM_ADDENDUM: '\n\n[TOOLS ADDENDUM]' }))
-vi.mock('@/lib/tool-registry', () => ({ executeRegisteredTool: h.executeRegisteredTool }))
+// registerTool: room-agents.ts now side-effect-imports tool-registry-bootstrap.ts,
+// which calls registerTool() at module load (siem/github/skill tool registration)
+// — a no-op here is fine, this suite only exercises dispatch, not registration.
+// getToolDefinition: only consulted on the fuzzy auto-correction path, to gate
+// auto-execution to tier==='read' tools — see h.getToolDefinition above.
+vi.mock('@/lib/tool-registry', () => ({
+  executeRegisteredTool: h.executeRegisteredTool,
+  registerTool: vi.fn(),
+  getToolDefinition: h.getToolDefinition,
+}))
 vi.mock('@/lib/room-tools', () => ({
   buildRoomToolSchemas: vi.fn(async () => [
     { type: 'function', function: { name: 'orion_list_secrets', description: 'list secrets', parameters: { type: 'object' } } },
     { type: 'function', function: { name: 'list_tools', description: 'list tools', parameters: { type: 'object' } } },
+    // tier:'destructive' in production (tools/room.ts) — used by the
+    // tier-gate negative test below, resolved via fuzzy match like
+    // orion_list_secrets is, but must NOT auto-execute.
+    { type: 'function', function: { name: 'delete_secret', description: 'delete secret', parameters: { type: 'object' } } },
   ]),
 }))
 vi.mock('@/lib/tool-permissions', () => ({ checkToolPermission: h.checkToolPermission }))
 vi.mock('@/lib/chat-redis', () => ({ publishChatMessage: h.publishChatMessage }))
 vi.mock('@/lib/agent-gateway', () => ({ resolveAgentGateway: vi.fn() }))
 vi.mock('@/lib/claude', () => ({ matchAndInjectSkills: vi.fn() }))
-vi.mock('@/lib/skill-tools', () => ({ resolveAgentPrimaryEnvironmentId: vi.fn() }))
+vi.mock('@/lib/skill-tools', () => ({ resolveAgentPrimaryEnvironmentId: vi.fn(), registerSkillTools: vi.fn() }))
 vi.mock('@/lib/agent-context', () => ({
   buildAgentContext: vi.fn(), buildAgentLocalContext: vi.fn(), buildRoomLocalContext: vi.fn(),
   invalidateSnapshotCache: vi.fn(), getModelContextLimit: vi.fn(async () => 32768), getClaudeContextLimit: vi.fn(() => 200000),
@@ -119,7 +136,9 @@ describe('callOpenAIChat (room)', () => {
       { role: 'assistant', content: null, tool_calls: [{ id: 't1', type: 'function', function: { name: 'orion_list_secrets', arguments: '{"env":"prod"}' } }] },
       { role: 'tool', content: 'registry:orion_list_secrets', tool_call_id: 't1', name: 'orion_list_secrets' },
     ])
-    expect(second.tools).toHaveLength(2)
+    // 3, not 2: buildRoomToolSchemas' mock now also returns delete_secret
+    // (added for the tier-gate negative test below) — unrelated to this test.
+    expect(second.tools).toHaveLength(3)
     expect(h.auditToolCall).toHaveBeenCalledWith(expect.objectContaining({ toolName: 'orion_list_secrets', outcome: 'executed' }))
   })
 
@@ -160,6 +179,20 @@ describe('callOpenAIChat (room)', () => {
     await callOpenAIChat('Bot', 'P', [], [], 'x', 'm', 'http://llm.test', null, toolCtx)
     const out = (h.prisma.chatMessage.create.mock.calls[0][0] as { data: { attachments: { output: string } } }).data.attachments.output
     expect(out).toBe('[Note: corrected "list_secrets" → "orion_list_secrets"]\nregistry:orion_list_secrets')
+  })
+
+  it('hallucinated tool name resolving to a write/destructive tool is NOT auto-executed', async () => {
+    h.getToolDefinition.mockReturnValueOnce({ tier: 'destructive' })
+    http.route('/v1/chat/completions',
+      openaiCompletion({ tool_calls: [{ id: 'a', name: 'delete_secret_now', arguments: '{}' }] }),
+      openaiCompletion({ content: 'ok' }),
+    )
+    await callOpenAIChat('Bot', 'P', [], [], 'x', 'm', 'http://llm.test', null, toolCtx)
+    expect(h.executeRegisteredTool).not.toHaveBeenCalled()
+    const out = (h.prisma.chatMessage.create.mock.calls[0][0] as { data: { attachments: { output: string } } }).data.attachments.output
+    expect(out).toContain('did not execute')
+    expect(out).toContain('tier="destructive"')
+    expect(out).toContain('delete_secret')
   })
 
   it('gateway tool results are cached within the session', async () => {
@@ -208,11 +241,12 @@ describe('callOpenAIChat (room)', () => {
     expect((http.callsTo('/v1/chat/completions')[1].body as Record<string, unknown>).tools).toBeUndefined()
   })
 
-  it('HTTP error → null reply', async () => {
-    http.route('/v1/chat/completions', text('x', 500))
+  it('HTTP error → null reply (retries 5xx up to LLM_RETRY_MAX_ATTEMPTS, then gives up)', async () => {
+    http.route('/v1/chat/completions', text('x', 500), text('x', 500), text('x', 500))
     expect(await callOpenAIChat('Bot', 'P', [], [], 'x', 'm', 'http://llm.test')).toEqual({
       reply: null, tokensUsed: 0, contextLimit: 32768, inputTokens: 0, outputTokens: 0,
     })
+    expect(http.callsTo('/v1/chat/completions')).toHaveLength(3)
   })
 })
 
@@ -237,8 +271,29 @@ describe('callClaude (room)', () => {
   })
 
   it('errors are mapped to user-facing hints', async () => {
-    http.route('/run/collect', json({ error: 'OAuth token expired' }), text('ENOENT claude', 500))
+    // A sidecar-reported app error (no HTTP status) is never retried — one
+    // queued response is enough. A real 5xx is retried up to 3x; in
+    // production a persistent failure like a missing binary returns the
+    // same error every attempt, so the final mapped message is unchanged —
+    // queue the same response 3x to mirror that (not a workaround).
+    http.route('/run/collect',
+      json({ error: 'OAuth token expired' }),
+      text('ENOENT claude', 500), text('ENOENT claude', 500), text('ENOENT claude', 500),
+    )
     expect(await callClaude('Bot', 'P', [], [], 'hi')).toEqual({ text: null, error: 'authentication issue', inputTokens: 0, outputTokens: 0 })
     expect(await callClaude('Bot', 'P', [], [], 'hi')).toEqual({ text: null, error: 'claude binary not installed', inputTokens: 0, outputTokens: 0 })
+  })
+
+  it('a useMcp session (agentId+roomId) is never retried — only one attempt even on a 5xx', async () => {
+    // Unlike the plain-completion path above, a useMcp call runs tool calls
+    // (including writes) server-side inside the sidecar before returning.
+    // Retrying it from scratch on a late failure risks double-executing
+    // whatever already ran. Exactly one fake response is queued — if this
+    // regresses to retrying useMcp sessions, the second attempt would hit
+    // "no route" and this assertion on call count would fail.
+    http.route('/run/collect', text('ENOENT claude', 500))
+    const r = await callClaude('Bot', 'P', [], [], 'hi', undefined, false, 'agent-1', 'room-1')
+    expect(r).toEqual({ text: null, error: 'claude binary not installed', inputTokens: 0, outputTokens: 0 })
+    expect(http.callsTo('/run/collect')).toHaveLength(1)
   })
 })

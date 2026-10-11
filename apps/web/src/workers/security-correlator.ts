@@ -10,6 +10,7 @@
  */
 
 import { prisma } from '@/lib/db'
+import { sanitizeContextNote } from '@/lib/sanitize-context'
 import { type IncidentDraft } from '@/lib/security/types'
 import { correlateEvents, recordRuleIncident } from '@/lib/security/rule-engine'
 import type { NamedRule, RuleParams } from '@/lib/security/rule-engine'
@@ -62,9 +63,6 @@ const WARDEN_MIN_SEVERITY = (() => {
   const v = Number(process.env.WARDEN_MIN_SEVERITY)
   return Number.isFinite(v) && v > 0 ? v : 40
 })()
-
-/** How often to update source health staleness check (ms). */
-const STALENESS_CHECK_INTERVAL = 5 * 60 * 1000
 
 /**
  * Synthetic ID used to surface the orphan-events bucket in {@link CorrelationResult}.
@@ -188,9 +186,6 @@ export async function runCorrelator(): Promise<CorrelationResult[]> {
       })
     }
   }
-
-  // 2. Check for stale sources
-  await checkSourceStaleness()
 
   return results
 }
@@ -345,11 +340,22 @@ async function correlateEnvironment(
       // incident chat by foreign key — no need to embed the id in body text.
       const securityRoomId = await getSystemRoomId('system.room.security')
       if (securityRoomId) {
+        // rootCauseSummary and attackerKey are derived from Falco/CrowdSec/Wazuh
+        // payloads — attacker-influenced strings — and this text is what wakes
+        // Warden's agentic loop below. Run both through the rule-layer sanitizer
+        // before they reach chat history/LLM context (sync: this is a worker
+        // loop, not a request handler — no classifier round-trip per incident).
+        const safeSummary = incident.rootCauseSummary
+          ? sanitizeContextNote('incident.rootCauseSummary', incident.rootCauseSummary)
+          : null
+        const safeAttackerKey = incident.attackerKey
+          ? sanitizeContextNote('incident.attackerKey', incident.attackerKey)
+          : null
         const noticeBody = [
           `Warden | New Incident [${new Date().toISOString()}]`,
-          `Incident: ${incident.rootCauseSummary || 'Untitled'}`,
+          `Incident: ${safeSummary || 'Untitled'}`,
           `Severity: ${incident.severity}`,
-          `Attacker: ${incident.attackerKey || 'unknown'}`,
+          `Attacker: ${safeAttackerKey || 'unknown'}`,
           `Events linked: ${draft.eventIds.length}`,
           `Warden is triaging...`,
         ].join('\n')
@@ -607,51 +613,6 @@ async function extractAndLinkObservables(
       `[siem] correlator: SOC observable extraction failed for incident ${incident.id}:`,
       err instanceof Error ? `${err.name}: ${err.message}` : err,
     )
-  }
-}
-
-// ── Staleness check ────────────────────────────────────────────────────────────
-
-/**
- * Check for stale sources and emit synthetic source_stale events.
- */
-async function checkSourceStaleness(): Promise<void> {
-  const sources = await prisma.sourceHealth.findMany({
-    where: {
-      lastSeenAt: {
-        not: null,
-      },
-    },
-  })
-
-  const now = Date.now()
-
-  for (const source of sources) {
-    if (!source.lastSeenAt) continue
-
-    const elapsed = now - source.lastSeenAt.getTime()
-    if (elapsed > source.staleAfterMs * 2) {
-      // Source is stale — emit synthetic event
-      await prisma.securityEvent.create({
-        data: {
-          id: `stale_${source.source}_${Date.now()}`,
-          source: source.source,
-          type: 'source_stale',
-          severity: 10,
-          title: `Source ${source.source} is stale (${Math.round(elapsed / 60000)}m since last event)`,
-          description: `Source last seen ${elapsed}ms ago (threshold: ${source.staleAfterMs}ms)`,
-          rawEvent: { staleAfterMs: source.staleAfterMs, lastSeenAt: source.lastSeenAt },
-          dedupKey: `stale_${source.source}_${Math.round(now / 300000)}`, // per-5min dedup
-          environmentId: source.environmentId,
-        },
-      })
-
-      // Update source health
-      await prisma.sourceHealth.update({
-        where: { source: source.source },
-        data: { lastSeenAt: new Date() }, // reset to prevent spam
-      })
-    }
   }
 }
 

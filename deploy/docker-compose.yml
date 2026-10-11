@@ -777,9 +777,6 @@ services:
       - /etc:/host/etc:ro
       - ./host-agent/falco/falco.yaml:/etc/falco/falco.yaml:ro
       - ./host-agent/falco/falco_rules.local.yaml:/etc/falco/falco_rules.local.yaml:ro
-    environment:
-      FALCO_GRPC_ENABLED: "true"
-      FALCO_GRPC_BIND_ADDRESS: "0.0.0.0:5060"
     deploy:
       resources:
         limits:
@@ -806,7 +803,8 @@ services:
       WEBHOOK_CUSTOMHEADERS: "X-Orion-Falco-Signature:${FALCO_WEBHOOK_SECRET:-}"
       CUSTOMFIELDS: "environmentId:host"
       WEBHOOK_MINIMUMPRIORITY: "notice"
-      # Read alerts from Falco's gRPC bridge instead of stdin
+      # Falcosidekick's own inbound HTTP listener — Falco's http_output POSTs
+      # here (falco.yaml: http_output.url = http://falcosidekick:2801).
       LISTENADDRESS: "0.0.0.0"
       LISTENPORT: "2801"
     deploy:
