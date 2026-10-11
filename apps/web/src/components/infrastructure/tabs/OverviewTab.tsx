@@ -7,9 +7,9 @@ import { Button } from '@/components/ui/Button'
 import { ApiError, errorMessage } from '@/lib/api'
 import { NodeGrid } from '@/components/infrastructure/NodeGrid'
 import { PodTable } from '@/components/infrastructure/PodTable'
-import type { CachedNode, CachedPod } from '@/lib/k8s'
+import type { CachedNode, CachedPod, NodeMetric } from '@/lib/k8s'
 
-interface InfraResponse { nodes: CachedNode[]; pods: CachedPod[] }
+interface InfraResponse { nodes: CachedNode[]; pods: CachedPod[]; metrics?: NodeMetric[] }
 
 /** The infrastructure route returns { error, detail } — show both. */
 function describe(err: unknown): string {
@@ -51,7 +51,7 @@ export function OverviewTab({ envId }: { envId: string }) {
         <>
           <NodeGrid
             nodes={nodes}
-            metrics={[]}
+            metrics={data?.metrics ?? []}
             selectedNode={selectedNode}
             onNodeClick={name => setSelectedNode(prev => prev === name ? null : name)}
           />

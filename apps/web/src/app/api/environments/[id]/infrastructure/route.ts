@@ -2,13 +2,14 @@
  * GET /api/environments/:id/infrastructure
  *
  * Fetches nodes and pods from an environment via the ORION Gateway.
- * Returns { nodes: CachedNode[], pods: CachedPod[] }
+ * Returns { nodes: CachedNode[], pods: CachedPod[], metrics: NodeMetric[] }
+ * (metrics is empty when the cluster has no metrics-server).
  */
 import { gatewayHeaders } from '@/lib/gateway-headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
-import type { CachedNode, CachedPod } from '@/lib/k8s'
+import type { CachedNode, CachedPod, NodeMetric } from '@/lib/k8s'
 
 async function gatewayExec(
   gatewayUrl: string,
@@ -47,6 +48,27 @@ function parseNode(node: any): CachedNode {
     kernelVersion: node.status?.nodeInfo?.kernelVersion ?? '',
     osImage:       node.status?.nodeInfo?.osImage ?? '',
     conditions:    node.status?.conditions?.map((c: any) => ({ type: c.type, status: c.status })) ?? [],
+  }
+}
+
+const QUANTITY_SUFFIX: Record<string, number> = {
+  n: 1e-9, u: 1e-6, m: 1e-3, '': 1, k: 1e3, M: 1e6, G: 1e9, T: 1e12,
+  Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4,
+}
+
+// Parse a Kubernetes resource quantity ("250m", "1234567n", "2Gi") to base units.
+function parseQuantity(q: string): number {
+  const m = /^([0-9.]+)([a-zA-Z]*)$/.exec(q ?? '')
+  const mult = m ? QUANTITY_SUFFIX[m[2]] : undefined
+  return m && mult !== undefined ? parseFloat(m[1]) * mult : NaN
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseNodeMetric(item: any): NodeMetric {
+  return {
+    name:         item.metadata?.name ?? '',
+    cpuUsageNano: Math.round(parseQuantity(item.usage?.cpu) * 1e9),
+    memUsageKi:   Math.round(parseQuantity(item.usage?.memory) / 1024),
   }
 }
 
@@ -134,12 +156,13 @@ export async function GET(
     // Fetch nodes and pods independently — large clusters may have too many pods
     // for the gateway's stdout buffer, so a failed pods query should not kill the
     // entire response.
-    const [nodesJson, podsText] = await Promise.allSettled([
+    const [nodesJson, podsText, metricsJson] = await Promise.allSettled([
       gatewayExec(env.gatewayUrl, env.gatewayToken, 'kubectl_get', { resource: 'nodes', output: 'json' }),
       gatewayExec(env.gatewayUrl, env.gatewayToken, 'kubectl_get_pods', {}),
+      gatewayExec(env.gatewayUrl, env.gatewayToken, 'kubectl_get', { resource: 'nodes.metrics.k8s.io', output: 'json' }),
     ])
 
-    // Nodes always required; pods are best-effort
+    // Nodes always required; pods and metrics are best-effort
     if (nodesJson.status === 'rejected') {
       const reason = nodesJson.reason instanceof Error ? nodesJson.reason.message : String(nodesJson.reason)
       return NextResponse.json({ error: reason }, { status: 502 })
@@ -161,7 +184,18 @@ export async function GET(
       }
     }
 
-    return NextResponse.json({ nodes, pods })
+    // Needs metrics-server in the cluster and metrics.k8s.io read access for the gateway
+    let metrics: NodeMetric[] = []
+    if (metricsJson.status === 'fulfilled' && metricsJson.value) {
+      try {
+        metrics = (JSON.parse(metricsJson.value).items ?? []).map(parseNodeMetric)
+          .filter((m: NodeMetric) => m.name && Number.isFinite(m.cpuUsageNano) && Number.isFinite(m.memUsageKi))
+      } catch {
+        // No metrics-server or unparseable output — return nodes without usage
+      }
+    }
+
+    return NextResponse.json({ nodes, pods, metrics })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 502 })
