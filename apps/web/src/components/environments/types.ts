@@ -65,7 +65,7 @@ export interface UserTier {
 
 export interface BootstrapLog { type: 'step' | 'log' | 'error' | 'done'; message: string }
 
-export interface JoinResult { token: string; expiresAt: string; dockerCmd: string; kubectlCmd: string }
+export interface JoinResult { token: string; expiresAt: string; dockerCmd: string; kubectlCmd: string; metricsServerCmd?: string }
 
 export type EnvTab = 'tools' | 'agents' | 'groups' | 'access'
 
