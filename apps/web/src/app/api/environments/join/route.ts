@@ -16,9 +16,15 @@ import { prisma } from '@/lib/db'
 import { randomBytes, createHash } from 'crypto'
 import { logAudit } from '@/lib/audit'
 import { revokeEnvironmentGitCredential } from '@/lib/environment-git-credentials'
+import { ensureMetricsServerAfterJoin } from '@/lib/metrics-server'
 
 function hashFingerprint(machineId: string): string {
   return createHash('sha256').update(machineId).digest('hex')
+}
+
+// Node CPU/memory needs metrics-server — install it once the gateway is serving
+function installMetricsServer(envId: string) {
+  ensureMetricsServerAfterJoin(envId, () => prisma.environment.findUnique({ where: { id: envId } }))
 }
 
 export async function POST(req: NextRequest) {
@@ -101,6 +107,7 @@ export async function POST(req: NextRequest) {
       target: `environment:${env.id}`,
       detail: { event: 'gateway_joined', environmentId: env.id, gatewayType: body.gatewayType ?? 'unknown' },
     })
+    installMetricsServer(env.id)
     return NextResponse.json({ environmentId: env.id, apiToken: env.gatewayToken, environmentName: env.name })
   }
 
@@ -143,6 +150,8 @@ export async function POST(req: NextRequest) {
     target: `environment:${env.id}`,
     detail: { event: 'gateway_joined', environmentId: env.id, gatewayType: body.gatewayType ?? 'unknown' },
   })
+
+  installMetricsServer(env.id)
 
   return NextResponse.json({
     environmentId: env.id,
