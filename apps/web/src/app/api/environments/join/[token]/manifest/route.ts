@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHash } from 'crypto'
 import { prisma } from '@/lib/db'
 import { gatewayImageSpec } from '@/lib/gateway-image'
+import { GATEWAY_METRICS_RBAC } from '@/lib/metrics-server'
 
 // SystemSetting.value is a Json column — narrow to string before using
 function settingStr(setting: { value: unknown } | null, fallback: string): string {
@@ -120,9 +121,6 @@ rules:
   - apiGroups: ["policy"]
     resources: ["podsecuritypolicies"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["metrics.k8s.io"]
-    resources: ["nodes", "pods"]
-    verbs: ["get", "list"]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -138,6 +136,9 @@ subjects:
     name: orion-gateway
     namespace: management
 
+---
+# Lets the gateway install metrics-server (node CPU/memory) and read metrics
+${GATEWAY_METRICS_RBAC}
 ---
 # Scoped Role — lets the gateway patch its own join secret to persist permanent credentials
 apiVersion: rbac.authorization.k8s.io/v1

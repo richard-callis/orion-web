@@ -117,6 +117,8 @@ lib/k8s.ts internal state:
 | GET/PUT/DELETE | `/environments/[id]` | standard CRUD | — | Environment |
 | POST | `/environments/[id]/join-token` | `environmentJoinToken.create()` | — | Token |
 | POST | `/environments/[id]/bootstrap` | various creates | gateway bootstrap calls | Bootstrap result |
+| GET | `/environments/[id]/infrastructure` | `environment.findUnique()` | gateway `kubectl_get` nodes + `nodes.metrics.k8s.io`, `kubectl_get_pods` | `{ nodes, pods, metrics, metricsError? }` |
+| POST | `/environments/[id]/metrics-server` | `environment.findUnique()` | gateway `kubectl_apply_manifest` (falls back to stored kubeconfig) | MetricsServerResult (502 on error) |
 
 ### `/api/admin`
 
