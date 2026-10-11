@@ -173,7 +173,8 @@ export const kubernetesTools = ([
           // clusterrole, namespace, etc.) error or return nothing with -A.
           const clusterScoped = ['node', 'nodes', 'persistentvolume', 'pv', 'storageclass',
             'clusterrole', 'clusterrolebinding', 'namespace', 'ns', 'ingressclass',
-            'priorityclass', 'runtimeclass', 'crd', 'customresourcedefinition']
+            'priorityclass', 'runtimeclass', 'crd', 'customresourcedefinition',
+            'nodes.metrics.k8s.io']
           if (!clusterScoped.includes(resource.toLowerCase())) {
             cmdArgs.push('-A')
           }
