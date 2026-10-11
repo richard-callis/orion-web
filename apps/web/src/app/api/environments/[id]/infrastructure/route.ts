@@ -22,9 +22,9 @@ async function gatewayExec(
     headers: gatewayHeaders(gatewayToken),
     body: JSON.stringify({ name: toolName, arguments: args }),
   })
-  if (!res.ok) throw new Error(`Gateway tool ${toolName} failed: ${res.status}`)
-  const data = await res.json() as { result?: string; error?: string }
-  if (data.error) throw new Error(data.error)
+  // The gateway puts kubectl's error text in the body of non-2xx responses
+  const data = await res.json().catch(() => ({})) as { result?: string; error?: string }
+  if (!res.ok || data.error) throw new Error(data.error ?? `Gateway tool ${toolName} failed: ${res.status}`)
   return data.result ?? ''
 }
 
