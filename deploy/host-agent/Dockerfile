@@ -14,7 +14,7 @@
 # from the download server.
 FROM docker:29-cli AS docker-cli
 
-FROM timberio/vector:0.58.0-debian
+FROM timberio/vector:0.59.0-debian
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 # Runs as 1000:1000 (set in docker-compose.yml); the image has no "vector" user.
 USER 1000:1000
