@@ -9,7 +9,7 @@ import { NodeGrid } from '@/components/infrastructure/NodeGrid'
 import { PodTable } from '@/components/infrastructure/PodTable'
 import type { CachedNode, CachedPod, NodeMetric } from '@/lib/k8s'
 
-interface InfraResponse { nodes: CachedNode[]; pods: CachedPod[]; metrics?: NodeMetric[] }
+interface InfraResponse { nodes: CachedNode[]; pods: CachedPod[]; metrics?: NodeMetric[]; metricsError?: string }
 
 /** The infrastructure route returns { error, detail } — show both. */
 function describe(err: unknown): string {
@@ -49,6 +49,12 @@ export function OverviewTab({ envId }: { envId: string }) {
 
       {nodes.length > 0 && (
         <>
+          {data?.metricsError && (
+            <div role="status" className="rounded-lg border border-status-warning/30 bg-status-warning/10 px-4 py-3 text-xs text-status-warning">
+              <span className="font-medium">Node CPU/memory unavailable:</span>{' '}
+              <span className="whitespace-pre-wrap break-words font-mono">{data.metricsError}</span>
+            </div>
+          )}
           <NodeGrid
             nodes={nodes}
             metrics={data?.metrics ?? []}

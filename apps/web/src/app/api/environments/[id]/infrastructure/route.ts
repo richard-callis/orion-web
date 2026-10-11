@@ -2,8 +2,8 @@
  * GET /api/environments/:id/infrastructure
  *
  * Fetches nodes and pods from an environment via the ORION Gateway.
- * Returns { nodes: CachedNode[], pods: CachedPod[], metrics: NodeMetric[] }
- * (metrics is empty when the cluster has no metrics-server).
+ * Returns { nodes: CachedNode[], pods: CachedPod[], metrics: NodeMetric[], metricsError?: string }
+ * (metrics is empty, with metricsError saying why, when node usage can't be read).
  */
 import { gatewayHeaders } from '@/lib/gateway-headers'
 import { NextRequest, NextResponse } from 'next/server'
@@ -186,16 +186,22 @@ export async function GET(
 
     // Needs metrics-server in the cluster and metrics.k8s.io read access for the gateway
     let metrics: NodeMetric[] = []
-    if (metricsJson.status === 'fulfilled' && metricsJson.value) {
+    let metricsError: string | undefined
+    if (metricsJson.status === 'rejected') {
+      metricsError = metricsJson.reason instanceof Error ? metricsJson.reason.message : String(metricsJson.reason)
+    } else {
       try {
         metrics = (JSON.parse(metricsJson.value).items ?? []).map(parseNodeMetric)
           .filter((m: NodeMetric) => m.name && Number.isFinite(m.cpuUsageNano) && Number.isFinite(m.memUsageKi))
+        if (metrics.length === 0) metricsError = 'metrics-server returned no node metrics'
       } catch {
-        // No metrics-server or unparseable output — return nodes without usage
+        // Non-JSON output is kubectl's error text (e.g. Forbidden, or no metrics-server)
+        metricsError = metricsJson.value.trim() || 'empty response from gateway'
       }
     }
+    if (metricsError) metricsError = metricsError.slice(0, 500)
 
-    return NextResponse.json({ nodes, pods, metrics })
+    return NextResponse.json({ nodes, pods, metrics, metricsError })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 502 })
