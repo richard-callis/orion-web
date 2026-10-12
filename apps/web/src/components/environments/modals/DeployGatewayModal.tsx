@@ -50,6 +50,7 @@ export function DeployGatewayModal({ env, onClose, onDeployed }: {
   const id = useId()
   const [gatewayUrl, setGatewayUrl] = useState('')
   const [gatewayType, setGatewayType] = useState(env.type)
+  const [metricsServer, setMetricsServer] = useState(true)
   const [result, setResult] = useState<JoinResult | null>(null)
   const [generating, setGenerating] = useState(false)
 
@@ -68,7 +69,7 @@ export function DeployGatewayModal({ env, onClose, onDeployed }: {
     try {
       setResult(await apiFetch<JoinResult>(`/api/environments/${env.id}/generate-join`, {
         method: 'POST',
-        body: { gatewayUrl: gatewayUrl || undefined, gatewayType },
+        body: { gatewayUrl: gatewayUrl || undefined, gatewayType, metricsServer },
       }))
     } catch (e) {
       toast.error(`Failed to generate join token: ${errorMessage(e)}`)
@@ -124,6 +125,15 @@ export function DeployGatewayModal({ env, onClose, onDeployed }: {
               <Input id={`${id}-url`} value={gatewayUrl} onChange={e => setGatewayUrl(e.target.value)}
                 placeholder="http://192.168.1.84:3001 or http://orion-gateway.management.svc.cluster.local:3001" />
             </div>
+            {gatewayType === 'cluster' && (
+              <label className="flex items-start gap-2 text-xs text-text-secondary">
+                <input type="checkbox" className="mt-0.5" checked={metricsServer} onChange={e => setMetricsServer(e.target.checked)} />
+                <span>
+                  Install metrics-server (node CPU/memory on the Infrastructure page).{' '}
+                  <span className="text-text-muted">Untick if the cluster already runs one, e.g. k3s, EKS, GKE or AKS.</span>
+                </span>
+              </label>
+            )}
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="secondary" onClick={onClose}>Cancel</Button>
               <Button onClick={generateJoinToken} disabled={generating}>
@@ -139,6 +149,14 @@ export function DeployGatewayModal({ env, onClose, onDeployed }: {
             </div>
             <CopyBlock label="Docker" icon={<Terminal size={11} aria-hidden />} text={result.dockerCmd} />
             <CopyBlock label="Kubernetes" icon={<Server size={11} aria-hidden />} text={result.kubectlCmd} wrap />
+            {result.metricsServerCmd && (
+              <>
+                <p className="text-xs text-text-muted">
+                  Gateway already installed? Add metrics-server only — this leaves the running gateway and its credentials untouched:
+                </p>
+                <CopyBlock label="metrics-server only" icon={<Server size={11} aria-hidden />} text={result.metricsServerCmd} wrap />
+              </>
+            )}
             <div className="flex justify-end pt-1">
               <Button onClick={onClose}>Done</Button>
             </div>

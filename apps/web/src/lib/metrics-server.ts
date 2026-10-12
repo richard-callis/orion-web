@@ -339,23 +339,3 @@ export async function ensureMetricsServer(
     return { status: 'error', error: `Installing metrics-server failed: ${msg(e)}` }
   }
 }
-
-/**
- * Fire-and-forget after a gateway (re-)joins: the gateway calls /join during
- * startup, before it serves tool calls, so retry for a couple of minutes.
- */
-export function ensureMetricsServerAfterJoin(envId: string, load: () => Promise<Parameters<typeof ensureMetricsServer>[0] | null>): void {
-  void (async () => {
-    for (let attempt = 0; attempt < 8; attempt++) {
-      await new Promise(r => setTimeout(r, 15_000))
-      const env = await load().catch(() => null)
-      if (!env) return
-      const res = await ensureMetricsServer(env)
-      if (res.status !== 'error') {
-        console.log(`[metrics-server] environment ${envId}: ${res.status}`)
-        return
-      }
-      if (attempt === 7) console.warn(`[metrics-server] environment ${envId}: ${res.error}`)
-    }
-  })().catch(e => console.warn(`[metrics-server] environment ${envId}: ${msg(e)}`))
-}

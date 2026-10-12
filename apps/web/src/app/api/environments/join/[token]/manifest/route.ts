@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHash } from 'crypto'
 import { prisma } from '@/lib/db'
 import { gatewayImageSpec } from '@/lib/gateway-image'
-import { GATEWAY_METRICS_RBAC } from '@/lib/metrics-server'
+import { GATEWAY_METRICS_RBAC, metricsServerManifest } from '@/lib/metrics-server'
 
 // SystemSetting.value is a Json column — narrow to string before using
 function settingStr(setting: { value: unknown } | null, fallback: string): string {
@@ -34,6 +34,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
 
   const { searchParams } = new URL(req.url)
   const gatewayType = searchParams.get('type') ?? record.environment.type ?? 'cluster'
+  // metrics-server (node CPU/memory) ships with the gateway, applied with the
+  // installer's admin credentials. metricsServer=0 opts out for clusters that
+  // already run one (k3s, EKS/GKE/AKS).
+  const withMetricsServer = gatewayType === 'cluster' && searchParams.get('metricsServer') !== '0'
+
+  // only=metrics-server: just metrics-server + the gateway's metrics RBAC, for
+  // clusters whose gateway is already installed. Re-applying the full manifest
+  // would blank the join Secret and drop the gateway's saved credentials.
+  if (searchParams.get('only') === 'metrics-server') {
+    return new NextResponse(`---\n${GATEWAY_METRICS_RBAC}---\n${metricsServerManifest({ kubeletInsecureTls: true })}`, {
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    })
+  }
 
   // ORION_CALLBACK_URL = the URL gateways use to reach ORION (LAN/internal, not behind Cloudflare).
   // Falls back to x-forwarded-host (Traefik), then MANAGEMENT_IP, then NEXTAUTH_URL.
@@ -283,7 +296,7 @@ spec:
     - port: 3001
       targetPort: 3001
       nodePort: 30001
-`
+${withMetricsServer ? `---\n${metricsServerManifest({ kubeletInsecureTls: true })}` : ''}`
 
   return new NextResponse(manifest, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' },

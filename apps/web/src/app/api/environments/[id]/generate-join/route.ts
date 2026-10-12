@@ -47,6 +47,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const requestedType: string = body.gatewayType ?? env.type ?? 'cluster'
   // M2 fix: validate gatewayType against allowlist to prevent type confusion
   const gatewayType: string = ALLOWED_GATEWAY_TYPES.has(requestedType) ? requestedType : 'cluster'
+  const metricsServer = body.metricsServer !== false
 
   // Public URL — prefer the request Host header, but it may be 0.0.0.0 inside Docker.
   // Use x-forwarded-host (set by Traefik) when available, then MANAGEMENT_IP, then request host.
@@ -74,7 +75,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   ].filter(Boolean).join('\n')
 
   // Use the callback URL so the manifest curl works from cluster nodes (not blocked by Cloudflare)
-  const kubectlCmd = `kubectl apply -f <(curl -s '${orionCallbackUrl}/api/environments/join/${token}/manifest?type=${gatewayType}')`
+  const kubectlCmd = `kubectl apply -f <(curl -s '${orionCallbackUrl}/api/environments/join/${token}/manifest?type=${gatewayType}${metricsServer ? '' : '&metricsServer=0'}')`
 
-  return NextResponse.json({ token, expiresAt, dockerCmd, kubectlCmd, orionUrl: orionPublicUrl })
+  // Adds metrics-server to a cluster whose gateway is already installed
+  const metricsServerCmd = gatewayType === 'cluster'
+    ? `kubectl apply -f <(curl -s '${orionCallbackUrl}/api/environments/join/${token}/manifest?only=metrics-server')`
+    : undefined
+
+  return NextResponse.json({ token, expiresAt, dockerCmd, kubectlCmd, metricsServerCmd, orionUrl: orionPublicUrl })
 }

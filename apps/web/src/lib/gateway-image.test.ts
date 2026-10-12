@@ -78,10 +78,11 @@ describe('join manifest gateway image + probes', () => {
   })
   afterEach(() => { process.env = { ...saved } })
 
+  // Gateway objects only — metrics-server has its own /livez + /readyz probes
   async function render(): Promise<string> {
     const { GET } = await import('@/app/api/environments/join/[token]/manifest/route')
     const { NextRequest } = await import('next/server')
-    const res = await GET(new NextRequest('http://orion.test/api/environments/join/tok/manifest'), {
+    const res = await GET(new NextRequest('http://orion.test/api/environments/join/tok/manifest?metricsServer=0'), {
       params: Promise.resolve({ token: 'tok' }),
     })
     expect(res.status).toBe(200)
