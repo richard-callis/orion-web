@@ -310,7 +310,7 @@ services:
 
   # ── Vault ──────────────────────────────────────────────────────────────────
   vault:
-    image: hashicorp/vault:2.1
+    image: hashicorp/vault:2.2
     restart: unless-stopped
     command: server
     depends_on:
