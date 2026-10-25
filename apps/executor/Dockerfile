@@ -5,7 +5,7 @@
 
 # npm ci validates every workspace in the lockfile, so all manifests are copied;
 # only apps/executor's dependencies are installed (all hoisted to /app/node_modules).
-FROM node:26.10.0-alpine3.24@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS manifests
+FROM node:26.12.1-alpine3.24@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS manifests
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/package.json
@@ -22,7 +22,7 @@ FROM manifests AS prod-deps
 RUN npm ci --workspace apps/executor --include-workspace-root=false --omit=dev \
  && mkdir -p apps/executor/node_modules
 
-FROM node:26.10.0-alpine3.24@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80
+FROM node:26.12.1-alpine3.24@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797
 
 WORKDIR /app
 
