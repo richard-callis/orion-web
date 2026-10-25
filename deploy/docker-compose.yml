@@ -210,7 +210,7 @@ services:
   # If connecting to GitHub, GitLab, or an external Gitea, leave this profile inactive.
   gitea:
     profiles: [gitea]
-    image: gitea/gitea:28.1.0
+    image: gitea/gitea:28.2.0
     restart: unless-stopped
     environment:
       USER_UID: 1000
