@@ -12,6 +12,11 @@ import { prisma } from '@/lib/db'
 import { startJob, type JobLogger } from '@/lib/job-runner'
 import { GatewayClient } from '@/lib/agent-runner/gateway-client'
 import { requireAdmin } from '@/lib/auth'
+import { dropNodePorts } from '@/lib/drop-node-ports'
+import { localKubectlArgs } from '@/lib/local-kubectl-args'
+
+// Traefik chart the bootstrap's values are written for (service.spec.*, exposedPort).
+const TRAEFIK_CHART_VERSION = '39.0.8'
 
 export async function POST(
   _req: NextRequest,
@@ -234,13 +239,19 @@ async function bootstrapIngressPoint(
     }
 
     // Step 4: Traefik via Helm
-    await log('Step 4/4: Installing Traefik via Helm...')
+    await log(`Step 4/4: Installing Traefik (chart ${TRAEFIK_CHART_VERSION}) via Helm...`)
+    // exposedPort is the Service port; ports.<name>.port is the container's
+    // (unprivileged 8000/8443 by default), which these values used to set.
     const helmValues: Record<string, string> = {
-      'ports.websecure.port': String(point.port),
-      'ports.web.port':       '80',
+      'ports.websecure.exposedPort': String(point.port),
+      'ports.web.exposedPort':       '80',
+      // Reached on its LoadBalancer IP only: no NodePorts on every node's address.
+      // Fine here: this path always installs MetalLB, which needs none.
+      'service.spec.allocateLoadBalancerNodePorts': 'false',
     }
     if (point.ip) {
-      helmValues['service.loadBalancerIP'] = point.ip
+      // The chart reads service.spec.*, never a top-level service.loadBalancerIP.
+      helmValues['service.spec.loadBalancerIP'] = point.ip
     }
     if (point.certManager) {
       helmValues['ingressClass.enabled']        = 'true'
@@ -251,6 +262,8 @@ async function bootstrapIngressPoint(
       release:         'traefik',
       chart:           'traefik',
       repo:            'https://helm.traefik.io/traefik',
+      // Pinned: the values above are checked against this chart version.
+      version:         TRAEFIK_CHART_VERSION,
       namespace:       'kube-system',
       createNamespace: false,
       values:          helmValues,
@@ -258,6 +271,9 @@ async function bootstrapIngressPoint(
       timeout:         '180s',
     })
     await log('  Traefik installed ✓')
+    // An upgrade keeps the NodePorts the Service already had.
+    const dropped = await dropNodePorts(gatewayExec, 'traefik', 'kube-system')
+    if (dropped) await log(`  Removed ${dropped} NodePort(s) from the traefik Service ✓`)
 
     // Discover the assigned LoadBalancer IP
     try {
@@ -368,12 +384,16 @@ function makeLocalGx(kubeconfig: string) {
             : [
                 'upgrade', args.release as string, args.chart as string,
                 ...(args.repo ? ['--repo', args.repo as string] : []),
+                ...(args.version ? ['--version', args.version as string] : []),
                 '--install',
                 '--namespace', args.namespace as string,
                 ...(args.wait ? ['--wait'] : []),
                 ...(args.timeout ? ['--timeout', args.timeout as string] : []),
                 ...(args.createNamespace ? ['--create-namespace'] : []),
-                ...(args.values ? ['--values', '-'] : []),
+                // --set, as the gateway's helm_upgrade_install does: `--values -`
+                // read stdin, which nothing wrote, so every value was dropped.
+                ...Object.entries((args.values ?? {}) as Record<string, string>)
+                  .flatMap(([k, v]) => ['--set', `${k}=${v}`]),
               ]),
           '--kubeconfig', kc,
         ], { timeout: name === 'helm_upgrade_install' ? 600_000 : 30_000 })
@@ -383,23 +403,12 @@ function makeLocalGx(kubeconfig: string) {
       }
     }
 
-    if (name === 'kubectl_rollout_status') {
-      return (await exec('kubectl', [
-        'rollout', 'status', `-${args.kind}`, args.name, '-n', args.namespace,
-        `--timeout=${args.timeout ?? '120s'}`, '--kubeconfig', kc,
-      ], { timeout: 300_000 })).stdout
-    }
-
-    // Generic kubectl
-    if (!name.startsWith('kubectl_')) return ''
-    const cmd = name.substring(8)
-    const flags: string[] = []
-    for (const [key, val] of Object.entries(args)) {
-      if (key === 'manifest') continue
-      if (key === 'namespace') { flags.push('-n'); flags.push(String(val)) }
-      else if (key === 'output') { flags.push(`-o${val === '' ? '' : val}`) }
-      else { flags.push(`--${key.replace(/_/g, '-')}`); flags.push(String(val)) }
-    }
-    return (await exec('kubectl', [cmd, ...flags, '--kubeconfig', kc], { timeout: 30_000 })).stdout
+    // kubectl_get/patch/rollout_status, shaped like the gateway's tools. The old
+    // generic branch turned every arg into a flag (`get --resource ... --name ...`),
+    // which kubectl rejects, so every probe here read as "not installed".
+    const argv = localKubectlArgs(name, args)
+    if (!argv) throw new Error(`local runner: unsupported tool ${name}`)
+    return (await exec('kubectl', [...argv, '--kubeconfig', kc],
+      { timeout: name === 'kubectl_rollout_status' ? 300_000 : 30_000 })).stdout
   }
 }

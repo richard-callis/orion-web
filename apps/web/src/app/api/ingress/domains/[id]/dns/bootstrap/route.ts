@@ -12,6 +12,7 @@ import { NextRequest } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { buildZoneFile, syncToKubernetes, syncToDocker } from '@/lib/dns-sync'
+import { dropNodePorts } from '@/lib/drop-node-ports'
 
 function sse(ctrl: ReadableStreamDefaultController, event: object) {
   ctrl.enqueue(`data: ${JSON.stringify(event)}\n\n`)
@@ -131,6 +132,10 @@ metadata:
     managed-by: orion
 spec:
   type: LoadBalancer${loadBalancerLine}
+  # Reached on its LoadBalancer IP only: no NodePort on every node's address.
+  # MetalLB, Cilium LB-IPAM and k3s ServiceLB need none; a cloud load balancer
+  # that forwards to NodePorts (e.g. AWS instance mode) would.
+  allocateLoadBalancerNodePorts: false
   selector:
     app: coredns-orion
   ports:
@@ -241,6 +246,9 @@ export async function POST(
           const manifests = buildCoreDnsManifests(domain.name, domain.coreDnsIp, zoneContent)
           await exec('kubectl_apply_manifest', { manifest: manifests })
           log(ctrl, '  Manifests applied ✓')
+          // A re-apply keeps the NodePorts the Service already had.
+          const dropped = await dropNodePorts(exec, 'coredns-orion', 'kube-system')
+          if (dropped) log(ctrl, `  Removed ${dropped} NodePort(s) from the coredns-orion Service ✓`)
 
           log(ctrl, 'Step 2/2: Waiting for CoreDNS to be ready...')
           await exec('kubectl_rollout_status', {

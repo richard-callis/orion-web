@@ -97,6 +97,7 @@ describe('built-in tools reject flag injection without running the CLI', () => {
     ['helm_uninstall', { release: '--kube-apiserver=https://x', namespace: 'default' }],
     ['helm_repo_add', { name: '--insecure-skip-tls-verify', url: 'https://charts.example.com' }],
     ['helm_upgrade_install', { release: 'r', chart: '--post-renderer=/bin/sh', namespace: 'default' }],
+    ['helm_upgrade_install', { release: 'r', chart: 'c', namespace: 'default', version: '--post-renderer=/bin/sh' }],
   ])('%s %j', async (name, args) => {
     const out = await tool(kubernetesTools, name).execute(args)
     expect(out).toMatch(/^Error: /)
@@ -109,6 +110,15 @@ describe('built-in tools reject flag injection without running the CLI', () => {
       expect(out).toContain('not permitted')
     }
     expect(runOut).not.toHaveBeenCalled()
+  })
+
+  it('helm_upgrade_install passes a chart version', async () => {
+    await tool(kubernetesTools, 'helm_upgrade_install').execute({
+      release: 'traefik', chart: 'traefik', repo: 'https://helm.traefik.io/traefik', namespace: 'kube-system', version: '39.0.8',
+    })
+    const args = vi.mocked(runOut).mock.calls[0][1] as string[]
+    expect(args.slice(args.indexOf('--version'), args.indexOf('--version') + 2)).toEqual(['--version', '39.0.8'])
+    expect(args.indexOf('--version')).toBeLessThan(args.indexOf('--'))
   })
 
   it('valid kubectl_get puts positionals after --', async () => {
