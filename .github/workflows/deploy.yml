@@ -75,10 +75,10 @@ jobs:
           python3 - <<'PY'
           import json, os, sys, time, urllib.request, urllib.error
           repo, sha, tok = os.environ["REPO"], os.environ["SHA"], os.environ["GH_TOKEN"]
-          out = open(os.environ["GITHUB_OUTPUT"], "a")
           def done(proceed, msg, level="notice", code=0):
               print(f"::{level}::{msg}")
-              out.write(f"proceed={'true' if proceed else 'false'}\nsha={sha}\n")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                  out.write(f"proceed={'true' if proceed else 'false'}\nsha={sha}\n")
               sys.exit(code)
           if os.environ.get("SKIP") == "true":
               done(True, f"CI check skipped by manual dispatch for {sha[:12]}", "warning")
@@ -125,9 +125,17 @@ jobs:
           # files git just checked out, so tracked templates stay current.
           COREDNS_KEEP=$(mktemp -d)
           cp -a deploy/coredns/. "$COREDNS_KEEP/" 2>/dev/null || true
-          git fetch --depth 1 origin "$DEPLOY_SHA"
+          git fetch --depth 50 origin "$DEPLOY_SHA"
           git reset --hard HEAD
-          git checkout -B main "$DEPLOY_SHA"
+          # Never roll the host back: if a newer, already-deployed commit is
+          # checked out (an older deploy queued behind it), keep that tree. It
+          # passed CI when it was deployed. The image pin below still applies.
+          cur=$(git rev-parse HEAD)
+          if [ "$cur" != "$DEPLOY_SHA" ] && git merge-base --is-ancestor "$DEPLOY_SHA" "$cur" 2>/dev/null; then
+            echo "::notice::host already at newer $cur; keeping its tree"
+          else
+            git checkout -B main "$DEPLOY_SHA"
+          fi
           cp -a --update=none "$COREDNS_KEEP/." deploy/coredns/
           rm -rf "$COREDNS_KEEP"
 
