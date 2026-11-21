@@ -44,9 +44,10 @@ export async function GET(
   // Host keys ArgoCD needs for an SSH clone it can't verify by itself (H2). Read
   // before any credential is minted, so a failure here never leaves the
   // environment's working credential revoked for one ArgoCD can't use.
+  const cloneOptions = { bundledGiteaSsh: config.type === 'gitea-bundled' && await bundledGiteaSshEnabled() }
   let knownHosts: string[]
   try {
-    knownHosts = await providerKnownHosts(config, { bundledGiteaSsh: config.type === 'gitea-bundled' && await bundledGiteaSshEnabled() })
+    knownHosts = await providerKnownHosts(config, cloneOptions)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error(`[git-provider] could not read the git host's SSH keys for "${env.name}": ${msg}`)
@@ -55,7 +56,7 @@ export async function GET(
 
   let credential
   try {
-    credential = await getGatewayGitCredential(env)
+    credential = await getGatewayGitCredential(env, cloneOptions)
   } catch (err) {
     if (err instanceof GitCredentialUnavailableError) {
       return NextResponse.json({ error: err.message }, { status: 409 })

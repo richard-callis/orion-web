@@ -52,7 +52,9 @@ export async function providerKnownHosts(config: GitProviderConfig, opts: CloneO
   if (!ip) throw new Error('MANAGEMENT_IP not set — cannot name the Gitea SSH host for ArgoCD')
   const internalHost = process.env.GITEA_SSH_INTERNAL_HOST ?? 'gitea'
   const { stdout } = await exec('ssh-keyscan', ['-T', '5', '-p', '22', '--', internalHost], { timeout: 15_000 })
-  const lines = knownHostsFor(stdout, `[${ip}]:${bundledGiteaSshPort()}`)
+  // OpenSSH names a port-22 host bare and any other port as [host]:port.
+  const port = bundledGiteaSshPort()
+  const lines = knownHostsFor(stdout, port === 22 ? ip : `[${ip}]:${port}`)
   if (lines.length === 0) throw new Error(`ssh-keyscan returned no host keys for ${internalHost}:22`)
   cache = { at: Date.now(), lines }
   return lines

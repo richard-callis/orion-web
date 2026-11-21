@@ -41,6 +41,11 @@ describe('providerKnownHosts', () => {
     expect(execFile.mock.calls[0][0]).toBe('ssh-keyscan')
     expect(execFile.mock.calls[0][1]).toEqual(['-T', '5', '-p', '22', '--', 'gitea'])
   })
+  it('names a port-22 host bare, as ssh looks it up', async () => {
+    process.env.GITEA_SSH_PORT = '22'
+    expect((await providerKnownHosts(bundled, { bundledGiteaSsh: true }))[0]).toBe(`10.0.0.5 ssh-ed25519 ${ED}`)
+  })
+
   it('caches the scan', async () => {
     await providerKnownHosts(bundled, { bundledGiteaSsh: true })
     await providerKnownHosts(bundled, { bundledGiteaSsh: true })

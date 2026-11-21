@@ -30,6 +30,7 @@ import {
   type ScopedCredential,
   type ProviderRef,
   type CredentialKind,
+  type CloneOptions,
 } from '@/lib/git-provider/scoped-credentials'
 
 export const ORG_TOKEN_FALLBACK_SETTING = 'git.gateway.allowOrgTokenFallback'
@@ -98,12 +99,14 @@ function orgFallbackCredential(config: GitProviderConfig, owner: string, repo: s
  */
 export async function getGatewayGitCredential(
   env: { id: string; name: string; gitOwner: string | null; gitRepo: string | null },
+  /** The caller's reading of the settings, so it and this call agree on the transport. */
+  cloneOptions?: CloneOptions,
 ): Promise<GatewayGitCredential> {
   const config = await getGitProviderConfig()
   if (!config) throw new GitCredentialUnavailableError('Git provider not configured')
 
   const { owner, repo } = resolveEnvironmentRepo(env)
-  const opts = { bundledGiteaSsh: config.type === 'gitea-bundled' && await bundledGiteaSshEnabled() }
+  const opts = cloneOptions ?? { bundledGiteaSsh: config.type === 'gitea-bundled' && await bundledGiteaSshEnabled() }
   const expectedUrl = scopedRepoUrl(config, owner, repo, opts)
 
   const existing = await prisma.environmentGitCredential.findUnique({ where: { environmentId: env.id } })

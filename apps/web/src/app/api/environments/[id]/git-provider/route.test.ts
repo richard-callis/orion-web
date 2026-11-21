@@ -86,6 +86,9 @@ describe('GET /api/environments/:id/git-provider', () => {
     providerKnownHosts.mockResolvedValue(['[10.0.0.5]:2222 ssh-ed25519 AAAA'])
     const body = await (await get('Bearer mcga_env1')).json()
     expect(body.credential.knownHosts).toEqual(['[10.0.0.5]:2222 ssh-ed25519 AAAA'])
+    // One reading of the setting for both the host keys and the credential.
+    expect(providerKnownHosts).toHaveBeenCalledWith(expect.anything(), { bundledGiteaSsh: true })
+    expect(getGatewayGitCredential).toHaveBeenCalledWith(env, { bundledGiteaSsh: true })
   })
 
   it('502s rather than hand out an SSH credential whose host key it could not read', async () => {

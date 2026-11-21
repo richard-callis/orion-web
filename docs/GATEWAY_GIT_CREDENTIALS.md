@@ -97,22 +97,27 @@ token is an HTTPS password, which ArgoCD would never match to the SSH URL.
   to `git@github.com:<owner>/<repo>.git` **before** restarting the gateway on
   the new version, because the restart replaces the org-token Secret that the
   HTTPS URL relied on.
-- **Bundled Gitea, moving to SSH (H2)** on an install from before it:
-  1. In each environment repo, change the in-cluster Applications' `repoURL`
-     and the AppProject's `sourceRepos` to
-     `ssh://git@<MANAGEMENT_IP>:2222/<owner>/<repo>.git`, keeping the HTTP URL
-     in `sourceRepos` for now.
-  2. Set the SystemSetting `git.gateway.bundledGiteaSsh` to `true`.
-  3. Restart each gateway. Its next credential fetch revokes the HTTP bot user,
-     issues a deploy key, pins Gitea's host key in `argocd-ssh-known-hosts-cm`
-     and replaces the `orion-git-repo` Secret.
-  4. Drop the HTTP URL from `sourceRepos`.
+- **Bundled Gitea, moving to SSH (H2)** on an install from before it. The
+  setting is global: once it is on, *every* environment's gateway switches on
+  its next restart, planned or not (a pod reschedule counts). So:
+  1. For any cluster whose gateway can't write to the `argocd` namespace (a
+     read-only gateway), first give that cluster's ArgoCD its own deploy key and
+     Gitea's host key in Git. Its gateway can write neither the Secret nor the
+     ConfigMap, so once the setting is on, a restart only revokes the old bot
+     user; with ArgoCD on its own key, that is harmless.
+  2. In **every** environment repo, change the in-cluster Applications'
+     `repoURL` and the AppProject's `sourceRepos` to
+     `ssh://git@<MANAGEMENT_IP>:2222/<owner>/<repo>.git`, keeping the HTTP URL in
+     `sourceRepos` for now.
+  3. Set the SystemSetting `git.gateway.bundledGiteaSsh` to `true`.
+  4. Restart each writable gateway. Its credential fetch revokes the HTTP bot
+     user, issues a deploy key, pins Gitea's host key in
+     `argocd-ssh-known-hosts-cm` and replaces the `orion-git-repo` Secret.
+  5. Drop the HTTP URL from `sourceRepos`.
 
-  Until step 3 the cluster keeps the HTTP credential. A gateway without write
-  access to the `argocd` namespace (a read-only gateway) can write neither the
-  ConfigMap nor the Secret: give that cluster ArgoCD its own deploy key and the
-  host key in Git, and don't restart that gateway after step 2, or its old
-  credential is revoked with nothing to replace it.
+  Do steps 2 to 4 back to back: once step 2 syncs, the Applications point at the
+  SSH URL, which has no credential or host key until step 4, so they can't sync
+  in between.
 - Gateways older than this change understand only `{ url, token }`. For
   Gitea/GitLab the response keeps those fields, scoped to the one repo. For
   GitHub (SSH) the legacy `token` is empty, so old gateways can't register it.
