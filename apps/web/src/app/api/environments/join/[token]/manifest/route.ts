@@ -103,36 +103,48 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: orion-gateway
+# Read-only (infra-manager design §5.1): no Secrets, no pods/exec, no writes.
+# Changes to the cluster go through GitOps PRs or approved runbooks, never
+# through the gateway. Re-applying this downgrades an older, writable role.
 rules:
   - apiGroups: [""]
-    resources: ["pods", "pods/log", "pods/exec", "services", "endpoints", "configmaps", "namespaces", "nodes", "events", "secrets", "persistentvolumeclaims", "persistentvolumes"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    resources: ["pods", "pods/log", "services", "endpoints", "configmaps", "namespaces", "nodes", "events", "persistentvolumeclaims", "persistentvolumes", "serviceaccounts", "replicationcontrollers", "resourcequotas", "limitranges"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
-    resources: ["deployments", "replicasets", "statefulsets", "daemonsets", "replicationcontrollers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets", "controllerrevisions"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["batch"]
     resources: ["jobs", "cronjobs"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses", "networkpolicies"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    resources: ["ingresses", "ingressclasses", "networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "volumeattachments"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["cert-manager.io"]
-    resources: ["*"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    resources: ["certificates", "issuers", "clusterissuers", "certificaterequests"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["metallb.io"]
-    resources: ["*"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["apiservices"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    resources: ["ipaddresspools", "l2advertisements", "bgpadvertisements"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications", "appprojects"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["longhorn.io"]
+    resources: ["nodes", "volumes", "replicas", "backups", "settings"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["policy"]
-    resources: ["podsecuritypolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["ceph.rook.io"]
+    resources: ["cephclusters"]
     verbs: ["get", "list", "watch"]
 
 ---
@@ -189,11 +201,11 @@ metadata:
   annotations:
     orion/environment-id: "${record.environmentId}"
     orion/expires-at: "${record.expiresAt.toISOString()}"
+# environment-id and gateway-token are written by the gateway after it joins;
+# they are not listed here, so re-applying this manifest doesn't blank them.
 stringData:
   join-token: "${(await params).token}"
   orion-url: "${remoteOrionUrl}"
-  environment-id: ""
-  gateway-token: ""
 
 ---
 apiVersion: apps/v1

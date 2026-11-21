@@ -17,7 +17,9 @@ const docs = (yaml: string) => parseAllDocuments(yaml).map(d => {
 
 const env = { type: 'cluster', gatewayUrl: 'http://gw', gatewayToken: 't', kubeconfig: null, metadata: null }
 const notFound = new Error('Error from server (NotFound): apiservices.apiregistration.k8s.io "v1beta1.metrics.k8s.io" not found')
-const applied = () => executeTool.mock.calls.filter(c => c[0] === 'kubectl_apply_manifest').map(c => c[1].manifest as string)
+const gatewayApplies = () => executeTool.mock.calls.filter(c => c[0] === 'kubectl_apply_manifest')
+const adminApplied = () => localTool.mock.calls.filter(c => c[0] === 'kubectl_apply_manifest').map(c => c[1].manifest as string)
+const withKubeconfig = { ...env, kubeconfig: 'a2M=' }
 
 describe('metrics-server manifests', () => {
   it('are valid YAML, labelled ORION-managed', () => {
@@ -36,16 +38,15 @@ describe('metrics-server manifests', () => {
     expect(args(false)).not.toContain('--kubelet-insecure-tls')
   })
 
-  it('gateway RBAC holds every permission the metrics-server roles grant (no RBAC escalation)', () => {
+  it('gateway RBAC is read-only (no write verbs, no RBAC-granting rights)', () => {
     const rules = docs(GATEWAY_METRICS_RBAC).find(o => o.kind === 'ClusterRole').rules
-    const has = (group: string, res: string, verb: string) =>
-      rules.some((r: { apiGroups: string[]; resources: string[]; verbs: string[] }) =>
-        r.apiGroups.includes(group) && r.resources.includes(res) && r.verbs.includes(verb))
-    expect(has('', 'nodes/metrics', 'get')).toBe(true)
-    expect(has('metrics.k8s.io', 'nodes', 'watch')).toBe(true)
-    expect(has('authentication.k8s.io', 'tokenreviews', 'create')).toBe(true)
-    expect(has('authorization.k8s.io', 'subjectaccessreviews', 'create')).toBe(true)
-    expect(has('apiregistration.k8s.io', 'apiservices', 'create')).toBe(true)
+    const verbs = rules.flatMap((r: { verbs: string[] }) => r.verbs)
+    expect(verbs.every((v: string) => ['get', 'list', 'watch'].includes(v))).toBe(true)
+    const has = (group: string, res: string) =>
+      rules.some((r: { apiGroups: string[]; resources: string[] }) => r.apiGroups.includes(group) && r.resources.includes(res))
+    expect(has('metrics.k8s.io', 'nodes')).toBe(true)
+    expect(has('', 'nodes/metrics')).toBe(true)
+    expect(has('', 'serviceaccounts')).toBe(false)
   })
 })
 
@@ -57,47 +58,44 @@ describe('ensureMetricsServer', () => {
     expect(executeTool).not.toHaveBeenCalled()
   })
 
-  it('installs when no metrics-server exists, with insecure TLS by default', async () => {
+  it('installs with the stored admin kubeconfig, never through the gateway, with insecure TLS by default', async () => {
     executeTool.mockImplementation(async (tool: string) => { if (tool === 'kubectl_get') throw notFound; return 'ok' })
-    expect(await ensureMetricsServer(env)).toEqual({ status: 'installed', via: 'gateway' })
-    expect(applied()).toHaveLength(2)
-    expect(applied()[1]).toContain('--kubelet-insecure-tls')
+    localTool.mockResolvedValue('ok')
+    expect(await ensureMetricsServer(withKubeconfig)).toEqual({ status: 'installed', via: 'kubeconfig' })
+    expect(gatewayApplies()).toHaveLength(0)
+    expect(adminApplied()).toHaveLength(1)
+    expect(adminApplied()[0]).toContain('orion-gateway-metrics')
+    expect(adminApplied()[0]).toContain('--kubelet-insecure-tls')
   })
 
   it('honours metadata.metricsServer.kubeletInsecureTls = false', async () => {
     executeTool.mockImplementation(async (tool: string) => { if (tool === 'kubectl_get') throw notFound; return 'ok' })
-    await ensureMetricsServer({ ...env, metadata: { metricsServer: { kubeletInsecureTls: false } } })
-    expect(applied()[1]).not.toContain('--kubelet-insecure-tls')
+    localTool.mockResolvedValue('ok')
+    await ensureMetricsServer({ ...withKubeconfig, metadata: { metricsServer: { kubeletInsecureTls: false } } })
+    expect(adminApplied()[0]).not.toContain('--kubelet-insecure-tls')
   })
 
   it('leaves a metrics-server ORION does not manage alone', async () => {
     executeTool.mockImplementation(async (tool: string) =>
       tool === 'kubectl_get' ? JSON.stringify({ metadata: { labels: { 'k8s-app': 'metrics-server' } } }) : 'ok')
-    expect(await ensureMetricsServer(env)).toEqual({ status: 'existing' })
-    expect(applied()).toHaveLength(1) // gateway RBAC only
+    expect(await ensureMetricsServer(withKubeconfig)).toEqual({ status: 'existing' })
+    expect(gatewayApplies()).toHaveLength(0)
+    expect(adminApplied()).toHaveLength(0)
   })
 
-  it('updates its own metrics-server', async () => {
+  it('updates its own metrics-server with admin credentials', async () => {
     executeTool.mockImplementation(async (tool: string) =>
       tool === 'kubectl_get' ? JSON.stringify({ metadata: { labels: { 'app.kubernetes.io/managed-by': 'orion' } } }) : 'ok')
-    expect(await ensureMetricsServer(env)).toEqual({ status: 'updated', via: 'gateway' })
-  })
-
-  it('falls back to the stored kubeconfig when the gateway may not apply the RBAC', async () => {
-    executeTool.mockImplementation(async (tool: string) => {
-      if (tool === 'kubectl_get') throw notFound
-      throw new Error('clusterroles.rbac.authorization.k8s.io "orion-gateway-metrics" is forbidden: attempting to grant RBAC permissions not currently held')
-    })
     localTool.mockResolvedValue('ok')
-    expect(await ensureMetricsServer({ ...env, kubeconfig: 'a2M=' })).toEqual({ status: 'installed', via: 'kubeconfig' })
-    expect(localTool).toHaveBeenCalledTimes(2)
+    expect(await ensureMetricsServer(withKubeconfig)).toEqual({ status: 'updated', via: 'kubeconfig' })
   })
 
-  it('explains the one-time RBAC step when there is no kubeconfig to fall back to', async () => {
-    executeTool.mockRejectedValue(new Error('forbidden'))
+  it('explains the admin step when no kubeconfig is stored, without writing through the gateway', async () => {
+    executeTool.mockImplementation(async (tool: string) => { if (tool === 'kubectl_get') throw notFound; return 'ok' })
     const res = await ensureMetricsServer(env)
     expect(res.status).toBe('error')
-    expect(res.status === 'error' && res.error).toMatch(/orion-gateway-metrics/)
+    expect(res.status === 'error' && res.error).toMatch(/only=metrics-server/)
+    expect(gatewayApplies()).toHaveLength(0)
   })
 
   it('reports a failed existence check that is not NotFound', async () => {

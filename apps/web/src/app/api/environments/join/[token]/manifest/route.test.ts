@@ -53,4 +53,24 @@ describe('join manifest', () => {
     expect(n).toEqual(expect.arrayContaining(['ClusterRole/orion-gateway-metrics', 'Deployment/metrics-server', 'APIService/v1beta1.metrics.k8s.io']))
     expect(n.some(x => x.startsWith('Secret/') || x.startsWith('Deployment/orion-gateway'))).toBe(false)
   })
+
+  it('gives the gateway read-only RBAC: no writes, no Secrets, no pods/exec', async () => {
+    const objs = await render('?type=cluster')
+    const roles = objs.filter((o: { kind: string }) => o.kind === 'ClusterRole' && o.metadata.name.startsWith('orion-gateway'))
+    expect(roles.length).toBeGreaterThan(0)
+    for (const r of roles) {
+      for (const rule of r.rules) {
+        expect(rule.verbs.every((v: string) => ['get', 'list', 'watch'].includes(v))).toBe(true)
+        expect(rule.resources).not.toContain('secrets')
+        expect(rule.resources).not.toContain('pods/exec')
+        expect(rule.resources).not.toContain('*')
+      }
+    }
+  })
+
+  it("doesn't blank the gateway's saved credentials when re-applied", async () => {
+    const secret = (await render('?type=cluster')).find((o: { kind: string }) => o.kind === 'Secret')
+    expect(Object.keys(secret.stringData)).not.toContain('environment-id')
+    expect(Object.keys(secret.stringData)).not.toContain('gateway-token')
+  })
 })
