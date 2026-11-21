@@ -533,6 +533,7 @@ export const kubernetesTools = ([
         release:          { type: 'string', description: 'Release name' },
         chart:            { type: 'string', description: 'Chart name or path (e.g. "repo/chart" or full URL)' },
         repo:             { type: 'string', description: 'Helm repo name or URL. If it starts with http, uses --repo mode. Otherwise uses local cache.' },
+        version:          { type: 'string', description: 'Chart version (helm --version); latest when omitted' },
         namespace:        { type: 'string', description: 'Namespace to install into' },
         createNamespace:  { type: 'boolean', description: 'Create namespace if it does not exist' },
         values:           { type: 'object', description: 'Simple values to set (key: value pairs). For complex/nested values use valuesFile.' },
@@ -551,6 +552,7 @@ export const kubernetesTools = ([
         // If repo is a URL, use --repo mode (remote repo without pre-registering)
         // --repo takes a URL string (not NAME URL pair)
         if (repo.startsWith('http')) cmdArgs.push('--repo', httpUrl('repo', repo))
+        if (args.version !== undefined && args.version !== '') cmdArgs.push('--version', noFlag('version', args.version, 64))
         cmdArgs.push(
           '--namespace', k8sNamespace('namespace', args.namespace),
           '--timeout', duration('timeout', args.timeout ?? '120s'),

@@ -199,6 +199,11 @@ spec:
       targetPort: {{ PORT }}
       protocol: TCP                 # change to UDP if needed
   type: LoadBalancer
+  # Reachable on the LoadBalancer IP only, not on every node. Right for MetalLB,
+  # Cilium LB-IPAM and k3s ServiceLB; REMOVE this line for a cloud load balancer
+  # that forwards to NodePorts (AWS CLB/NLB instance mode, GKE without NEG,
+  # DigitalOcean, Linode, Hetzner) or k3s ServiceLB with externalTrafficPolicy: Local.
+  allocateLoadBalancerNodePorts: false
 `,
   },
 
