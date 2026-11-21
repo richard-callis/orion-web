@@ -33,6 +33,19 @@ import {
 } from '@/lib/git-provider/scoped-credentials'
 
 export const ORG_TOKEN_FALLBACK_SETTING = 'git.gateway.allowOrgTokenFallback'
+/**
+ * H2: the bundled Gitea's environments clone over SSH (deploy key, host key
+ * pinned) instead of plain HTTP. The setup wizard turns it on for new installs;
+ * an existing install turns it on once its in-cluster Applications use the SSH
+ * URL (docs/GATEWAY_GIT_CREDENTIALS.md), since the next credential fetch then
+ * replaces the HTTP credential.
+ */
+export const BUNDLED_GITEA_SSH_SETTING = 'git.gateway.bundledGiteaSsh'
+
+export async function bundledGiteaSshEnabled(): Promise<boolean> {
+  const row = await prisma.systemSetting.findUnique({ where: { key: BUNDLED_GITEA_SSH_SETTING } })
+  return row?.value === true || row?.value === 'true'
+}
 
 export interface GatewayGitCredential {
   kind: CredentialKind
@@ -90,7 +103,8 @@ export async function getGatewayGitCredential(
   if (!config) throw new GitCredentialUnavailableError('Git provider not configured')
 
   const { owner, repo } = resolveEnvironmentRepo(env)
-  const expectedUrl = scopedRepoUrl(config, owner, repo)
+  const opts = { bundledGiteaSsh: config.type === 'gitea-bundled' && await bundledGiteaSshEnabled() }
+  const expectedUrl = scopedRepoUrl(config, owner, repo, opts)
 
   const existing = await prisma.environmentGitCredential.findUnique({ where: { environmentId: env.id } })
   if (existing) {
@@ -106,9 +120,16 @@ export async function getGatewayGitCredential(
 
   let minted: ScopedCredential
   try {
-    minted = await mintScopedCredential(config, { owner, repo, label: envLabel(env) })
+    minted = await mintScopedCredential(config, { owner, repo, label: envLabel(env) }, opts)
   } catch (err) {
     if (err instanceof ScopingUnsupportedError) {
+      if (expectedUrl !== httpsRepoUrl(config, owner, repo)) {
+        // The org token is an HTTPS password, but this provider's clone URL is SSH
+        // (GitHub, bundled Gitea): ArgoCD would never match it to the repo.
+        throw new GitCredentialUnavailableError(
+          `${err.message}. The org-token fallback can't serve an SSH clone URL (${expectedUrl}); give the provider token admin rights on the repo.`,
+        )
+      }
       if (await orgTokenFallbackAllowed()) {
         console.warn(`[git-cred] ${err.message} — using org-token fallback for "${env.name}" (${ORG_TOKEN_FALLBACK_SETTING}=true)`)
         return orgFallbackCredential(config, owner, repo)

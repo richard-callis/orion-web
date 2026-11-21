@@ -5,7 +5,11 @@
  * Instead of handing it the org-wide provider token, mint the narrowest
  * credential each provider supports:
  *
- *   gitea / gitea-bundled  a dedicated bot user with `read` collaborator access
+ *   gitea-bundled          with CloneOptions.bundledGiteaSsh (H2): a read-only
+ *                          SSH deploy key on the env repo; ArgoCD clones over SSH
+ *                          (port 2222) with Gitea's host key pinned. Without it,
+ *                          the bot user below over plain HTTP, as before.
+ *   gitea (external)       a dedicated bot user with `read` collaborator access
  *                          on the env repo only, plus a `read:repository` token
  *                          (needs a site-admin provider token)
  *   github                 a read-only SSH deploy key on the env repo; ArgoCD
@@ -24,6 +28,7 @@ export type CredentialKind = 'https-token' | 'ssh-key'
 
 export type ProviderRef =
   | { provider: 'gitea'; apiUrl: string; botUser: string }
+  | { provider: 'gitea'; apiUrl: string; owner: string; repo: string; keyId: number }
   | { provider: 'github'; owner: string; repo: string; keyId: number }
   | { provider: 'gitlab'; apiUrl: string; projectPath: string; tokenId: number }
 
@@ -43,6 +48,12 @@ export class ScopingUnsupportedError extends Error {
     super(message)
     this.name = 'ScopingUnsupportedError'
   }
+}
+
+/** How an environment's cluster clones (see scopedRepoUrl). */
+export interface CloneOptions {
+  /** Bundled Gitea over SSH with a deploy key instead of HTTP with a bot token (H2). */
+  bundledGiteaSsh?: boolean
 }
 
 export interface RepoTarget {
@@ -82,13 +93,31 @@ export function httpsRepoUrl(config: GitProviderConfig, owner: string, repo: str
   return `${clusterGitBase(config)}/${owner}/${repo}.git`
 }
 
+/** SSH port the bundled Gitea publishes on the management host (compose: "2222:22"). */
+export function bundledGiteaSshPort(): number {
+  const port = Number(process.env.GITEA_SSH_PORT ?? 2222)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`GITEA_SSH_PORT is not a port: ${process.env.GITEA_SSH_PORT}`)
+  return port
+}
+
+/** Cluster-reachable SSH clone URL for the bundled Gitea. */
+export function bundledGiteaSshUrl(owner: string, repo: string): string {
+  const ip = process.env.MANAGEMENT_IP
+  if (!ip) throw new Error('MANAGEMENT_IP not set — cannot derive cluster-reachable Gitea URL')
+  return `ssh://git@${ip}:${bundledGiteaSshPort()}/${owner}/${repo}.git`
+}
+
 /**
- * The URL ArgoCD should clone when a scoped credential is in use. GitHub has no
- * API for repo-scoped HTTPS tokens, so GitHub environments clone over SSH with a
- * deploy key; everything else clones over HTTPS.
+ * The URL the cluster's ArgoCD clones with the gateway's credential; the
+ * in-cluster Applications must use it. GitHub has no API for repo-scoped HTTPS
+ * tokens, so it clones over SSH with a read-only deploy key; so does the bundled
+ * Gitea when bundledGiteaSsh is on (its HTTP is plain on the LAN). GitLab, an
+ * external Gitea and the bundled Gitea without the option clone over HTTP(S).
  */
-export function scopedRepoUrl(config: GitProviderConfig, owner: string, repo: string): string {
-  return config.type === 'github' ? `git@github.com:${owner}/${repo}.git` : httpsRepoUrl(config, owner, repo)
+export function scopedRepoUrl(config: GitProviderConfig, owner: string, repo: string, opts: CloneOptions = {}): string {
+  if (config.type === 'github') return `git@github.com:${owner}/${repo}.git`
+  if (config.type === 'gitea-bundled' && opts.bundledGiteaSsh) return bundledGiteaSshUrl(owner, repo)
+  return httpsRepoUrl(config, owner, repo)
 }
 
 // ── HTTP helper ──────────────────────────────────────────────────────────────
@@ -119,6 +148,33 @@ const isNotFound = (err: unknown) => err instanceof HttpError && err.status === 
 export function giteaBotUsername(label: string): string {
   const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 22).replace(/-+$/, '')
   return `orion-env-${slug || 'env'}-${randomBytes(3).toString('hex')}`
+}
+
+/** Bundled Gitea over SSH: a read-only deploy key on the env repo (needs repo admin). */
+async function mintGiteaDeployKey(config: GitProviderConfig, target: RepoTarget): Promise<ScopedCredential> {
+  const apiUrl = giteaApiBase(config)
+  const title = `orion-argocd-${target.label}-${randomBytes(3).toString('hex')}`.slice(0, 100)
+  const { publicKey, privateKey } = generateSshDeployKey(title)
+  let key: { id: number }
+  try {
+    key = await call<{ id: number }>(`${apiUrl}/api/v1/repos/${enc(target.owner)}/${enc(target.repo)}/keys`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `token ${config.token}` },
+      body: JSON.stringify({ title, key: publicKey, read_only: true }),
+    }, 'Gitea create deploy key')
+  } catch (err) {
+    if (isForbidden(err) || isNotFound(err)) {
+      throw new ScopingUnsupportedError('Gitea provider token cannot manage deploy keys on this repo (needs admin on the repo)')
+    }
+    throw err
+  }
+  return {
+    kind: 'ssh-key',
+    username: 'git',
+    secret: privateKey,
+    repoUrl: bundledGiteaSshUrl(target.owner, target.repo),
+    ref: { provider: 'gitea', apiUrl, owner: target.owner, repo: target.repo, keyId: key.id },
+  }
 }
 
 async function mintGitea(config: GitProviderConfig, target: RepoTarget): Promise<ScopedCredential> {
@@ -306,10 +362,11 @@ function enc(s: string): string {
   return encodeURIComponent(s)
 }
 
-export async function mintScopedCredential(config: GitProviderConfig, target: RepoTarget): Promise<ScopedCredential> {
+export async function mintScopedCredential(config: GitProviderConfig, target: RepoTarget, opts: CloneOptions = {}): Promise<ScopedCredential> {
   switch (config.type) {
-    case 'gitea':
     case 'gitea-bundled':
+      return opts.bundledGiteaSsh ? mintGiteaDeployKey(config, target) : mintGitea(config, target)
+    case 'gitea':
       return mintGitea(config, target)
     case 'github':
       return mintGitHub(config, target)
@@ -325,6 +382,13 @@ export async function revokeScopedCredential(config: GitProviderConfig, ref: Pro
   try {
     switch (ref.provider) {
       case 'gitea':
+        if ('keyId' in ref) {
+          await call(`${ref.apiUrl}/api/v1/repos/${enc(ref.owner)}/${enc(ref.repo)}/keys/${ref.keyId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `token ${config.token}` },
+          }, 'Gitea delete deploy key')
+          return
+        }
         await call(`${ref.apiUrl}/api/v1/admin/users/${enc(ref.botUser)}?purge=true`, {
           method: 'DELETE',
           headers: { Authorization: `token ${config.token}` },

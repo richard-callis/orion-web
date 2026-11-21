@@ -18,7 +18,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { constantTimeCompare } from '@/lib/security/webhook-auth'
 import { getGitProviderConfig } from '@/lib/git-provider'
-import { getGatewayGitCredential, GitCredentialUnavailableError } from '@/lib/environment-git-credentials'
+import { getGatewayGitCredential, GitCredentialUnavailableError, bundledGiteaSshEnabled } from '@/lib/environment-git-credentials'
+import { providerKnownHosts } from '@/lib/git-provider/known-hosts'
 
 export async function GET(
   req: NextRequest,
@@ -38,6 +39,18 @@ export async function GET(
   const config = await getGitProviderConfig()
   if (!config) {
     return NextResponse.json({ error: 'Git provider not configured' }, { status: 404 })
+  }
+
+  // Host keys ArgoCD needs for an SSH clone it can't verify by itself (H2). Read
+  // before any credential is minted, so a failure here never leaves the
+  // environment's working credential revoked for one ArgoCD can't use.
+  let knownHosts: string[]
+  try {
+    knownHosts = await providerKnownHosts(config, { bundledGiteaSsh: config.type === 'gitea-bundled' && await bundledGiteaSshEnabled() })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(`[git-provider] could not read the git host's SSH keys for "${env.name}": ${msg}`)
+    return NextResponse.json({ error: 'Could not read the git host\'s SSH host keys' }, { status: 502 })
   }
 
   let credential
@@ -68,6 +81,7 @@ export async function GET(
         ? { sshPrivateKey: credential.secret }
         : { password: credential.secret }),
       orgTokenFallback: credential.orgTokenFallback,
+      ...(credential.kind === 'ssh-key' && knownHosts.length ? { knownHosts } : {}),
     },
   })
 }

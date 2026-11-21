@@ -27,6 +27,8 @@ import { randomBytes } from 'crypto'
 import { seedSystemNebula } from '@/lib/seed-system-nebula'
 import { logAudit } from '@/lib/audit'
 import { isPrivateUrl } from '@/lib/ssrf-guard'
+import { prisma } from '@/lib/db'
+import { BUNDLED_GITEA_SSH_SETTING } from '@/lib/environment-git-credentials'
 
 export async function POST(req: NextRequest) {
   if (!await requireWizardSession(req)) {
@@ -127,6 +129,14 @@ export async function POST(req: NextRequest) {
   // ── Persist config ────────────────────────────────────────────────────────
 
   await writeEncryptedSetting('git.provider.config', config)
+  if (type === 'gitea-bundled') {
+    // New installs clone the bundled Gitea over SSH, never plain HTTP (H2).
+    await prisma.systemSetting.upsert({
+      where: { key: BUNDLED_GITEA_SSH_SETTING },
+      create: { key: BUNDLED_GITEA_SSH_SETTING, value: true },
+      update: { value: true },
+    })
+  }
 
   // Invalidate the in-process provider cache so the new config is picked up immediately
   invalidateGitProviderCache()

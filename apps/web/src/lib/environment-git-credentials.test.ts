@@ -37,13 +37,16 @@ import {
   revokeEnvironmentGitCredential,
   GitCredentialUnavailableError,
   ORG_TOKEN_FALLBACK_SETTING,
+  BUNDLED_GITEA_SSH_SETTING,
 } from './environment-git-credentials'
 import { ScopingUnsupportedError } from '@/lib/git-provider/scoped-credentials'
 
 const env = { id: 'env-1', name: 'Prod Cluster', gitOwner: 'orion', gitRepo: 'prod-cluster' }
-const config = { type: 'gitea-bundled', token: 'ORG-ADMIN-TOKEN', org: 'orion' }
-const REPO_URL = 'http://10.0.0.5:3002/orion/prod-cluster.git'
-const giteaRef = { provider: 'gitea', apiUrl: 'http://gitea:3000', botUser: 'orion-env-prod-abc123' }
+const config = { type: 'gitea', url: 'https://git.example.com', token: 'ORG-ADMIN-TOKEN', org: 'orion' }
+const REPO_URL = 'https://git.example.com/orion/prod-cluster.git'
+const giteaRef = { provider: 'gitea', apiUrl: 'https://git.example.com', botUser: 'orion-env-prod-abc123' }
+const bundled = { type: 'gitea-bundled', token: 'ORG-ADMIN-TOKEN', org: 'orion' }
+const SSH_URL = 'ssh://git@10.0.0.5:2222/orion/prod-cluster.git'
 
 beforeEach(() => {
   process.env.MANAGEMENT_IP = '10.0.0.5'
@@ -62,7 +65,7 @@ describe('getGatewayGitCredential', () => {
   it('mints, stores encrypted, and never returns the org token', async () => {
     const cred = await getGatewayGitCredential(env)
     expect(cred).toEqual({ kind: 'https-token', username: 'orion-env-prod-abc123', secret: 'SCOPED', repoUrl: REPO_URL, orgTokenFallback: false })
-    expect(mintScopedCredential).toHaveBeenCalledWith(config, { owner: 'orion', repo: 'prod-cluster', label: 'prod-cluster' })
+    expect(mintScopedCredential).toHaveBeenCalledWith(config, { owner: 'orion', repo: 'prod-cluster', label: 'prod-cluster' }, { bundledGiteaSsh: false })
     const stored = prisma.environmentGitCredential.create.mock.calls[0][0].data
     expect(stored).toMatchObject({ environmentId: 'env-1', provider: 'gitea', secret: 'enc:v1:SCOPED', repoUrl: REPO_URL })
     expect(JSON.stringify(stored)).not.toContain('ORG-ADMIN-TOKEN')
@@ -125,6 +128,41 @@ describe('getGatewayGitCredential', () => {
     const cred = await getGatewayGitCredential(env)
     expect(cred.secret).toBe('WINNER')
     expect(revokeScopedCredential).toHaveBeenCalledWith(config, giteaRef)
+  })
+
+  it('keeps a bundled-Gitea HTTP credential while SSH is off', async () => {
+    getGitProviderConfig.mockResolvedValue(bundled)
+    prisma.environmentGitCredential.findUnique.mockResolvedValue({
+      id: 'c1', provider: 'gitea', kind: 'https-token', username: 'bot', secret: 'enc:v1:OLD',
+      repoUrl: 'http://10.0.0.5:3002/orion/prod-cluster.git', providerRef: giteaRef,
+    })
+    const cred = await getGatewayGitCredential(env)
+    expect(cred.secret).toBe('OLD')
+    expect(revokeScopedCredential).not.toHaveBeenCalled()
+  })
+
+  it('replaces a bundled-Gitea HTTP bot-user credential with an SSH deploy key once SSH is on (H2)', async () => {
+    getGitProviderConfig.mockResolvedValue(bundled)
+    prisma.systemSetting.findUnique.mockImplementation(async ({ where }: { where: { key: string } }) =>
+      where.key === BUNDLED_GITEA_SSH_SETTING ? { key: where.key, value: true } : null)
+    const oldRef = { provider: 'gitea', apiUrl: 'http://gitea:3000', botUser: 'orion-env-prod-abc123' }
+    prisma.environmentGitCredential.findUnique.mockResolvedValue({
+      id: 'c1', provider: 'gitea', kind: 'https-token', username: 'bot', secret: 'enc:v1:OLD',
+      repoUrl: 'http://10.0.0.5:3002/orion/prod-cluster.git', providerRef: oldRef,
+    })
+    const keyRef = { provider: 'gitea', apiUrl: 'http://gitea:3000', owner: 'orion', repo: 'prod-cluster', keyId: 9 }
+    mintScopedCredential.mockResolvedValue({ kind: 'ssh-key', username: 'git', secret: 'KEY', repoUrl: SSH_URL, ref: keyRef })
+    const cred = await getGatewayGitCredential(env)
+    expect(revokeScopedCredential).toHaveBeenCalledWith(bundled, oldRef)
+    expect(mintScopedCredential).toHaveBeenCalledWith(bundled, expect.anything(), { bundledGiteaSsh: true })
+    expect(cred).toMatchObject({ kind: 'ssh-key', repoUrl: SSH_URL, secret: 'KEY' })
+  })
+
+  it('refuses the org-token fallback when the clone URL is SSH', async () => {
+    getGitProviderConfig.mockResolvedValue(bundled)
+    mintScopedCredential.mockRejectedValue(new ScopingUnsupportedError('needs admin on the repo'))
+    prisma.systemSetting.findUnique.mockResolvedValue({ key: 'any', value: true })
+    await expect(getGatewayGitCredential(env)).rejects.toThrow(/can't serve an SSH clone URL/)
   })
 
   it('errors when no git provider is configured', async () => {
