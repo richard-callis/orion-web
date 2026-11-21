@@ -210,7 +210,7 @@ services:
   # If connecting to GitHub, GitLab, or an external Gitea, leave this profile inactive.
   gitea:
     profiles: [gitea]
-    image: gitea/gitea:28.1.0
+    image: gitea/gitea:28.2.0
     restart: unless-stopped
     environment:
       USER_UID: 1000
@@ -254,7 +254,7 @@ services:
   # Activated by bootstrap.sh when REVERSE_PROXY_TYPE=docker is set in .env.
   traefik:
     profiles: [proxy]
-    image: traefik:v3.7.14
+    image: traefik:v3.7.16
     restart: unless-stopped
     command:
       - --providers.docker=true
@@ -310,7 +310,7 @@ services:
 
   # ── Vault ──────────────────────────────────────────────────────────────────
   vault:
-    image: hashicorp/vault:2.1
+    image: hashicorp/vault:2.2
     restart: unless-stopped
     command: server
     depends_on:
@@ -361,7 +361,7 @@ services:
   # Provides: mTLS termination, IP allowlisting, rate limiting, circuit breaking,
   # per-connection access logs, and Prometheus metrics on :9901.
   vault-proxy:
-    image: envoyproxy/envoy:v1.39.3
+    image: envoyproxy/envoy:v1.40.0
     restart: unless-stopped
     depends_on:
       vault:
@@ -757,7 +757,7 @@ services:
   # fails. 0.40.0 makes pf_kernel optional — it is skipped when BTF type
   # is absent rather than aborting startup.
   falco:
-    image: falcosecurity/falco:0.45.0
+    image: falcosecurity/falco:0.45.1
     restart: unless-stopped
     privileged: true
     pid: host
