@@ -271,6 +271,10 @@ function kubeletInsecureTls(env: Pick<Environment, 'metadata'>): boolean {
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
+const ADMIN_STEP =
+  "Generate a new join token (Deploy gateway → metrics-server only) and apply that manifest " +
+  "(?only=metrics-server) once with the cluster's admin credentials."
+
 /**
  * Install (or update an ORION-managed) metrics-server in a cluster environment.
  * Idempotent. The gateway is read-only, so it only checks what is installed;
@@ -278,10 +282,6 @@ const msg = (e: unknown) => (e instanceof Error ? e.message : String(e))
  * there is one, otherwise the owner re-applies the join manifest's
  * metrics-server part (?only=metrics-server) with admin credentials.
  */
-const ADMIN_STEP =
-  "Generate a new join token (Deploy gateway → metrics-server only) and apply that manifest " +
-  "(?only=metrics-server) once with the cluster's admin credentials."
-
 export async function ensureMetricsServer(
   env: Pick<Environment, 'type' | 'gatewayUrl' | 'gatewayToken' | 'kubeconfig' | 'metadata'>,
 ): Promise<MetricsServerResult> {
