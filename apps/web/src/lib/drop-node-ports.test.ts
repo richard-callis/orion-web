@@ -7,7 +7,9 @@ const svc = (alloc: boolean | undefined, ports: Array<{ nodePort?: number }>) =>
 describe('nodePortRemovalPatch', () => {
   it('removes every allocated nodePort once allocation is off', () => {
     expect(nodePortRemovalPatch(svc(false, [{ nodePort: 31935 }, {}, { nodePort: 31033 }]))).toEqual([
+      { op: 'test', path: '/spec/ports/0/nodePort', value: 31935 },
       { op: 'remove', path: '/spec/ports/0/nodePort' },
+      { op: 'test', path: '/spec/ports/2/nodePort', value: 31033 },
       { op: 'remove', path: '/spec/ports/2/nodePort' },
     ])
   })
@@ -29,7 +31,9 @@ describe('dropNodePorts', () => {
     expect(exec).toHaveBeenLastCalledWith('kubectl_patch', {
       resource: 'service', name: 'coredns-orion', namespace: 'kube-system', patchType: 'json',
       patch: JSON.stringify([
+        { op: 'test', path: '/spec/ports/0/nodePort', value: 31200 },
         { op: 'remove', path: '/spec/ports/0/nodePort' },
+        { op: 'test', path: '/spec/ports/1/nodePort', value: 31200 },
         { op: 'remove', path: '/spec/ports/1/nodePort' },
       ]),
     })

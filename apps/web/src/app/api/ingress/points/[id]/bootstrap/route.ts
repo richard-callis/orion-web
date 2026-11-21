@@ -13,6 +13,7 @@ import { startJob, type JobLogger } from '@/lib/job-runner'
 import { GatewayClient } from '@/lib/agent-runner/gateway-client'
 import { requireAdmin } from '@/lib/auth'
 import { dropNodePorts } from '@/lib/drop-node-ports'
+import { localKubectlArgs } from '@/lib/local-kubectl-args'
 
 // Traefik chart the bootstrap's values are written for (service.spec.*, exposedPort).
 const TRAEFIK_CHART_VERSION = '39.0.8'
@@ -238,7 +239,7 @@ async function bootstrapIngressPoint(
     }
 
     // Step 4: Traefik via Helm
-    await log('Step 4/4: Installing Traefik via Helm...')
+    await log(`Step 4/4: Installing Traefik (chart ${TRAEFIK_CHART_VERSION}) via Helm...`)
     // exposedPort is the Service port; ports.<name>.port is the container's
     // (unprivileged 8000/8443 by default), which these values used to set.
     const helmValues: Record<string, string> = {
@@ -402,31 +403,12 @@ function makeLocalGx(kubeconfig: string) {
       }
     }
 
-    if (name === 'kubectl_patch') {
-      return (await exec('kubectl', [
-        'patch', String(args.resource), String(args.name), '-n', String(args.namespace),
-        `--type=${args.patchType === 'json' ? 'json' : 'merge'}`, `--patch=${String(args.patch)}`,
-        '--kubeconfig', kc,
-      ], { timeout: 30_000 })).stdout
-    }
-
-    if (name === 'kubectl_rollout_status') {
-      return (await exec('kubectl', [
-        'rollout', 'status', `-${args.kind}`, args.name, '-n', args.namespace,
-        `--timeout=${args.timeout ?? '120s'}`, '--kubeconfig', kc,
-      ], { timeout: 300_000 })).stdout
-    }
-
-    // Generic kubectl
-    if (!name.startsWith('kubectl_')) return ''
-    const cmd = name.substring(8)
-    const flags: string[] = []
-    for (const [key, val] of Object.entries(args)) {
-      if (key === 'manifest') continue
-      if (key === 'namespace') { flags.push('-n'); flags.push(String(val)) }
-      else if (key === 'output') { flags.push(`-o${val === '' ? '' : val}`) }
-      else { flags.push(`--${key.replace(/_/g, '-')}`); flags.push(String(val)) }
-    }
-    return (await exec('kubectl', [cmd, ...flags, '--kubeconfig', kc], { timeout: 30_000 })).stdout
+    // kubectl_get/patch/rollout_status, shaped like the gateway's tools. The old
+    // generic branch turned every arg into a flag (`get --resource ... --name ...`),
+    // which kubectl rejects, so every probe here read as "not installed".
+    const argv = localKubectlArgs(name, args)
+    if (!argv) throw new Error(`local runner: unsupported tool ${name}`)
+    return (await exec('kubectl', [...argv, '--kubeconfig', kc],
+      { timeout: name === 'kubectl_rollout_status' ? 300_000 : 30_000 })).stdout
   }
 }
