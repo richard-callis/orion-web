@@ -33,6 +33,11 @@ on:
       - 'deploy/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
+    inputs:
+      skip_ci_check:
+        description: 'Deploy even if CI has not passed on this commit (emergency only)'
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-orion
@@ -44,16 +49,74 @@ concurrency:
 # minimum baseline (equivalent to the default for repos created Feb 2023+).
 permissions:
   contents: read
+  # Read-only: wait-for-ci reads this commit's CI workflow run and main's head.
+  actions: read
 
 jobs:
-  deploy:
-    # Skip if triggered by a failed upstream build.
+  # Merges now happen on Gitea, so CI no longer gates them before merge; it runs
+  # on GitHub after github-sync pushes main. Nothing deploys until CI has passed
+  # on the exact commit being deployed (platform design §5.1 step 9a). This job
+  # runs on a GitHub-hosted runner so it doesn't hold the self-hosted one, and
+  # the token never reaches the deploy host.
+  wait-for-ci:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.ci.outputs.proceed }}
+      sha: ${{ steps.ci.outputs.sha }}
+    steps:
+      - id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          SKIP: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_ci_check }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, time, urllib.request, urllib.error
+          repo, sha, tok = os.environ["REPO"], os.environ["SHA"], os.environ["GH_TOKEN"]
+          def done(proceed, msg, level="notice", code=0):
+              print(f"::{level}::{msg}")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                  out.write(f"proceed={'true' if proceed else 'false'}\nsha={sha}\n")
+              sys.exit(code)
+          if os.environ.get("SKIP") == "true":
+              done(True, f"CI check skipped by manual dispatch for {sha[:12]}", "warning")
+          def get(path):
+              req = urllib.request.Request(f"https://api.github.com/repos/{repo}/{path}",
+                  headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json"})
+              return json.load(urllib.request.urlopen(req, timeout=30))
+          deadline = time.time() + 40 * 60
+          while time.time() < deadline:
+              try:
+                  runs = get(f"actions/workflows/ci.yml/runs?head_sha={sha}&event=push&per_page=5").get("workflow_runs", [])
+                  if runs and runs[0]["status"] == "completed":
+                      c = runs[0]["conclusion"]
+                      if c == "success":
+                          done(True, f"CI passed on {sha[:12]}")
+                      if c in ("cancelled", "skipped"):
+                          head = get("commits/main")["sha"]
+                          if head != sha:
+                              done(False, f"CI on {sha[:12]} was {c} and main has moved to {head[:12]}: superseded, not deploying this commit")
+                      done(False, f"CI on {sha[:12]} concluded {c}: not deploying", "error", 1)
+                  print(f"CI on {sha[:12]}: {runs[0]['status'] if runs else 'no run yet'}, waiting")
+              except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as e:
+                  print(f"GitHub API error ({e}); retrying")
+              time.sleep(30)
+          done(False, f"CI on {sha[:12]} did not finish within 40 minutes: not deploying", "error", 1)
+          PY
+
+  deploy:
+    # Runs only after CI passed on the exact commit (wait-for-ci), and deploys
+    # that commit, not whatever main is by then.
+    needs: wait-for-ci
+    if: needs.wait-for-ci.outputs.proceed == 'true'
     runs-on: [self-hosted, linux, x64]
     env:
       DEPLOY_DIR: /opt/orion/deploy
+      DEPLOY_SHA: ${{ needs.wait-for-ci.outputs.sha }}
     steps:
-      - name: Sync /opt/orion to origin/main
+      - name: Sync /opt/orion to the CI-verified commit
         run: |
           cd /opt/orion
           # CoreDNS config/zones are runtime state written by the setup wizard.
@@ -62,9 +125,24 @@ jobs:
           # files git just checked out, so tracked templates stay current.
           COREDNS_KEEP=$(mktemp -d)
           cp -a deploy/coredns/. "$COREDNS_KEEP/" 2>/dev/null || true
-          git fetch --depth 1 origin main
+          # Full history (once) so ancestry between the host's commit and the
+          # one being deployed is always known.
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then git fetch --unshallow origin; fi
+          git fetch origin "$DEPLOY_SHA"
           git reset --hard HEAD
-          git checkout -B main origin/main
+          # Only move forward: deploy $DEPLOY_SHA if it's the same as or newer
+          # than the host's commit. If the host already has a newer commit (an
+          # older deploy queued behind it), keep that tree; it passed CI when it
+          # was deployed. The image pin below still applies either way.
+          cur=$(git rev-parse HEAD)
+          if [ "$cur" = "$DEPLOY_SHA" ] || git merge-base --is-ancestor "$cur" "$DEPLOY_SHA"; then
+            git checkout -B main "$DEPLOY_SHA"
+          elif git merge-base --is-ancestor "$DEPLOY_SHA" "$cur"; then
+            echo "::notice::host already at newer $cur; keeping its tree"
+          else
+            echo "::warning::$cur and $DEPLOY_SHA have diverged (history rewritten?); deploying the CI-verified $DEPLOY_SHA"
+            git checkout -B main "$DEPLOY_SHA"
+          fi
           cp -a --update=none "$COREDNS_KEEP/." deploy/coredns/
           rm -rf "$COREDNS_KEEP"
 
