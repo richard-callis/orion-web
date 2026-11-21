@@ -39,9 +39,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
   // already run one (k3s, EKS/GKE/AKS).
   const withMetricsServer = gatewayType === 'cluster' && searchParams.get('metricsServer') !== '0'
 
-  // only=metrics-server: just metrics-server + the gateway's metrics RBAC, for
-  // clusters whose gateway is already installed. Re-applying the full manifest
-  // would blank the join Secret and drop the gateway's saved credentials.
+  // only=metrics-server: just metrics-server + the gateway's (read-only) metrics
+  // RBAC, applied with admin credentials, for clusters whose gateway is already
+  // installed. Needs a fresh, unused join token like any manifest request.
   if (searchParams.get('only') === 'metrics-server') {
     return new NextResponse(`---\n${GATEWAY_METRICS_RBAC}---\n${metricsServerManifest({ kubeletInsecureTls: true })}`, {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' },
@@ -100,39 +100,72 @@ metadata:
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: orion-gateway-view
+# Read-only (infra-manager design §5.1): the built-in "view" role covers
+# namespaced workloads, services, config, events, HPAs and PDBs, excludes
+# Secrets and pods/exec, and grows with CRDs that aggregate-to-view.
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: orion-gateway
+    namespace: management
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: orion-gateway
+# Read-only extras "view" doesn't cover: cluster-scoped kinds and the operator
+# CRDs Orion's tools read. No Secrets, no pods/exec, no RBAC objects, no writes.
+# Changes to the cluster go through GitOps PRs or approved runbooks, never
+# through the gateway. Re-applying this downgrades an older, writable role.
 rules:
   - apiGroups: [""]
-    resources: ["pods", "pods/log", "pods/exec", "services", "endpoints", "configmaps", "namespaces", "nodes", "events", "secrets", "persistentvolumeclaims", "persistentvolumes"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["apps"]
-    resources: ["deployments", "replicasets", "statefulsets", "daemonsets", "replicationcontrollers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["batch"]
-    resources: ["jobs", "cronjobs"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    resources: ["nodes", "namespaces", "persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "volumeattachments", "csidrivers", "csinodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["scheduling.k8s.io"]
+    resources: ["priorityclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["node.k8s.io"]
+    resources: ["runtimeclasses"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses", "networkpolicies"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["cert-manager.io"]
-    resources: ["*"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["metallb.io"]
-    resources: ["*"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["apiservices"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    resources: ["ingressclasses"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["policy"]
-    resources: ["podsecuritypolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["cert-manager.io", "acme.cert-manager.io"]
+    resources: ["certificates", "issuers", "clusterissuers", "certificaterequests", "orders", "challenges"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metallb.io"]
+    resources: ["ipaddresspools", "l2advertisements", "bgpadvertisements"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications", "appprojects"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["longhorn.io"]
+    resources: ["nodes", "volumes", "replicas", "engines", "backups", "backupvolumes", "recurringjobs", "settings"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["ceph.rook.io"]
+    resources: ["cephclusters"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["velero.io"]
+    resources: ["backups", "restores", "schedules", "backupstoragelocations"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["traefik.io", "traefik.containo.us"]
+    resources: ["ingressroutes", "ingressroutetcps", "middlewares", "tlsoptions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways", "gatewayclasses", "httproutes"]
     verbs: ["get", "list", "watch"]
 
 ---
@@ -150,10 +183,11 @@ subjects:
     namespace: management
 
 ---
-# Lets the gateway install metrics-server (node CPU/memory) and read metrics
+# Lets the gateway read metrics and check the metrics-server APIService (read-only)
 ${GATEWAY_METRICS_RBAC}
 ---
-# Scoped Role — lets the gateway patch its own join secret to persist permanent credentials
+# Scoped Role — the only write the gateway keeps: patching its own join secret
+# to persist its permanent credentials after joining
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -189,11 +223,11 @@ metadata:
   annotations:
     orion/environment-id: "${record.environmentId}"
     orion/expires-at: "${record.expiresAt.toISOString()}"
+# environment-id and gateway-token are written by the gateway after it joins;
+# they are not listed here, so re-applying this manifest doesn't blank them.
 stringData:
   join-token: "${(await params).token}"
   orion-url: "${remoteOrionUrl}"
-  environment-id: ""
-  gateway-token: ""
 
 ---
 apiVersion: apps/v1

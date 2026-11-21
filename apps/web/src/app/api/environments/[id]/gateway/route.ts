@@ -2,7 +2,8 @@
  * POST /api/environments/:id/gateway/update
  *
  * Tells the gateway to update itself to the latest image.
- * - cluster gateways: kubectl rollout restart deployment/orion-gateway -n orion-management
+ * - cluster gateways: refused (409). They're read-only; an update is an image
+ *   digest change in the cluster's Git repo (GitOps).
  * - localhost/docker gateways: docker pull + docker restart via the gateway's /update endpoint
  */
 import { NextRequest, NextResponse } from 'next/server'
@@ -15,6 +16,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!env) return NextResponse.json({ error: 'Environment not found' }, { status: 404 })
   if (!env.gatewayUrl || !env.gatewayToken) {
     return NextResponse.json({ error: 'Gateway not connected' }, { status: 422 })
+  }
+  if (env.type === 'cluster') {
+    return NextResponse.json({
+      error: "Cluster gateways are read-only and can't restart themselves. Update the gateway image digest in the cluster's Git repo (GitOps).",
+    }, { status: 409 })
   }
 
   const res = await fetch(`${env.gatewayUrl}/update`, {
