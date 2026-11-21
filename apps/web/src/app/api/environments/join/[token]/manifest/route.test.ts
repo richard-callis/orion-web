@@ -73,4 +73,14 @@ describe('join manifest', () => {
     expect(Object.keys(secret.stringData)).not.toContain('environment-id')
     expect(Object.keys(secret.stringData)).not.toContain('gateway-token')
   })
+
+  it('binds no write roles besides the scoped join-secret writer', async () => {
+    const objs = await render('?type=cluster')
+    const bindings = objs.filter((o: { kind: string }) => o.kind === 'ClusterRoleBinding' || o.kind === 'RoleBinding')
+      .filter((b: { subjects?: { name: string }[] }) => b.subjects?.some(s => s.name === 'orion-gateway'))
+    const refs = bindings.map((b: { kind: string; roleRef: { name: string } }) => `${b.kind}:${b.roleRef.name}`).sort()
+    expect(refs).toEqual(['ClusterRoleBinding:orion-gateway', 'ClusterRoleBinding:orion-gateway-metrics', 'ClusterRoleBinding:view', 'RoleBinding:orion-gateway-secret-writer'])
+    const writer = objs.find((o: { kind: string; metadata: { name: string } }) => o.kind === 'Role' && o.metadata.name === 'orion-gateway-secret-writer')
+    expect(writer.rules).toEqual([{ apiGroups: [''], resources: ['secrets'], verbs: ['get', 'patch'], resourceNames: ['orion-gateway-talos-join'] }])
+  })
 })

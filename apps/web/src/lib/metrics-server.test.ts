@@ -59,24 +59,22 @@ describe('ensureMetricsServer', () => {
   })
 
   it('installs with the stored admin kubeconfig, never through the gateway, with insecure TLS by default', async () => {
-    executeTool.mockImplementation(async (tool: string) => { if (tool === 'kubectl_get') throw notFound; return 'ok' })
-    localTool.mockResolvedValue('ok')
+    localTool.mockImplementation(async (tool: string) => { if (tool === 'kubectl_get') throw notFound; return 'ok' })
     expect(await ensureMetricsServer(withKubeconfig)).toEqual({ status: 'installed', via: 'kubeconfig' })
-    expect(gatewayApplies()).toHaveLength(0)
+    expect(executeTool).not.toHaveBeenCalled()
     expect(adminApplied()).toHaveLength(1)
     expect(adminApplied()[0]).toContain('orion-gateway-metrics')
     expect(adminApplied()[0]).toContain('--kubelet-insecure-tls')
   })
 
   it('honours metadata.metricsServer.kubeletInsecureTls = false', async () => {
-    executeTool.mockImplementation(async (tool: string) => { if (tool === 'kubectl_get') throw notFound; return 'ok' })
-    localTool.mockResolvedValue('ok')
+    localTool.mockImplementation(async (tool: string) => { if (tool === 'kubectl_get') throw notFound; return 'ok' })
     await ensureMetricsServer({ ...withKubeconfig, metadata: { metricsServer: { kubeletInsecureTls: false } } })
     expect(adminApplied()[0]).not.toContain('--kubelet-insecure-tls')
   })
 
   it('leaves a metrics-server ORION does not manage alone', async () => {
-    executeTool.mockImplementation(async (tool: string) =>
+    localTool.mockImplementation(async (tool: string) =>
       tool === 'kubectl_get' ? JSON.stringify({ metadata: { labels: { 'k8s-app': 'metrics-server' } } }) : 'ok')
     expect(await ensureMetricsServer(withKubeconfig)).toEqual({ status: 'existing' })
     expect(gatewayApplies()).toHaveLength(0)
@@ -84,9 +82,8 @@ describe('ensureMetricsServer', () => {
   })
 
   it('updates its own metrics-server with admin credentials', async () => {
-    executeTool.mockImplementation(async (tool: string) =>
+    localTool.mockImplementation(async (tool: string) =>
       tool === 'kubectl_get' ? JSON.stringify({ metadata: { labels: { 'app.kubernetes.io/managed-by': 'orion' } } }) : 'ok')
-    localTool.mockResolvedValue('ok')
     expect(await ensureMetricsServer(withKubeconfig)).toEqual({ status: 'updated', via: 'kubeconfig' })
   })
 
@@ -96,6 +93,12 @@ describe('ensureMetricsServer', () => {
     expect(res.status).toBe('error')
     expect(res.status === 'error' && res.error).toMatch(/only=metrics-server/)
     expect(gatewayApplies()).toHaveLength(0)
+  })
+
+  it('explains the admin step when the gateway may not read the APIService', async () => {
+    executeTool.mockRejectedValue(new Error('apiservices.apiregistration.k8s.io "v1beta1.metrics.k8s.io" is forbidden'))
+    const res = await ensureMetricsServer(env)
+    expect(res.status === 'error' && res.error).toMatch(/join token.*only=metrics-server/)
   })
 
   it('reports a failed existence check that is not NotFound', async () => {

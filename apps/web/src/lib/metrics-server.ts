@@ -257,7 +257,7 @@ spec:
 }
 
 export type MetricsServerResult =
-  | { status: 'installed' | 'updated'; via: 'gateway' | 'kubeconfig' }
+  | { status: 'installed' | 'updated'; via: 'kubeconfig' }
   | { status: 'existing' }            // a metrics-server ORION doesn't manage is already present
   | { status: 'skipped'; reason: string }
   | { status: 'error'; error: string }
@@ -278,6 +278,10 @@ const msg = (e: unknown) => (e instanceof Error ? e.message : String(e))
  * there is one, otherwise the owner re-applies the join manifest's
  * metrics-server part (?only=metrics-server) with admin credentials.
  */
+const ADMIN_STEP =
+  "Generate a new join token (Deploy gateway → metrics-server only) and apply that manifest " +
+  "(?only=metrics-server) once with the cluster's admin credentials."
+
 export async function ensureMetricsServer(
   env: Pick<Environment, 'type' | 'gatewayUrl' | 'gatewayToken' | 'kubeconfig' | 'metadata'>,
 ): Promise<MetricsServerResult> {
@@ -295,8 +299,7 @@ export async function ensureMetricsServer(
     const admin = getLocal()
     if (!admin) {
       throw new Error(
-        'the gateway is read-only and no admin kubeconfig is stored for this environment. ' +
-        "Re-apply the join manifest's metrics-server part (?only=metrics-server) with admin credentials",
+        'the gateway is read-only and no admin kubeconfig is stored for this environment. ' + ADMIN_STEP,
       )
     }
     await admin('kubectl_apply_manifest', { manifest })
@@ -306,13 +309,18 @@ export async function ensureMetricsServer(
   // 2. Leave a metrics-server ORION doesn't manage alone.
   let existed = false
   try {
-    const raw = await gateway('kubectl_get', { resource: 'apiservices.apiregistration.k8s.io', name: APISERVICE, output: 'json' })
+    // Prefer admin credentials for the check too: environments joined before
+    // the gateway had apiservices read would otherwise just see Forbidden.
+    const check = getLocal() ?? gateway
+    const raw = await check('kubectl_get', { resource: 'apiservices.apiregistration.k8s.io', name: APISERVICE, output: 'json' })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const svc: any = JSON.parse(raw)
     existed = true
     if (svc?.metadata?.labels?.[MANAGED_BY] !== 'orion') return { status: 'existing' }
   } catch (e) {
-    // NotFound (kubectl error) means not installed; any other failure is a real error
+    // NotFound (kubectl error) means not installed; Forbidden means the gateway's
+    // metrics RBAC predates apiservices read; anything else is a real error
+    if (/forbidden/i.test(msg(e))) return { status: 'error', error: `The gateway may not read the metrics-server APIService. ${ADMIN_STEP}` }
     if (!/NotFound|not found/i.test(msg(e))) return { status: 'error', error: `Checking for metrics-server failed: ${msg(e)}` }
   }
 

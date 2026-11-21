@@ -16,6 +16,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!env.gatewayUrl || !env.gatewayToken) {
     return NextResponse.json({ error: 'Gateway not connected' }, { status: 422 })
   }
+  if (env.type === 'cluster') {
+    return NextResponse.json({
+      error: "Cluster gateways are read-only and can't restart themselves. Update the gateway image digest in the cluster's Git repo (GitOps).",
+    }, { status: 409 })
+  }
 
   const res = await fetch(`${env.gatewayUrl}/update`, {
     method: 'POST',

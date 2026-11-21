@@ -613,8 +613,14 @@ app.post('/tools/execute', requireAuth, async (req: Request, res: Response) => {
   }
 })
 
-// Self-update endpoint — triggers a rolling restart so the pod is replaced with the latest image
+// Self-update endpoint. Cluster gateways are read-only (infra-manager design
+// §5.1): they can't restart their own Deployment, and updates are an image
+// digest change applied through GitOps. Docker/localhost gateways restart.
 app.post('/update', requireAuth, (_req: Request, res: Response) => {
+  if (GATEWAY_TYPE === 'cluster') {
+    res.status(409).json({ ok: false, error: 'Cluster gateways are read-only: update the gateway image digest in the cluster\'s Git repo instead' })
+    return
+  }
   res.json({ ok: true, message: 'Update triggered — gateway will restart shortly' })
   // Defer the restart so the HTTP response is sent first
   setTimeout(() => {
