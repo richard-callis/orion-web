@@ -125,15 +125,22 @@ jobs:
           # files git just checked out, so tracked templates stay current.
           COREDNS_KEEP=$(mktemp -d)
           cp -a deploy/coredns/. "$COREDNS_KEEP/" 2>/dev/null || true
-          git fetch --depth 50 origin "$DEPLOY_SHA"
+          # Full history (once) so ancestry between the host's commit and the
+          # one being deployed is always known.
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then git fetch --unshallow origin; fi
+          git fetch origin "$DEPLOY_SHA"
           git reset --hard HEAD
-          # Never roll the host back: if a newer, already-deployed commit is
-          # checked out (an older deploy queued behind it), keep that tree. It
-          # passed CI when it was deployed. The image pin below still applies.
+          # Only move forward: deploy $DEPLOY_SHA if it's the same as or newer
+          # than the host's commit. If the host already has a newer commit (an
+          # older deploy queued behind it), keep that tree; it passed CI when it
+          # was deployed. The image pin below still applies either way.
           cur=$(git rev-parse HEAD)
-          if [ "$cur" != "$DEPLOY_SHA" ] && git merge-base --is-ancestor "$DEPLOY_SHA" "$cur" 2>/dev/null; then
+          if [ "$cur" = "$DEPLOY_SHA" ] || git merge-base --is-ancestor "$cur" "$DEPLOY_SHA"; then
+            git checkout -B main "$DEPLOY_SHA"
+          elif git merge-base --is-ancestor "$DEPLOY_SHA" "$cur"; then
             echo "::notice::host already at newer $cur; keeping its tree"
           else
+            echo "::warning::$cur and $DEPLOY_SHA have diverged (history rewritten?); deploying the CI-verified $DEPLOY_SHA"
             git checkout -B main "$DEPLOY_SHA"
           fi
           cp -a --update=none "$COREDNS_KEEP/." deploy/coredns/
