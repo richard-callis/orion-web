@@ -14,6 +14,7 @@
  */
 
 import { prisma } from './db'
+import { CHAT_MODELS, chatModelChoice } from './embedding-models'
 import { completeOnce, claudeTarget, targetForExternalModel } from './agent-runner/engine/complete'
 import { ProviderHttpError } from './agent-runner/engine/types'
 
@@ -28,11 +29,12 @@ const DEFAULT_TIMEOUT_MS = 120_000
 
 export async function getDefaultModelId(): Promise<string> {
   const setting = await prisma.systemSetting.findUnique({ where: { key: SETTING_KEY } })
-  if (setting?.value && typeof setting.value === 'string') return setting.value
+  const chosen = await chatModelChoice(setting?.value, SETTING_KEY)
+  if (chosen) return chosen
 
   // No setting — fall back to first enabled external model, then claude
   const first = await prisma.externalModel.findFirst({
-    where: { enabled: true },
+    where: { enabled: true, ...CHAT_MODELS },
     orderBy: { createdAt: 'asc' },
   })
   return first?.id ?? 'claude'

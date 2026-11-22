@@ -10,6 +10,7 @@ import fs from 'fs'
 import type { Prisma } from '@prisma/client'
 import { humanActor } from './gateway-headers'
 import { prisma } from './db'
+import { CHAT_MODELS, EMBEDDING_MODEL_ERROR, isEmbeddingModel } from './embedding-models'
 import { getPrompt, interpolate } from './system-prompts'
 import { generateEmbedding, skillVectorSearch } from './embeddings'
 import { getChatUserRole, canUseTools, filterToolsForRole } from './chat-tool-policy'
@@ -108,7 +109,7 @@ export async function matchAndInjectSkills(
   // for an embedding-provider call on every turn when there's nothing to match.
   if (skills.length === 0) return { injected: '', skillName: null }
   // Cheap pre-check: skip the embedding-provider call (real latency/cost, up
-  // to a 30s timeout) entirely when none of this environment's installed
+  // to a 30s timeout per attempt) entirely when none of this environment's installed
   // skills actually have a stored embedding to match against — a single
   // indexed existence query beats paying for an API call with no chance of
   // a hit. Net result is unchanged: previously an unmatched embedding call
@@ -291,8 +292,11 @@ interface ResolvedOllama { baseUrl: string; timeoutSecs: number; sampling: Ollam
 async function resolveOllama(model: string, baseUrl: string | undefined, timeoutSecs: number | undefined, sampling: OllamaSampling): Promise<ResolvedOllama | null> {
   if (baseUrl) return { baseUrl, timeoutSecs: timeoutSecs ?? 120, sampling }
   const ext = await prisma.externalModel.findFirst({ where: { provider: 'ollama', modelId: model, enabled: true } })
+    ?? await prisma.externalModel.findFirst({ where: { provider: 'ollama', enabled: true, ...CHAT_MODELS } })
+    // Any Ollama row will do for the endpoint; an embedding model's sampling won't.
     ?? await prisma.externalModel.findFirst({ where: { provider: 'ollama', enabled: true } })
   if (!ext?.baseUrl) return null
+  if (isEmbeddingModel(ext.modelId)) return { baseUrl: ext.baseUrl, timeoutSecs: ext.timeoutSecs ?? 120, sampling }
   return {
     baseUrl: ext.baseUrl,
     timeoutSecs: ext.timeoutSecs ?? 120,
@@ -687,6 +691,7 @@ async function* streamAgentChatInner(
     } else {
       model = llm.slice('ollama:'.length)
     }
+    if (isEmbeddingModel(model)) { yield { type: 'error', error: `${model} ${EMBEDDING_MODEL_ERROR}` }; return }
 
     const gw = await loadAgentGateway()
     const noGwSuffix = '\n\nNo MCP gateway is connected right now. You cannot run tools or commands. Be honest about this limitation.'
@@ -810,7 +815,7 @@ Be specific with details. Use 5-8 sentences if needed for completeness:
 ${transcript}`
 
   // Try Ollama first — free, local, no Claude quota
-  const ollamaExt = await prisma.externalModel.findFirst({ where: { provider: 'ollama', enabled: true } })
+  const ollamaExt = await prisma.externalModel.findFirst({ where: { provider: 'ollama', enabled: true, ...CHAT_MODELS } })
   if (ollamaExt) {
     try {
       const r = await completeOnce({ kind: 'ollama', baseUrl: ollamaExt.baseUrl, model: ollamaExt.modelId }, prompt, {

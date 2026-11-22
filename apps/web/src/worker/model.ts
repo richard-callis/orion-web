@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { chatModelChoice, EMBEDDING_MODEL_ERROR, refersToEmbeddingModel } from '@/lib/embedding-models'
 
 let cachedDefaultModel: string | null = null
 let cachedDefaultModelAt = 0
@@ -20,13 +21,15 @@ export async function resolveModelId(llm: unknown): Promise<string> {
   if (useDefault || typeof llm !== 'string') {
     if (!cachedDefaultModel || Date.now() - cachedDefaultModelAt > MODEL_CACHE_TTL_MS) {
       const setting = await prisma.systemSetting.findUnique({ where: { key: 'model.default' } })
-      const value = setting?.value as string | undefined
-      if (!value) throw new Error('No default LLM configured — set model.default in System Settings')
+      const value = await chatModelChoice(setting?.value, 'model.default')
+      if (!value) throw new Error('No default LLM configured — set model.default in System Settings to a model that can chat')
       cachedDefaultModel = value
       cachedDefaultModelAt = Date.now()
     }
     return cachedDefaultModel
   }
+
+  if (await refersToEmbeddingModel(llm)) throw new Error(`The agent's model (${llm}) ${EMBEDDING_MODEL_ERROR}`)
 
   // Bare agent/model ID with no routing prefix → treat as external gateway agent
   if (!llm.startsWith('claude:') && !llm.startsWith('ollama:') && !llm.startsWith('ext:')) {

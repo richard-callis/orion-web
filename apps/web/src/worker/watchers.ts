@@ -174,91 +174,93 @@ export async function runWatchers() {
     log(`Running watcher: "${agent.name}"`)
     runningWatchers.add(agent.id)
 
-    const systemPrompt = (meta.systemPrompt as string | undefined) ?? 'You are a monitoring agent.'
-    const modelId = await resolveModelId(cfg.llm)
-    const agentGw = await resolveAgentGateway(agent.id)
-    const gateway = agentGw ? { url: agentGw.url, token: agentGw.token } : null
-
-    // Pre-fetch all context the agent needs — no API calls from the agent side
-    const [rawKnowledge, snapshot, systemRooms, prevState] = await Promise.all([
-      retrieveKnowledgeContext((meta.systemPrompt as string | undefined) ?? agent.name, 5, 0.2).catch(() => ''),
-      buildSystemSnapshot(),
-      getSystemRooms(),
-      loadWatcherState(agent.id),
-    ])
-
-    const wikiContext = rawKnowledge
-      ? `\n\n---\n## Relevant Knowledge Base Context\n${rawKnowledge}\n---\n\n`
-      : ''
-
-    // Inject tool awareness preamble into watcher system prompt — same as task runner
-    const watcherToolList = [
-      ...managementToolLines(),
-      ...(gateway ? ['- (gateway tools available: kubectl_get, shell_exec, and others connected via environment gateway)'] : []),
-    ].join('\n')
-    const watcherToolsPreamble = await getPrompt('system.task-runner-tools')
-    const watcherInjectedPreamble = watcherToolsPreamble.replace('{{toolList}}', watcherToolList)
-
-    // Fetch AGENTS.md from the environment's Gitea repo (if linked)
-    const watcherAgentsMd = agentGw?.environmentId
-      ? await getAgentsMd(agentGw.environmentId)
-      : null
-    const watcherAgentsMdSection = watcherAgentsMd
-      ? `\n\n## Environment-Specific Instructions (from AGENTS.md)\n${watcherAgentsMd}`
-      : ''
-
-    const watcherSystemPrompt = watcherInjectedPreamble + '\n\n' + systemPrompt + watcherAgentsMdSection + wikiContext
-
-    // Build system room context block so agents know where to post
-    const roomLines = Object.entries({
-      health:      systemRooms['system.room.health'],
-      operations:  systemRooms['system.room.operations'],
-      maintenance: systemRooms['system.room.maintenance'],
-    })
-      .filter(([, id]) => id !== null)
-      .map(([name, id]) => `  ${name}: ${id}`)
-    const roomContext = roomLines.length > 0
-      ? `\n[System rooms — use these room_id values with orion_send_message]\n${roomLines.join('\n')}`
-      : ''
-
-    // Inject the previous run's directives so the watcher does not re-issue the
-    // same assignments in a tight loop (prevents re-assignment churn).
-    let priorDirectivesBlock = ''
-    if (prevState && Date.now() - prevState.timestamp < 5 * 60 * 1000) {
-      priorDirectivesBlock =
-        `\n## Your previous directives (run ${new Date(prevState.timestamp).toISOString()})\n` +
-        `${prevState.directives.slice(0, 2000)}\n` +
-        (prevState.taskIds.length
-          ? `Tasks you already acted on: ${prevState.taskIds.join(', ')}\n`
-          : '') +
-        `Do NOT re-issue directives for tasks you already assigned in the last 5 minutes unless their status has changed.\n`
-    }
-
-    // The agent receives all data it needs as context — no outbound calls required.
-    // Mutations go through tool calls (orion_assign_task, orion_create_agent, etc.)
-    // executed server-side with full attribution (SOC2 [A-001]).
-    const enrichedPrompt = [watchPrompt, roomContext, priorDirectivesBlock, ``, snapshot].join('\n')
-
-    const ctx: TaskRunContext = {
-      taskId:          `watch:${agent.id}`,
-      taskTitle:       `[Watch] ${agent.name}`,
-      taskDescription: enrichedPrompt,
-      taskPlan:        null,
-      agentId:         agent.id,
-      agentName:       agent.name,
-      systemPrompt:    watcherSystemPrompt,
-      modelId,
-      gateway,
-      environmentId:   agentGw?.environmentId,
-      managementTools: {
-        definitions: MANAGEMENT_TOOL_DEFS,
-        execute: (name, argsRaw) => executeManagedTool(name, argsRaw, agent.id),
-      },
-      // Watchers have no task-level timeout of their own — cap each run.
-      signal: AbortSignal.timeout(WATCHER_TIMEOUT_MS),
-    }
-
+    // The setup is inside the try too: a failure there must release the watcher and
+    // not stop the ones after it.
     try {
+      const systemPrompt = (meta.systemPrompt as string | undefined) ?? 'You are a monitoring agent.'
+      const modelId = await resolveModelId(cfg.llm)
+      const agentGw = await resolveAgentGateway(agent.id)
+      const gateway = agentGw ? { url: agentGw.url, token: agentGw.token } : null
+
+      // Pre-fetch all context the agent needs — no API calls from the agent side
+      const [rawKnowledge, snapshot, systemRooms, prevState] = await Promise.all([
+        retrieveKnowledgeContext((meta.systemPrompt as string | undefined) ?? agent.name, 5, 0.2).catch(() => ''),
+        buildSystemSnapshot(),
+        getSystemRooms(),
+        loadWatcherState(agent.id),
+      ])
+
+      const wikiContext = rawKnowledge
+        ? `\n\n---\n## Relevant Knowledge Base Context\n${rawKnowledge}\n---\n\n`
+        : ''
+
+      // Inject tool awareness preamble into watcher system prompt — same as task runner
+      const watcherToolList = [
+        ...managementToolLines(),
+        ...(gateway ? ['- (gateway tools available: kubectl_get, shell_exec, and others connected via environment gateway)'] : []),
+      ].join('\n')
+      const watcherToolsPreamble = await getPrompt('system.task-runner-tools')
+      const watcherInjectedPreamble = watcherToolsPreamble.replace('{{toolList}}', watcherToolList)
+
+      // Fetch AGENTS.md from the environment's Gitea repo (if linked)
+      const watcherAgentsMd = agentGw?.environmentId
+        ? await getAgentsMd(agentGw.environmentId)
+        : null
+      const watcherAgentsMdSection = watcherAgentsMd
+        ? `\n\n## Environment-Specific Instructions (from AGENTS.md)\n${watcherAgentsMd}`
+        : ''
+
+      const watcherSystemPrompt = watcherInjectedPreamble + '\n\n' + systemPrompt + watcherAgentsMdSection + wikiContext
+
+      // Build system room context block so agents know where to post
+      const roomLines = Object.entries({
+        health:      systemRooms['system.room.health'],
+        operations:  systemRooms['system.room.operations'],
+        maintenance: systemRooms['system.room.maintenance'],
+      })
+        .filter(([, id]) => id !== null)
+        .map(([name, id]) => `  ${name}: ${id}`)
+      const roomContext = roomLines.length > 0
+        ? `\n[System rooms — use these room_id values with orion_send_message]\n${roomLines.join('\n')}`
+        : ''
+
+      // Inject the previous run's directives so the watcher does not re-issue the
+      // same assignments in a tight loop (prevents re-assignment churn).
+      let priorDirectivesBlock = ''
+      if (prevState && Date.now() - prevState.timestamp < 5 * 60 * 1000) {
+        priorDirectivesBlock =
+          `\n## Your previous directives (run ${new Date(prevState.timestamp).toISOString()})\n` +
+          `${prevState.directives.slice(0, 2000)}\n` +
+          (prevState.taskIds.length
+            ? `Tasks you already acted on: ${prevState.taskIds.join(', ')}\n`
+            : '') +
+          `Do NOT re-issue directives for tasks you already assigned in the last 5 minutes unless their status has changed.\n`
+      }
+
+      // The agent receives all data it needs as context — no outbound calls required.
+      // Mutations go through tool calls (orion_assign_task, orion_create_agent, etc.)
+      // executed server-side with full attribution (SOC2 [A-001]).
+      const enrichedPrompt = [watchPrompt, roomContext, priorDirectivesBlock, ``, snapshot].join('\n')
+
+      const ctx: TaskRunContext = {
+        taskId:          `watch:${agent.id}`,
+        taskTitle:       `[Watch] ${agent.name}`,
+        taskDescription: enrichedPrompt,
+        taskPlan:        null,
+        agentId:         agent.id,
+        agentName:       agent.name,
+        systemPrompt:    watcherSystemPrompt,
+        modelId,
+        gateway,
+        environmentId:   agentGw?.environmentId,
+        managementTools: {
+          definitions: MANAGEMENT_TOOL_DEFS,
+          execute: (name, argsRaw) => executeManagedTool(name, argsRaw, agent.id),
+        },
+        // Watchers have no task-level timeout of their own — cap each run.
+        signal: AbortSignal.timeout(WATCHER_TIMEOUT_MS),
+      }
+
       const runner = createRunner(modelId)
       let output = ''
       for await (const event of runner.run(ctx)) {

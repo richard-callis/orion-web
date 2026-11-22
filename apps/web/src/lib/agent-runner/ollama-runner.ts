@@ -1,3 +1,4 @@
+import { CHAT_MODELS } from '../embedding-models'
 import type { AgentRunner, AgentEvent, TaskRunContext } from './types'
 import { createOllamaProvider } from './engine/providers/ollama'
 import { runTask } from './task-loop'
@@ -32,7 +33,9 @@ async function resolveOllamaConfig(modelId: string): Promise<{ baseUrl: string; 
     })
   }
   if (!model) {
-    model = await prisma.externalModel.findFirst({ where: { provider: 'ollama', enabled: true } })
+    // Only the endpoint is used, so any Ollama row will do; a chat model's first.
+    model = await prisma.externalModel.findFirst({ where: { provider: 'ollama', enabled: true, ...CHAT_MODELS } })
+      ?? await prisma.externalModel.findFirst({ where: { provider: 'ollama', enabled: true } })
   }
 
   if (!model?.baseUrl) throw new Error('No Ollama model configured — add one in Admin → Models')

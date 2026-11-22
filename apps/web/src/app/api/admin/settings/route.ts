@@ -4,6 +4,7 @@ import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { parseBodyOrError, UpdateSettingsSchema } from '@/lib/validate'
 import { encrypt } from '@/lib/encryption'
+import { EMBEDDING_MODEL_ERROR, isRefusedDefault } from '@/lib/embedding-models'
 
 // Keys matching these substrings are sensitive: encrypted at rest and redacted in GET responses.
 const SENSITIVE_KEY_PATTERNS = ['token', 'secret', 'password', 'apikey', 'api_key', 'key', 'credential']
@@ -27,6 +28,10 @@ export async function PATCH(req: NextRequest) {
   const result = await parseBodyOrError(req, UpdateSettingsSchema)
   if ('error' in result) return result.error
   const { data } = result
+
+  if (await isRefusedDefault(data.key, data.value)) {
+    return NextResponse.json({ error: `${data.key}: that ${EMBEDDING_MODEL_ERROR}` }, { status: 400 })
+  }
 
   // SOC2: encrypt sensitive values before storage
   let valueToStore: unknown

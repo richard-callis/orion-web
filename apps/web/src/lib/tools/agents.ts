@@ -4,6 +4,7 @@
  * Tool definitions only — registered (in the canonical order) by ./index.ts.
  */
 
+import { EMBEDDING_MODEL_ERROR, refersToEmbeddingModel } from '@/lib/embedding-models'
 import { z } from 'zod'
 import { prisma } from '@/lib/db'
 import { getDefaultModelId } from '@/lib/default-model'
@@ -369,6 +370,7 @@ Guidelines:
       }
 
       modelId = modelId ?? await getDefaultModelId()
+      if (await refersToEmbeddingModel(modelId)) return `Error: ${modelId} ${EMBEDDING_MODEL_ERROR}`
 
       // Resolve gateway from environment if available
       let gateway: { url: string; token: string } | null = null
