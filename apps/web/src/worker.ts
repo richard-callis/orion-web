@@ -27,7 +27,7 @@ import { WORKER_ID } from './workers/task-claim'
 import { log, err } from './worker/log'
 import { markStopping, isStopping, runningTasks, runningWatchers, workerConfig } from './worker/state'
 import { startScheduler, stopScheduler } from './worker/scheduler'
-import { startHeartbeatWhenReady } from './worker/heartbeat'
+import { startHeartbeatWhenReady, stopHeartbeat } from './worker/heartbeat'
 import { recoverStuckTasks } from './worker/recovery'
 import { pollOnce } from './worker/poll'
 import { catchUpDailyScan } from './worker/daily-scan'
@@ -123,6 +123,7 @@ async function shutdown(signal: string): Promise<void> {
   stopScheduler()
   stopScheduledJobs()
   stopDream()
+  stopHeartbeat()
   const deadline = Date.now() + 60_000
   while ((runningTasks.size > 0 || runningWatchers.size > 0) && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 1000))

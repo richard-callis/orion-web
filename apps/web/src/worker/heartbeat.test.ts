@@ -5,7 +5,7 @@ vi.mock('fs', () => ({ writeFileSync, default: { writeFileSync } }))
 vi.mock('./log', () => ({ log: vi.fn(), err: vi.fn() }))
 
 import { err } from './log'
-import { HEARTBEAT_FILE, HEARTBEAT_INTERVAL_MS, MIN_UPTIME_MS, MODEL_WAIT_MS, startHeartbeatWhenReady, stopHeartbeat } from './heartbeat'
+import { HEARTBEAT_FILE, HEARTBEAT_INTERVAL_MS, STARTUP_GRACE_MS, MODEL_WAIT_MS, startHeartbeatWhenReady, stopHeartbeat } from './heartbeat'
 
 const never = new Promise<void>(() => {})
 
@@ -20,18 +20,18 @@ afterEach(() => {
 })
 
 describe('startHeartbeatWhenReady', () => {
-  it('waits for the minimum uptime even when the model is already settled', async () => {
+  it('waits out the startup grace even when the model is already settled', async () => {
     void startHeartbeatWhenReady(Promise.resolve())
-    await vi.advanceTimersByTimeAsync(MIN_UPTIME_MS - 1)
+    await vi.advanceTimersByTimeAsync(STARTUP_GRACE_MS - 1)
     expect(writeFileSync).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
     expect(writeFileSync).toHaveBeenCalledWith(HEARTBEAT_FILE, expect.any(String))
   })
 
-  it('waits for the model past the minimum uptime', async () => {
+  it('waits for the model past the startup grace', async () => {
     let settle!: () => void
     void startHeartbeatWhenReady(new Promise<void>(r => { settle = r }))
-    await vi.advanceTimersByTimeAsync(MIN_UPTIME_MS * 3)
+    await vi.advanceTimersByTimeAsync(STARTUP_GRACE_MS * 3)
     expect(writeFileSync).not.toHaveBeenCalled()
     settle()
     await vi.advanceTimersByTimeAsync(0)
@@ -48,17 +48,30 @@ describe('startHeartbeatWhenReady', () => {
 
   it('treats a failed model load as settled', async () => {
     void startHeartbeatWhenReady(Promise.reject(new Error('no model')))
-    await vi.advanceTimersByTimeAsync(MIN_UPTIME_MS)
+    await vi.advanceTimersByTimeAsync(STARTUP_GRACE_MS)
     expect(writeFileSync).toHaveBeenCalledTimes(1)
   })
 
   it('keeps beating, and survives write failures (logged once per outage)', async () => {
     void startHeartbeatWhenReady(Promise.resolve())
-    await vi.advanceTimersByTimeAsync(MIN_UPTIME_MS)
+    await vi.advanceTimersByTimeAsync(STARTUP_GRACE_MS)
     writeFileSync.mockImplementation(() => { throw new Error('ENOSPC') })
     await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS * 3)
     expect(err).toHaveBeenCalledTimes(1)
     writeFileSync.mockReset()
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
+    expect(writeFileSync).toHaveBeenCalledTimes(1)
+    writeFileSync.mockImplementation(() => { throw new Error('ENOSPC') })
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS * 2)
+    expect(err).toHaveBeenCalledTimes(2) // a second outage is logged again
+  })
+
+  it('never beats twice as often when started again', async () => {
+    void startHeartbeatWhenReady(Promise.resolve())
+    await vi.advanceTimersByTimeAsync(STARTUP_GRACE_MS)
+    void startHeartbeatWhenReady(Promise.resolve())
+    await vi.advanceTimersByTimeAsync(STARTUP_GRACE_MS)
+    writeFileSync.mockClear()
     await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
     expect(writeFileSync).toHaveBeenCalledTimes(1)
   })

@@ -3,19 +3,24 @@
  * (deploy/docker-compose.yml): fresh = the process is past startup and its
  * event loop is turning.
  *
- * It starts late on purpose. A crash loop must never look healthy between
- * crashes, so the first beat waits for a minimum uptime and for the
- * prompt-injection model to settle (loaded, failed or disabled): loading it is
- * the worker's largest memory spike, and at too low a limit the process is
- * OOM-killed there. The wait for the model is capped, so a slow first download
- * (the worker runs fine without it) doesn't keep the container unhealthy.
+ * It starts late on purpose, so that a worker crashing during startup never
+ * looks healthy between crashes: the first beat waits STARTUP_GRACE_MS after
+ * startup and for the prompt-injection model to settle (loaded, failed or
+ * disabled). Loading it is the worker's largest memory spike, and at too low a
+ * limit the process is OOM-killed there. The wait for the model is capped, so a
+ * slow first download (the worker runs fine without it) doesn't keep the
+ * container unhealthy.
+ *
+ * Not caught: a crash later than that, e.g. while loading a model whose download
+ * outlasted the cap, or in a job minutes after startup.
  */
 import { writeFileSync } from 'fs'
 import { err, log } from './log'
 
-export const HEARTBEAT_FILE = process.env.ORION_WORKER_HEARTBEAT_FILE || '/tmp/orion-worker-heartbeat'
+// Also in deploy/docker-compose.yml (command and healthcheck).
+export const HEARTBEAT_FILE = '/tmp/orion-worker-heartbeat'
 export const HEARTBEAT_INTERVAL_MS = 15_000
-export const MIN_UPTIME_MS = 30_000
+export const STARTUP_GRACE_MS = 30_000
 export const MODEL_WAIT_MS = 240_000
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -35,11 +40,11 @@ function beat(): void {
 
 const sleep = (ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms).unref() })
 
-/** Start beating once the worker is up long enough and `modelSettled` resolves (or times out). */
+/** Start beating after the startup grace and once `modelSettled` settles (or its wait times out). */
 export async function startHeartbeatWhenReady(modelSettled: Promise<unknown>): Promise<void> {
   const mine = ++generation
   await Promise.all([
-    sleep(MIN_UPTIME_MS),
+    sleep(STARTUP_GRACE_MS),
     Promise.race([modelSettled.catch(() => {}), sleep(MODEL_WAIT_MS)]),
   ])
   if (mine !== generation || timer) return // stopped or restarted meanwhile
