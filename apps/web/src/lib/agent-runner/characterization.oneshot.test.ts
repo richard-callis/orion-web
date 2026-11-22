@@ -83,6 +83,55 @@ describe('dream callWithModel', () => {
     expect(await callWithModel('x', 'p')).toEqual({ text: 'out', inputTokens: 3, outputTokens: 4, reasoning: 'why' })
   })
 
+  describe('direct (no reasoning, JSON schema)', () => {
+    const opts = { maxTokens: 50, direct: { schema: { type: 'object' } } }
+    const model = (provider: string) => h.prisma.externalModel.findUnique.mockResolvedValue({ id: 'x', provider, baseUrl: 'http://llm.test', modelId: 'r1', apiKey: null, timeoutSecs: 5 })
+    const ok = json({ choices: [{ message: { content: '{}' }, finish_reason: 'stop' }], usage: {} })
+
+    it('custom endpoints get both fields and the token limit', async () => {
+      model('custom')
+      http.route('/v1/chat/completions', ok)
+      await callWithModel('x', 'p', opts)
+      expect(http.calls[0].body).toEqual({
+        model: 'r1', stream: false, messages: [{ role: 'user', content: 'p' }], max_tokens: 50,
+        chat_template_kwargs: { enable_thinking: false },
+        response_format: { type: 'json_schema', json_schema: { name: 'reply', schema: { type: 'object' } } },
+      })
+    })
+
+    it('asks again plainly, without the limit, when an endpoint rejects the request', async () => {
+      for (const [provider, status] of [['openai', 400], ['custom', 422], ['openrouter', 500]] as const) {
+        http.calls.length = 0
+        model(provider)
+        http.route('/v1/chat/completions', text('use max_completion_tokens', status), ok)
+        expect((await callWithModel('x', 'p', opts)).text).toBe('{}')
+        expect(http.calls).toHaveLength(2)
+        expect(http.calls[1].body).toEqual({ model: 'r1', stream: false, messages: [{ role: 'user', content: 'p' }] })
+      }
+    })
+
+    it("stays within the model's own token limit", async () => {
+      h.prisma.externalModel.findUnique.mockResolvedValue({ id: 'x', provider: 'custom', baseUrl: 'http://llm.test', modelId: 'r1', maxTokens: 20 })
+      http.route('/v1/chat/completions', ok)
+      await callWithModel('x', 'p', opts)
+      expect(http.calls[0].body).toMatchObject({ max_tokens: 20 })
+    })
+
+    it('Ollama: think off, the schema as format, num_predict; done_reason length is a cut-off', async () => {
+      h.prisma.externalModel.findUnique.mockResolvedValue({ id: 'o', provider: 'ollama', baseUrl: 'http://ollama.test', modelId: 'llama3' })
+      http.route('/api/generate', json({ response: 'r', done_reason: 'length' }))
+      expect((await callWithModel('o', 'p', opts)).truncated).toBe(true)
+      expect(http.calls[0].body).toEqual({ model: 'llama3', prompt: 'p', stream: false, think: false, format: { type: 'object' }, options: { num_predict: 50 } })
+    })
+
+    it('does not retry other failures, and reports a cut-off reply', async () => {
+      model('custom')
+      http.route('/v1/chat/completions', text('busy', 503), json({ choices: [{ message: { content: 'x' }, finish_reason: 'length' }] }))
+      await expect(callWithModel('x', 'p', opts)).rejects.toThrow('503')
+      expect((await callWithModel('x', 'p', opts)).truncated).toBe(true)
+    })
+  })
+
   it('Ollama: /api/generate with eval counts', async () => {
     h.prisma.externalModel.findUnique.mockResolvedValue({ id: 'o', provider: 'ollama', baseUrl: 'http://ollama.test', modelId: 'llama3' })
     http.route('/api/generate', json({ response: 'r', prompt_eval_count: 8, eval_count: 2 }))

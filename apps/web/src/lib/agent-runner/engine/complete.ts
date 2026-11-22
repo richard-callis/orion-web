@@ -20,6 +20,8 @@ export interface CompletionResult {
   outputTokens?: number
   /** Separated reasoning trace (llama-server --reasoning-format deepseek). */
   reasoning?: string
+  /** Cut off at the token limit (only where the provider says so). */
+  truncated?: true
 }
 
 export interface CompletionOptions {
@@ -27,6 +29,10 @@ export interface CompletionOptions {
   system?: string
   /** Ollama sampling options. */
   options?: Record<string, number>
+  /** Output token limit (OpenAI-compatible and Ollama targets). */
+  maxTokens?: number
+  /** Extra request fields (OpenAI-compatible and Ollama targets); never override the basic ones. */
+  extraBody?: Record<string, unknown>
   signal?: AbortSignal
 }
 
@@ -61,11 +67,14 @@ export async function completeOnce(target: CompletionTarget, prompt: string, opt
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...opts.extraBody,
         model: target.model,
         prompt,
         stream: false,
         ...(opts.system !== undefined && { system: opts.system }),
-        ...(opts.options && { options: opts.options }),
+        ...((opts.options || opts.maxTokens !== undefined) && {
+          options: { ...opts.options, ...(opts.maxTokens !== undefined && { num_predict: opts.maxTokens }) },
+        }),
       }),
       signal: runSignal(opts.signal, opts.timeoutMs),
     })
@@ -73,8 +82,11 @@ export async function completeOnce(target: CompletionTarget, prompt: string, opt
       const body = await res.text().catch(() => '')
       throw new ProviderHttpError(`Ollama HTTP ${res.status}`, res.status, body)
     }
-    const data = await res.json() as { response?: string; prompt_eval_count?: number; eval_count?: number }
-    return { text: data.response?.trim() ?? '', inputTokens: data.prompt_eval_count, outputTokens: data.eval_count }
+    const data = await res.json() as { response?: string; prompt_eval_count?: number; eval_count?: number; done_reason?: string }
+    return {
+      text: data.response?.trim() ?? '', inputTokens: data.prompt_eval_count, outputTokens: data.eval_count,
+      ...(data.done_reason === 'length' && { truncated: true as const }),
+    }
   }
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -86,7 +98,11 @@ export async function completeOnce(target: CompletionTarget, prompt: string, opt
   const res = await fetch(`${target.baseUrl}/v1/chat/completions`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ model: target.model, stream: false, messages }),
+    body: JSON.stringify({
+      ...opts.extraBody,
+      model: target.model, stream: false, messages,
+      ...(opts.maxTokens !== undefined && { max_tokens: opts.maxTokens }),
+    }),
     signal: runSignal(opts.signal, opts.timeoutMs),
   })
   if (!res.ok) {
@@ -94,7 +110,7 @@ export async function completeOnce(target: CompletionTarget, prompt: string, opt
     throw new ProviderHttpError(`Model API returned HTTP ${res.status}`, res.status, body)
   }
   const data = await res.json() as {
-    choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>
+    choices?: Array<{ message?: { content?: string; reasoning_content?: string }; finish_reason?: string }>
     usage?: { prompt_tokens?: number; completion_tokens?: number }
   }
   const msg = data.choices?.[0]?.message
@@ -103,6 +119,7 @@ export async function completeOnce(target: CompletionTarget, prompt: string, opt
     reasoning: msg?.reasoning_content?.trim() || undefined,
     inputTokens: data.usage?.prompt_tokens,
     outputTokens: data.usage?.completion_tokens,
+    ...(data.choices?.[0]?.finish_reason === 'length' && { truncated: true as const }),
   }
 }
 

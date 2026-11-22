@@ -9,8 +9,8 @@
  *    Writes each extracted item as a Note + immediately embeds it + computes edges.
  *
  * 2. SYNTHESIS (every 12 hours)
- *    Groups all notes by folder/tag cluster.
- *    Asks an LLM to identify missing mid-level "hub" notes that should connect
+ *    Takes notes no hub links yet, in small batches by folder (dream-synthesis.ts).
+ *    Asks an LLM to extend hubs or propose missing mid-level "hub" notes that connect
  *    related specifics (e.g. "ESO Secret Sync Patterns" tying together multiple
  *    Tailscale/Vault/cert-manager notes). Writes hub notes with [[wikilinks]] to
  *    their members so the graph has structure beyond leaf-level facts.
@@ -41,6 +41,20 @@ import { estimateTokens } from './token-budget'
 import { completeOnce, claudeTarget, targetForExternalModel } from './agent-runner/engine/complete'
 import { ProviderHttpError } from './agent-runner/engine/types'
 import {
+  SYNTHESIS_MAX_NEW_HUBS,
+  SYNTHESIS_MAX_TOKENS,
+  SYNTHESIS_SCHEMA,
+  isDreamHub,
+  isHub,
+  linkedTitles,
+  mergeHub,
+  parseHubs,
+  renderHub,
+  synthesisBatches,
+  synthesisPrompt,
+  type ProposedHub,
+} from './dream-synthesis'
+import {
   type SkillSpec,
   validateSkillContent,
   validateSkillName,
@@ -70,6 +84,7 @@ const EXTRACTION_RECENT_TITLES   = 100
 const DREAM_MIN_FAILURE_DELAY_MS = 5 * 60 * 1000
 const DREAM_MAX_FAILURE_DELAY_MS = 2 * 60 * 60 * 1000
 const PRUNING_BATCH          = 20   // notes per pruning LLM call
+const SYNTHESIS_MAX_CALL_ERRORS = 2 // failed model calls in a row before a synthesis run stops
 const SKILL_CRAFTING_BATCH   = 15   // completed tasks reviewed per LLM call
 const MAX_NOTE_AGE_DAYS      = 90   // never auto-delete notes newer than this
 
@@ -91,10 +106,33 @@ interface LLMCallResult {
   inputTokens: number
   outputTokens: number
   reasoning?: string
+  truncated?: true
+}
+
+interface LLMCallOptions {
+  /** Output token limit. */
+  maxTokens?: number
+  /**
+   * No reasoning trace, and a JSON schema the reply must match. An endpoint that
+   * rejects these fields (or the token limit) is asked again as before: plain,
+   * with no limit.
+   */
+  direct?: { schema: Record<string, unknown> }
+}
+
+/** Statuses servers answer unknown or unsupported request fields with. */
+const FIELD_REJECTED = [400, 422, 500, 501]
+
+function directBody(direct: NonNullable<LLMCallOptions['direct']>, ollama: boolean): Record<string, unknown> {
+  if (ollama) return { think: false, format: direct.schema }
+  return {
+    chat_template_kwargs: { enable_thinking: false },  // llama.cpp, vLLM, SGLang
+    response_format: { type: 'json_schema', json_schema: { name: 'reply', schema: direct.schema } },
+  }
 }
 
 /** @internal exported for the engine characterization tests */
-export async function callWithModel(modelId: string, prompt: string): Promise<LLMCallResult> {
+export async function callWithModel(modelId: string, prompt: string, opts: LLMCallOptions = {}): Promise<LLMCallResult> {
   const claude = claudeTarget(modelId)
   if (claude) {
     const r = await completeOnce(claude, prompt, { timeoutMs: 90_000 })
@@ -108,11 +146,22 @@ export async function callWithModel(modelId: string, prompt: string): Promise<LL
   if (!extModel) throw new Error(`dream.model '${modelId}' not found`)
 
   const isOllama = extModel.provider === 'ollama'
+  const target = targetForExternalModel(extModel)
+  const timeoutMs = isOllama ? 90_000 : (extModel.timeoutSecs ?? 120) * 1000
+  const maxTokens = opts.maxTokens === undefined ? undefined : Math.min(opts.maxTokens, extModel.maxTokens ?? Infinity)
+  const extra = {
+    ...(maxTokens !== undefined && { maxTokens }),
+    ...(opts.direct && { extraBody: directBody(opts.direct, isOllama) }),
+  }
   let r
   try {
-    r = await completeOnce(targetForExternalModel(extModel), prompt, {
-      timeoutMs: isOllama ? 90_000 : (extModel.timeoutSecs ?? 120) * 1000,
-    })
+    try {
+      r = await completeOnce(target, prompt, { timeoutMs, ...extra })
+    } catch (e) {
+      if (Object.keys(extra).length === 0 || !(e instanceof ProviderHttpError) || !FIELD_REJECTED.includes(e.status)) throw e
+      console.warn(`[dream] Model '${modelId}' rejected the request with extra fields (HTTP ${e.status}: ${e.body.slice(0, 200)}); retrying without them`)
+      r = await completeOnce(target, prompt, { timeoutMs })
+    }
   } catch (e) {
     if (e instanceof ProviderHttpError) throw new Error(`${isOllama ? 'Ollama' : 'External model'} HTTP ${e.status}`, { cause: e })
     throw e
@@ -122,6 +171,7 @@ export async function callWithModel(modelId: string, prompt: string): Promise<LL
     inputTokens: r.inputTokens ?? estimateTokens(prompt),
     outputTokens: r.outputTokens ?? estimateTokens(r.text),
     ...(r.reasoning && { reasoning: r.reasoning }),
+    ...(r.truncated && { truncated: true as const }),
   }
 }
 
@@ -162,28 +212,31 @@ async function recordDreamUsage(inputTokens: number, outputTokens: number, model
 interface DreamLLMResult {
   text: string
   reasoning?: string
+  truncated?: true
 }
 
-async function callLLM(prompt: string, jobType: 'extraction' | 'synthesis' | 'pruning' | 'skill_crafting'): Promise<DreamLLMResult> {
+async function callLLM(prompt: string, jobType: 'extraction' | 'synthesis' | 'pruning' | 'skill_crafting', opts: LLMCallOptions = {}): Promise<DreamLLMResult> {
   const modelId = await getDreamModelId()
 
   try {
-    const result = await callWithModel(modelId, prompt)
+    const result = await callWithModel(modelId, prompt, opts)
     await recordDreamUsage(result.inputTokens, result.outputTokens, modelId)
-    await recordDreamReasoning(jobType, result.reasoning)
-    return { text: result.text, reasoning: result.reasoning }
+    if (!result.truncated) await recordDreamReasoning(jobType, result.reasoning)
+    return { text: result.text, reasoning: result.reasoning, truncated: result.truncated }
   } catch (primaryErr) {
-    console.warn(`[dream] Model '${modelId}' failed (${primaryErr}), falling back to system default`)
-
     const { getDefaultModelId } = await import('./default-model')
     const defaultId = await getDefaultModelId()
 
-    if (defaultId === modelId) throw primaryErr  // same model, don't retry
+    if (defaultId === modelId) {  // same model, don't retry
+      console.warn(`[dream] Model '${modelId}' failed (${primaryErr}); it is the system default, so there is nothing to fall back to`)
+      throw primaryErr
+    }
+    console.warn(`[dream] Model '${modelId}' failed (${primaryErr}), falling back to system default`)
 
-    const result = await callWithModel(defaultId, prompt)
+    const result = await callWithModel(defaultId, prompt, opts)
     await recordDreamUsage(result.inputTokens, result.outputTokens, defaultId)
-    await recordDreamReasoning(jobType, result.reasoning)
-    return { text: result.text, reasoning: result.reasoning }
+    if (!result.truncated) await recordDreamReasoning(jobType, result.reasoning)
+    return { text: result.text, reasoning: result.reasoning, truncated: result.truncated }
   }
 }
 
@@ -454,9 +507,10 @@ If nothing is worth remembering, return an empty array: []`
 // ── Synthesis ─────────────────────────────────────────────────────────────────
 
 /**
- * Identify missing hub notes that should connect clusters of related specifics.
- * Creates mid-level "Infrastructure", "Agent Patterns", and topic-level notes
- * that [[wikilink]] to their members — giving the knowledge graph real structure.
+ * Identify missing hub notes that should connect clusters of related specifics,
+ * batch by batch over the notes no hub links yet, at most SYNTHESIS_MAX_NEW_HUBS
+ * new ones per run. Hubs [[wikilink]] to their members — giving the knowledge
+ * graph real structure. Existing hubs only ever gain links.
  * Called every SYNTHESIS_INTERVAL_MS.
  */
 export async function runSynthesis(): Promise<void> {
@@ -467,7 +521,7 @@ export async function runSynthesis(): Promise<void> {
   console.log(`[dream] Synthesis — last run ${lastRun.toISOString()}`)
 
   const notes = await prisma.note.findMany({
-    select: { id: true, title: true, folder: true, tags: true, content: true },
+    select: { title: true, folder: true, tags: true, content: true },
     orderBy: { updatedAt: 'desc' },
   })
 
@@ -477,91 +531,88 @@ export async function runSynthesis(): Promise<void> {
     return
   }
 
-  const noteIndex = notes
-    .map(n => `  [${n.folder}] ${n.title}`)
-    .join('\n')
+  const hubNotes = notes.filter(n => isHub(n.tags))
+  const batches = synthesisBatches(notes, linkedTitles(notes.map(n => n.title), hubNotes.map(n => n.content)))
+  // Only Dream's own hubs may be extended, so only they are offered by title.
+  const hubTitles = notes.filter(n => isDreamHub(n.tags)).map(n => n.title.trim())
+  let created = 0, extended = 0, replies = 0, unusable = 0, failed = 0, callErrors = 0
+  let lastError: unknown
 
-  const synthesisPrompt = `You are a knowledge architect for an AI agent team managing a Kubernetes homelab cluster.
-
-Below is the current knowledge base — a flat list of specific notes extracted from agent activity. Your job is to identify missing "hub" notes that should exist to connect related specifics into a coherent knowledge graph.
-
-CURRENT NOTES:
-${noteIndex}
-
-Instructions:
-- Identify clusters of related notes (e.g. multiple notes about ESO, Vault, Tailscale, agent coordination, GitOps).
-- For each cluster that lacks a hub note, propose one hub note that:
-  - Has a broad topic title (e.g. "ESO & Vault Secret Management", "Agent Coordination Patterns", "Tailscale Operator Setup")
-  - Has content summarising what's known about that topic
-  - Uses [[Note Title]] wikilinks to connect to every specific note in the cluster (use exact titles from the list above)
-- Only create hubs where 2+ specific notes exist on the same topic.
-- Do NOT recreate notes that already exist as hubs (check the list above).
-- Do NOT create hubs for unrelated one-off notes.
-
-Respond with a JSON array (and nothing else). Each hub note:
-{
-  "title": "Topic-Level Hub Title",
-  "content": "## Overview\\n...summary of what is known...\\n\\n## Notes in this cluster\\n- [[Exact Note Title]]\\n- [[Exact Note Title]]",
-  "folder": "Infrastructure" | "Agent Patterns" | "GitOps" | "Security" | "Networking" | "Observability",
-  "tags": ["hub", "tag2"]
-}
-
-If no hubs are missing, return an empty array: []`
-
-  // LLM failure propagates (no watermark advance → retried with backoff);
-  // an unparseable response is logged and the run is consumed.
-  const raw = (await callLLM(synthesisPrompt, 'synthesis')).text
-  let hubs: Array<{ title: string; content: string; folder: string; tags: string[] }> = []
-  try {
-    const jsonMatch = raw.match(/\[[\s\S]*\]/)
-    if (jsonMatch) hubs = JSON.parse(jsonMatch[0])
-  } catch (e) {
-    console.error('[dream] Synthesis parse error (run consumed):', e)
-  }
-
-  console.log(`[dream] Synthesis — writing ${hubs.length} hub notes`)
-
-  let written = 0
-  for (const hub of hubs) {
-    if (!hub.title?.trim() || !hub.content?.trim()) continue
+  for (const [i, batch] of batches.entries()) {
+    if (created >= SYNTHESIS_MAX_NEW_HUBS) break // the rest waits for the next run
+    let reply: DreamLLMResult
     try {
-      // MAJOR fix: scope synthesis lookups to dream-tagged notes only.
-      // Synthesis previously matched by title alone — if a human note shared a hub
-      // title, synthesis would wholesale replace its content. Now only dream-owned
-      // notes are updated; a title collision with a human note creates a new note.
-      const existing = await prisma.note.findFirst({
-        where: { title: hub.title.trim(), tags: { array_contains: 'dream' } },
+      reply = await callLLM(synthesisPrompt(batch, hubTitles), 'synthesis', {
+        maxTokens: SYNTHESIS_MAX_TOKENS,
+        direct: { schema: SYNTHESIS_SCHEMA },
       })
-      if (existing) {
-        // Hub already exists — update content to reflect current cluster membership
-        const note = await prisma.note.update({
-          where: { id: existing.id },
-          data: { content: hub.content.trim(), updatedAt: new Date() },
-        })
-        const embedded = await embedNote(note, { attributeToDream: true }).catch(e => { console.error(`[dream] embedNote failed for "${note.title}":`, e); return false })
-        if (embedded) await computeSemanticEdges(note.id).catch(() => {})
-      } else {
-        const dreamTags = Array.from(new Set(['dream', 'hub', ...(hub.tags ?? [])]))
-        const note = await prisma.note.create({
-          data: {
-            title:   hub.title.trim(),
-            content: hub.content.trim(),
-            folder:  hub.folder ?? 'Infrastructure',
-            type:    'note',
-            tags:    dreamTags as any,
-          },
-        })
-        const embedded = await embedNote(note, { attributeToDream: true }).catch(e => { console.error(`[dream] embedNote failed for "${note.title}":`, e); return false })
-        if (embedded) await computeSemanticEdges(note.id).catch(() => {})
-      }
-      written++
     } catch (e) {
-      console.error('[dream] Failed to write hub note:', hub.title, e)
+      callErrors++
+      failed++
+      lastError = e
+      console.error(`[dream] Synthesis batch ${i + 1}/${batches.length} failed (${batch.length} notes):`, e)
+      if (callErrors >= SYNTHESIS_MAX_CALL_ERRORS) break // the model is down or far too slow: don't wait it out per batch
+      continue
+    }
+    replies++
+    callErrors = 0
+    let hubs: ProposedHub[]
+    try {
+      if (reply.truncated) throw new Error('reply cut off at the token limit')
+      hubs = parseHubs(reply.text, batch, hubTitles)
+    } catch (e) {
+      unusable++
+      console.error(`[dream] Synthesis batch ${i + 1}/${batches.length}: unusable reply (${batch.length} notes):`, e)
+      continue
+    }
+    for (const hub of hubs) {
+      if (created >= SYNTHESIS_MAX_NEW_HUBS) break
+      try {
+        const result = await writeHub(hub)
+        if (result === 'created') created++
+        if (result === 'extended') extended++
+        // Later batches may add to it, unless it turned out not to be a hub.
+        if (result !== 'refused' && !hubTitles.includes(hub.title)) hubTitles.unshift(hub.title)
+      } catch (e) {
+        console.error('[dream] Failed to write hub note:', hub.title, e)
+      }
     }
   }
 
+  // The model never answered: no watermark advance, so it is retried with backoff.
+  // An unusable answer consumes the run (the same prompt would get it again, at
+  // full price); those notes are simply part of the next one.
+  if (replies === 0 && failed > 0) throw lastError
+
   await setSetting('dream.synthesisLastRun', String(now.getTime()))
-  console.log(`[dream] Synthesis complete — wrote ${written}/${hubs.length} hub notes`)
+  console.log(`[dream] Synthesis complete — ${created} new, ${extended} extended hub notes; ${replies}/${batches.length} batches answered (${unusable} unusable, ${failed} failed)`)
+}
+
+/** Create a hub note, or add missing links to the existing one. */
+async function writeHub(hub: ProposedHub): Promise<'created' | 'extended' | 'unchanged' | 'refused'> {
+  // Only dream-owned notes are ever touched: a title shared with a human note
+  // makes a new note. A dream note of that title that isn't a hub (a specific
+  // note) is left alone too.
+  const existing =
+    await prisma.note.findFirst({ where: { title: hub.title, tags: { array_contains: ['dream', 'hub'] } } }) ??
+    await prisma.note.findFirst({ where: { title: hub.title, tags: { array_contains: ['dream'] } } })
+  if (existing && !isHub(existing.tags)) {
+    console.warn(`[dream] Synthesis — "${hub.title}" is already a specific note, not replaced`)
+    return 'refused'
+  }
+  let note
+  if (existing) {
+    const content = mergeHub(existing.content, hub)
+    if (content === null) return 'unchanged'
+    note = await prisma.note.update({ where: { id: existing.id }, data: { content, updatedAt: new Date() } })
+  } else {
+    note = await prisma.note.create({
+      data: { title: hub.title, content: renderHub(hub), folder: hub.folder, type: 'note', tags: ['dream', 'hub'] },
+    })
+  }
+  const embedded = await embedNote(note, { attributeToDream: true }).catch(e => { console.error(`[dream] embedNote failed for "${note.title}":`, e); return false })
+  if (embedded) await computeSemanticEdges(note.id).catch(() => {})
+  return existing ? 'extended' : 'created'
 }
 
 // ── Pruning ───────────────────────────────────────────────────────────────────
