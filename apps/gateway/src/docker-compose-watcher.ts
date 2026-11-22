@@ -10,6 +10,7 @@
  */
 
 import { run } from './lib/run.js'
+import { errMsg } from './lib/logger.js'
 import { REPORT_REFRESH_MS, type ArgoCDApp, type SyncReportFn } from './argocd-watcher.js'
 
 export class DockerComposeWatcher {
@@ -24,9 +25,9 @@ export class DockerComposeWatcher {
   ) {}
 
   start() {
-    this.poll().catch(err => console.error('[docker-watcher] Initial poll failed:', err))
+    this.poll().catch(err => console.error('[docker-watcher] Initial poll failed:', errMsg(err)))
     this.timer = setInterval(() => {
-      this.poll().catch(err => console.error('[docker-watcher] Poll failed:', err))
+      this.poll().catch(err => console.error('[docker-watcher] Poll failed:', errMsg(err)))
     }, this.intervalMs)
     console.log(`[docker-watcher] Watching Docker containers (interval: ${this.intervalMs / 1000}s)`)
   }

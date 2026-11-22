@@ -10,7 +10,7 @@
  */
 
 import { run } from './lib/run.js'
-import { logger } from './lib/logger.js'
+import { errMsg, logger } from './lib/logger.js'
 
 export interface ArgoCDApp {
   name: string
@@ -49,9 +49,9 @@ export class ArgoCDWatcher {
 
   start() {
     // Initial poll immediately, then on interval
-    this.poll().catch(err => console.error('[argocd-watcher] Initial poll failed:', err))
+    this.poll().catch(err => console.error('[argocd-watcher] Initial poll failed:', errMsg(err)))
     this.timer = setInterval(() => {
-      this.poll().catch(err => console.error('[argocd-watcher] Poll failed:', err))
+      this.poll().catch(err => console.error('[argocd-watcher] Poll failed:', errMsg(err)))
     }, this.intervalMs)
     console.log(`[argocd-watcher] Watching ArgoCD applications (interval: ${this.intervalMs / 1000}s)`)
   }

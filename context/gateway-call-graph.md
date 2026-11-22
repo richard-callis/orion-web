@@ -44,6 +44,8 @@ start()
   │    └─ setInterval:
   │         fetchTools() → if tools changed → callback(newTools) → updates activeTools
   │
+  ├─ GATEWAY_READ_ONLY: no HooksEngine, no bootstrapArgoCD, allowlisted tools only (lib/read-only.ts)
+  │
   ├─ if GATEWAY_TYPE = 'cluster':
   │    ├─ new ArgoCDWatcher(orion.reportSyncStatus, 60_000ms)
   │    │    └─ start() → poll() immediately + setInterval

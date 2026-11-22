@@ -1,5 +1,6 @@
 import { runOut } from '../lib/run.js'
 import { withValidation, k8sName, k8sNamespace, duration } from '../lib/validate-args.js'
+import { isReadOnly } from '../lib/read-only.js'
 
 /**
  * Velero backup & recovery tools. Implemented as a thin `velero` CLI wrapper
@@ -57,7 +58,12 @@ export const backupTools = ([
       required: ['name'],
     },
     async execute(args: Record<string, unknown>) {
-      return withValidation(async () => velero(['backup', 'describe', '--details', '--', k8sName('name', args.name)]))
+      return withValidation(async () => velero([
+        'backup', 'describe',
+        // --details creates a DownloadRequest: a write
+        ...(isReadOnly(process.env.GATEWAY_READ_ONLY) ? [] : ['--details']),
+        '--', k8sName('name', args.name),
+      ]))
     },
   },
   {
