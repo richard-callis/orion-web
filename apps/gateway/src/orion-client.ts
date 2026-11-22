@@ -158,18 +158,19 @@ export class OrionClient {
     }
   }
 
-  /** Report ArgoCD Application sync/health state to ORION */
-  async reportSyncStatus(apps: import('./argocd-watcher.js').ArgoCDApp[]): Promise<void> {
+  /** Report ArgoCD Application sync/health state to ORION (`refresh`: a periodic re-send). Throws when ORION rejects it. */
+  async reportSyncStatus(apps: import('./argocd-watcher.js').ArgoCDApp[], opts: { refresh?: boolean } = {}): Promise<void> {
     const res = await this.fetchOrion(
       `${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}/sync-status`,
       {
         method: 'POST',
         headers: this.headers(),
-        body: JSON.stringify({ applications: apps }),
+        body: JSON.stringify({ applications: apps, ...(opts.refresh ? { refresh: true } : {}) }),
       },
     )
     if (!res.ok) {
-      console.error(`[gateway] reportSyncStatus failed: ${res.status} ${await res.text()}`)
+      // Thrown, not just logged: the watchers count a report that returns as delivered.
+      throw new Error(`reportSyncStatus failed: ${res.status} ${await res.text()}`)
     }
   }
 

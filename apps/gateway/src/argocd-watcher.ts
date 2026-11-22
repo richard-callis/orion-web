@@ -2,7 +2,9 @@
  * ArgoCD Sync Watcher
  *
  * Polls ArgoCD Application resources in the cluster every 60s.
- * When sync/health state changes, reports to ORION via OrionClient.
+ * When sync/health state changes, reports to ORION via OrionClient; otherwise
+ * the state is re-sent every REPORT_REFRESH_MS (which also drops removed apps),
+ * because ORION's drift detector ignores state reported more than 10 minutes ago.
  *
  * Requires: kubectl in PATH, cluster-admin ServiceAccount (provided by bootstrap).
  */
@@ -21,15 +23,28 @@ export interface ArgoCDApp {
   reconciledAt: string | null
 }
 
-type SyncReportFn = (apps: ArgoCDApp[]) => Promise<void>
+/**
+ * `refresh: true` marks a periodic re-send with no sync/health change: ORION
+ * stores it but closes no GitOps PR on it. Must throw when it isn't delivered.
+ */
+export type SyncReportFn = (apps: ArgoCDApp[], opts?: { refresh?: boolean }) => Promise<void>
+
+/**
+ * Re-send after this long: every fourth 60s poll, half a poll early so that a poll
+ * running a little short of 4 minutes doesn't wait for the fifth. A failed report
+ * is retried on the next poll, so several can fail within the detector's 10 minutes.
+ */
+export const REPORT_REFRESH_MS = 3.5 * 60_000
 
 export class ArgoCDWatcher {
   private timer?: ReturnType<typeof setInterval>
   private lastState: Map<string, string> = new Map() // name → JSON snapshot for change detection
+  private lastReportAt = 0
 
   constructor(
     private readonly onChanged: SyncReportFn,
     private readonly intervalMs = 60_000,
+    private readonly refreshMs = REPORT_REFRESH_MS,
   ) {}
 
   start() {
@@ -45,7 +60,9 @@ export class ArgoCDWatcher {
     if (this.timer) clearInterval(this.timer)
   }
 
-  private async poll() {
+  /** One poll (public for tests). */
+  async poll() {
+    const startedAt = Date.now()
     let stdout: string
     try {
       // maxOutput 0: the JSON is parsed here, so it must not be truncated
@@ -93,6 +110,10 @@ export class ArgoCDWatcher {
       for (const { key, snapshot } of pendingUpdates) {
         this.lastState.set(key, snapshot)
       }
+      this.lastReportAt = startedAt
+    } else if (apps.length > 0 && startedAt - this.lastReportAt >= this.refreshMs) {
+      await this.onChanged(apps, { refresh: true })
+      this.lastReportAt = startedAt
     }
   }
 }
