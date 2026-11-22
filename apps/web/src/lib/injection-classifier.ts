@@ -210,9 +210,13 @@ function getModel(): Promise<Loaded | null> {
   return loading
 }
 
-/** Start downloading/loading in the background so the first retrieval isn't blocked. */
-export function warmInjectionClassifier(): void {
-  if (classifierEnabled()) void getModel()
+/**
+ * Start downloading/loading in the background so the first retrieval isn't
+ * blocked. Resolves once the load has settled (loaded, failed or disabled);
+ * never rejects.
+ */
+export async function warmInjectionClassifier(): Promise<void> {
+  if (classifierEnabled()) await getModel()
 }
 
 export function classifierStatus(): { enabled: boolean; ready: boolean; disabledReason: string | null } {
