@@ -12,6 +12,7 @@
  *   task/       runTask and its phases (context, budget, federation, execute,
  *               finalize, failure)
  *   scheduler   periodic jobs table + shared in-flight guard
+ *   heartbeat   file read by the container healthcheck
  *   poll, watchers, recovery, gitops-sync, approval-escalation,
  *   federation-poller, daily-scan — the jobs themselves
  */
@@ -26,6 +27,7 @@ import { WORKER_ID } from './workers/task-claim'
 import { log, err } from './worker/log'
 import { markStopping, isStopping, runningTasks, runningWatchers, workerConfig } from './worker/state'
 import { startScheduler, stopScheduler } from './worker/scheduler'
+import { startHeartbeatWhenReady, stopHeartbeat } from './worker/heartbeat'
 import { recoverStuckTasks } from './worker/recovery'
 import { pollOnce } from './worker/poll'
 import { catchUpDailyScan } from './worker/daily-scan'
@@ -87,7 +89,7 @@ async function main() {
 
   // SOC2 C-001: download/load the prompt-injection model in the background so
   // the first context retrieval isn't blocked by it (no-op when disabled).
-  warmInjectionClassifier()
+  const modelSettled = warmInjectionClassifier()
 
   // Daily vuln scan: run now if the worker restarted and missed 02:00.
   catchUpDailyScan()
@@ -95,6 +97,9 @@ async function main() {
   // Every periodic job — task poll, watchers, pollers, recovery, escalation,
   // drift detection, federation — see worker/scheduler.ts.
   startScheduler()
+
+  // Container healthcheck: only once startup, model load included, is behind us.
+  void startHeartbeatWhenReady(modelSettled)
 }
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -118,6 +123,7 @@ async function shutdown(signal: string): Promise<void> {
   stopScheduler()
   stopScheduledJobs()
   stopDream()
+  stopHeartbeat()
   const deadline = Date.now() + 60_000
   while ((runningTasks.size > 0 || runningWatchers.size > 0) && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 1000))

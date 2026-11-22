@@ -1,0 +1,61 @@
+/**
+ * Worker heartbeat file, read by the orion-worker container healthcheck
+ * (deploy/docker-compose.yml): fresh = the process is past startup and its
+ * event loop is turning.
+ *
+ * It starts late on purpose, so that a worker crashing during startup never
+ * looks healthy between crashes: the first beat waits STARTUP_GRACE_MS after
+ * startup and for the prompt-injection model to settle (loaded, failed or
+ * disabled). Loading it is the worker's largest memory spike, and at too low a
+ * limit the process is OOM-killed there. The wait for the model is capped, so a
+ * slow first download (the worker runs fine without it) doesn't keep the
+ * container unhealthy.
+ *
+ * Not caught: a crash later than that, e.g. while loading a model whose download
+ * outlasted the cap, or in a job minutes after startup.
+ */
+import { writeFileSync } from 'fs'
+import { err, log } from './log'
+
+// Also in deploy/docker-compose.yml (command and healthcheck).
+export const HEARTBEAT_FILE = '/tmp/orion-worker-heartbeat'
+export const HEARTBEAT_INTERVAL_MS = 15_000
+export const STARTUP_GRACE_MS = 30_000
+export const MODEL_WAIT_MS = 240_000
+
+let timer: ReturnType<typeof setInterval> | null = null
+let generation = 0
+let failed = false
+
+function beat(): void {
+  try {
+    writeFileSync(HEARTBEAT_FILE, `${Date.now()}\n`)
+    failed = false
+  } catch (e) {
+    // Logged once per outage: without the file the container turns unhealthy.
+    if (!failed) err(`Heartbeat write failed (${HEARTBEAT_FILE}): ${e}`)
+    failed = true
+  }
+}
+
+const sleep = (ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms).unref() })
+
+/** Start beating after the startup grace and once `modelSettled` settles (or its wait times out). */
+export async function startHeartbeatWhenReady(modelSettled: Promise<unknown>): Promise<void> {
+  const mine = ++generation
+  await Promise.all([
+    sleep(STARTUP_GRACE_MS),
+    Promise.race([modelSettled.catch(() => {}), sleep(MODEL_WAIT_MS)]),
+  ])
+  if (mine !== generation || timer) return // stopped or restarted meanwhile
+  beat()
+  timer = setInterval(beat, HEARTBEAT_INTERVAL_MS)
+  timer.unref()
+  log('Ready — heartbeat started')
+}
+
+export function stopHeartbeat(): void {
+  generation++
+  if (timer) clearInterval(timer)
+  timer = null
+}
