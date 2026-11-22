@@ -6,6 +6,7 @@ import {
   withValidation, noFlag, k8sName, k8sLabel, k8sNamespace, k8sResource, labelSelector,
   oneOf, duration, durationSeconds, positiveInt, helmName, httpUrl,
 } from '../lib/validate-args.js'
+import { refuseSecrets } from '../lib/read-only.js'
 
 // Every agent-supplied value goes through validate-args before reaching argv, and
 // positionals follow a `--` terminator: a value such as `--server=https://attacker`
@@ -110,7 +111,9 @@ export const kubernetesTools = ([
       return withValidation(async () => {
         const cmdArgs = ['describe']
         if (args.namespace) cmdArgs.push('-n', k8sNamespace('namespace', args.namespace))
-        cmdArgs.push('--', k8sResource('resource', args.resource), k8sName('name', args.name))
+        const resource = k8sResource('resource', args.resource)
+        refuseSecrets(resource)
+        cmdArgs.push('--', resource, k8sName('name', args.name))
         return kubectl(cmdArgs)
       })
     },
@@ -164,6 +167,7 @@ export const kubernetesTools = ([
     async execute(args: Record<string, unknown>) {
       return withValidation(async () => {
         const resource = k8sResource('resource', args.resource)
+        refuseSecrets(resource)
         const name = args.name ? k8sName('name', args.name) : undefined
         const cmdArgs = ['get']
         if (args.namespace) {

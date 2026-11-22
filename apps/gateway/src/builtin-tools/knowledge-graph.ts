@@ -216,6 +216,8 @@ export const knowledgeGraphTools = ([
       let noteContent: string
 
       if (args.noteId) {
+        // Goes into the URL path: "../x" would reach another endpoint.
+        if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(args.noteId))) return "Error: Invalid argument 'noteId'"
         const noteData = await orionFetch(`/api/notes/${args.noteId}`) as { title: string; content: string; id: string }
         noteId = noteData.id
         noteTitle = noteData.title

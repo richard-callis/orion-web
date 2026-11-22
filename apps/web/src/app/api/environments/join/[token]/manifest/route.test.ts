@@ -54,6 +54,16 @@ describe('join manifest', () => {
     expect(n.some(x => x.startsWith('Secret/') || x.startsWith('Deployment/orion-gateway'))).toBe(false)
   })
 
+  it('runs every joined gateway in read-only mode, and quotes the type', async () => {
+    const env = async (type: string) => {
+      const d = (await render(`?type=${type}`)).find((o: { kind: string; metadata: { name: string } }) => o.kind === 'Deployment' && o.metadata.name.startsWith('orion-gateway'))
+      return Object.fromEntries(d.spec.template.spec.containers[0].env.map((e: { name: string; value?: string }) => [e.name, e.value]))
+    }
+    expect(await env('cluster')).toMatchObject({ GATEWAY_TYPE: 'cluster', GATEWAY_READ_ONLY: 'true' })
+    for (const t of ['docker', 'localhost', 'Cluster']) expect(await env(t)).toMatchObject({ GATEWAY_TYPE: t, GATEWAY_READ_ONLY: 'true' })
+    expect((await env(encodeURIComponent('x"\n            - name: EVIL'))).EVIL).toBeUndefined()
+  })
+
   it('gives the gateway read-only RBAC: no writes, no Secrets, no pods/exec', async () => {
     const objs = await render('?type=cluster')
     const roles = objs.filter((o: { kind: string }) => o.kind === 'ClusterRole' && o.metadata.name.startsWith('orion-gateway'))

@@ -3,6 +3,16 @@
 > File: `apps/gateway/src/builtin-tools/`
 > Referenced by: [[gateway-call-graph]]
 
+## Read-only mode (GATEWAY_READ_ONLY)
+
+With `GATEWAY_READ_ONLY` set to anything but empty/false/0/no/off, only the tools in
+`apps/gateway/src/lib/read-only.ts` (an allowlist) are registered and offered.
+Custom shell/http tools are refused, kubectl get/describe refuse Secrets, the hooks
+engine doesn't start, ArgoCD isn't bootstrapped and `/update` answers 409.
+`docker_inspect` is left out until docker-read-proxy exists. Gateways joined through the
+join manifest get it. An older gateway image ignores the variable. A
+new tool is left out until it is added there (a test lists what is left out).
+
 ## Registration by GATEWAY_TYPE
 
 > Counts verified 2026-09-26 by importing each module's exported tool array (63 in total).

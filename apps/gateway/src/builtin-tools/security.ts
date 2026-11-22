@@ -128,7 +128,7 @@ const readToolDefs = ([
       if (!api) return 'CROWDSEC_API environment variable not configured'
       const key = process.env.CROWDSEC_API_KEY ?? ''
       const limit = args.limit ?? 50
-      const url = `${api.replace(/\/+$/, '')}/api/v1/requests/search?limit=${limit}`
+      const url = `${api.replace(/\/+$/, '')}/api/v1/requests/search?limit=${encodeURIComponent(String(limit))}`
       const res = await fetch(url, {
         headers: { 'X-Api-Key': key, 'Content-Type': 'application/json' },
         signal: AbortSignal.timeout(30_000),
@@ -178,7 +178,7 @@ const readToolDefs = ([
       const api = process.env.NTOPNG_API
       if (!api) return 'NTOPNG_API environment variable not configured'
       const limit = args.limit ?? 50
-      const url = `${api.replace(/\/+$/, '')}/_/api/v2/threats?active=true&limit=${limit}`
+      const url = `${api.replace(/\/+$/, '')}/_/api/v2/threats?active=true&limit=${encodeURIComponent(String(limit))}`
       const res = await fetch(url, {
         headers: { 'Content-Type': 'application/json' },
         signal: AbortSignal.timeout(30_000),
@@ -204,7 +204,7 @@ const readToolDefs = ([
       const api = process.env.NTOPNG_API
       if (!api) return 'NTOPNG_API environment variable not configured'
       const minutes = args.minutes ?? 60
-      const url = `${api.replace(/\/+$/, '')}/_/api/v2/toptalkers?minutes=${minutes}`
+      const url = `${api.replace(/\/+$/, '')}/_/api/v2/toptalkers?minutes=${encodeURIComponent(String(minutes))}`
       const res = await fetch(url, {
         headers: { 'Content-Type': 'application/json' },
         signal: AbortSignal.timeout(30_000),
@@ -234,6 +234,7 @@ const readToolDefs = ([
       const user = process.env.ELASTICSEARCH_USERNAME ?? ''
       const pass = process.env.ELASTICSEARCH_PASSWORD ?? ''
       const index = String(args.index ?? 'flow-*')
+      if (!ELK_INDEX.test(index)) return `Error: Invalid argument 'index': '${index}' is not an index name or pattern`
       const size  = args.size ?? 20
       const query = args.query !== undefined
         ? JSON.parse(String(args.query))
@@ -273,6 +274,7 @@ const readToolDefs = ([
       const user = process.env.ELASTICSEARCH_USERNAME ?? ''
       const pass = process.env.ELASTICSEARCH_PASSWORD ?? ''
       const index = String(args.index ?? 'syslog-*')
+      if (!ELK_INDEX.test(index)) return `Error: Invalid argument 'index': '${index}' is not an index name or pattern`
       const size  = args.size ?? 20
       let query = args.query !== undefined
         ? JSON.parse(String(args.query))
@@ -862,5 +864,11 @@ const writeToolDefs = ([
 ] as const).map(t => ({ ...t, category: 'security' as const }))
 
 // ── Combined export ──────────────────────────────────────────────────────────
+
+/**
+ * An index name or comma-separated patterns. The value goes into the URL path of a
+ * POST, so anything else could reach another endpoint ("x/_delete_by_query?").
+ */
+const ELK_INDEX = /^[a-z0-9*][a-z0-9._*-]*(,-?[a-z0-9*][a-z0-9._*-]*)*$/
 
 export const securityTools = [...readToolDefs, ...writeToolDefs]

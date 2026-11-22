@@ -258,7 +258,11 @@ spec:
             - name: PORT
               value: "3001"
             - name: GATEWAY_TYPE
-              value: "${gatewayType}"
+              value: ${JSON.stringify(gatewayType)}
+            # As its RBAC above, for every type: RBAC doesn't bound tools that don't use
+            # it (Talos with a caller's talosconfig, custom shell/http tools, security writes).
+            - name: GATEWAY_READ_ONLY
+              value: "true"
             - name: ORION_URL
               valueFrom:
                 secretKeyRef:

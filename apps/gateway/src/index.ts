@@ -14,6 +14,8 @@
  *   GATEWAY_URL            — This gateway's own URL (reported to ORION), e.g. http://192.168.1.10:3001
  *   PORT                   — Port to listen on (default 3001)
  *   GATEWAY_TYPE           — "cluster" | "docker" | "localhost" (controls built-in tools)
+ *   GATEWAY_READ_ONLY      — any value but empty/false/0/no/off: only the read tools in
+ *                            lib/read-only.ts, no custom tools, no ArgoCD bootstrap
  *   GATEWAY_CREDS_FILE     — Path to persist credentials for restart resilience (localhost mode)
  *   POD_NAMESPACE          — Namespace this pod runs in (downward API); falls back to
  *                            GATEWAY_NAMESPACE, then the service-account namespace file
@@ -60,6 +62,7 @@ import { bootstrapArgoCD } from './argocd-bootstrap.js'
 import { run } from './lib/run.js'
 import { logger, errMsg } from './lib/logger.js'
 import { resolveRestTool } from './lib/tool-policy.js'
+import { isReadOnly, readOnlyBuiltins, readOnlyPolicy } from './lib/read-only.js'
 
 const _require = createRequire(import.meta.url)
 const GATEWAY_VERSION: string = (() => {
@@ -352,8 +355,11 @@ type BuiltinTool = {
 
 const BUILTIN_REGISTRY: Record<string, BuiltinTool> = {}
 
+const READ_ONLY = isReadOnly(process.env.GATEWAY_READ_ONLY)
+if (READ_ONLY) logger.info('read-only mode: only allowlisted read tools are registered, custom tools are refused')
+
 function registerBuiltins(tools: BuiltinTool[]) {
-  for (const t of tools) BUILTIN_REGISTRY[t.name] = t
+  for (const t of READ_ONLY ? readOnlyBuiltins(tools) : tools) BUILTIN_REGISTRY[t.name] = t
 }
 
 function binaryOnPath(bin: string): boolean {
@@ -422,7 +428,7 @@ let inFlight = 0
 
 /** Apply a tool list from ORION, dropping shell tools whose templates are unsafe. */
 function applyTools(tools: McpToolConfig[]): void {
-  activeTools = tools.filter(t => {
+  activeTools = (READ_ONLY ? readOnlyPolicy(tools, BUILTIN_REGISTRY) : tools).filter(t => {
     if (t.execType !== 'shell') return true
     const err = validateShellTemplate(String(t.execConfig?.command ?? ''))
     if (err) logger.error({ tool: t.name, reason: err }, 'rejecting shell tool with unsafe command template')
@@ -617,8 +623,8 @@ app.post('/tools/execute', requireAuth, async (req: Request, res: Response) => {
 // §5.1): they can't restart their own Deployment, and updates are an image
 // digest change applied through GitOps. Docker/localhost gateways restart.
 app.post('/update', requireAuth, (_req: Request, res: Response) => {
-  if (GATEWAY_TYPE === 'cluster') {
-    res.status(409).json({ ok: false, error: 'Cluster gateways are read-only: update the gateway image digest in the cluster\'s Git repo instead' })
+  if (GATEWAY_TYPE === 'cluster' || READ_ONLY) {
+    res.status(409).json({ ok: false, error: 'This gateway is read-only: change its image instead (for a cluster, the digest in the cluster\'s Git repo)' })
     return
   }
   res.json({ ok: true, message: 'Update triggered — gateway will restart shortly' })
@@ -786,17 +792,21 @@ async function start() {
   startHeartbeat()
 
   // Hooks engine and skill loader — poll ORION for Nebula config
-  hooksEngine = new HooksEngine(client)
+  if (!READ_ONLY) {
+    hooksEngine = new HooksEngine(client) // hooks can run commands
+    await hooksEngine.start(ENVIRONMENT_ID)
+  }
   skillLoader = new SkillLoader()
-  await hooksEngine.start(ENVIRONMENT_ID)
   await skillLoader.load(ENVIRONMENT_ID, client).catch(err => logger.warn({ err: errMsg(err) }, 'skill loader failed'))
 
   // ArgoCD + Ingress watchers for K8s clusters
   if (GATEWAY_TYPE === 'cluster') {
     // Bootstrap ArgoCD into the cluster (idempotent — safe on every restart)
-    bootstrapArgoCD(ORION_URL, ENVIRONMENT_ID, GATEWAY_TOKEN).catch(err =>
-      console.error('[gateway] ArgoCD bootstrap failed (non-fatal):', errMsg(err))
-    )
+    if (!READ_ONLY) {
+      bootstrapArgoCD(ORION_URL, ENVIRONMENT_ID, GATEWAY_TOKEN).catch(err =>
+        console.error('[gateway] ArgoCD bootstrap failed (non-fatal):', errMsg(err))
+      )
+    }
 
     argoCdWatcher = new ArgoCDWatcher(async (apps, opts) => { await client.reportSyncStatus(apps, opts) })
     argoCdWatcher.start()
