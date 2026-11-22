@@ -18,7 +18,8 @@ name: Deploy ORION
 #     (not :latest), so the deploy runs exactly what was built.
 #   - A PostgreSQL dump is taken before anything changes (migrations run on
 #     container start and cannot be rolled back).
-#   - The deploy FAILS if ORION is not healthy within 5 minutes.
+#   - The deploy FAILS if ORION is not healthy within 5 minutes, or the worker
+#     within 6 more.
 #   - Every healthy deploy records deploy/.last-good (git SHA + image digests);
 #     deploy/rollback.sh returns to it. See the failure step for the runbook.
 
@@ -180,7 +181,8 @@ jobs:
         # on timeout — a deploy that never became healthy is not a success.
         run: |
           $DEPLOY_DIR/wait-healthy.sh orion 300
-          $DEPLOY_DIR/wait-healthy.sh orion-worker 60
+          # Not healthy until its heartbeat starts (model load included, up to 4 min).
+          $DEPLOY_DIR/wait-healthy.sh orion-worker 360
 
       - name: Record last-good deploy
         run: |

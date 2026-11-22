@@ -14,6 +14,9 @@
 #   ./restore.sh --list
 #   ./restore.sh predeploy_<timestamp>
 #
+# The worker's health is only a warning here: images from before its heartbeat
+# (worker/heartbeat.ts) never turn healthy.
+#
 # After a rollback, `git -C /opt/orion checkout <sha from .last-good>` keeps the
 # compose/bootstrap files consistent with the images until the fix lands on main.
 set -euo pipefail
@@ -59,5 +62,9 @@ done
 echo "Recreating ORION services on last-good images..."
 $COMPOSE up -d --no-build --pull never orion orion-worker gateway vector
 "$DEPLOY_DIR/wait-healthy.sh" orion 300
+echo "Images are rolled back. Checking orion-worker (up to 6 minutes; a failure here is only a warning)..."
+# Not fatal: an image from before the worker heartbeat runs fine but never turns healthy.
+"$DEPLOY_DIR/wait-healthy.sh" orion-worker 360 || \
+  echo "WARNING: orion-worker is not healthy. Expected for an image from before its heartbeat; otherwise check 'docker inspect' RestartCount and its logs." >&2
 echo "Rollback complete. Last good: $(grep '^GIT_SHA=' "$LAST_GOOD" | cut -d= -f2)"
 echo "NOTE: the next bootstrap.sh / CI deploy returns to :latest — merge a fix (or revert) first."

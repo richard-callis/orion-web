@@ -151,9 +151,22 @@ services:
   # the cron-style background jobs. Migrations run in the orion service first.
   orion-worker:
     image: ghcr.io/${GITHUB_ORG}/orion-web:${ORION_WEB_VERSION:-${ORION_VERSION:-latest}}
-    command: ["node", "worker.js"]
+    # The heartbeat of a previous run must not vouch for this one (/tmp survives a
+    # restart). `;`: a file that can't be removed must not keep the worker down.
+    command: ["sh", "-c", "rm -f /tmp/orion-worker-heartbeat; exec node worker.js"]
     restart: unless-stopped
     init: true
+    healthcheck:
+      # worker/heartbeat.ts: touched every 15s once startup and the model load are
+      # done. Model inference blocks the event loop, for all windows of all notes
+      # in one retrieval: 180s covers usual ones, several very long notes may not
+      # fit. Nothing restarts an unhealthy worker; only deploys look at this. A
+      # file from the future (clock stepped back) doesn't count as fresh.
+      test: ["CMD-SHELL", "t=$$(stat -c %Y /tmp/orion-worker-heartbeat 2>/dev/null) && a=$$(( $$(date +%s) - t )) && [ $$a -lt 180 ] && [ $$a -gt -60 ]"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 300s
     stop_grace_period: 75s
     depends_on:
       orion:

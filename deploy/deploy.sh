@@ -50,3 +50,4 @@ docker compose up -d --remove-orphans || {
 # container's own healthcheck rather than curling the host port.
 echo "Waiting for ORION to become healthy..."
 "$COMPOSE_DIR/wait-healthy.sh" orion 300
+"$COMPOSE_DIR/wait-healthy.sh" orion-worker 360
