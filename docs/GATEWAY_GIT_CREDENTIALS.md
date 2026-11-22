@@ -60,9 +60,38 @@ Applications in) is not affected.
 - **Rotated** when a new gateway joins the environment (first join with a
   fresh join token) and when the gateway token is rotated
   (`POST /api/environments/:id/rotate-token`). The old credential is revoked
-  at the provider; the gateway re-registers ArgoCD with a new one on its next
-  start. An idempotent re-join by the same machine keeps the current credential.
+  at the provider. A writable gateway re-registers ArgoCD with a new one on its
+  next start; where ORION wrote the Secret it does it at once, with the stored admin
+  kubeconfig (see Bootstrapped clusters). An idempotent re-join by the same machine keeps the current credential.
 - **Revoked** at the provider when the environment is deleted.
+
+**Bootstrapped clusters.** The gateway that cluster bootstrap deploys is read-only
+and never fetches the credential, so ORION writes it with the environment's admin
+kubeconfig. Bootstrap installs ArgoCD if the cluster has none, pins the host keys,
+and writes the `orion-git-repo` Secret in ArgoCD's namespace. When a gateway joins or
+its token is rotated, the credential is revoked and ORION replaces the Secret right
+after. Only a Secret ORION wrote (label `orion/registered-by`): one a writable gateway
+wrote, or ArgoCD's own key, is left alone. If that gateway has since become read-only,
+its Secret holds a revoked credential after the next join or rotation: run bootstrap, or
+give ArgoCD its own key.
+
+**Re-run bootstrap** after changing the git provider, the repo or
+`git.gateway.bundledGiteaSsh`, and when ORION logs `[argocd-repo] could not
+re-register` (the cluster was unreachable, or ORION restarted in the middle). Until
+then ArgoCD can't sync.
+
+**Gateways deployed by an older release** stay bound to cluster-admin: re-running
+bootstrap only warns. Delete Deployment `orion-management/orion-gateway` and re-run
+it. The gateway then joins afresh, read-only, and its old token stops working. If
+another ClusterRoleBinding gives its ServiceAccount cluster-admin, or that can't be
+checked, bootstrap stops.
+
+Bootstrap needs a gateway image of its own ORION release or newer: an older one can't
+join without a URL, or ignores `GATEWAY_READ_ONLY` (it still has only read-only RBAC).
+
+A read-only gateway refuses writes, so ingress bootstrap then uses the stored admin
+kubeconfig. Storage bootstrap and DNS bootstrap, sync and records
+go through the gateway only, and don't work with a read-only one.
 
 If a provider call fails while revoking, the database row is still removed (so
 a fresh credential is minted next time) and the failure is logged with
@@ -74,8 +103,8 @@ deploy tokens named `orion-argocd-*`.
 
 If the provider token can't mint scoped credentials (for example an external
 Gitea token that isn't a site admin, or a GitHub token without admin on the
-repo), ORION **refuses** by default. The gateway logs the reason (HTTP 409) and
-skips ArgoCD repo registration.
+repo), ORION **refuses** by default. The gateway (HTTP 409) or, for a bootstrapped
+cluster, bootstrap logs the reason and skips ArgoCD repo registration.
 
 To knowingly accept the old behaviour for such setups, set the SystemSetting
 `git.gateway.allowOrgTokenFallback` to `true`. The org token is then handed
@@ -103,8 +132,10 @@ token is an HTTPS password, which ArgoCD would never match to the SSH URL.
   1. For any cluster whose gateway can't write to the `argocd` namespace (a
      read-only gateway), first give that cluster's ArgoCD its own deploy key and
      Gitea's host key in Git. Its gateway can write neither the Secret nor the
-     ConfigMap, so once the setting is on, a restart only revokes the old bot
-     user; with ArgoCD on its own key, that is harmless.
+     ConfigMap. With `GATEWAY_READ_ONLY` it doesn't fetch the credential either;
+     without it, a restart only revokes the old bot user, which is harmless with
+     ArgoCD on its own key. A bootstrapped cluster instead follows steps 2 and 3,
+     then re-runs bootstrap in place of step 4.
   2. In **every** environment repo, change the in-cluster Applications'
      `repoURL` and the AppProject's `sourceRepos` to
      `ssh://git@<MANAGEMENT_IP>:2222/<owner>/<repo>.git`, keeping the HTTP URL in

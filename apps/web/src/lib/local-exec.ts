@@ -1,10 +1,13 @@
 /**
- * Local command runner — falls back to local kubectl/helm when the gateway is unreachable.
+ * Local command runner: kubectl/helm with an environment's stored kubeconfig, for work its
+ * gateway can't do (unreachable, or read-only). Call cleanup() when done: the kubeconfig
+ * is on disk until then.
  */
 import { mkdirSync, writeFileSync, rmSync } from 'fs'
 import { execFile, type ExecFileOptions } from 'child_process'
 import { promisify } from 'util'
 import { randomBytes } from 'crypto'
+import { localKubectlArgs } from './local-kubectl-args'
 
 const execFileAsync = promisify(execFile)
 
@@ -18,7 +21,9 @@ export function makeLocalGx(kubeconfig: string) {
 
   const kc = `${tmpDir}/kc`
 
-  return async function kubectlTool(name: string, args: Record<string, unknown>): Promise<string> {
+  const cleanup = () => { rmSync(tmpDir, { recursive: true, force: true }) }
+
+  async function kubectlTool(name: string, args: Record<string, unknown>): Promise<string> {
     if (name === 'kubectl_apply_manifest' || name === 'kubectl_apply_url') {
       if (name === 'kubectl_apply_url') {
         // Validate URL is https before passing to kubectl
@@ -113,31 +118,12 @@ export function makeLocalGx(kubeconfig: string) {
       return (await execFileAsync('kubectl', cmdArgs, { timeout: 30_000 })).stdout
     }
 
-    if (name === 'kubectl_rollout_status') {
-      return (await execFileAsync('kubectl', [
-        'rollout', 'status', `${args.kind as string}/${args.name as string}`, '-n', args.namespace as string,
-        `--timeout=${args.timeout ?? '120s'}`, '--kubeconfig', kc,
-      ], { timeout: 300_000 })).stdout
-    }
-
-    if (name === 'kubectl_get' || name === 'kubectl_patch' || name === 'kubectl_exec') {
-      const cmd = name.startsWith('kubectl_') ? name.substring(8) : 'get'
-      // Allowlist of safe arg keys — prevents flag injection (--as, --token, --server, etc.)
-      const ALLOWED_KUBECTL_ARGS = new Set([
-        'resource', 'name', 'namespace', 'output', 'container',
-        'selector', 'all_namespaces', 'subresource', 'patch', 'patch_type',
-        'kind', 'timeout', 'command',
-      ])
-      const flags: string[] = []
-      for (const [k, v] of Object.entries(args).filter(([key]) => key !== 'manifest')) {
-        if (!ALLOWED_KUBECTL_ARGS.has(k)) continue
-        if (k === 'namespace') { flags.push('-n'); flags.push(String(v)) }
-        else if (k === 'output') { flags.push(`-o${v === '' ? '' : v}`) }
-        else { flags.push(`--${k.replace(/_/g, '-')}`); flags.push(String(v)) }
-      }
-      return (await execFileAsync('kubectl', [cmd, ...flags, '--kubeconfig', kc], { timeout: 30_000 })).stdout
-    }
-
-    return ''
+    // Shaped like the gateway's tools of the same name; anything else is refused, not skipped.
+    const argv = localKubectlArgs(name, args)
+    if (!argv) throw new Error(`local runner: unsupported tool ${name}`)
+    return (await execFileAsync('kubectl', [...argv, '--kubeconfig', kc],
+      { timeout: name === 'kubectl_rollout_status' ? 300_000 : 30_000 })).stdout
   }
+
+  return Object.assign(kubectlTool, { cleanup })
 }

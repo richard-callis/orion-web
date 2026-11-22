@@ -6,6 +6,6 @@ export { renderGatewayManifest, type GatewayManifestInput } from './gateway-mani
 export { esoVaultManifest, type TLSConfig } from './eso-vault-manifest'
 
 /** Gateway manifest for this ORION instance (its callback URL + gateway image). */
-export function gatewayManifest(envName: string, joinToken: string): string {
-  return renderGatewayManifest({ envName, joinToken, orionUrl: ORION_URL, image: gatewayImageSpec() })
+export function gatewayManifest(envName: string, joinToken: string, gatewayUrl: string): string {
+  return renderGatewayManifest({ envName, joinToken, orionUrl: ORION_URL, gatewayUrl, image: gatewayImageSpec() })
 }

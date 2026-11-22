@@ -16,6 +16,7 @@ import { prisma } from '@/lib/db'
 import { randomBytes, createHash } from 'crypto'
 import { logAudit } from '@/lib/audit'
 import { revokeEnvironmentGitCredential } from '@/lib/environment-git-credentials'
+import { refreshArgoCDRepo } from '@/lib/bootstrap/argocd-install'
 
 function hashFingerprint(machineId: string): string {
   return createHash('sha256').update(machineId).digest('hex')
@@ -134,6 +135,8 @@ export async function POST(req: NextRequest) {
   // previous gateway for this environment loses git access. (An idempotent
   // re-join by the same machine, above, keeps the current credential.)
   await revokeEnvironmentGitCredential(env.id)
+  // A read-only gateway can't give ArgoCD the new one; with a stored admin kubeconfig ORION does.
+  void refreshArgoCDRepo(env.id)
 
   console.log(`[join] Gateway registered for environment "${env.name}" (${env.id})${fingerprint ? ' with fingerprint' : ' (no fingerprint)'}`)
 

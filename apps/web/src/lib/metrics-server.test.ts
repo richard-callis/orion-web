@@ -3,10 +3,11 @@ import { parseAllDocuments } from 'yaml'
 
 const executeTool = vi.fn()
 const localTool = vi.fn()
+const cleanup = vi.fn()
 vi.mock('./agent-runner/gateway-client', () => ({
   GatewayClient: class { executeTool = executeTool },
 }))
-vi.mock('./local-exec', () => ({ makeLocalGx: () => localTool }))
+vi.mock('./local-exec', () => ({ makeLocalGx: () => Object.assign(localTool, { cleanup }) }))
 
 import { ensureMetricsServer, metricsServerManifest, GATEWAY_METRICS_RBAC } from './metrics-server'
 
@@ -52,6 +53,14 @@ describe('metrics-server manifests', () => {
 
 describe('ensureMetricsServer', () => {
   beforeEach(() => { executeTool.mockReset(); localTool.mockReset() })
+
+  it('needs no gateway with a stored kubeconfig, and cleans it up', async () => {
+    cleanup.mockReset()
+    localTool.mockRejectedValueOnce(notFound).mockResolvedValue('')
+    expect(await ensureMetricsServer({ ...withKubeconfig, gatewayUrl: null, gatewayToken: null })).toEqual({ status: 'installed', via: 'kubeconfig' })
+    expect(cleanup).toHaveBeenCalledTimes(1)
+    expect(await ensureMetricsServer({ ...env, gatewayUrl: null })).toMatchObject({ status: 'skipped' })
+  })
 
   it('skips non-cluster environments', async () => {
     expect(await ensureMetricsServer({ ...env, type: 'docker' })).toMatchObject({ status: 'skipped' })

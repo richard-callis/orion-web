@@ -154,11 +154,117 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: orion-gateway-admin
+  name: orion-management-gateway-view
+# Read-only (infra-manager design §5.1): the built-in "view" role covers
+# namespaced workloads, services, config, events, HPAs and PDBs, excludes
+# Secrets and pods/exec, and grows with CRDs that aggregate-to-view.
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-admin
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: orion-gateway
+    namespace: orion-management
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: orion-management-gateway
+# Read-only extras "view" doesn't cover: cluster-scoped kinds and the operator
+# CRDs Orion's tools read. No Secrets, no pods/exec, no RBAC objects, no writes.
+# Changes to the cluster go through GitOps PRs or approved runbooks, never
+# through the gateway. Re-applying this downgrades an older, writable role.
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "namespaces", "persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "volumeattachments", "csidrivers", "csinodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["scheduling.k8s.io"]
+    resources: ["priorityclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["node.k8s.io"]
+    resources: ["runtimeclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["cert-manager.io", "acme.cert-manager.io"]
+    resources: ["certificates", "issuers", "clusterissuers", "certificaterequests", "orders", "challenges"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metallb.io"]
+    resources: ["ipaddresspools", "l2advertisements", "bgpadvertisements"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications", "appprojects"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["longhorn.io"]
+    resources: ["nodes", "volumes", "replicas", "engines", "backups", "backupvolumes", "recurringjobs", "settings"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["ceph.rook.io"]
+    resources: ["cephclusters"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["velero.io"]
+    resources: ["backups", "restores", "schedules", "backupstoragelocations"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["traefik.io", "traefik.containo.us"]
+    resources: ["ingressroutes", "ingressroutetcps", "middlewares", "tlsoptions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways", "gatewayclasses", "httproutes"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: orion-management-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: orion-management-gateway
+subjects:
+  - kind: ServiceAccount
+    name: orion-gateway
+    namespace: orion-management
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: orion-management-gateway-metrics
+  labels:
+    app.kubernetes.io/managed-by: orion
+rules:
+  # Read-only: the gateway reads metrics and checks whether metrics-server is
+  # installed. It no longer installs it (that needs RBAC-granting rights, which
+  # make the gateway admin-equivalent); metrics-server is applied with admin
+  # credentials: the join manifest, or ORION with a stored kubeconfig.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiregistration.k8s.io"]
+    resources: ["apiservices"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["nodes/metrics"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: orion-management-gateway-metrics
+  labels:
+    app.kubernetes.io/managed-by: orion
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: orion-management-gateway-metrics
 subjects:
   - kind: ServiceAccount
     name: orion-gateway
@@ -229,6 +335,10 @@ spec:
               value: "3001"
             - name: GATEWAY_TYPE
               value: "cluster"
+            # Read-only like its RBAC above: bootstrap does the cluster writes itself,
+            # with the environment's admin kubeconfig (lib/bootstrap/argocd-install.ts).
+            - name: GATEWAY_READ_ONLY
+              value: "true"
             - name: ENV_NAME
               value: "lab"
             - name: GATEWAY_NAMESPACE
@@ -275,7 +385,7 @@ spec:
                   key: machine-id
                   optional: true
             - name: GATEWAY_URL
-              value: "http://orion-gateway.orion-management.svc.cluster.local:3001"
+              value: "https://gw.example.com"
           # /health exists in every gateway image; /readyz (503 until the gateway
           # has registered and loaded its tool policy) only when the image is
           # pinned to a release that has it. See lib/gateway-image.ts.
@@ -321,11 +431,117 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: orion-gateway-admin
+  name: orion-management-gateway-view
+# Read-only (infra-manager design §5.1): the built-in "view" role covers
+# namespaced workloads, services, config, events, HPAs and PDBs, excludes
+# Secrets and pods/exec, and grows with CRDs that aggregate-to-view.
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-admin
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: orion-gateway
+    namespace: orion-management
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: orion-management-gateway
+# Read-only extras "view" doesn't cover: cluster-scoped kinds and the operator
+# CRDs Orion's tools read. No Secrets, no pods/exec, no RBAC objects, no writes.
+# Changes to the cluster go through GitOps PRs or approved runbooks, never
+# through the gateway. Re-applying this downgrades an older, writable role.
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "namespaces", "persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "volumeattachments", "csidrivers", "csinodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["scheduling.k8s.io"]
+    resources: ["priorityclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["node.k8s.io"]
+    resources: ["runtimeclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["cert-manager.io", "acme.cert-manager.io"]
+    resources: ["certificates", "issuers", "clusterissuers", "certificaterequests", "orders", "challenges"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metallb.io"]
+    resources: ["ipaddresspools", "l2advertisements", "bgpadvertisements"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications", "appprojects"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["longhorn.io"]
+    resources: ["nodes", "volumes", "replicas", "engines", "backups", "backupvolumes", "recurringjobs", "settings"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["ceph.rook.io"]
+    resources: ["cephclusters"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["velero.io"]
+    resources: ["backups", "restores", "schedules", "backupstoragelocations"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["traefik.io", "traefik.containo.us"]
+    resources: ["ingressroutes", "ingressroutetcps", "middlewares", "tlsoptions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways", "gatewayclasses", "httproutes"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: orion-management-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: orion-management-gateway
+subjects:
+  - kind: ServiceAccount
+    name: orion-gateway
+    namespace: orion-management
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: orion-management-gateway-metrics
+  labels:
+    app.kubernetes.io/managed-by: orion
+rules:
+  # Read-only: the gateway reads metrics and checks whether metrics-server is
+  # installed. It no longer installs it (that needs RBAC-granting rights, which
+  # make the gateway admin-equivalent); metrics-server is applied with admin
+  # credentials: the join manifest, or ORION with a stored kubeconfig.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiregistration.k8s.io"]
+    resources: ["apiservices"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["nodes/metrics"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: orion-management-gateway-metrics
+  labels:
+    app.kubernetes.io/managed-by: orion
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: orion-management-gateway-metrics
 subjects:
   - kind: ServiceAccount
     name: orion-gateway
@@ -396,6 +612,10 @@ spec:
               value: "3001"
             - name: GATEWAY_TYPE
               value: "cluster"
+            # Read-only like its RBAC above: bootstrap does the cluster writes itself,
+            # with the environment's admin kubeconfig (lib/bootstrap/argocd-install.ts).
+            - name: GATEWAY_READ_ONLY
+              value: "true"
             - name: ENV_NAME
               value: "Prod Cluster_1"
             - name: GATEWAY_NAMESPACE
@@ -442,7 +662,7 @@ spec:
                   key: machine-id
                   optional: true
             - name: GATEWAY_URL
-              value: "http://orion-gateway.orion-management.svc.cluster.local:3001"
+              value: ""
           # /health exists in every gateway image; /readyz (503 until the gateway
           # has registered and loaded its tool policy) only when the image is
           # pinned to a release that has it. See lib/gateway-image.ts.
@@ -469,5 +689,91 @@ spec:
   ports:
     - port: 3001
       targetPort: 3001
+"
+`;
+
+exports[`gatewayManifest permissions > pins the RBAC the join manifest ships 1`] = `
+"apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: orion-gateway-view
+# Read-only (infra-manager design §5.1): the built-in "view" role covers
+# namespaced workloads, services, config, events, HPAs and PDBs, excludes
+# Secrets and pods/exec, and grows with CRDs that aggregate-to-view.
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: orion-gateway
+    namespace: management
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: orion-gateway
+# Read-only extras "view" doesn't cover: cluster-scoped kinds and the operator
+# CRDs Orion's tools read. No Secrets, no pods/exec, no RBAC objects, no writes.
+# Changes to the cluster go through GitOps PRs or approved runbooks, never
+# through the gateway. Re-applying this downgrades an older, writable role.
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "namespaces", "persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "volumeattachments", "csidrivers", "csinodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["scheduling.k8s.io"]
+    resources: ["priorityclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["node.k8s.io"]
+    resources: ["runtimeclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["cert-manager.io", "acme.cert-manager.io"]
+    resources: ["certificates", "issuers", "clusterissuers", "certificaterequests", "orders", "challenges"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metallb.io"]
+    resources: ["ipaddresspools", "l2advertisements", "bgpadvertisements"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications", "appprojects"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["longhorn.io"]
+    resources: ["nodes", "volumes", "replicas", "engines", "backups", "backupvolumes", "recurringjobs", "settings"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["ceph.rook.io"]
+    resources: ["cephclusters"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["velero.io"]
+    resources: ["backups", "restores", "schedules", "backupstoragelocations"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["traefik.io", "traefik.containo.us"]
+    resources: ["ingressroutes", "ingressroutetcps", "middlewares", "tlsoptions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways", "gatewayclasses", "httproutes"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: orion-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: orion-gateway
+subjects:
+  - kind: ServiceAccount
+    name: orion-gateway
+    namespace: management
 "
 `;

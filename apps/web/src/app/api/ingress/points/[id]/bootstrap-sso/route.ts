@@ -8,10 +8,10 @@
  *
  * Returns { jobId } immediately — progress tracked via /api/jobs/[id].
  */
-import { gatewayHeaders } from '@/lib/gateway-headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { startJob, type JobLogger } from '@/lib/job-runner'
+import { gatewayCanWrite } from '@/lib/gateway-writable'
 import { GatewayClient } from '@/lib/agent-runner/gateway-client'
 import { requireAdmin } from '@/lib/auth'
 import { makeLocalGx } from '@/lib/local-exec'
@@ -55,7 +55,7 @@ export async function POST(
     return NextResponse.json({ error: 'Hostname is required' }, { status: 422 })
   }
 
-  // Determine execution mode: gateway first, fallback to local kubeconfig
+  // Determine execution mode: a gateway that can write first, else the local kubeconfig
   const gwUrl = env.gatewayUrl
   const gwToken = env.gatewayToken
   const hasKubeconfig = Boolean(env.kubeconfig)
@@ -63,22 +63,7 @@ export async function POST(
   let useGateway = false
   let useLocal = false
 
-  if (gwUrl && gwToken) {
-    // Try the gateway
-    try {
-      const res = await fetch(`${gwUrl}/tools/execute`, {
-        method: 'POST',
-        headers: gatewayHeaders(gwToken),
-        body: JSON.stringify({ name: 'kubectl_get_nodes', arguments: { wide: false } }),
-        signal: AbortSignal.timeout(5000),
-      })
-      if (res.ok) {
-        useGateway = true
-      }
-    } catch {
-      // Gateway unreachable
-    }
-  }
+  if (gwUrl && gwToken) useGateway = await gatewayCanWrite(gwUrl, gwToken, env.type)
 
   if (!useGateway && hasKubeconfig) {
     useLocal = true
@@ -92,7 +77,7 @@ export async function POST(
       return NextResponse.json({ error: 'Gateway token set but no gateway URL' }, { status: 422 })
     }
     if (gwUrl && gwToken) {
-      return NextResponse.json({ error: `Gateway at ${gwUrl} is not reachable and no kubeconfig is stored. Deploy the gateway via the Environment settings page.` }, { status: 422 })
+      return NextResponse.json({ error: `Gateway at ${gwUrl} is not reachable, or is read-only, and no kubeconfig is stored. Deploy the gateway via the Environment settings page.` }, { status: 422 })
     }
     return NextResponse.json({ error: 'No gateway available and no kubeconfig stored. Deploy the gateway or upload a kubeconfig for this environment.' }, { status: 422 })
   }
@@ -108,7 +93,12 @@ export async function POST(
         await bootstrapProvider(gwExecFn(gc), log, { provider, hostname, namespace, clusterIssuer, adminPassword, oidcIssuerUrl, clientId, clientSecret, customIssuerCaSecret, databaseType, redisHost, isDocker: false })
       } else if (useLocal) {
         await log(`Using local kubectl (stored kubeconfig) for cluster operations`)
-        await bootstrapProvider(makeLocalGx(env.kubeconfig!), log, { provider, hostname, namespace, clusterIssuer, adminPassword, oidcIssuerUrl, clientId, clientSecret, customIssuerCaSecret, databaseType, redisHost, isDocker: false })
+        const local = makeLocalGx(env.kubeconfig!)
+        try {
+          await bootstrapProvider(local, log, { provider, hostname, namespace, clusterIssuer, adminPassword, oidcIssuerUrl, clientId, clientSecret, customIssuerCaSecret, databaseType, redisHost, isDocker: false })
+        } finally {
+          local.cleanup()
+        }
       }
     },
   )
