@@ -18,7 +18,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { constantTimeCompare } from '@/lib/security/webhook-auth'
 import { getGitProviderConfig } from '@/lib/git-provider'
-import { getGatewayGitCredential, GitCredentialUnavailableError } from '@/lib/environment-git-credentials'
+import { getGatewayGitCredential, GitCredentialUnavailableError, bundledGiteaSshEnabled } from '@/lib/environment-git-credentials'
+import { providerKnownHosts } from '@/lib/git-provider/known-hosts'
 
 export async function GET(
   req: NextRequest,
@@ -40,9 +41,22 @@ export async function GET(
     return NextResponse.json({ error: 'Git provider not configured' }, { status: 404 })
   }
 
+  // Host keys ArgoCD needs for an SSH clone it can't verify by itself (H2). Read
+  // before any credential is minted, so a failure here never leaves the
+  // environment's working credential revoked for one ArgoCD can't use.
+  const cloneOptions = { bundledGiteaSsh: config.type === 'gitea-bundled' && await bundledGiteaSshEnabled() }
+  let knownHosts: string[]
+  try {
+    knownHosts = await providerKnownHosts(config, cloneOptions)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(`[git-provider] could not read the git host's SSH keys for "${env.name}": ${msg}`)
+    return NextResponse.json({ error: 'Could not read the git host\'s SSH host keys' }, { status: 502 })
+  }
+
   let credential
   try {
-    credential = await getGatewayGitCredential(env)
+    credential = await getGatewayGitCredential(env, cloneOptions)
   } catch (err) {
     if (err instanceof GitCredentialUnavailableError) {
       return NextResponse.json({ error: err.message }, { status: 409 })
@@ -68,6 +82,7 @@ export async function GET(
         ? { sshPrivateKey: credential.secret }
         : { password: credential.secret }),
       orgTokenFallback: credential.orgTokenFallback,
+      ...(credential.kind === 'ssh-key' && knownHosts.length ? { knownHosts } : {}),
     },
   })
 }

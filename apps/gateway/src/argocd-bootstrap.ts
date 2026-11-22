@@ -32,7 +32,69 @@ export interface GitProviderInfo {
     password?: string
     sshPrivateKey?: string
     orgTokenFallback?: boolean
+    /** known_hosts lines for an SSH host ArgoCD doesn't know (bundled Gitea, H2). */
+    knownHosts?: string[]
   }
+}
+
+/** One known_hosts line we accept from ORION: host, key type, base64 key. */
+const KNOWN_HOST_LINE = /^(\S+) (ssh-ed25519|ecdsa-sha2-nistp(?:256|384|521)|ssh-rsa) [A-Za-z0-9+/]+={0,2}$/
+/** An existing ssh_known_hosts entry's host and key type (a trailing comment allowed). */
+const EXISTING_LINE = /^(\S+) (\S+) \S+(?:\s.*)?$/
+
+/**
+ * The known_hosts host name for an SSH clone URL: `[host]:port` for a port
+ * other than 22, else `host`. null for anything that isn't an SSH URL.
+ */
+export function sshKnownHostsName(repoUrl: string): string | null {
+  const url = /^ssh:\/\/(?:[^@/]+@)?(\[[^\]]+\]|[^:/]+)(?::(\d+))?\//.exec(repoUrl)
+  if (url) {
+    const host = url[1].replace(/^\[|\]$/g, '')
+    return url[2] && url[2] !== '22' ? `[${host}]:${url[2]}` : host
+  }
+  const scp = /^[^@/:]+@([^:/]+):(?!\/)/.exec(repoUrl)
+  return scp ? scp[1] : null
+}
+
+/**
+ * Only lines for the host the credential clones from: ORION may pin the key of
+ * its own git host, never replace another host's (github.com, say).
+ */
+export function knownHostsForRepo(repoUrl: string, lines: string[]): string[] {
+  const host = sshKnownHostsName(repoUrl)
+  if (!host) return []
+  return lines.map(l => l.trim()).filter(l => KNOWN_HOST_LINE.exec(l)?.[1] === host)
+}
+
+/**
+ * Merge host-key lines into ArgoCD's ssh_known_hosts text. A key replaces the
+ * existing one for the same host and key type (a rotated host key); every
+ * other line, comments included, is kept in order. Lines that are not plain
+ * key lines are ignored. Returns the text unchanged when nothing differs.
+ */
+export function mergeKnownHosts(existing: string, add: string[]): string {
+  const valid = [...new Set(add.map(l => l.trim()).filter(l => KNOWN_HOST_LINE.test(l)))]
+  if (valid.length === 0) return existing
+  const id = (l: string) => { const m = EXISTING_LINE.exec(l.trim()); return m ? `${m[1]} ${m[2]}` : null }
+  const replacing = new Set(valid.map(id))
+  const lines = existing.split('\n')
+  const kept = lines.filter(l => { const k = id(l); return k === null || !replacing.has(k) || valid.includes(l.trim()) })
+  const missing = valid.filter(v => !kept.some(l => l.trim() === v))
+  if (missing.length === 0 && kept.length === lines.length) return existing
+  const body = kept.join('\n').replace(/\n+$/, '')
+  return `${body}${body ? '\n' : ''}${missing.join('\n')}\n`
+}
+
+/** Pin ORION-supplied host keys in argocd-ssh-known-hosts-cm (no-op when present). */
+async function pinKnownHosts(lines: string[]): Promise<void> {
+  const { stdout } = await run('kubectl', ['get', 'configmap', 'argocd-ssh-known-hosts-cm', '-n', 'argocd', '-o', 'json'], { timeoutMs: 15_000 })
+  const cm = JSON.parse(stdout)
+  const current: string = cm?.data?.ssh_known_hosts ?? ''
+  const merged = mergeKnownHosts(current, lines)
+  if (merged === current) return
+  await run('kubectl', ['patch', 'configmap', 'argocd-ssh-known-hosts-cm', '-n', 'argocd', '--type', 'merge', '--patch-file', '/dev/stdin'],
+    { timeoutMs: 15_000, input: JSON.stringify({ data: { ssh_known_hosts: merged } }) })
+  console.log(`[argocd-bootstrap] Pinned ${lines.length} SSH host key(s) in argocd-ssh-known-hosts-cm`)
 }
 
 /**
@@ -160,7 +222,21 @@ export async function bootstrapArgoCD(
       console.warn('[argocd-bootstrap] ORION issued the org-wide git token (fallback enabled) — not repo-scoped')
     }
 
-    // Step 5: Register (or refresh) the repo Secret. Always applied — kubectl apply
+    // Step 5: Pin the git host's SSH keys first, so ArgoCD's first clone with the
+    // new credential can verify the host (it never accepts unknown host keys).
+    const hostKeys = gitConfig.credential?.knownHosts?.length
+      ? knownHostsForRepo(gitConfig.credential.repoUrl, gitConfig.credential.knownHosts)
+      : []
+    if (hostKeys.length) {
+      try {
+        await pinKnownHosts(hostKeys)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[argocd-bootstrap] Failed to pin the git host's SSH keys (clones will fail host-key verification): ${msg}`)
+      }
+    }
+
+    // Step 6: Register (or refresh) the repo Secret. Always applied — kubectl apply
     // is idempotent, and a rotated credential must replace the previous one.
     try {
       const { yaml, repoUrl } = buildRepoSecretYaml(gitConfig)

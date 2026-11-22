@@ -41,12 +41,56 @@ afterEach(() => {
   delete process.env.MANAGEMENT_IP
 })
 
-const gitea: GitProviderConfig = { type: 'gitea-bundled', token: 'ORG-ADMIN-TOKEN', org: 'orion' }
+const gitea: GitProviderConfig = { type: 'gitea', url: 'http://gitea.example:3000', token: 'ORG-ADMIN-TOKEN', org: 'orion' }
+const bundled: GitProviderConfig = { type: 'gitea-bundled', token: 'ORG-ADMIN-TOKEN', org: 'orion' }
 const github: GitProviderConfig = { type: 'github', token: 'ORG-PAT', org: 'acme' }
 const gitlab: GitProviderConfig = { type: 'gitlab', url: 'https://gl.example.com', token: 'ORG-GL', org: 'acme' }
 const target = { owner: 'orion', repo: 'prod-cluster', label: 'prod-cluster' }
 
-describe('Gitea', () => {
+describe('bundled Gitea', () => {
+  it('adds a read-only deploy key and clones over SSH on the management address', async () => {
+    responder = () => ({ status: 201, body: { id: 77 } })
+    const cred = await mintScopedCredential(bundled, target, { bundledGiteaSsh: true })
+
+    expect(cred).toMatchObject({
+      kind: 'ssh-key',
+      username: 'git',
+      repoUrl: 'ssh://git@10.0.0.5:2222/orion/prod-cluster.git',
+      ref: { provider: 'gitea', apiUrl: 'http://gitea:3000', owner: 'orion', repo: 'prod-cluster', keyId: 77 },
+    })
+    expect(cred.secret).toContain('BEGIN OPENSSH PRIVATE KEY')
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ method: 'POST', url: 'http://gitea:3000/api/v1/repos/orion/prod-cluster/keys' })
+    expect(calls[0].headers.Authorization).toBe('token ORG-ADMIN-TOKEN')
+    expect(calls[0].body).toMatchObject({ read_only: true })
+    expect((calls[0].body as { key: string }).key).toMatch(/^ssh-ed25519 /)
+  })
+
+  it('reports a token without repo admin as unsupported', async () => {
+    responder = () => ({ status: 403, body: {} })
+    await expect(mintScopedCredential(bundled, target, { bundledGiteaSsh: true })).rejects.toBeInstanceOf(ScopingUnsupportedError)
+  })
+
+  it('keeps the HTTP bot user until SSH is turned on (existing installs)', async () => {
+    responder = (c) => c.url.endsWith('/tokens') ? { status: 201, body: { sha1: 'SCOPED-TOKEN' } } : { status: c.method === 'PUT' ? 204 : 201, body: c.method === 'PUT' ? undefined : {} }
+    const cred = await mintScopedCredential(bundled, target)
+    expect(cred).toMatchObject({ kind: 'https-token', repoUrl: 'http://10.0.0.5:3002/orion/prod-cluster.git' })
+    expect(scopedRepoUrl(bundled, 'orion', 'prod-cluster')).toBe('http://10.0.0.5:3002/orion/prod-cluster.git')
+  })
+
+  it('uses GITEA_SSH_PORT and rejects a bad one', () => {
+    process.env.GITEA_SSH_PORT = '2022'
+    try {
+      expect(scopedRepoUrl(bundled, 'orion', 'x', { bundledGiteaSsh: true })).toBe('ssh://git@10.0.0.5:2022/orion/x.git')
+      process.env.GITEA_SSH_PORT = 'nope'
+      expect(() => scopedRepoUrl(bundled, 'orion', 'x', { bundledGiteaSsh: true })).toThrow(/not a port/)
+    } finally {
+      delete process.env.GITEA_SSH_PORT
+    }
+  })
+})
+
+describe('external Gitea', () => {
   it('creates a bot user with read-only collaborator access and a read:repository token', async () => {
     responder = (c) => c.url.endsWith('/tokens') ? { status: 201, body: { sha1: 'SCOPED-TOKEN' } } : { status: c.method === 'PUT' ? 204 : 201, body: c.method === 'PUT' ? undefined : {} }
 
@@ -55,16 +99,16 @@ describe('Gitea', () => {
     expect(cred).toMatchObject({
       kind: 'https-token',
       secret: 'SCOPED-TOKEN',
-      repoUrl: 'http://10.0.0.5:3002/orion/prod-cluster.git',
-      ref: { provider: 'gitea', apiUrl: 'http://gitea:3000' },
+      repoUrl: 'http://gitea.example:3000/orion/prod-cluster.git',
+      ref: { provider: 'gitea', apiUrl: 'http://gitea.example:3000' },
     })
     expect(cred.username).toMatch(/^orion-env-prod-cluster-[0-9a-f]{6}$/)
     expect(cred.secret).not.toBe(gitea.token)
 
     const [create, collab, token] = calls
-    expect(create).toMatchObject({ method: 'POST', url: 'http://gitea:3000/api/v1/admin/users' })
+    expect(create).toMatchObject({ method: 'POST', url: 'http://gitea.example:3000/api/v1/admin/users' })
     expect(create.headers.Authorization).toBe('token ORG-ADMIN-TOKEN')
-    expect(collab.url).toBe(`http://gitea:3000/api/v1/repos/orion/prod-cluster/collaborators/${cred.username}`)
+    expect(collab.url).toBe(`http://gitea.example:3000/api/v1/repos/orion/prod-cluster/collaborators/${cred.username}`)
     expect(collab.body).toEqual({ permission: 'read' })
     expect(token.headers.Authorization).toMatch(/^Basic /)
     expect(token.body).toMatchObject({ scopes: ['read:repository'] })
@@ -114,8 +158,10 @@ describe('GitHub', () => {
       .rejects.toBeInstanceOf(ScopingUnsupportedError)
   })
 
-  it('scopedRepoUrl uses SSH for GitHub and HTTPS elsewhere', () => {
+  it('scopedRepoUrl uses SSH for GitHub and the bundled Gitea (when on), HTTP(S) elsewhere', () => {
     expect(scopedRepoUrl(github, 'acme', 'prod')).toBe('git@github.com:acme/prod.git')
+    expect(scopedRepoUrl(bundled, 'acme', 'prod', { bundledGiteaSsh: true })).toBe('ssh://git@10.0.0.5:2222/acme/prod.git')
+    expect(scopedRepoUrl(gitea, 'acme', 'prod')).toBe('http://gitea.example:3000/acme/prod.git')
     expect(scopedRepoUrl(gitlab, 'acme', 'prod')).toBe('https://gl.example.com/acme/prod.git')
   })
 })
@@ -154,6 +200,7 @@ describe('GitLab', () => {
 describe('revokeScopedCredential', () => {
   it.each([
     [gitea, { provider: 'gitea', apiUrl: 'http://gitea:3000', botUser: 'orion-env-x-abc123' }, 'http://gitea:3000/api/v1/admin/users/orion-env-x-abc123?purge=true'],
+    [bundled, { provider: 'gitea', apiUrl: 'http://gitea:3000', owner: 'orion', repo: 'prod', keyId: 77 }, 'http://gitea:3000/api/v1/repos/orion/prod/keys/77'],
     [github, { provider: 'github', owner: 'acme', repo: 'prod', keyId: 9 }, 'https://api.github.com/repos/acme/prod/keys/9'],
     [gitlab, { provider: 'gitlab', apiUrl: 'https://gl.example.com', projectPath: 'acme/prod', tokenId: 7 }, 'https://gl.example.com/api/v4/projects/acme%2Fprod/deploy_tokens/7'],
   ] as const)('deletes at the provider (%#)', async (config, ref, url) => {

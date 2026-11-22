@@ -12,7 +12,9 @@ Each environment now gets a **read-only credential scoped to its own repo**.
 
 | Provider | Credential | ArgoCD clones over | Needs on the org/provider token |
 |---|---|---|---|
-| Bundled Gitea / Gitea | A bot user `orion-env-<env>-<rand>` with `read` collaborator access on the env repo only, plus a `read:repository` token | HTTPS | Site admin (to create the bot user) |
+| Bundled Gitea, `git.gateway.bundledGiteaSsh` on (new installs) | A read-only SSH deploy key on the env repo, plus Gitea's SSH host keys | SSH (`ssh://git@<MANAGEMENT_IP>:2222/owner/repo.git`) | Admin on the env repo (to add deploy keys) |
+| Bundled Gitea, setting off (installs from before H2) | As external Gitea | plain HTTP (`http://<MANAGEMENT_IP>:3002/owner/repo.git`) | Site admin |
+| External Gitea | A bot user `orion-env-<env>-<rand>` with `read` collaborator access on the env repo only, plus a `read:repository` token | HTTPS | Site admin (to create the bot user) |
 | GitHub | A read-only SSH deploy key on the env repo | SSH (`git@github.com:owner/repo.git`) | Admin on the env repo (to add deploy keys) |
 | GitLab | A project deploy token with `read_repository` | HTTPS | Maintainer on the project |
 
@@ -22,6 +24,24 @@ Applications for a GitHub environment must use the SSH URL**
 (`git@github.com:<owner>/<repo>.git`). The scaffolded `argocd/root-application.yaml`
 leaves `repoURL` as the `<GIT_REPO_URL>` placeholder; set it to the URL the
 gateway logs (`Registered git repo <url> in ArgoCD`).
+
+The bundled Gitea serves plain HTTP on the LAN, so with the SystemSetting
+`git.gateway.bundledGiteaSsh` on, its environments clone over SSH instead
+(hardening step H2). The setup wizard turns it on when it configures the bundled
+Gitea; installs from before H2 keep HTTP until it is turned on (see Upgrading).
+ArgoCD never accepts an unknown SSH host key and
+doesn't ship Gitea's, so ORION reads them on its compose network (`ssh-keyscan`
+to the `gitea` service, port 22) and sends them with the credential as
+known_hosts lines for `[MANAGEMENT_IP]:2222` (`GITEA_SSH_PORT` if the published
+port differs). The gateway merges them into `argocd-ssh-known-hosts-cm` before
+registering the credential, replacing an older key for the same host and type
+and leaving every other entry alone. It only takes keys for the host in the
+credential's own URL, so ORION can never re-key another host (github.com, say).
+ORION reads the host keys before it issues or replaces any credential, and if
+it can't, it returns 502 and leaves the current credential alone.
+
+As with GitHub, the in-cluster Applications (and their AppProject's
+`sourceRepos`) must use the SSH URL the gateway logs.
 
 The gateway registers the credential as an ArgoCD `repo-creds` template whose
 URL prefix is the environment repo (without `.git`), so Applications match with
@@ -47,7 +67,7 @@ Applications in) is not affected.
 If a provider call fails while revoking, the database row is still removed (so
 a fresh credential is minted next time) and the failure is logged with
 `[git-cred] failed to revoke ... (remove it manually)`. Look for leftover
-`orion-env-*` Gitea users, `orion-argocd-*` GitHub deploy keys, or GitLab
+`orion-env-*` Gitea users, `orion-argocd-*` Gitea or GitHub deploy keys, or GitLab
 deploy tokens named `orion-argocd-*`.
 
 ## Fallback: org-wide token (opt-in)
@@ -62,7 +82,9 @@ To knowingly accept the old behaviour for such setups, set the SystemSetting
 out, flagged `orgTokenFallback: true` in the response, and the gateway logs a
 warning. It is never stored per environment.
 
-Transient provider errors (5xx, timeouts) never trigger the fallback.
+Transient provider errors (5xx, timeouts) never trigger the fallback, and
+neither does a provider whose clone URL is SSH (GitHub, bundled Gitea): the org
+token is an HTTPS password, which ArgoCD would never match to the SSH URL.
 
 ## Upgrading existing deployments
 
@@ -75,6 +97,27 @@ Transient provider errors (5xx, timeouts) never trigger the fallback.
   to `git@github.com:<owner>/<repo>.git` **before** restarting the gateway on
   the new version, because the restart replaces the org-token Secret that the
   HTTPS URL relied on.
+- **Bundled Gitea, moving to SSH (H2)** on an install from before it. The
+  setting is global: once it is on, *every* environment's gateway switches on
+  its next restart, planned or not (a pod reschedule counts). So:
+  1. For any cluster whose gateway can't write to the `argocd` namespace (a
+     read-only gateway), first give that cluster's ArgoCD its own deploy key and
+     Gitea's host key in Git. Its gateway can write neither the Secret nor the
+     ConfigMap, so once the setting is on, a restart only revokes the old bot
+     user; with ArgoCD on its own key, that is harmless.
+  2. In **every** environment repo, change the in-cluster Applications'
+     `repoURL` and the AppProject's `sourceRepos` to
+     `ssh://git@<MANAGEMENT_IP>:2222/<owner>/<repo>.git`, keeping the HTTP URL in
+     `sourceRepos` for now.
+  3. Set the SystemSetting `git.gateway.bundledGiteaSsh` to `true`.
+  4. Restart each writable gateway. Its credential fetch revokes the HTTP bot
+     user, issues a deploy key, pins Gitea's host key in
+     `argocd-ssh-known-hosts-cm` and replaces the `orion-git-repo` Secret.
+  5. Drop the HTTP URL from `sourceRepos`.
+
+  Do steps 2 to 4 back to back: once step 2 syncs, the Applications point at the
+  SSH URL, which has no credential or host key until step 4, so they can't sync
+  in between.
 - Gateways older than this change understand only `{ url, token }`. For
   Gitea/GitLab the response keeps those fields, scoped to the one repo. For
   GitHub (SSH) the legacy `token` is empty, so old gateways can't register it.

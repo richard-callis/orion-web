@@ -5,17 +5,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 
-const { prisma, getGitProviderConfig, getGatewayGitCredential } = vi.hoisted(() => ({
+const { prisma, getGitProviderConfig, getGatewayGitCredential, providerKnownHosts } = vi.hoisted(() => ({
   prisma: { environment: { findUnique: vi.fn() } },
   getGitProviderConfig: vi.fn(),
   getGatewayGitCredential: vi.fn(),
+  providerKnownHosts: vi.fn(),
 }))
 
 vi.mock('@/lib/db', () => ({ prisma }))
 vi.mock('@/lib/git-provider', () => ({ getGitProviderConfig }))
+vi.mock('@/lib/git-provider/known-hosts', () => ({ providerKnownHosts }))
 vi.mock('@/lib/environment-git-credentials', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/environment-git-credentials')>()
-  return { ...actual, getGatewayGitCredential }
+  return { ...actual, getGatewayGitCredential, bundledGiteaSshEnabled: async () => true }
 })
 
 import { GET } from './route'
@@ -34,6 +36,7 @@ beforeEach(() => {
   prisma.environment.findUnique.mockReset().mockResolvedValue(env)
   getGitProviderConfig.mockReset().mockResolvedValue({ type: 'gitea-bundled', token: 'ORG-ADMIN-TOKEN', org: 'orion' })
   getGatewayGitCredential.mockReset()
+  providerKnownHosts.mockReset().mockResolvedValue([])
 })
 
 describe('GET /api/environments/:id/git-provider', () => {
@@ -74,6 +77,41 @@ describe('GET /api/environments/:id/git-provider', () => {
     expect(body.token).toBe('')
     expect(body.credential).toMatchObject({ kind: 'ssh-key', sshPrivateKey: expect.stringContaining('OPENSSH') })
     expect(body.credential.password).toBeUndefined()
+  })
+
+  it('sends the host keys ArgoCD needs for an SSH clone of the bundled Gitea', async () => {
+    getGatewayGitCredential.mockResolvedValue({
+      kind: 'ssh-key', username: 'git', secret: 'KEY', repoUrl: 'ssh://git@10.0.0.5:2222/orion/prod.git', orgTokenFallback: false,
+    })
+    providerKnownHosts.mockResolvedValue(['[10.0.0.5]:2222 ssh-ed25519 AAAA'])
+    const body = await (await get('Bearer mcga_env1')).json()
+    expect(body.credential.knownHosts).toEqual(['[10.0.0.5]:2222 ssh-ed25519 AAAA'])
+    // One reading of the setting for both the host keys and the credential.
+    expect(providerKnownHosts).toHaveBeenCalledWith(expect.anything(), { bundledGiteaSsh: true })
+    expect(getGatewayGitCredential).toHaveBeenCalledWith(env, { bundledGiteaSsh: true })
+  })
+
+  it('502s rather than hand out an SSH credential whose host key it could not read', async () => {
+    getGatewayGitCredential.mockResolvedValue({
+      kind: 'ssh-key', username: 'git', secret: 'KEY', repoUrl: 'ssh://git@10.0.0.5:2222/orion/prod.git', orgTokenFallback: false,
+    })
+    providerKnownHosts.mockRejectedValue(new Error('ssh-keyscan returned no host keys for gitea:22'))
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = await get('Bearer mcga_env1')
+    expect(res.status).toBe(502)
+    expect(JSON.stringify(await res.json())).not.toContain('KEY')
+    // Checked before any credential is minted (or an old one revoked).
+    expect(getGatewayGitCredential).not.toHaveBeenCalled()
+    err.mockRestore()
+  })
+
+  it('sends no host keys with an HTTPS credential', async () => {
+    getGatewayGitCredential.mockResolvedValue({
+      kind: 'https-token', username: 'bot', secret: 'T', repoUrl: 'https://git.example.com/o/r.git', orgTokenFallback: false,
+    })
+    providerKnownHosts.mockResolvedValue(['[10.0.0.5]:2222 ssh-ed25519 AAAA'])
+    const body = await (await get('Bearer mcga_env1')).json()
+    expect(body.credential.knownHosts).toBeUndefined()
   })
 
   it('409s with the reason when no scoped credential can be issued', async () => {
