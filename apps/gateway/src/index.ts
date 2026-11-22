@@ -798,7 +798,7 @@ async function start() {
       console.error('[gateway] ArgoCD bootstrap failed (non-fatal):', errMsg(err))
     )
 
-    argoCdWatcher = new ArgoCDWatcher(async (apps) => { await client.reportSyncStatus(apps) })
+    argoCdWatcher = new ArgoCDWatcher(async (apps, opts) => { await client.reportSyncStatus(apps, opts) })
     argoCdWatcher.start()
 
     ingressWatcher = new IngressWatcher(async (ingresses) => { await client.reportIngresses(ingresses) })
@@ -806,7 +806,7 @@ async function start() {
   }
 
   if (GATEWAY_TYPE === 'docker' || GATEWAY_TYPE === 'localhost') {
-    dockerWatcher = new DockerComposeWatcher(async (apps) => { await client.reportSyncStatus(apps) })
+    dockerWatcher = new DockerComposeWatcher(async (apps, opts) => { await client.reportSyncStatus(apps, opts) })
     dockerWatcher.start()
   }
 }

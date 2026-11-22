@@ -204,10 +204,16 @@ describe('OrionClient', () => {
       )
     })
 
-    it('does not throw on failure', async () => {
-      global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500, text: () => Promise.resolve('error') })
+    it('marks a refresh in the body', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('') })
+      await new OrionClient(cfg).reportSyncStatus([], { refresh: true })
+      expect(JSON.parse(vi.mocked(global.fetch).mock.calls[0][1]!.body as string)).toEqual({ applications: [], refresh: true })
+    })
+
+    it('throws when ORION rejects it, so the watcher sends it again', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 502, text: () => Promise.resolve('bad gateway') })
       const client = new OrionClient(cfg)
-      await expect(client.reportSyncStatus([])).resolves.toBeUndefined()
+      await expect(client.reportSyncStatus([])).rejects.toThrow('502')
     })
   })
 

@@ -51,7 +51,8 @@ start()
   │    │           execAsync('kubectl get applications -n argocd -o json')
   │    │           → parseApp(item) for each
   │    │           → if changed: orion.reportSyncStatus(apps)
-  │    │                         └─ POST /api/environments/{id}/sync-status
+  │    │             else after 3.5 min (4th poll): orion.reportSyncStatus(apps, { refresh: true })
+  │    │                         └─ POST /api/environments/{id}/sync-status (throws on non-2xx → retried next poll)
   │    │
   │    └─ new IngressWatcher(orion.reportIngresses, 60_000ms)
   │         └─ start() → poll() immediately + setInterval
@@ -59,6 +60,11 @@ start()
   │                 execAsync('kubectl get ingress -A -o json')
   │                 → if changed: orion.reportIngresses(rules)
   │                               └─ POST /api/environments/{id}/ingress/sync
+  │
+  ├─ if GATEWAY_TYPE = 'docker' or 'localhost':
+  │    └─ new DockerComposeWatcher(orion.reportSyncStatus, 60_000ms)
+  │         └─ poll(): docker ps -a → docker inspect (containers exited 0: restart policy)
+  │              → same change/refresh reporting as ArgoCDWatcher
   │
   └─ app.listen(PORT)
 ```
@@ -115,7 +121,7 @@ POST /mcp/message     → SSE message handler
 | `fetchTools()` | GET /api/environments/{id}/tools | start() + heartbeat | every 30s |
 | `startHeartbeat(cb)` | — setInterval | start() | — |
 | `stopHeartbeat()` | — clearInterval | SIGTERM | — |
-| `reportSyncStatus(apps)` | POST /api/environments/{id}/sync-status | ArgoCDWatcher.poll() | when argocd changes |
+| `reportSyncStatus(apps, { refresh? })` | POST /api/environments/{id}/sync-status | ArgoCDWatcher.poll(), DockerComposeWatcher.poll() | on change, else every 4th poll (4 min) as a refresh |
 | `reportIngresses(rules)` | POST /api/environments/{id}/ingress/sync | IngressWatcher.poll() | when ingresses change |
 | `disconnect()` | PUT /api/environments/{id} (disconnected) | SIGTERM | — |
 

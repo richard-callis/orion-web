@@ -3,7 +3,8 @@
  *
  * Receives ArgoCD Application sync/health state from the Gateway's ArgoCD watcher.
  * Updates the environment's metadata with the latest sync state.
- * Closes any GitOpsPRs whose revision has been synced.
+ * Closes any GitOpsPRs whose revision has been synced, unless the report is a
+ * periodic re-send (`refresh: true`), which says nothing new about any PR.
  *
  * Auth: Bearer gatewayToken (same token used for heartbeats).
  */
@@ -33,10 +34,13 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // Body first: metadata is read, changed and written back below, so nothing slow
+  // may sit between the read and the write.
+  const { applications, refresh } = (await req.json()) as { applications: ArgoCDApp[]; refresh?: boolean }
+
   const env = await prisma.environment.findUnique({ where: { id: (await params).id } })
   if (!env) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const { applications } = (await req.json()) as { applications: ArgoCDApp[] }
   if (!Array.isArray(applications)) {
     return NextResponse.json({ error: 'applications must be an array' }, { status: 400 })
   }
@@ -68,7 +72,7 @@ export async function POST(
     .filter(a => a.syncStatus === 'Synced' && a.revision)
     .map(a => a.revision)
 
-  if (syncedRevisions.length > 0) {
+  if (refresh !== true && syncedRevisions.length > 0) {
     // Find open PRs for this environment whose branch tip matches a synced revision
     // We store the branch name in GitOpsPR — ArgoCD reports the commit SHA.
     // Best-effort: mark PRs as merged if they're still "open" and the app is now Synced.
