@@ -76,6 +76,15 @@ describe('startHeartbeatWhenReady', () => {
     expect(writeFileSync).toHaveBeenCalledTimes(1)
   })
 
+  it('stops beating once stopped', async () => {
+    void startHeartbeatWhenReady(Promise.resolve())
+    await vi.advanceTimersByTimeAsync(STARTUP_GRACE_MS)
+    expect(writeFileSync).toHaveBeenCalledTimes(1)
+    stopHeartbeat()
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS * 4)
+    expect(writeFileSync).toHaveBeenCalledTimes(1)
+  })
+
   it('does not start after being stopped', async () => {
     void startHeartbeatWhenReady(Promise.resolve())
     stopHeartbeat()
