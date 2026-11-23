@@ -4,7 +4,7 @@ set -euo pipefail
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Image versions exported by the caller (e.g. .github/workflows/deploy.yml pins
-# the image it just built) must win over any value in .env, which is sourced
+# every image, deploy/resolve_images.py) must win over any value in .env, which is sourced
 # below. Capture them now and re-export after every `source .env`.
 VERSION_OVERRIDES=""
 for v in ORION_VERSION ORION_WEB_VERSION ORION_GATEWAY_VERSION ORION_VECTOR_VERSION; do

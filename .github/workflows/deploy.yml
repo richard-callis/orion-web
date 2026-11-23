@@ -14,8 +14,8 @@ name: Deploy ORION
 # images, and runs `docker compose up -d` which picks up any new services.
 #
 # Safety net:
-#   - The image the triggering build just pushed is pinned by its commit SHA
-#     (not :latest), so the deploy runs exactly what was built.
+#   - Every ORION image is pinned to the one built for this commit's history
+#     (deploy/resolve_images.py), never :latest.
 #   - A PostgreSQL dump is taken before anything changes (migrations run on
 #     container start and cannot be rolled back).
 #   - The deploy FAILS if ORION is not healthy within 5 minutes, or the worker
@@ -44,21 +44,20 @@ concurrency:
   group: deploy-orion
   cancel-in-progress: false
 
-# Deploy needs no GITHUB_TOKEN privileges. It git-fetches via the host's own
-# credentials and pulls images via the host's docker config; the workflow
-# token is not used for either. contents: read is the conventional explicit
-# minimum baseline (equivalent to the default for repos created Feb 2023+).
+# Read-only token. The deploy git-fetches with the host's own credentials and pulls
+# images with its docker config; the token is used only to read workflow runs.
+# contents: read is the conventional explicit minimum baseline.
 permissions:
   contents: read
-  # Read-only: wait-for-ci reads this commit's CI workflow run and main's head.
+  # Read-only: wait-for-ci reads this commit's CI run and main's head, and the deploy
+  # job whether an image build is still running.
   actions: read
 
 jobs:
   # Merges now happen on Gitea, so CI no longer gates them before merge; it runs
   # on GitHub after github-sync pushes main. Nothing deploys until CI has passed
   # on the exact commit being deployed (platform design §5.1 step 9a). This job
-  # runs on a GitHub-hosted runner so it doesn't hold the self-hosted one, and
-  # the token never reaches the deploy host.
+  # runs on a GitHub-hosted runner so it doesn't hold the self-hosted one.
   wait-for-ci:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
@@ -98,7 +97,11 @@ jobs:
                       if c in ("cancelled", "skipped"):
                           head = get("commits/main")["sha"]
                           if head != sha:
-                              done(False, f"CI on {sha[:12]} was {c} and main has moved to {head[:12]}: superseded, not deploying this commit")
+                              # Superseded: deploy main's head instead, once its CI passes. Nothing
+                              # else may trigger a deploy for this commit's changes.
+                              print(f"::notice::CI on {sha[:12]} was {c}; main has moved to {head[:12]}: deploying that")
+                              sha = head
+                              continue
                       done(False, f"CI on {sha[:12]} concluded {c}: not deploying", "error", 1)
                   print(f"CI on {sha[:12]}: {runs[0]['status'] if runs else 'no run yet'}, waiting")
               except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as e:
@@ -147,25 +150,41 @@ jobs:
           cp -a --update=none "$COREDNS_KEEP/." deploy/coredns/
           rm -rf "$COREDNS_KEEP"
 
-      - name: Pin the image that was just built
-        # Each build workflow tags its image with the commit SHA. Only the
-        # triggering image has that tag; the others stay on ORION_VERSION
-        # (default :latest). bootstrap.sh keeps these exports over .env values.
+      - name: Pin the images of this commit
+        # Whatever triggered this run: queued deploys cancel each other, so the one
+        # that runs may not be the one a build asked for. deploy/resolve_images.py
+        # asks GitHub whether a build is still running, with this job's read-only
+        # token (from the environment, never on a command line).
+        id: pins
         env:
-          RUN_NAME: ${{ github.event.workflow_run.name }}
-          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          case "$RUN_NAME" in
-            "Build ORION Web")     echo "ORION_WEB_VERSION=$RUN_SHA"     >> "$GITHUB_ENV" ;;
-            "Build ORION Gateway") echo "ORION_GATEWAY_VERSION=$RUN_SHA" >> "$GITHUB_ENV" ;;
-            "Build ORION Vector")  echo "ORION_VECTOR_VERSION=$RUN_SHA"  >> "$GITHUB_ENV" ;;
-            *) echo "Not triggered by an image build — using ORION_VERSION from .env (default latest)." ;;
-          esac
+          if [ ! -x /opt/orion/deploy/resolve_images.py ]; then
+            # A tree from before the resolver (a build of an older commit finishing late).
+            echo "::notice::this tree has no resolve_images.py; skipping it, the next deploy pins its images"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          GITHUB_ORG=$(sed -n 's/^GITHUB_ORG=//p' "$DEPLOY_DIR/.env" | tail -1 | tr -d "\"'")
+          export GITHUB_ORG
+          set +e
+          /opt/orion/deploy/resolve_images.py > "$RUNNER_TEMP/images"
+          rc=$?
+          set -e
+          if [ "$rc" = 3 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [ "$rc" = 0 ] || exit "$rc"
+          cat "$RUNNER_TEMP/images"
+          cat "$RUNNER_TEMP/images" >> "$GITHUB_ENV"
 
       - name: Pre-deploy database backup
+        if: steps.pins.outputs.skip != 'true'
         run: $DEPLOY_DIR/backup.sh --pre-deploy
 
       - name: Bootstrap and start stack
+        if: steps.pins.outputs.skip != 'true'
         # bootstrap.sh:
         #   - generates any missing secrets in deploy/.env (idempotent grep guards)
         #   - seeds Vault KV + SecurityConfig where applicable
@@ -177,6 +196,7 @@ jobs:
           ./bootstrap.sh
 
       - name: Wait for ORION health
+        if: steps.pins.outputs.skip != 'true'
         # Uses the container healthchecks (orion: /api/health). Fails the job
         # on timeout — a deploy that never became healthy is not a success.
         run: |
@@ -185,12 +205,15 @@ jobs:
           $DEPLOY_DIR/wait-healthy.sh orion-worker 360
 
       - name: Record last-good deploy
+        if: steps.pins.outputs.skip != 'true'
         run: |
           cd $DEPLOY_DIR
           tmp=$(mktemp)
           {
             echo "GIT_SHA=$(git -C /opt/orion rev-parse HEAD)"
             echo "DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            # The registry tags behind those digests, for rollback.sh to pin in .env.
+            [ ! -s "$RUNNER_TEMP/images" ] || sed 's/^/TAG_/' "$RUNNER_TEMP/images"
             for pair in orion:ORION_WEB_VERSION gateway:ORION_GATEWAY_VERSION vector:ORION_VECTOR_VERSION; do
               svc=${pair%%:*}; var=${pair#*:}
               cid=$(docker compose -f docker-compose.yml --env-file .env ps -q "$svc" | head -1)
@@ -201,6 +224,8 @@ jobs:
           } > "$tmp"
           mv "$tmp" .last-good
           cat .last-good
+          # Healthy: these images are now what a compose command run by hand should use.
+          [ ! -s "$RUNNER_TEMP/images" ] || ./set-image-pins.sh < "$RUNNER_TEMP/images"
 
       - name: Rollback runbook
         if: failure()
