@@ -4,7 +4,7 @@
 #   1. journald — SSH, sudo, PAM authentication failures
 #   2. Docker Events API — container lifecycle (OOM, die, kill, restart, start)
 #   3. Vault audit — unseal, token creation, policy changes
-#   4. Docker logs — Traefik access logs
+#   4. Docker logs — Traefik's own log (its access log is off)
 #
 # Batches events over 5s / 100 events using reduce, builds a
 # { batch_id, hostname, events: [...] } envelope, signs with HMAC-SHA256,
@@ -57,21 +57,17 @@ include = ["/vault/audit/audit.log"]
 read_from = "end"
 data_dir = "/var/lib/vector"
 
-# ── Source 4: Docker logs (edge containers: traefik) ──────────────────────────
-# Collects stdout/stderr from the edge-proxy containers.
-#
-# authentik / authentik-worker were removed from include_containers: confirmed
-# via `docker ps -a` on prod that no such containers exist on this host.
-# Authentik is deployable as a k8s "provider" (see deploy/providers/authentik.json)
-# onto the Talos cluster, not as a docker-compose service on the Orion host —
-# it was never actually running here for docker_logs to pick up. Orion's own
-# app auth is Auth.js/NextAuth (apps/web), not a reverse-proxy-level service,
-# so there is currently nothing to replace these entries with.
+# ── Source 4: Docker logs (edge proxy) ────────────────────────────────────────
+# Traefik's stdout/stderr. Its access log is off (docker-compose.yml), so this is its
+# own log: errors, certificate problems. Another container needs a source of its own:
+# several include_labels must all match the same container.
 
 [sources.docker_edge_logs]
 type = "docker_logs"
 docker_host = "http://docker-read-proxy:2375"
-include_containers = ["traefik"]
+# By label: include_containers matches a name prefix, and compose names the container
+# <project>-traefik-1.
+include_labels = ["com.docker.compose.service=traefik"]
 
 # ── Source 5: UDM Pro syslog ─────────────────────────────────────────────────
 # Receives syslog from the UniFi Dream Machine Pro (UDP, port 5514).
@@ -185,47 +181,18 @@ source = """
   .raw = .message
 """
 
-# ── Transform 4: Edge Docker logs → structured event ────────────────────────
-# Parses Traefik log lines. The "authentik" branch below is currently dead
-# code — docker_edge_logs no longer includes authentik/authentik-worker
-# containers (they don't exist on this host, see Source 4 above) — but is
-# left in place as harmless/inert in case an edge-level auth proxy is
-# reintroduced under that container name.
+# ── Transform 4: Edge proxy log → structured event ──────────────────────────
+# No verdict from the text: in this log "401" or "denied" can be part of anything.
 
 [transforms.edge_to_event]
 type = "remap"
 inputs = ["docker_edge_logs"]
 source = """
-  name = string(.container_name) ?? "edge"
-  msg = string(.message) ?? ""
-  if contains(name, "authentik") {
-    if contains(msg, "denied") || contains(msg, "Forbidden") || contains(msg, "invalid") {
-      .subtype = "auth.denied"
-      .severity = 30
-    } else if contains(msg, "Authenticated successfully") || contains(msg, "login success") {
-      .subtype = "auth.success"
-      .severity = 10
-    } else {
-      .subtype = "auth.generic"
-      .severity = 0
-    }
-    .category = "edge"
-  } else if contains(name, "traefik") {
-    if contains(msg, "403") || contains(msg, "401") || contains(msg, "denied") {
-      .subtype = "http.deny"
-      .severity = 20
-    } else {
-      .subtype = "http.access"
-      .severity = 0
-    }
-    .category = "edge"
-  } else {
-    .category = "edge"
-    .subtype = "http.access"
-    .severity = 0
-  }
-  .source_file = name
-  .raw = msg
+  .category = "edge"
+  .subtype = "log"
+  .severity = 0
+  .source_file = string(.container_name) ?? "edge"
+  .raw = string(.message) ?? ""
 """
 
 # ── Transform 5: UDM Pro syslog → structured event ──────────────────────────
