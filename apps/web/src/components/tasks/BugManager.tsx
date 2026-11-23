@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { Plus, Trash2, ChevronRight, User, X } from 'lucide-react'
-import type { Bug } from '@/types/tasks'
+import type { Bug, TaskUser } from '@/types/tasks'
 import { KanbanBoard } from '../ui/KanbanBoard'
 import { CreateEntityModal } from '../ui/CreateEntityModal'
 import { useToast } from '../ui/Toast'
@@ -298,7 +298,15 @@ export function BugManager({ initialBugs, users }: Props) {
                 <label htmlFor="bug-assigned-to" className="text-[10px] uppercase tracking-wide text-text-muted">Assigned To</label>
                 <select id="bug-assigned-to"
                   value={editAssignee}
-                  onChange={e => { setEditAssignee(e.target.value); updateBug(selectedBug.id, { assignedUserId: e.target.value || null }) }}
+                  onChange={e => {
+                    const id = e.target.value
+                    setEditAssignee(id)
+                    const u = users.find(x => x.id === id)
+                    updateBug(selectedBug.id, {
+                      assignedUserId: id || null,
+                      assignedUser: u ? { id: u.id, name: u.name, username: u.username, email: '', role: '' } as TaskUser : null,
+                    })
+                  }}
                   className="w-full text-xs bg-bg-raised border border-border-visible rounded-sm px-2 py-1.5 text-text-primary focus:outline-hidden focus:border-accent"
                 >
                   <option value="">Unassigned</option>

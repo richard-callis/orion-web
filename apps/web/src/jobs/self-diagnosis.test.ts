@@ -245,6 +245,22 @@ describe('runSelfDiagnosis', () => {
     expect(db.bugs[0].occurrences).toBe(12)
   })
 
+  it('counts a late-committing row stamped inside the overlap before the last seen time', async () => {
+    db.jobRuns.push(failedRun({ finishedAt: minsAgo(1) }))
+    await runSelfDiagnosis(NOW)
+    const lastSeen = db.bugs[0].lastSeenAt as Date
+    db.jobRuns.push(failedRun({ finishedAt: new Date(lastSeen.getTime() - 30_000) }))
+    const r = await runSelfDiagnosis(NOW)
+    expect(r.updated).toBe(1)
+    expect(db.bugs[0].occurrences).toBe(2)
+  })
+
+  it('warns when the stored watermark is older than 24 h', async () => {
+    db.settings.set('self-diagnosis.watermark', minsAgo(48 * 60).toISOString())
+    await runSelfDiagnosis(NOW)
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('older than 24 h'))
+  })
+
   it('does not re-count an archived failed job (updatedAt bumped, completedAt old)', async () => {
     db.backgroundJobs.push(failedJob({ completedAt: minsAgo(60), updatedAt: minsAgo(60) }))
     await runSelfDiagnosis(NOW)

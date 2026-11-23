@@ -18,15 +18,16 @@
  * Re-reads are mostly harmless: evidence entries carry the id of the row they
  * came from and windowed signals older than the Bug's lastSeenAt are skipped,
  * so a row read twice (watermark overlap, retry after a failed run) counts
- * once. Not airtight for a group with more than MAX_EVIDENCE rows sharing one
- * timestamp, which can be counted again if re-read.
+ * once. Not airtight for more than MAX_EVIDENCE rows of one fault within
+ * OVERLAP_MS of each other, which can be counted again if re-read.
  *
  * Caps per run: MAX_SIGNALS signals (also per source), MAX_NEW_BUGS new Bugs.
  * When either bites, a warning is logged and the watermark stops at the first
  * unprocessed signal, so the rest is picked up next run. The watermark never
  * reads further back than 24 h (readWatermark), so a fault group that cannot
  * be stored, or a source that keeps failing, is retried for at most 24 h and
- * cannot pin the watermark forever.
+ * cannot pin the watermark forever. A stored watermark older than that is
+ * clamped with a warning, so signals before the floor are skipped, not silently.
  */
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db'
@@ -37,6 +38,7 @@ export const MAX_NEW_BUGS = 50
 export const MAX_EVIDENCE = 10
 const WATERMARK_KEY = 'self-diagnosis.watermark'
 const FIRST_RUN_LOOKBACK_MS = 24 * 60 * 60 * 1000
+const OVERLAP_MS = 2 * 60_000
 const REGRESSION_NOTE = 'regressed after being resolved'
 const SEVERITIES = ['low', 'medium', 'high', 'critical']
 
@@ -58,6 +60,9 @@ async function readWatermark(now: Date): Promise<Date> {
   const row = await prisma.systemSetting.findUnique({ where: { key: WATERMARK_KEY } })
   const d = typeof row?.value === 'string' ? new Date(row.value) : null
   const floor = new Date(now.getTime() - FIRST_RUN_LOOKBACK_MS)
+  if (d && !Number.isNaN(d.getTime()) && d <= floor) {
+    console.warn(`[self-diagnosis] watermark ${d.toISOString()} is older than 24 h; signals before ${floor.toISOString()} are skipped`)
+  }
   return d && !Number.isNaN(d.getTime()) && d > floor ? d : floor
 }
 
@@ -122,7 +127,9 @@ export async function runSelfDiagnosis(now = new Date()): Promise<SelfDiagnosisR
   }
 
   // Two minutes of overlap: a row stamped just before `now` may commit after the query ran.
-  const watermark: Date = resumeAt ?? new Date(now.getTime() - 2 * 60_000)
+  const overlapStart = new Date(now.getTime() - OVERLAP_MS)
+  const held = resumeAt as Date | null // assigned in closures, so TS narrows it to never
+  const watermark: Date = held && held < overlapStart ? held : overlapStart
   await prisma.systemSetting.upsert({
     where: { key: WATERMARK_KEY },
     create: { key: WATERMARK_KEY, value: watermark.toISOString() },
@@ -162,7 +169,7 @@ async function createBug(fingerprint: string, group: Signal[]): Promise<void> {
 async function bumpBug(bug: Prisma.BugGetPayload<object>, group: Signal[]): Promise<boolean> {
   const old = readEvidence(bug.evidence)
   const known = new Set(old.map(e => e.ref))
-  const fresh = uniqueSignals(group).filter(s => !known.has(s.ref) && !(s.windowed && bug.lastSeenAt && s.at < bug.lastSeenAt))
+  const fresh = uniqueSignals(group).filter(s => !known.has(s.ref) && !(s.windowed && bug.lastSeenAt && s.at.getTime() < bug.lastSeenAt.getTime() - OVERLAP_MS))
   if (fresh.length === 0) return false
 
   const regressed = bug.status === 'resolved' || bug.status === 'closed'
