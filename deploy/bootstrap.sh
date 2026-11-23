@@ -219,7 +219,7 @@ fi
 # ── Fix coredns dir ownership (ORION runs as uid=1001, needs write access) ────
 chown -R 1001:1001 "$DEPLOY_DIR/coredns" 2>/dev/null || true
 
-# ── Detect docker.sock GID for docker-read-proxy / orion / gateway access ─────
+# ── Detect docker.sock GID for docker-read-proxy / gateway access ─────────────
 # They run unprivileged, with group_add to gain access to
 # /var/run/docker.sock. The compose default of 999 is a guess — actual GID
 # varies per host (e.g. Debian ships 988). Write the real value to .env so

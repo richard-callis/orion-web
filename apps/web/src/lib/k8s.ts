@@ -7,7 +7,8 @@ import { redactSensitive } from './redact'
 
 const kc = new k8s.KubeConfig()
 // loadFromDefault tries in order: KUBECONFIG env → ~/.kube/config → in-cluster service account
-// This works for both Docker (kubeconfig mounted at /root/.kube) and in-cluster deployments
+// In ORION's compose stack none of these exist (no kubeconfig is mounted): environment
+// kubeconfigs come from the database instead.
 try {
   kc.loadFromDefault()
 } catch {

@@ -84,42 +84,47 @@ export function DeployGatewayModal({ env, onClose, onDeployed }: {
       <ModalHeader title={`Deploy Gateway · ${env.name}`} onClose={stream.running ? undefined : onClose} icon={<Rocket size={14} className="text-accent" aria-hidden />} />
 
       <div className="p-5 space-y-4">
-        {localBootstrap ? (
-          stream.events.length === 0 && !stream.running ? (
-            <>
+        {localBootstrap && (stream.events.length > 0 || stream.running) && (
+          <BootstrapLogView logs={stream.events} running={stream.running && !stream.done} />
+        )}
+        {localBootstrap && stream.events.length === 0 && !stream.running ? (
+          <>
+            <p className="text-xs text-text-muted">
+              {env.type === 'localhost'
+                ? "Creates a Gitea repo with CI/CD scaffold and its webhook. A localhost environment's gateway is ORION's own gateway service."
+                : 'Creates a Gitea repo with CI/CD scaffold and its webhook, then gives you the command that starts the gateway on the host.'}
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="secondary" onClick={onClose}>Cancel</Button>
+              <Button onClick={() => stream.start(`/api/environments/${env.id}/deploy-gateway`)}>
+                <Rocket size={11} aria-hidden /> Set Up
+              </Button>
+            </div>
+          </>
+        ) : localBootstrap && !stream.done ? null : env.type === 'localhost' ? (
+          <>
+            {env.status !== 'connected' && (
               <p className="text-xs text-text-muted">
-                Deploys the gateway container, creates a Gitea repo with CI/CD scaffold, and registers a self-hosted Actions runner — all in one click.
+                No gateway is connected. Check ORION&apos;s gateway service: it serves the first localhost environment only. For another gateway on this host, add it as a Docker environment (a private gateway URL needs ALLOW_PRIVATE_GATEWAY_URLS=true).
               </p>
-              <div className="flex justify-end gap-2 pt-1">
-                <Button variant="secondary" onClick={onClose}>Cancel</Button>
-                <Button onClick={() => stream.start(`/api/environments/${env.id}/deploy-gateway`)}>
-                  <Rocket size={11} aria-hidden /> Deploy Everything
-                </Button>
-              </div>
-            </>
-          ) : (
-            <>
-              <BootstrapLogView logs={stream.events} running={stream.running && !stream.done} />
-              {stream.done && (
-                <div className="flex justify-end pt-1">
-                  <Button onClick={onClose}>Done</Button>
-                </div>
-              )}
-            </>
-          )
+            )}
+            <div className="flex justify-end pt-1">
+              <Button onClick={onClose}>Done</Button>
+            </div>
+          </>
         ) : !result ? (
           <>
             <p className="text-xs text-text-muted">
               Generate a one-time join token. The gateway uses it on first boot to register itself — no manual credential copying needed.
             </p>
-            <div>
+            {!localBootstrap && <div>
               <label htmlFor={`${id}-type`} className={labelClass}>Gateway Type</label>
               <Select id={`${id}-type`} value={gatewayType} onChange={e => setGatewayType(e.target.value)}>
                 <option value="cluster">Cluster (kubectl)</option>
                 <option value="docker">Docker Node</option>
                 <option value="remote">Remote / Other</option>
               </Select>
-            </div>
+            </div>}
             <div>
               <label htmlFor={`${id}-url`} className={labelClass}>Gateway URL <span className="text-text-muted">(how ORION will reach this gateway after deployment)</span></label>
               <Input id={`${id}-url`} value={gatewayUrl} onChange={e => setGatewayUrl(e.target.value)}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
+import { gatewayImageSpec } from '@/lib/gateway-image'
 import { randomBytes, createHash } from 'crypto'
 
 /** Hash a join token for safe DB storage — store hash, return raw to the user. */
@@ -64,14 +65,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // Callback URL — what gateways and cluster nodes use to reach ORION (bypasses Cloudflare/proxies).
   const orionCallbackUrl = (process.env.ORION_CALLBACK_URL ?? orionPublicUrl).replace(/\/$/, '')
 
+  // A Docker host's gateway manages its containers through the socket, as uid 1001
+  // in the host's docker group. The image follows the release ORION runs. One
+  // container per environment, replaced when the command is run again.
+  const containerName = `orion-gateway-${env.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-${env.id.slice(-6).toLowerCase().replace(/[^a-z0-9]/g, '')}`
   const dockerCmd = [
-    'docker run -d \\',
+    `docker rm -f ${containerName} 2>/dev/null; docker run -d --name ${containerName} \\`,
     `  -e JOIN_TOKEN=${token} \\`,
     `  -e GATEWAY_TYPE=${gatewayType} \\`,
     gatewayUrl ? `  -e GATEWAY_URL=${gatewayUrl} \\` : null,
     `  -e ORION_URL=${orionCallbackUrl} \\`,
+    gatewayType !== 'cluster' ? '  -v /var/run/docker.sock:/var/run/docker.sock:ro \\' : null,
+    gatewayType !== 'cluster' ? '  --group-add "$(stat -c %g /var/run/docker.sock)" \\' : null,
     `  --restart unless-stopped \\`,
-    `  ghcr.io/richard-callis/orion-gateway:latest`,
+    `  ${gatewayImageSpec().image}`,
   ].filter(Boolean).join('\n')
 
   // Use the callback URL so the manifest curl works from cluster nodes (not blocked by Cloudflare)
