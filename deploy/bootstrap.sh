@@ -399,6 +399,7 @@ fi
 # Idempotent: re-runs only when ubuntu-latest label is missing from .runner.
 if [[ "${GIT_PROVIDER:-gitea-bundled}" == "gitea-bundled" ]]; then
   source "$DEPLOY_DIR/.env" 2>/dev/null || true
+  eval "$VERSION_OVERRIDES"
   RUNNER_FILE="/opt/orion-runner/.runner"
   RUNNER_CONFIG="/opt/orion-runner/config.yaml"
   RUNNER_LABELS="self-hosted:docker:ubuntu:latest,docker:docker:ubuntu:latest,localhost:docker:ubuntu:latest,ubuntu-latest:docker:ubuntu:latest"
@@ -491,7 +492,9 @@ mkdir -p "$DEPLOY_DIR/vector-data"
 chown -R 1000:1000 "$DEPLOY_DIR/vector-data" 2>/dev/null || true
 
 echo "Starting Vector host telemetry shipper..."
-$COMPOSE up -d --force-recreate vector 2>/dev/null || echo "NOTE: Vector service failed to start (check compose logs)."
+# --no-deps: --force-recreate would recreate vector's dependencies too (orion, and
+# docker-read-proxy), which the `up -d` above already brought to the right images.
+$COMPOSE up -d --force-recreate --no-deps vector 2>/dev/null || echo "NOTE: Vector service failed to start (check compose logs)."
 
 # Warn about unpinned image tags (SOC2 LOW finding)
 if grep -qE ":(latest|[^@\"']+)\"" "$DEPLOY_DIR/docker-compose.yml" 2>/dev/null; then

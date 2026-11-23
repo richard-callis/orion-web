@@ -203,6 +203,31 @@ jobs:
           $DEPLOY_DIR/wait-healthy.sh orion 300
           # Not healthy until its heartbeat starts (model load included, up to 4 min).
           $DEPLOY_DIR/wait-healthy.sh orion-worker 360
+          # Healthy isn't enough: each must run the image pinned above (a later compose
+          # command in bootstrap.sh once recreated orion from .env's previous pin), and
+          # stay running. Vector is optional (bootstrap.sh tolerates it not starting):
+          # a vector that isn't running is a warning, one on the wrong image an error.
+          if [ -s "$RUNNER_TEMP/images" ]; then
+            wrong=0
+            for pair in orion:ORION_WEB_VERSION orion-worker:ORION_WEB_VERSION gateway:ORION_GATEWAY_VERSION vector:ORION_VECTOR_VERSION; do
+              svc=${pair%%:*}; var=${pair#*:}; want=${!var:-}
+              [ -n "$want" ] || continue
+              level=error; [ "$svc" = vector ] && level=warning
+              cid=$(docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$DEPLOY_DIR/.env" ps -aq "$svc" | head -1)
+              if [ -z "$cid" ]; then
+                echo "::$level::$svc has no container"; [ "$level" = warning ] || wrong=1; continue
+              fi
+              image=$(docker inspect --format '{{.Config.Image}}' "$cid")
+              if [ "${image##*:}" != "$want" ]; then
+                echo "::error::$svc runs $image, not :$want"; wrong=1; continue
+              fi
+              state=$(docker inspect --format '{{.State.Status}}' "$cid")
+              if [ "$state" != running ]; then
+                echo "::$level::$svc is $state"; [ "$level" = warning ] || wrong=1
+              fi
+            done
+            [ "$wrong" = 0 ]
+          fi
 
       - name: Record last-good deploy
         if: steps.pins.outputs.skip != 'true'
