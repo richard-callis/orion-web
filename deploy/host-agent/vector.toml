@@ -45,7 +45,7 @@ _COMM = ["sshd", "sudo", "su", "login", "passwd"]
 [sources.docker_lifecycle]
 type = "exec"
 mode = "streaming"
-command = ["docker", "events", "--format", "{{json .}}", "--filter", "event=oom", "--filter", "event=die", "--filter", "event=restart", "--filter", "event=kill", "--filter", "event=start"]
+command = ["docker", "-H", "tcp://docker-read-proxy:2375", "events", "--format", "{{json .}}", "--filter", "event=oom", "--filter", "event=die", "--filter", "event=restart", "--filter", "event=kill", "--filter", "event=start"]
 
 # ── Source 3: Vault audit log file ───────────────────────────────────────────
 # Reads the file-based audit log written by Vault's audit device.
@@ -70,6 +70,7 @@ data_dir = "/var/lib/vector"
 
 [sources.docker_edge_logs]
 type = "docker_logs"
+docker_host = "http://docker-read-proxy:2375"
 include_containers = ["traefik"]
 
 # ── Source 5: UDM Pro syslog ─────────────────────────────────────────────────

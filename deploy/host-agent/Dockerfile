@@ -6,8 +6,8 @@
 # kill, restart, start) — Vector has no native source for these. The official
 # image doesn't ship with the docker CLI, so the exec fails with ENOENT.
 #
-# This image adds *just the docker client* (not the daemon). The container
-# uses the host's /var/run/docker.sock for daemon communication.
+# This image adds *just the docker client* (not the daemon). It talks to
+# docker-read-proxy, never to the host's Docker socket.
 #
 # We copy the docker binary from the official docker:cli image rather than
 # fetching a pinned tar URL, which avoids 404s as old versions are removed

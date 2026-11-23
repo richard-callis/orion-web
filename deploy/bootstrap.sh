@@ -219,8 +219,8 @@ fi
 # ── Fix coredns dir ownership (ORION runs as uid=1001, needs write access) ────
 chown -R 1001:1001 "$DEPLOY_DIR/coredns" 2>/dev/null || true
 
-# ── Detect docker.sock GID for vector / orion / gateway docker access ─────────
-# The vector container runs as 1000:1000 with group_add to gain access to
+# ── Detect docker.sock GID for docker-read-proxy / orion / gateway access ─────
+# They run unprivileged, with group_add to gain access to
 # /var/run/docker.sock. The compose default of 999 is a guess — actual GID
 # varies per host (e.g. Debian ships 988). Write the real value to .env so
 # compose substitutes it correctly on every `up -d`.
@@ -329,7 +329,7 @@ fi
 # source changes (e.g. deploy/orion-claude/server.js) are picked up.
 echo ""
 echo "Building local services..."
-GITHUB_ORG="${GITHUB_ORG}" $COMPOSE build vault-unsealer orion-claude claude-refresh orion-executor
+GITHUB_ORG="${GITHUB_ORG}" $COMPOSE build vault-unsealer docker-read-proxy orion-claude claude-refresh orion-executor
 
 # ── Start stack ───────────────────────────────────────────────────────────────
 echo ""

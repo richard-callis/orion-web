@@ -40,6 +40,9 @@ docker compose pull --quiet || {
   exit 1
 }
 
+# Built here, not pulled: without this an existing image would never be updated.
+docker compose build --quiet docker-read-proxy
+
 echo "Restarting services..."
 docker compose up -d --remove-orphans || {
   echo "ERROR: docker compose up failed"

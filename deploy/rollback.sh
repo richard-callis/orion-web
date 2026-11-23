@@ -60,7 +60,9 @@ for var in "${!REFS[@]}"; do
 done
 
 echo "Recreating ORION services on last-good images..."
-$COMPOSE up -d --no-build --pull never orion orion-worker gateway vector
+$COMPOSE up -d --no-build --pull never orion orion-worker gateway
+# --no-deps: vector depends on docker-read-proxy, which is built here and not rolled back.
+$COMPOSE up -d --no-build --pull never --no-deps vector
 "$DEPLOY_DIR/wait-healthy.sh" orion 300
 echo "Images are rolled back. Checking orion-worker (up to 6 minutes; a failure here is only a warning)..."
 # Not fatal: an image from before the worker heartbeat runs fine but never turns healthy.
