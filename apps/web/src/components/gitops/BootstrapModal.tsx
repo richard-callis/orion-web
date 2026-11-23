@@ -80,7 +80,7 @@ export function BootstrapModal({
 
   const { start } = stream
 
-  // Localhost: auto-deploy on mount
+  // Localhost: set up the environment repo on mount
   useEffect(() => {
     if (isLocalhost) void start(`/api/environments/${envId}/deploy-gateway`)
   }, [envId, isLocalhost, start])
@@ -112,8 +112,8 @@ export function BootstrapModal({
       })
 
       if (isLocalhost) {
-        // Localhost: the deployment is fully automated via the Docker socket.
-        // Just run it directly — no kubectl, no AI needed.
+        // Localhost: repo setup is automated, and the gateway is ORION's own
+        // gateway service. No kubectl, no AI needed.
         setCreatingTask(false)
         void start(`/api/environments/${envId}/deploy-gateway`)
         return
@@ -214,6 +214,9 @@ export function BootstrapModal({
         <p role="alert" className="px-5 pt-3 text-xs text-status-error">{agentError}</p>
       )}
 
+      {/* ── Localhost: repo setup log ── */}
+      {isLocalhost && logPanel}
+
       {/* ── Remote Docker: copy-paste command ── */}
       {isRemoteDocker && (
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
@@ -243,9 +246,6 @@ export function BootstrapModal({
           )}
         </div>
       )}
-
-      {/* ── Localhost: auto-deploy log ── */}
-      {isLocalhost && logPanel}
 
       {/* ── Cluster: preflight → auto-detect credentials → bootstrap log ── */}
       {isCluster && !kubeconfigReady && (

@@ -164,7 +164,7 @@ Visit `http://<your-management-ip>:3000`, paste the setup token, and follow the 
 In the ORION UI, go to **Environments → Add Environment** and select:
 
 - **Kubernetes** — provide a kubeconfig; ORION deploys ArgoCD, ESO, and the ORION Gateway
-- **Docker** — provide a Docker socket or TCP endpoint; ORION deploys the ORION Gateway and a Gitea Actions runner
+- **Docker** — ORION sets up the environment's Gitea repo and gives you a `docker run` command that starts the ORION Gateway on the host (ORION itself holds no Docker socket); register a Gitea Actions runner from Gitea's runner settings
 
 ---
 

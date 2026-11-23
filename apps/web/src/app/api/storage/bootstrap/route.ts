@@ -105,7 +105,7 @@ async function getTalosIscsiSchematic(): Promise<string> {
   return data.id
 }
 
-// Candidate paths where talosconfig may be found on the host (mounted into the container)
+// Candidate paths of a talosconfig mounted into the container (ORION's compose stack mounts none)
 const TALOS_CONFIG_PATHS = ['/root/.talos/config', '/root/.talos/talosconfig']
 
 async function autoFetchTalosConfig(
@@ -302,8 +302,8 @@ async function bootstrapLonghorn(
       const existingMeta = (env?.metadata as Record<string, unknown> | null) ?? {}
       effectiveTalosConfig = await autoFetchTalosConfig(log, envId, existingMeta)
       if (!effectiveTalosConfig) {
-        await log('  ⚠ Could not find talosconfig on host (checked /root/.talos/config).')
-        await log('    Run: talosctl config export > /root/.talos/config  on the host,')
+        await log('  ⚠ No talosconfig for this environment (ORION has no access to the host\'s).')
+        await log('    Paste it in the environment\'s cluster preflight (Talosconfig),')
         await log('    then re-run bootstrap.')
       }
     }

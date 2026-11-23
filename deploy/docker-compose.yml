@@ -81,13 +81,14 @@ x-orion-env: &orion-env
     # Loki — log query proxy
     LOKI_URL: http://loki:3100
 
+# No Docker socket (root on the host, :ro or not) and nothing from /root: ORION's own
+# code has no direct access to the host. It is still root-equivalent through what it
+# holds: the local gateway's token (that gateway runs any container, mounts and all)
+# and the stored credentials. Read-only gateways and narrow credentials follow (the
+# infrastructure-manager design, steps I0 and I1).
 x-orion-volumes: &orion-volumes
-  - /var/run/docker.sock:/var/run/docker.sock:ro
   - orion-claude-creds:/claude-creds
   - ./coredns:/etc/coredns-managed
-  - /root/.ssh:/root/.ssh:ro
-  - /root/.kube:/root/.kube:ro
-  - /root/.talos:/root/.talos:ro
   - ./vault-proxy/certs:/vault-proxy-certs:ro
   - orion-models:/models   # prompt-injection classifier weights (C-001)
 
@@ -110,10 +111,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes: *orion-volumes
-    # docker.sock is root:docker 0660 — the container runs as uid 1001, so it
-    # needs the host's docker group (DOCKER_GID is detected by bootstrap.sh).
-    group_add:
-      - "${DOCKER_GID:-999}"
     init: true
     # Published on ORION_BIND_ADDR only (bootstrap.sh sets it to the management
     # IP; the compose default is loopback). Never 0.0.0.0: on the direct port a
@@ -177,8 +174,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes: *orion-volumes
-    group_add:
-      - "${DOCKER_GID:-999}"
     labels:
       traefik.enable: "false"
     deploy:

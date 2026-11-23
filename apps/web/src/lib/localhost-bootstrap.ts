@@ -1,20 +1,22 @@
 /**
  * Localhost / Docker Environment Bootstrap
  *
- * Full setup when the "Deploy" button is pressed on a localhost or docker environment:
- *   1. Deploy the ORION gateway container via Docker socket
- *   2. Create a Gitea org (if needed) and environment repo
- *   3. Commit the CI/CD scaffold (README + deploy.yml)
- *   4. Register a Gitea Actions self-hosted runner (act_runner container)
- *   5. Update the environment DB record with repo info
+ * Run by the "Deploy" button of a localhost or docker environment:
+ *   1. Create a Gitea org (if needed) and the environment repo
+ *   2. Commit the CI/CD scaffold (README + deploy.yml) and register the webhook
+ *   3. Update the environment DB record with repo info
+ *
+ * ORION holds no Docker socket (root on the host). A localhost environment's
+ * gateway is ORION's own compose `gateway` service, and its Actions runner is
+ * registered by the installer. A docker environment's gateway is started by the
+ * owner with the Deploy Gateway command (generate-join), and a runner is
+ * registered from Gitea's runner settings.
  */
 
-import http from 'http'
 import { randomBytes } from 'crypto'
 import { prisma } from './db'
 import { getGitProvider, getGitProviderConfig } from './git-provider'
 import { GiteaGitProvider } from './git-provider/gitea-provider'
-import { gatewayImageSpec } from './gateway-image'
 
 export type LocalBootstrapEvent =
   | { type: 'step';  message: string }
@@ -22,9 +24,6 @@ export type LocalBootstrapEvent =
   | { type: 'error'; message: string }
   | { type: 'done';  message: string }
 
-const SOCKET           = '/var/run/docker.sock'
-const GATEWAY_IMAGE    = gatewayImageSpec().image
-const RUNNER_IMAGE     = 'gitea/act_runner:latest'
 const ORION_CALLBACK_URL = (
   process.env.ORION_CALLBACK_URL ??
   (process.env.MANAGEMENT_IP ? `http://${process.env.MANAGEMENT_IP}:3000` : null) ??
@@ -35,107 +34,7 @@ if (!process.env.ORION_CALLBACK_URL && !process.env.MANAGEMENT_IP) {
   console.warn('[orion] WARNING: Neither ORION_CALLBACK_URL nor MANAGEMENT_IP is set. Gateway/webhook URLs will use localhost — this will break in container environments.')
 }
 
-// ── Docker socket helpers ─────────────────────────────────────────────────────
-
-function dockerRequest(opts: { method: string; path: string; body?: unknown }): Promise<{ status: number; body: string }> {
-  return new Promise((resolve, reject) => {
-    const payload = opts.body ? JSON.stringify(opts.body) : undefined
-    const req = http.request(
-      {
-        socketPath: SOCKET,
-        method: opts.method,
-        path: opts.path,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
-        },
-      },
-      (res) => {
-        let data = ''
-        res.on('data', (chunk: Buffer) => { data += chunk.toString() })
-        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: data }))
-      },
-    )
-    req.on('error', reject)
-    if (payload) req.write(payload)
-    req.end()
-  })
-}
-
-function dockerPull(image: string, onLog: (line: string) => void): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const [repoTag] = image.split(':')
-    const tag = image.includes(':') ? image.split(':')[1] : 'latest'
-    const path = `/images/create?fromImage=${encodeURIComponent(repoTag)}&tag=${encodeURIComponent(tag)}`
-    const req = http.request({ socketPath: SOCKET, method: 'POST', path }, (res) => {
-      let buf = ''
-      res.on('data', (chunk: Buffer) => {
-        buf += chunk.toString()
-        const lines = buf.split('\n')
-        buf = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.trim()) continue
-          try {
-            const evt = JSON.parse(line) as { status?: string; progress?: string; error?: string }
-            if (evt.error) { reject(new Error(evt.error)); return }
-            const msg = evt.progress ? `${evt.status} ${evt.progress}` : evt.status
-            if (msg) onLog(msg)
-          } catch { /* ignore */ }
-        }
-      })
-      res.on('end', () => resolve())
-      res.on('error', reject)
-    })
-    req.on('error', reject)
-    req.end()
-  })
-}
-
-async function removeContainer(name: string): Promise<void> {
-  await dockerRequest({ method: 'DELETE', path: `/containers/${encodeURIComponent(name)}?force=true` })
-}
-
-async function createAndStartContainer(name: string, body: unknown): Promise<string> {
-  const createRes = await dockerRequest({
-    method: 'POST',
-    path: `/containers/create?name=${encodeURIComponent(name)}`,
-    body,
-  })
-  if (createRes.status !== 201) {
-    throw new Error(`Container create failed (${createRes.status}): ${createRes.body}`)
-  }
-  const { Id } = JSON.parse(createRes.body) as { Id: string }
-  const startRes = await dockerRequest({ method: 'POST', path: `/containers/${Id}/start` })
-  if (startRes.status !== 204 && startRes.status !== 304) {
-    throw new Error(`Container start failed (${startRes.status}): ${createRes.body}`)
-  }
-  return Id
-}
-
-// ── Gitea runner registration token ──────────────────────────────────────────
-
-async function getRunnerRegistrationToken(provider: GiteaGitProvider): Promise<string> {
-  // Access the private Gitea API via the fetch helper using the internal method pattern.
-  // We need to call POST /api/v1/admin/runners/registration-token.
-  // Since we can't call the private fetch directly, we use the provider's base URL via env.
-  const giteaUrl = (process.env.GITEA_URL ?? 'http://gitea:3000').replace(/\/$/, '')
-  const token    = process.env.GITEA_ADMIN_TOKEN ?? ''
-  const res = await fetch(`${giteaUrl}/api/v1/admin/runners/registration-token`, {
-    method: 'GET',
-    headers: {
-      Authorization: `token ${token}`,
-      'Content-Type': 'application/json',
-    },
-  })
-  if (!res.ok) {
-    const detail = await res.text().catch(() => '')
-    throw new Error(`Failed to get runner registration token: ${res.status} ${detail}`)
-  }
-  const data = await res.json() as { token: string }
-  return data.token
-}
-
-// ── Scaffold files ────────────────────────────────────────────────────────────
+// ── CI/CD scaffold ────────────────────────────────────────────────────────────
 
 function buildDockerScaffold(envName: string, orionUrl: string): { path: string; content: string }[] {
   const readme = `# ${envName}
@@ -220,41 +119,8 @@ export async function bootstrapLocalEnvironment(
   }
 
   const slug          = env.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
-  const gatewayName   = `orion-gateway-${slug}`
-  const runnerName    = `orion-runner-${slug}`
-  const composeNet    = 'deploy_default'
 
-  // ── Step 1: Deploy gateway container ────────────────────────────────────────
-  emit({ type: 'step', message: 'Generating join token…' })
-  await prisma.environmentJoinToken.deleteMany({ where: { environmentId, usedAt: null } })
-  const joinToken = 'orion_' + randomBytes(24).toString('hex')
-  await prisma.environmentJoinToken.create({
-    data: { token: joinToken, environmentId, expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) },
-  })
-
-  emit({ type: 'step', message: `Pulling gateway image…` })
-  await dockerPull(GATEWAY_IMAGE, msg => emit({ type: 'log', message: msg }))
-
-  emit({ type: 'step', message: 'Deploying gateway container…' })
-  await removeContainer(gatewayName)
-  const gatewayUrl = env.gatewayUrl ?? `http://${process.env.MANAGEMENT_IP ?? 'localhost'}:3001`
-  await createAndStartContainer(gatewayName, {
-    Image: GATEWAY_IMAGE,
-    Env: [
-      `JOIN_TOKEN=${joinToken}`,
-      `GATEWAY_TYPE=${env.type}`,
-      `ORION_URL=${ORION_CALLBACK_URL}`,
-      `GATEWAY_URL=${gatewayUrl}`,
-    ],
-    HostConfig: {
-      Binds: ['/var/run/docker.sock:/var/run/docker.sock:ro'],
-      RestartPolicy: { Name: 'unless-stopped' },
-      NetworkMode: composeNet,
-    },
-  })
-  emit({ type: 'log', message: 'Gateway container started — will connect within ~30s.' })
-
-  // ── Step 2: Gitea repo ───────────────────────────────────────────────────────
+  // ── Step 1: Gitea repo ───────────────────────────────────────────────────────
   emit({ type: 'step', message: 'Setting up Gitea repository…' })
   const provider = await getGitProvider()
   const providerHealthy = await provider.isHealthy()
@@ -320,86 +186,12 @@ export async function bootstrapLocalEnvironment(
     )
     emit({ type: 'log', message: 'Webhook registered.' })
 
-    // ── Step 3: Gitea Actions runner ──────────────────────────────────────────
-    emit({ type: 'step', message: 'Registering Gitea Actions runner…' })
-    try {
-      const regToken = await getRunnerRegistrationToken(provider as GiteaGitProvider)
-      // Use host network so the runner (and sibling Docker executor containers)
-      // can reach Gitea on localhost:3002 and ORION on localhost:3000.
-      const giteaHostUrl = `http://localhost:${process.env.GITEA_PORT ?? '3002'}`
-
-      emit({ type: 'log', message: `Pulling runner image…` })
-      await dockerPull(RUNNER_IMAGE, msg => emit({ type: 'log', message: msg }))
-
-      // Write act_runner config.yaml into the data volume via a one-shot Alpine container.
-      // Sets Docker executor with host network + docker tooling mounts.
-      const runnerConfig = [
-        'log:',
-        '  level: info',
-        'runner:',
-        `  file: /data/.runner`,
-        '  capacity: 1',
-        'cache:',
-        '  enabled: false',
-        'container:',
-        '  network: host',
-        '  options: -v /usr/bin/docker:/usr/bin/docker -v /usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins',
-        '  valid_volumes:',
-        '    - /var/run/docker.sock',
-        '    - /usr/bin/docker',
-        '    - /usr/libexec/docker/cli-plugins',
-      ].join('\n')
-
-      const configWriteRes = await dockerRequest({
-        method: 'POST',
-        path: `/containers/create?name=orion-runner-config-init`,
-        body: {
-          Image: 'alpine',
-          Cmd: ['sh', '-c', `printf '%s' "${runnerConfig.replace(/'/g, "'\\''")}" > /data/config.yaml && echo done`],
-          HostConfig: {
-            Binds: [`orion-runner-${slug}:/data`],
-            AutoRemove: true,
-          },
-        },
-      })
-      if (configWriteRes.status === 201) {
-        const { Id: cfgId } = JSON.parse(configWriteRes.body) as { Id: string }
-        await dockerRequest({ method: 'POST', path: `/containers/${cfgId}/start` })
-        // Wait briefly for the one-shot container to finish
-        await new Promise(r => setTimeout(r, 2000))
-      }
-
-      await removeContainer(runnerName)
-      await createAndStartContainer(runnerName, {
-        Image: RUNNER_IMAGE,
-        Env: [
-          `GITEA_INSTANCE_URL=${giteaHostUrl}`,
-          `GITEA_RUNNER_REGISTRATION_TOKEN=${regToken}`,
-          `GITEA_RUNNER_NAME=${runnerName}`,
-          // Label format: label:executor:image — Docker executor with ubuntu:latest
-          `GITEA_RUNNER_LABELS=self-hosted:docker:ubuntu:latest,docker:docker:ubuntu:latest,${slug}:docker:ubuntu:latest`,
-          // Tell act_runner to use host network for spawned containers and mount docker tooling
-          `GITEA_RUNNER_CONFIG=/data/config.yaml`,
-        ],
-        HostConfig: {
-          Binds: [
-            '/var/run/docker.sock:/var/run/docker.sock',
-            '/usr/bin/docker:/usr/bin/docker:ro',
-            '/usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins:ro',
-            `orion-runner-${slug}:/data`,
-          ],
-          RestartPolicy: { Name: 'unless-stopped' },
-          NetworkMode: 'host',
-        },
-      })
-      emit({ type: 'log', message: `Runner "${runnerName}" started — registering with Gitea…` })
-    } catch (e) {
-      // Runner setup is best-effort — Gitea Actions may not be enabled
-      emit({ type: 'log', message: `Runner setup skipped: ${e instanceof Error ? e.message : e}` })
-    }
+    emit({ type: 'log', message: env.type === 'localhost'
+      ? "Actions runner: this host's runner (orion-runner-localhost) is registered by ORION's installer."
+      : 'Actions runner: register one for this repo in Gitea (Site Administration → Actions → Runners).' })
   }
 
-  // ── Step 4: Update environment record ────────────────────────────────────────
+  // ── Step 2: Update environment record ────────────────────────────────────────
   await prisma.environment.update({
     where: { id: environmentId },
     data: {
@@ -408,5 +200,9 @@ export async function bootstrapLocalEnvironment(
     },
   })
 
-  emit({ type: 'done', message: 'Bootstrap complete! Gateway will connect within ~30 seconds.' })
+  emit({ type: 'done', message: env.type === 'localhost'
+    ? (env.status === 'connected'
+      ? "Repository ready. This host's gateway is ORION's own gateway service, already running."
+      : "Repository ready. No gateway is connected. Check ORION's gateway service: it serves the first localhost environment only. For another gateway on this host, add it as a Docker environment (a private gateway URL needs ALLOW_PRIVATE_GATEWAY_URLS=true).")
+    : 'Repository ready. Start the gateway with the command below; it connects within ~30 seconds.' })
 }
