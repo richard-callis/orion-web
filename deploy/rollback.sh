@@ -16,6 +16,7 @@
 #
 # The worker's health is only a warning here: images from before its heartbeat
 # (worker/heartbeat.ts) never turn healthy.
+# The automatic path (auto-rollback.sh) waits for the worker again and treats it as fatal.
 #
 # After a rollback, `git -C /opt/orion checkout <sha from .last-good>` keeps the
 # compose/bootstrap files consistent with the images until the fix lands on main.
