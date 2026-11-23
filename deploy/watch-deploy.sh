@@ -79,7 +79,7 @@ check() {  # $1 = baseline pass
   return "$bad"
 }
 
-[[ $SECONDS_TOTAL =~ ^[0-9]+$ && $INTERVAL =~ ^[1-9][0-9]*$ && $TOLERANCE =~ ^[1-9][0-9]*$ ]] || {
+[[ $SECONDS_TOTAL =~ ^(0|[1-9][0-9]*)$ && $INTERVAL =~ ^[1-9][0-9]*$ && $TOLERANCE =~ ^[1-9][0-9]*$ ]] || {
   echo "::error::usage: watch-deploy.sh [seconds] (WATCH_INTERVAL and WATCH_TOLERANCE > 0)"; exit 2; }
 rounds=$(( SECONDS_TOTAL / INTERVAL ))
 (( rounds >= 1 )) || rounds=1

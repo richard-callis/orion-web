@@ -178,7 +178,7 @@ class Watch(Base):
         self.assertNotIn('/api/health', r.stdout)
 
     def test_bad_arguments_are_refused(self):
-        for args, env in ((('abc',), {}), (('90',), {'WATCH_INTERVAL': '0'}), (('90',), {'WATCH_TOLERANCE': '0'})):
+        for args, env in ((('abc',), {}), (('08',), {}), (('90',), {'WATCH_INTERVAL': '0'}), (('90',), {'WATCH_TOLERANCE': '0'})):
             r = self.run_script(*args, script='watch-deploy.sh', env=env)
             self.assertEqual(r.returncode, 2, (args, env, r.stdout, r.stderr))
             self.assertIn('::error::usage', r.stdout)
