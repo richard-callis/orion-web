@@ -1,5 +1,30 @@
 # ORION
 
+## Agents run by the dispatcher
+
+If you work in a sandbox as a dispatched agent (an attempt branch, no access to a live
+ORION), this section takes precedence over the rest of this file.
+
+- **This repository is public on GitHub** (`main` is mirrored). Never put private data in
+  code, tests, comments, commit messages or PR text: names, addresses, hostnames and IPs of
+  a real install, tokens, customer data. Use `example.com` and `10.0.0.x`.
+- **A merge to `main` deploys.** Keep PRs small and complete.
+- **Node 26** (the runtime images' version). If `node -v` says otherwise:
+  `npm install --prefix ~/.node26 node@26 && export PATH=~/.node26/node_modules/node/bin:$PATH`
+- **Checks to run before you report success:** `npm ci`; in `apps/web`, `npx prisma generate`
+  (and `npx prisma validate` with any `DATABASE_URL`); `npm run lint`; `npm run typecheck`;
+  `npm test --workspace <each workspace you touched>` (`apps/web`, `apps/gateway`,
+  `apps/executor`); `npm run build --workspace apps/web` when you touched it (it catches what
+  tsc misses). A schema change needs a migration named as in "Database migrations" below,
+  and `node context/gen-schema.mjs`. CI also runs checks you may not be able to (a database
+  drift check, container smoke tests): say so if your change could affect them.
+- **GitNexus isn't available to you.** Where this file says to use it, find callers with grep
+  and say in your summary what you checked. Skip the worktree section.
+- **Paths only the owner merges** (deployment, CI, database migrations, login and security
+  code, the gateway and executor, bootstrap, agent tools, dependencies): change them only if
+  the task is about them, in a PR of their own.
+- **No visual changes** unless the task asks for them.
+
 ## Concurrent Worktrees
 
 Multiple Claude instances can work on ORION simultaneously using git worktrees.

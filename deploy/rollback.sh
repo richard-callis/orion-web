@@ -42,22 +42,42 @@ fi
 # .last-good lines: GIT_SHA=<sha>, and <VAR>=<repo>@sha256:<digest> for
 # ORION_WEB_VERSION / ORION_GATEWAY_VERSION / ORION_VECTOR_VERSION.
 declare -A REFS=()
+PINS=$(mktemp)
+trap 'rm -f "$PINS"' EXIT
 while IFS='=' read -r key value; do
   case "$key" in
     ORION_WEB_VERSION|ORION_GATEWAY_VERSION|ORION_VECTOR_VERSION) REFS[$key]="$value" ;;
   esac
 done < "$LAST_GOOD"
 
-# Compose references images as <repo>:<tag>, so pull each recorded digest and
-# give it a local "rollback" tag, then point the version variables at that tag.
+# Compose references images as <repo>:<tag>. A deploy records each image's registry
+# tag (TAG_<VAR>) beside its digest: pin that tag, after checking it still names the
+# recorded image, also in .env so a compose command or bootstrap.sh run by hand keeps
+# the rollback and can pull it. Without one (an older .last-good), the digest gets a
+# local "rollback" tag, used for this run only: it can't be pulled.
+declare -A TAGS=()
+while IFS='=' read -r key value; do
+  case "$key" in TAG_ORION_WEB_VERSION|TAG_ORION_GATEWAY_VERSION|TAG_ORION_VECTOR_VERSION) TAGS[${key#TAG_}]="$value" ;; esac
+done < "$LAST_GOOD"
 for var in "${!REFS[@]}"; do
   ref="${REFS[$var]}"
   repo="${ref%@*}"
   echo "Pinning $var -> $ref"
   docker pull -q "$ref" >/dev/null
-  docker tag "$ref" "$repo:rollback"
-  export "$var=rollback"
+  tag="${TAGS[$var]:-}"
+  if [ -n "$tag" ] && docker pull -q "$repo:$tag" >/dev/null 2>&1 \
+     && [ "$(docker image inspect --format '{{.Id}}' "$repo:$tag")" = "$(docker image inspect --format '{{.Id}}' "$ref")" ]; then
+    export "$var=$tag"
+    echo "$var=$tag" >> "$PINS"
+  else
+    echo "  (no registry tag for it: local tag 'rollback', not written to .env)"
+    old=$(sed -n "s/^$var=//p" "$DEPLOY_DIR/.env" | tail -1)
+    [ -z "$old" ] || echo "WARNING: .env still pins $var=$old: a compose command or bootstrap.sh run by hand brings that image back." >&2
+    docker tag "$ref" "$repo:rollback"
+    export "$var=rollback"
+  fi
 done
+[ ! -s "$PINS" ] || "$DEPLOY_DIR/set-image-pins.sh" < "$PINS"
 
 echo "Recreating ORION services on last-good images..."
 $COMPOSE up -d --no-build --pull never orion orion-worker gateway
@@ -69,4 +89,4 @@ echo "Images are rolled back. Checking orion-worker (up to 6 minutes; a failure 
 "$DEPLOY_DIR/wait-healthy.sh" orion-worker 360 || \
   echo "WARNING: orion-worker is not healthy. Expected for an image from before its heartbeat; otherwise check 'docker inspect' RestartCount and its logs." >&2
 echo "Rollback complete. Last good: $(grep '^GIT_SHA=' "$LAST_GOOD" | cut -d= -f2)"
-echo "NOTE: the next bootstrap.sh / CI deploy returns to :latest — merge a fix (or revert) first."
+echo "NOTE: .env pins the rolled-back images where their registry tags are known, but the next CI deploy returns to the images of main's history (deploy/resolve_images.py): merge a fix (or revert) first."
