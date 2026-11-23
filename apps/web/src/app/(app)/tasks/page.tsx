@@ -40,6 +40,7 @@ export default async function TasksPageRoute() {
     prisma.bug.findMany({
       orderBy: { updatedAt: 'desc' },
       take: MAX_BUGS,
+      omit: { evidence: true },
       include: { assignedUser: { select: USER_SELECT } },
     }),
   ])

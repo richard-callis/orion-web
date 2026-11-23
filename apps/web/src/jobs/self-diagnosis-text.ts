@@ -24,8 +24,8 @@ export interface Signal {
 }
 
 const CREDENTIAL_URL = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s:@/]+:[^\s@/]+@/gi // scheme://user:pass@host
-const SECRET_ASSIGNMENT = /\b(\w*(?:key|token|secret|passw(?:or)?d|pwd)\w*\s*=\s*)["']?[^\s"',;}]+/gi
-const KNOWN_TOKENS = /\bBearer\s+[\w.~+/-]+=*|\beyJ[\w-]*\.eyJ[\w-]*\.[\w-]+|\b(?:orion_ak|mcg)_[\w-]+/gi // bearer, JWT, ORION keys
+const SECRET_ASSIGNMENT = /(["']?\b\w*(?:key|token|secret|passw(?:or)?d|pwd|credential)\w*["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s"',;}]+)/gi
+const KNOWN_TOKENS = /\bBearer\s+[\w.~+/-]+=*|\beyJ[\w-]*\.eyJ[\w-]*\.[\w-]+|\b(?:orion_ak|mcg)_[\w-]+|\bBasic\s+[A-Za-z0-9+/]+=*/gi // bearer, basic auth, JWT, ORION keys
 const LONG_BLOB = /(?<![\w/.+=-])(?=[A-Za-z0-9+/_-]*\d)[A-Za-z0-9][A-Za-z0-9+/_-]{39,}={0,2}(?![\w/.-])/g // base64/hex
 
 /**
@@ -59,14 +59,18 @@ export function fingerprintOf(kind: string, normalized: string): string {
   return createHash('sha256').update(`${kind}\n${normalized}`).digest('hex')
 }
 
+/** Drop NUL and other control characters (Postgres rejects \u0000 in text and jsonb). */
+// eslint-disable-next-line no-control-regex
+const clean = (t: string) => t.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+
 export function makeSignal(p: {
   kind: string; area: string; text: string; ref: string; at: Date
   windowed: boolean; high?: boolean; excerpt?: string
 }): Signal {
-  const message = redact(p.text).slice(0, 500)
+  const message = redact(clean(p.text)).slice(0, 500)
   return {
     kind: p.kind, area: p.area, message, ref: p.ref, at: p.at, windowed: p.windowed, high: p.high ?? false,
     fingerprint: fingerprintOf(p.kind, normalizeMessage(message)),
-    excerpt: redact(p.excerpt ?? p.text).slice(0, EXCERPT_MAX),
+    excerpt: redact(clean(p.excerpt ?? p.text)).slice(0, EXCERPT_MAX),
   }
 }

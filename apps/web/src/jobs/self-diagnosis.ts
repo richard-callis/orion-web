@@ -15,12 +15,18 @@
  * "regressed after being resolved" note in the evidence. triaged / in_progress
  * keep their status.
  *
- * Idempotent: each evidence entry carries the id of the row it came from, so a
- * row read twice (watermark overlap, retry after a failed run) counts once.
+ * Re-reads are mostly harmless: evidence entries carry the id of the row they
+ * came from and windowed signals older than the Bug's lastSeenAt are skipped,
+ * so a row read twice (watermark overlap, retry after a failed run) counts
+ * once. Not airtight for a group with more than MAX_EVIDENCE rows sharing one
+ * timestamp, which can be counted again if re-read.
  *
- * Caps per run: MAX_SIGNALS signals, MAX_NEW_BUGS new Bugs. When either bites,
- * a warning is logged and the watermark stops at the first unprocessed signal,
- * so the rest is picked up next run.
+ * Caps per run: MAX_SIGNALS signals (also per source), MAX_NEW_BUGS new Bugs.
+ * When either bites, a warning is logged and the watermark stops at the first
+ * unprocessed signal, so the rest is picked up next run. The watermark never
+ * reads further back than 24 h (readWatermark), so a fault group that cannot
+ * be stored, or a source that keeps failing, is retried for at most 24 h and
+ * cannot pin the watermark forever.
  */
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db'
@@ -51,21 +57,37 @@ const newestFirst = (a: EvidenceEntry, b: EvidenceEntry) => b.at.localeCompare(a
 async function readWatermark(now: Date): Promise<Date> {
   const row = await prisma.systemSetting.findUnique({ where: { key: WATERMARK_KEY } })
   const d = typeof row?.value === 'string' ? new Date(row.value) : null
-  return d && !Number.isNaN(d.getTime()) ? d : new Date(now.getTime() - FIRST_RUN_LOOKBACK_MS)
+  const floor = new Date(now.getTime() - FIRST_RUN_LOOKBACK_MS)
+  return d && !Number.isNaN(d.getTime()) && d > floor ? d : floor
 }
 
 export interface SelfDiagnosisResult { signals: number; created: number; updated: number; skipped: number }
 
 export async function runSelfDiagnosis(now = new Date()): Promise<SelfDiagnosisResult> {
   const since = await readWatermark(now)
-  const all = (await Promise.all(SIGNAL_SOURCES.map(s => s(since, now)))).flat()
+  let resumeAt: Date | null = null
+  const hold = (d: Date) => { if (!resumeAt || d < resumeAt) resumeAt = d }
+  const settled = await Promise.allSettled(SIGNAL_SOURCES.map(s => s.read(since, now)))
+  const all: Signal[] = []
+  settled.forEach((r, i) => {
+    const src = SIGNAL_SOURCES[i]
+    if (r.status === 'rejected') {
+      console.error(`[self-diagnosis] source ${src.name} failed:`, r.reason)
+      if (src.windowed) hold(since) // read its rows again next run
+      return
+    }
+    all.push(...r.value.signals)
+    if (r.value.truncated) {
+      console.warn(`[self-diagnosis] source ${src.name} has more than ${MAX_SIGNALS} signals; the rest wait for the next run`)
+      hold(r.value.signals.at(-1)?.at ?? since)
+    }
+  })
   // State checks first, then windowed signals oldest-first, so a cap cuts the newest.
   const ordered = [...all.filter(s => !s.windowed), ...all.filter(s => s.windowed).sort((a, b) => a.at.getTime() - b.at.getTime())]
   const signals = ordered.slice(0, MAX_SIGNALS)
-  let resumeAt: Date | null = null
   if (ordered.length > signals.length) {
     console.warn(`[self-diagnosis] ${ordered.length} signals, processing the first ${MAX_SIGNALS}; the rest wait for the next run`)
-    resumeAt = signals.filter(s => s.windowed).at(-1)?.at ?? since
+    hold(signals.filter(s => s.windowed).at(-1)?.at ?? since)
   }
 
   const groups = new Map<string, Signal[]>()
@@ -77,7 +99,7 @@ export async function runSelfDiagnosis(now = new Date()): Promise<SelfDiagnosisR
   const result: SelfDiagnosisResult = { signals: signals.length, created: 0, updated: 0, skipped: 0 }
   const holdBack = (group: Signal[]) => {
     result.skipped++
-    for (const s of group.filter(x => x.windowed)) if (!resumeAt || s.at < resumeAt) resumeAt = s.at
+    for (const s of group.filter(x => x.windowed)) hold(s.at)
   }
   for (const [fingerprint, group] of groups) {
     try {
@@ -99,7 +121,8 @@ export async function runSelfDiagnosis(now = new Date()): Promise<SelfDiagnosisR
     console.warn(`[self-diagnosis] ${result.skipped} fault group(s) not recorded this run (new-bug cap ${MAX_NEW_BUGS} or errors); retrying next run`)
   }
 
-  const watermark = resumeAt ?? now
+  // Two minutes of overlap: a row stamped just before `now` may commit after the query ran.
+  const watermark: Date = resumeAt ?? new Date(now.getTime() - 2 * 60_000)
   await prisma.systemSetting.upsert({
     where: { key: WATERMARK_KEY },
     create: { key: WATERMARK_KEY, value: watermark.toISOString() },
@@ -120,7 +143,7 @@ async function createBug(fingerprint: string, group: Signal[]): Promise<void> {
   await prisma.bug.create({
     data: {
       title: `${first.area}: ${normalizeMessage(first.message)}`.slice(0, 120),
-      description: `Self-diagnosis saw this ${signals.length} time(s) in its first look (signal: ${first.kind}). Latest: ${last.message}`,
+      description: `First seen ${first.at.toISOString()} (signal ${first.kind}): ${first.message}`,
       severity: severityFor(first.high, signals.length),
       status: 'open',
       reportedBy: 'orion',
@@ -139,23 +162,29 @@ async function createBug(fingerprint: string, group: Signal[]): Promise<void> {
 async function bumpBug(bug: Prisma.BugGetPayload<object>, group: Signal[]): Promise<boolean> {
   const old = readEvidence(bug.evidence)
   const known = new Set(old.map(e => e.ref))
-  const fresh = uniqueSignals(group).filter(s => !known.has(s.ref))
+  const fresh = uniqueSignals(group).filter(s => !known.has(s.ref) && !(s.windowed && bug.lastSeenAt && s.at < bug.lastSeenAt))
   if (fresh.length === 0) return false
 
   const regressed = bug.status === 'resolved' || bug.status === 'closed'
-  const entries = fresh.map(toEntry).sort(newestFirst)
-  if (regressed) entries[0].note = REGRESSION_NOTE
+  const entries = fresh.map(toEntry)
   const occurrences = bug.occurrences + fresh.length
   const wanted = severityFor(fresh[0].high, occurrences)
   const raise = bug.status !== 'triaged' && bug.status !== 'in_progress' && SEVERITIES.indexOf(wanted) > SEVERITIES.indexOf(bug.severity)
   const lastSeen = fresh.at(-1)!.at
+  // The regression note is its own entry, kept apart from the capped occurrence entries.
+  if (regressed) entries.push({ ref: `regression:${lastSeen.toISOString()}`, at: lastSeen.toISOString(), excerpt: '', note: REGRESSION_NOTE })
+  const merged = [...entries, ...old].sort(newestFirst)
+  const evidence = [...merged.filter(e => !e.note).slice(0, MAX_EVIDENCE), ...merged.filter(e => e.note).slice(0, MAX_EVIDENCE)].sort(newestFirst)
   await prisma.bug.update({
     where: { id: bug.id },
     data: {
       occurrences,
       lastSeenAt: bug.lastSeenAt && bug.lastSeenAt > lastSeen ? bug.lastSeenAt : lastSeen,
-      evidence: [...entries, ...old].sort(newestFirst).slice(0, MAX_EVIDENCE) as unknown as Prisma.InputJsonValue,
-      ...(regressed ? { status: 'open' } : {}),
+      evidence: evidence as unknown as Prisma.InputJsonValue,
+      ...(regressed ? {
+        status: 'open',
+        description: `${bug.description ?? ''}\nRegressed ${lastSeen.toISOString()} after being resolved (${occurrences} occurrences so far).`,
+      } : {}),
       ...(raise ? { severity: wanted } : {}),
     },
   })

@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { Plus, Trash2, ChevronRight, User, X } from 'lucide-react'
-import type { Bug, TaskUser } from '@/types/tasks'
+import type { Bug } from '@/types/tasks'
 import { KanbanBoard } from '../ui/KanbanBoard'
 import { CreateEntityModal } from '../ui/CreateEntityModal'
 import { useToast } from '../ui/Toast'
@@ -145,18 +145,9 @@ export function BugManager({ initialBugs, users }: Props) {
 
   const saveDetail = async () => {
     if (!selectedBug) return
-    const assignedUser = users.find(u => u.id === editAssignee) ?? null
-    const patch: Partial<Bug> = {
-      title:          editTitle,
-      description:    editDesc || null,
-      area:           editArea || null,
-      severity:       editSev,
-      status:         editStatus,
-      assignedUserId: editAssignee || null,
-      assignedUser:   assignedUser ? {
-        id: assignedUser.id, name: assignedUser.name, username: assignedUser.username, email: '', role: '',
-      } as TaskUser : null,
-    }
+    // Text fields only: status, severity and assignee save through their own handlers,
+    // and sending them here would undo a change made meanwhile (e.g. self-diagnosis reopening a bug).
+    const patch: Partial<Bug> = { title: editTitle, description: editDesc || null, area: editArea || null }
     await updateBug(selectedBug.id, patch)
   }
 
