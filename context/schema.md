@@ -585,6 +585,12 @@
 | assignedUser | → User? | `@relation("AssignedBugUser", fields: [assignedUserId], references: [id], onDelete: SetNull)` |  |
 | createdAt | DateTime | `@default(now())` |  |
 | updatedAt | DateTime | `@updatedAt` |  |
+| source | String? |  | "self-diagnosis"; null for bugs filed by people |
+| fingerprint | String? | `@unique` | sha256 of signal kind + normalized message |
+| evidence | Json? |  | most recent occurrences: [{ ref, at, excerpt, note? }] |
+| occurrences | Int | `@default(1)` |  |
+| firstSeenAt | DateTime? |  |  |
+| lastSeenAt | DateTime? |  |  |
 
 ### ExternalModel
 

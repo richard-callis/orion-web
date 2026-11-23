@@ -581,17 +581,24 @@ model VerificationToken {
 }
 
 model Bug {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   title          String
-  description    String?  @db.Text
-  severity       String   @default("medium") // low | medium | high | critical
-  status         String   @default("open") // open | triaged | in_progress | resolved | closed
+  description    String?   @db.Text
+  severity       String    @default("medium") // low | medium | high | critical
+  status         String    @default("open") // open | triaged | in_progress | resolved | closed
   area           String? // component/area e.g. "Traefik", "Auth", "Game Servers"
-  reportedBy     String   @default("admin")
+  reportedBy     String    @default("admin")
   assignedUserId String?
-  assignedUser   User?    @relation("AssignedBugUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  assignedUser   User?     @relation("AssignedBugUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  // Self-diagnosis (jobs/self-diagnosis.ts): bugs ORION files about its own failures.
+  source         String? // "self-diagnosis"; null for bugs filed by people
+  fingerprint    String?   @unique // sha256 of signal kind + normalized message
+  evidence       Json? // most recent occurrences: [{ ref, at, excerpt, note? }]
+  occurrences    Int       @default(1)
+  firstSeenAt    DateTime?
+  lastSeenAt     DateTime?
 }
 
 model ExternalModel {

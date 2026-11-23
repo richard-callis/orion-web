@@ -15,6 +15,7 @@ import { runEventTriggeredScan } from '@/jobs/security-scan-vulns'
 import { runGoalHeartbeat } from '@/jobs/goal-heartbeat'
 import { detectGitOpsDrift } from '@/jobs/gitops-drift'
 import { runScheduler } from '@/jobs/task-scheduler'
+import { runSelfDiagnosis } from '@/jobs/self-diagnosis'
 import { err } from './log'
 import { isStopping, workerConfig } from './state'
 import { recoverStuckTasks } from './recovery'
@@ -83,6 +84,8 @@ export function workerJobs(): ScheduledJob[] {
     { name: 'Approval timeout escalation',  intervalMs: 5 * MINUTE, fn: escalateStalePendingValidation },
     // Compare live cluster state to desired GitOps state.
     { name: 'GitOps drift detection',       intervalMs: 5 * MINUTE, fn: detectGitOpsDrift },
+    // File deduplicated Bugs for ORION's own failures (see jobs/self-diagnosis.ts).
+    { name: 'Self-diagnosis',               intervalMs: 10 * MINUTE, fn: runSelfDiagnosis },
     // Check in-flight federated tasks for completion.
     { name: 'Federation spoke polling',     intervalMs: MINUTE, fn: pollFederatedTasks },
   ]
