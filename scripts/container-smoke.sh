@@ -7,7 +7,7 @@
 #   - Vector 0.58: config rejected (env interpolation disabled)       → validate the real config
 #   - Falco 0.45: missing container plugin                            → load the real config
 #
-# Usage: scripts/container-smoke.sh [gateway|executor|vector|falco ...]  (default: all)
+# Usage: scripts/container-smoke.sh [gateway|executor|proxy|vector|falco ...]  (default: all)
 # Needs only Docker. Uses throwaway names and no host ports.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -54,6 +54,17 @@ smoke_executor() {
   docker rm -f "ex-$TAG" >/dev/null; docker rmi -f "orion-executor:$TAG" >/dev/null
 }
 
+smoke_proxy() {
+  echo "── docker-read-proxy image"
+  docker build -q -t "orion-drp:$TAG" deploy/docker-read-proxy >/dev/null
+  # Its tests, on the Python it ships with (musl's small thread stacks matter).
+  if docker run --rm -v "$PWD/deploy/docker-read-proxy/test_proxy.py:/app/test_proxy.py:ro" \
+    "orion-drp:$TAG" python3 -B -m unittest test_proxy >/dev/null 2>"/tmp/drp-$TAG.log"; then pass "docker-read-proxy tests pass in its image"
+  else fail "docker-read-proxy tests"; tail -40 "/tmp/drp-$TAG.log"; fi
+  rm -f "/tmp/drp-$TAG.log"
+  docker rmi -f "orion-drp:$TAG" >/dev/null
+}
+
 smoke_vector() {
   echo "── host-agent Vector config"
   docker build -q -t "orion-vector:$TAG" -f deploy/host-agent/Dockerfile deploy/host-agent >/dev/null
@@ -77,6 +88,6 @@ smoke_falco() {
   else fail "Falco config/rules failed to load on $img"; fi
 }
 
-TARGETS=("$@"); [ ${#TARGETS[@]} -eq 0 ] && TARGETS=(gateway executor vector falco)
+TARGETS=("$@"); [ ${#TARGETS[@]} -eq 0 ] && TARGETS=(gateway executor proxy vector falco)
 for t in "${TARGETS[@]}"; do "smoke_$t"; done
 exit $FAILED

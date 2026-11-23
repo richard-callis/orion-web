@@ -68,6 +68,9 @@ jobs:
         run: npm test --workspace apps/gateway
       - name: executor
         run: npm test --workspace apps/executor -- --passWithNoTests
+      - name: docker-read-proxy
+        working-directory: deploy/docker-read-proxy
+        run: python3 -m unittest -v test_proxy
 
   migrations:
     name: Migrations replay + drift
@@ -132,7 +135,7 @@ jobs:
   # image missing modules and Falco/Vector configs their new versions rejected.
   # Build and boot/validate each against the real Dockerfiles and configs.
   container-smoke:
-    name: Container smoke (gateway, executor, Vector, Falco)
+    name: Container smoke (gateway, executor, Docker read proxy, Vector, Falco)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

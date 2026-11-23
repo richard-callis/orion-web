@@ -442,6 +442,41 @@ services:
           cpus: '0.5'
           memory: 256M
 
+  # ── Docker read proxy ──────────────────────────────────────────────────────
+  # A read-only, sanitizing view of the Docker API (infra-manager design §5.1, I1):
+  # list, inspect, stats, logs and container events, without environment variables,
+  # commands or mounts. Answers only the services in ALLOWED_CLIENTS, on its own
+  # network. See deploy/docker-read-proxy/proxy.py.
+  docker-read-proxy:
+    build:
+      context: ./docker-read-proxy
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    group_add:
+      - "${DOCKER_GID:-999}"
+    networks: [docker-read]
+    environment:
+      ALLOWED_CLIENTS: vector
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ["CMD", "python3", "proxy.py", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+          pids: 200
+
   # ── Claude Code Service ────────────────────────────────────────────────────
   # Persistent Claude Code sidecar. Handles OAuth login interactively and
   # stores credentials in the shared orion-claude-creds volume.
@@ -723,6 +758,20 @@ services:
     # The image's default config path is /etc/vector/vector.yaml, which exists
     # in the image as a demo-logs generator. Without --config, vector loads
     # that demo and ships fake events. Point it explicitly at the mounted TOML.
+    # docker_logs lists the containers once and gives up for good if that fails, and
+    # depends_on doesn't order a host reboot: wait for the proxy, but no more than 2
+    # minutes, since the other sources don't need it.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        end=$$(($$(date +%s) + 120))
+        until timeout 5 docker -H tcp://docker-read-proxy:2375 ps -q >/dev/null 2>&1; do
+          if [ "$$(date +%s)" -ge "$$end" ]; then echo "docker-read-proxy is not answering: starting without edge logs" >&2; break; fi
+          sleep 2
+        done
+        exec /usr/bin/vector "$$@"
+      - vector
     command: ["--config", "/etc/vector/vector.toml"]
     restart: unless-stopped
     depends_on:
@@ -733,16 +782,21 @@ services:
       # Vector's loki sink retries until Loki is ready.
       loki:
         condition: service_started
+      # restart: recreating the proxy ends vector's log streams. Vector resumes a lost
+      # stream from its own start time, so a restart is the only way not to re-send the
+      # edge logs since then.
+      # Only _started: an unhealthy proxy must not fail a deploy or keep vector down.
+      docker-read-proxy:
+        condition: service_started
+        restart: true
     read_only: true
     user: "1000:1000"
-    group_add:
-      - "${DOCKER_GID:-999}"
+    networks: [default, docker-read]
     ports:
       - "5514:5514/udp"
     environment:
       HOST_AGENT_WEBHOOK_SECRET: "${HOST_AGENT_WEBHOOK_SECRET:-}"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/log/journal:/var/log/journal:ro
       - vault-audit:/vault/audit:ro
       - ./host-agent/vector.toml:/etc/vector/vector.toml:ro
@@ -888,6 +942,11 @@ services:
         limits:
           cpus: '0.5'
           memory: 512M
+
+networks:
+  # docker-read-proxy and its clients. Internal: no route off the host.
+  docker-read:
+    internal: true
 
 volumes:
   gitea-data:
