@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
+import { EMBEDDING_MODEL_ERROR, isRefusedDefault } from '@/lib/embedding-models'
 
 // PUT /api/admin/models/default  — set or clear the default model
 export async function PUT(req: NextRequest) {
@@ -15,6 +16,10 @@ export async function PUT(req: NextRequest) {
     // Clear default
     await prisma.systemSetting.deleteMany({ where: { key: 'model.default' } })
     return NextResponse.json({ defaultModelId: null })
+  }
+
+  if (await isRefusedDefault('model.default', modelId)) {
+    return NextResponse.json({ error: `That ${EMBEDDING_MODEL_ERROR}` }, { status: 400 })
   }
 
   await prisma.systemSetting.upsert({

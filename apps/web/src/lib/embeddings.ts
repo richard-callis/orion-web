@@ -11,6 +11,7 @@
 
 import { Prisma } from '@prisma/client'
 import { prisma } from './db'
+import { isEmbeddingModel } from './embedding-models'
 import { sanitizeContextNoteAsync } from './sanitize-context'
 
 // ── Providers ────────────────────────────────────────────────────────────────
@@ -42,7 +43,8 @@ async function getEmbeddingProvider(): Promise<{
   }
 
   // Fallback: Ollama (typically nomic-embed-text or bge-m3)
-  const ollama = models.find((m: any) => m.provider === 'ollama')
+  const ollama = models.find((m: any) => m.provider === 'ollama' && isEmbeddingModel(m.modelId))
+    ?? models.find((m: any) => m.provider === 'ollama')
   if (ollama && ollama.baseUrl) {
     return {
       baseUrl: ollama.baseUrl,
@@ -55,6 +57,9 @@ async function getEmbeddingProvider(): Promise<{
 }
 
 // ── Embedding Generation ─────────────────────────────────────────────────────
+
+/** A context this short isn't worth embedding for. */
+const MIN_EMBED_CHARS = 500
 
 /**
  * Generate a text embedding using the configured provider.
@@ -97,16 +102,27 @@ export async function generateEmbedding(
   }
 
   // Ollama: supports /api/embed endpoint (nomic-embed-text, bge-m3, etc.)
-  const res = await fetch(`${provider.baseUrl}/api/embed`, {
+  const deadline = AbortSignal.timeout(60_000) // for all attempts together
+  const embed = (input: string) => fetch(`${provider.baseUrl}/api/embed`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: provider.modelId, input: text }),
-    signal: AbortSignal.timeout(30_000),
+    body: JSON.stringify({ model: provider.modelId, input }),
+    signal: AbortSignal.any([deadline, AbortSignal.timeout(30_000)]),
   })
-  if (!res.ok) {
-    console.error(`[embeddings] Ollama /api/embed returned ${res.status} for model ${provider.modelId}`)
-    return null
+  // A text longer than the model's context is refused, and how many characters fit
+  // depends on the text: shorten it until it fits rather than leave it unembedded.
+  let input = text
+  let res = await embed(input)
+  while (!res.ok) {
+    const error = (await res.text().catch(() => '')).slice(0, 300)
+    if (res.status !== 400 || !/exceeds\b.*\bcontext length/i.test(error) || input.length <= MIN_EMBED_CHARS) {
+      console.error(`[embeddings] Ollama /api/embed returned ${res.status} for model ${provider.modelId}: ${error}`)
+      return null
+    }
+    input = input.slice(0, Math.max(MIN_EMBED_CHARS, Math.floor(input.length * 0.75)))
+    res = await embed(input)
   }
+  if (input.length < text.length) console.log(`[embeddings] shortened a text from ${text.length} to ${input.length} characters to fit ${provider.modelId}`)
   // NOTE: /api/embed (current) returns `embeddings` — a plural array-of-arrays,
   // one vector per input. This is NOT the same shape as the deprecated
   // /api/embeddings endpoint, which returns a singular `embedding` array.
@@ -124,7 +140,7 @@ export async function generateEmbedding(
   }
   // Ollama's /api/embed does not report token usage — estimate from input length.
   if (attributeToDream) {
-    await recordDreamEmbeddingUsage(Math.ceil(text.length / 4), provider.modelId)
+    await recordDreamEmbeddingUsage(Math.ceil(input.length / 4), provider.modelId)
   }
   return { vector, modelRef: provider.modelId }
 }

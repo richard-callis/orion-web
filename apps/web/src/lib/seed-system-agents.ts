@@ -13,6 +13,7 @@
 
 import { randomBytes } from 'crypto'
 import { prisma } from './db'
+import { CHAT_MODELS, chatModelChoice } from './embedding-models'
 import { ACCESS_ADMIN_GROUP_NAME } from './tool-registry'
 import { encrypt } from './encryption'
 import { promptText } from '@/prompts'
@@ -275,10 +276,11 @@ export const SYSTEM_AGENT_DEFS: SystemAgentDef[] = [
  */
 async function resolveDefaultLlm(): Promise<string> {
   const setting = await prisma.systemSetting.findUnique({ where: { key: 'ai.default-model' } })
-  if (setting?.value && typeof setting.value === 'string') return setting.value
+  const chosen = await chatModelChoice(setting?.value, 'ai.default-model')
+  if (chosen) return chosen
 
   const first = await prisma.externalModel.findFirst({
-    where: { enabled: true },
+    where: { enabled: true, ...CHAT_MODELS },
     orderBy: { createdAt: 'asc' },
     select: { id: true },
   })

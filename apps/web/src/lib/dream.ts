@@ -94,7 +94,9 @@ const MAX_NOTE_AGE_DAYS      = 90   // never auto-delete notes newer than this
 
 async function getDreamModelId(): Promise<string> {
   const dreamModel = await prisma.systemSetting.findUnique({ where: { key: 'dream.model' } })
-  if (dreamModel?.value && typeof dreamModel.value === 'string') return dreamModel.value
+  const { chatModelChoice } = await import('./embedding-models')
+  const chosen = await chatModelChoice(dreamModel?.value, 'dream.model')
+  if (chosen) return chosen
 
   // Fall back to system default
   const { getDefaultModelId } = await import('./default-model')

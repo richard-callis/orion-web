@@ -1,3 +1,4 @@
+import { isEmbeddingModel } from '@/lib/embedding-models'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireWizardSession } from '@/lib/setup-guard'
@@ -58,12 +59,14 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  // Automatically make the wizard-configured model the system default
-  await prisma.systemSetting.upsert({
-    where:  { key: 'model.default' },
-    update: { value: `ext:${created.id}` },
-    create: { key: 'model.default', value: `ext:${created.id}` },
-  })
+  // Automatically make the wizard-configured model the system default, if it can chat
+  if (!isEmbeddingModel(data.modelId)) {
+    await prisma.systemSetting.upsert({
+      where:  { key: 'model.default' },
+      update: { value: `ext:${created.id}` },
+      create: { key: 'model.default', value: `ext:${created.id}` },
+    })
+  }
 
   void logAudit({
     userId: 'system',

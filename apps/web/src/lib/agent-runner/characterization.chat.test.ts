@@ -95,7 +95,7 @@ beforeEach(() => {
   http.install()
   for (const model of Object.values(h.prisma)) for (const f of Object.values(model)) (f as ReturnType<typeof vi.fn>).mockClear()
   h.prisma.environment.findFirst.mockResolvedValue(null as never)
-  h.prisma.externalModel.findFirst.mockResolvedValue({ baseUrl: 'http://ollama.test', timeoutSecs: 30 } as never)
+  h.prisma.externalModel.findFirst.mockResolvedValue({ modelId: 'llama3.1:8b', baseUrl: 'http://ollama.test', timeoutSecs: 30 } as never)
   asRole('user')
   h.executeRegisteredTool.mockClear()
   h.getRunTokenCap.mockResolvedValue(400_000)
@@ -440,6 +440,17 @@ describe('streamAgentChat', () => {
     expect(h.finish).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    ['ext:m', { id: 'm', provider: 'ollama', modelId: 'nomic-embed-text', baseUrl: 'http://ollama.test' }],
+    ['ollama:nomic-embed-text', null],
+  ])('an embedding model is refused without a provider call: %s', async (llm, row) => {
+    h.prisma.externalModel.findUnique.mockResolvedValue(row as never)
+    const chunks = await collectUntilTerminal(streamAgentChat('hi', 'c1', 'You are Bob.', [], { llm }, 'agent-1', 'u1'))
+    expect(chunks).toEqual([{ type: 'error', error: expect.stringContaining("can't chat") }])
+    expect(http.calls).toHaveLength(0)
+    expect(h.finish).toHaveBeenCalledTimes(1)
+  })
+
   it('claude agent: persona override prompt sent to the sidecar with agent maxTurns', async () => {
     http.route('/run', stream(sidecarNDJSON([{ type: 'result', subtype: 'success', result: 'yo' }])))
     const chunks = await collectUntilTerminal(streamAgentChat('hi', 'c1', 'You are Bob.', [], { llm: 'claude:claude-x', maxTurns: 3 }, 'agent-1', 'u1'))
@@ -450,5 +461,20 @@ describe('streamAgentChat', () => {
     expect(body.maxTurns).toBe(3)
     expect(body.allowedTools).toEqual([])
     expect(body.model).toBe('claude-x')
+  })
+})
+
+describe('Ollama endpoint lookup with embedding models about', () => {
+  const embedding = { modelId: 'nomic-embed-text', baseUrl: 'http://ollama.test', timeoutSecs: 30, temperature: 0.9 }
+  it('falls back to an embedding row for the endpoint, without its sampling', async () => {
+    h.prisma.externalModel.findFirst.mockReset()
+      .mockResolvedValueOnce(null as never).mockResolvedValueOnce(null as never).mockResolvedValue(embedding as never)
+    http.route('/api/chat', stream(ollamaNDJSON(['hi'])))
+    const chunks = await collectUntilTerminal(streamOllamaChat('p', 'c', [], 'llama3.1:8b', undefined, undefined, 'u1'))
+    expect(chunks.at(-1)?.type).toBe('done')
+    const where = h.prisma.externalModel.findFirst.mock.calls.map(c => (c as unknown as [{ where: Record<string, unknown> }])[0].where)
+    expect(where[1]).toHaveProperty('NOT')
+    expect(where[2]).toEqual({ provider: 'ollama', enabled: true })
+    expect(JSON.stringify(http.callsTo('/api/chat')[0].body)).not.toContain('0.9')
   })
 })

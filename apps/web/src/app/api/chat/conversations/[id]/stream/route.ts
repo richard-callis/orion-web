@@ -5,6 +5,7 @@ import { createSSEStream } from '@/lib/sse'
 import { streamClaudeResponse, streamAgentChat, streamOllamaChat, streamGeminiChat, streamOpenAIChat, type AgentContextConfig } from '@/lib/claude'
 import { retrieveKnowledgeContext } from '@/lib/embeddings'
 import { prisma } from '@/lib/db'
+import { chatModelChoice, EMBEDDING_MODEL_ERROR, isEmbeddingModel } from '@/lib/embedding-models'
 import { getPrompt } from '@/lib/system-prompts'
 import { getSessionToken } from '@/lib/session-token'
 import { getChatUserRole, canUseTools } from '@/lib/chat-tool-policy'
@@ -61,7 +62,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // If nothing selected, check system default
   if (!rawModel) {
     const defaultSetting = await prisma.systemSetting.findUnique({ where: { key: 'model.default' } })
-    const def = defaultSetting?.value as string | undefined
+    const def = await chatModelChoice(defaultSetting?.value, 'model.default')
     // Only use default if it's not a claude:* model (those are resolved below as Claude)
     if (def && !def.startsWith('claude:')) rawModel = def
   }
@@ -109,6 +110,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         : `You are ${agent.name}${agent.role ? `, a ${agent.role}` : ''}${agent.description ? `.\n\n${agent.description}` : '.'}`
       agentContextConfig = (agentMeta?.contextConfig as AgentContextConfig) ?? {}
     }
+  }
+
+  // A chosen model that can't chat is refused, not replaced: the replacement could be a
+  // cloud model, and the user picked a local one.
+  const chosen = openaiModel ?? ollamaModel
+  if (!agentSystemPrompt && chosen && isEmbeddingModel(chosen)) {
+    return createSSEStream((send, close) => {
+      send('error', { type: 'error', error: `${chosen} ${EMBEDDING_MODEL_ERROR}` })
+      close()
+      return () => {}
+    })
   }
 
   // History window: respect agent's contextConfig, increased defaults for better context retention

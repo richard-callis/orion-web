@@ -14,6 +14,7 @@
  *   gemini:<model>            — not yet supported; posts a clear error to the room
  */
 
+import { EMBEDDING_MODEL_ERROR, refersToEmbeddingModel } from './embedding-models'
 import { prisma } from './db'
 import { setTyping, clearTyping } from './typing-state'
 import { TOOLS_SYSTEM_ADDENDUM } from './agent-tools'
@@ -1029,6 +1030,23 @@ export async function triggerRoomAgentReplies(
 
 
       console.log(`[room-agents] ${agent.name} (${llm}${toolsEnabled ? ', tools' : ''}${gateway ? ', gateway' : ''}) → replying to room ${roomId}`)
+
+      // Refused before the budget gate, so nothing is left open.
+      if (await refersToEmbeddingModel(llm)) {
+        console.error(`[room-agents] ${agent.name}: ${llm} ${EMBEDDING_MODEL_ERROR}`)
+        const notice = `I can't reply: my model (\`${llm}\`) ${EMBEDDING_MODEL_ERROR}.`
+        const msg = await prisma.chatMessage.create({
+          data: { roomId, agentId: agent.id, senderType: 'agent', content: notice },
+        })
+        await publishChatMessage(roomId, {
+          id:         msg.id,
+          senderType: 'agent',
+          content:    notice,
+          sender:     { type: 'agent', id: agent.id, name: agent.name },
+          createdAt:  msg.createdAt instanceof Date ? msg.createdAt.toISOString() : msg.createdAt,
+        })
+        continue
+      }
 
       let reply: string | null = null
       let tokensUsed = 0

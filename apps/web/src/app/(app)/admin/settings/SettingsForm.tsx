@@ -22,7 +22,7 @@ interface Props {
   initialSettings: Record<string, unknown>
   externalModels:  ExternalModel[]
   cacheRegistry:   CacheEntry[]
-  saveSettings:    (entries: Array<{ key: string; value: string }>) => Promise<void>
+  saveSettings:    (entries: Array<{ key: string; value: string }>) => Promise<{ error?: string }>
   flushCaches:     () => Promise<void>
 }
 
@@ -88,7 +88,8 @@ export function SettingsForm({
           ...Object.entries(general).map(([key, value]) => ({ key, value: String(value) })),
           ...Object.entries(cacheTtls).map(([key, value]) => ({ key, value: String(value) })),
         ]
-        await saveSettings(entries)
+        const { error } = await saveSettings(entries)
+        if (error) { setError(error); return }
         setSaved(true)
         setTimeout(() => setSaved(false), 2500)
       } catch (e) {
