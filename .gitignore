@@ -13,6 +13,7 @@ dist/
 # Deploy host runtime state (created by bootstrap/backup/deploy on the host)
 deploy/backups/
 deploy/.last-good
+deploy/.last-rollback
 deploy/vector-data/
 deploy/vault-unseal-keys/
 deploy/vault-proxy/certs/

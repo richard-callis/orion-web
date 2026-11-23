@@ -70,6 +70,8 @@ jobs:
         run: npm test --workspace apps/executor -- --passWithNoTests
       - name: deploy image pinning
         run: python3 -m unittest -v scripts/test_resolve_images.py scripts/test_set_image_pins.py scripts/test_bootstrap_pins.py
+      - name: deploy watch and rollback
+        run: python3 -m unittest -v scripts/test_deploy_watch.py
       - name: docker-read-proxy
         working-directory: deploy/docker-read-proxy
         run: python3 -m unittest -v test_proxy

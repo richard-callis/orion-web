@@ -19,9 +19,12 @@ name: Deploy ORION
 #   - A PostgreSQL dump is taken before anything changes (migrations run on
 #     container start and cannot be rolled back).
 #   - The deploy FAILS if ORION is not healthy within 5 minutes, or the worker
-#     within 6 more.
-#   - Every healthy deploy records deploy/.last-good (git SHA + image digests);
-#     deploy/rollback.sh returns to it. See the failure step for the runbook.
+#     within 6 more, or if orion, orion-worker or gateway don't stay healthy for
+#     the 10 minutes after (deploy/watch-deploy.sh).
+#   - Every deploy that survives that records deploy/.last-good (git SHA + image
+#     digests). A failed one is rolled back to it by deploy/auto-rollback.sh
+#     (deploy/rollback.sh), unless it changed database migrations: then the runbook
+#     is printed. The job still ends failed; deploy/.last-rollback says what happened.
 
 on:
   workflow_run:
@@ -184,6 +187,7 @@ jobs:
         run: $DEPLOY_DIR/backup.sh --pre-deploy
 
       - name: Bootstrap and start stack
+        id: bootstrap
         if: steps.pins.outputs.skip != 'true'
         # bootstrap.sh:
         #   - generates any missing secrets in deploy/.env (idempotent grep guards)
@@ -229,6 +233,13 @@ jobs:
             [ "$wrong" = 0 ]
           fi
 
+      - name: Watch the new version
+        if: steps.pins.outputs.skip != 'true'
+        # 10 minutes: orion, orion-worker and gateway must stay running and healthy,
+        # not be recreated or restarted, and /api/health must answer. Only a version
+        # that survives this is recorded as last-good.
+        run: $DEPLOY_DIR/watch-deploy.sh 600
+
       - name: Record last-good deploy
         if: steps.pins.outputs.skip != 'true'
         run: |
@@ -252,15 +263,10 @@ jobs:
           # Healthy: these images are now what a compose command run by hand should use.
           [ ! -s "$RUNNER_TEMP/images" ] || ./set-image-pins.sh < "$RUNNER_TEMP/images"
 
-      - name: Rollback runbook
-        if: failure()
-        run: |
-          echo "::error::Deploy failed. Nothing was rolled back automatically."
-          echo "Last healthy deploy:"; cat $DEPLOY_DIR/.last-good 2>/dev/null || echo "  (none recorded)"
-          echo ""
-          echo "To roll back on the host (see deploy/rollback.sh header):"
-          echo "  1. Images only:  $DEPLOY_DIR/rollback.sh"
-          echo "  2. If a migration ran and the old code can't handle it, first restore the DB:"
-          echo "       docker compose -f $DEPLOY_DIR/docker-compose.yml --env-file $DEPLOY_DIR/.env stop orion orion-worker"
-          echo "       $DEPLOY_DIR/restore.sh predeploy_<timestamp>   # newest: $(ls -1t $DEPLOY_DIR/backups/postgres_predeploy_*.sql.gz 2>/dev/null | head -1)"
-          echo "     then run rollback.sh."
+      - name: Automatic rollback
+        # Only when the new version was started (a failure in the pins or backup steps
+        # changed nothing). Rolls the images back to deploy/.last-good unless the
+        # deploy changed database migrations; either way the job stays failed.
+        # Outcome is written to deploy/.last-rollback.
+        if: failure() && steps.bootstrap.outcome != 'skipped'
+        run: $DEPLOY_DIR/auto-rollback.sh
