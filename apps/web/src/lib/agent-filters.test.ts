@@ -44,11 +44,23 @@ describe('call sites', () => {
 
   it('create_agent counts active agents through notArchivedAgentWhere', async () => {
     const count = vi.fn().mockResolvedValue(50)
+    const findUnique = vi.fn().mockResolvedValue(null)
     const result = await orionCreateAgentTool.handler(
       { name: 'x-agent', role: 'tester', systemPrompt: 'You are a test agent used in unit tests.' },
-      { prisma: { agent: { count } } } as never,
+      { prisma: { agent: { count, findUnique } } } as never,
     )
     expect(count).toHaveBeenCalledWith({ where: notArchivedAgentWhere() })
     expect(result).toContain('maximum active agent limit')
+  })
+
+  it('create_agent returns an existing agent by name even when the roster is full', async () => {
+    const count = vi.fn().mockResolvedValue(50)
+    const findUnique = vi.fn().mockResolvedValue({ id: 'a1', name: 'x-agent', role: 'tester', metadata: {} })
+    const result = await orionCreateAgentTool.handler(
+      { name: 'x-agent', role: 'tester', systemPrompt: 'You are a test agent used in unit tests.' },
+      { prisma: { agent: { count, findUnique } } } as never,
+    )
+    expect(count).not.toHaveBeenCalled()
+    expect(result).toContain('Agent already exists')
   })
 })

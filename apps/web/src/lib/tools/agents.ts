@@ -65,15 +65,6 @@ async function handleCreateAgent(args: unknown, ctx: ToolExecutionContext): Prom
   if (spec.systemPrompt.trim().length < 20) return 'Error: systemPrompt is too short (minimum 20 characters) — provide a meaningful role description'
   if (spec.systemPrompt.trim().length > 10_000) return 'Error: systemPrompt exceeds maximum length (10,000 characters)'
 
-  // Cap total non-archived agents to prevent runaway agent-creation loops.
-  const MAX_ACTIVE_AGENTS = 50
-  const activeCount = await ctx.prisma.agent.count({
-    where: notArchivedAgentWhere(),
-  })
-  if (activeCount >= MAX_ACTIVE_AGENTS) {
-    return `Error: maximum active agent limit (${MAX_ACTIVE_AGENTS}) reached. Archive unused agents before creating new ones.`
-  }
-
   const actorId = ctx.agentId ?? ctx.userId
   if (RESERVED_AGENT_NAMES.includes(spec.name.toLowerCase())) {
     await auditLog(actorId, `⚠️ Cannot create agent: **${spec.name}** is a reserved name`)
@@ -90,6 +81,15 @@ async function handleCreateAgent(args: unknown, ctx: ToolExecutionContext): Prom
       return `Error: an archived agent named "${spec.name.trim()}" already exists (id: ${existingByName.id}). Choose a different name — do not reuse archived agent names.`
     }
     return JSON.stringify({ id: existingByName.id, name: existingByName.name, role: existingByName.role, note: 'Agent already exists — returning existing record' }, null, 2)
+  }
+
+  // Cap total non-archived agents to prevent runaway agent-creation loops.
+  const MAX_ACTIVE_AGENTS = 50
+  const activeCount = await ctx.prisma.agent.count({
+    where: notArchivedAgentWhere(),
+  })
+  if (activeCount >= MAX_ACTIVE_AGENTS) {
+    return `Error: maximum active agent limit (${MAX_ACTIVE_AGENTS}) reached. Archive unused agents before creating new ones.`
   }
 
   const defaultLlm     = await getDefaultModelId()

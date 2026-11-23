@@ -3,7 +3,7 @@
 // it is separate from DATABASE_URL so the suite never touches a live database by accident.
 // e.g. docker run -d --rm -e POSTGRES_PASSWORD=x -p 55432:5432 pgvector/pgvector:pg16
 //      DATABASE_URL=postgresql://postgres:x@localhost:55432/postgres apps/web/prisma/check-drift.sh
-//      ORION_TEST_DATABASE_URL=$that npm test --workspace apps/web -- agent-filters.db
+//      ORION_TEST_DATABASE_URL=postgresql://postgres:x@localhost:55432/postgres npm test --workspace apps/web -- agent-filters.db
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { Prisma, PrismaClient } from '@prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
