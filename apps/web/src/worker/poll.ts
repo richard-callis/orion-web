@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { notArchivedAgentWhere } from '@/lib/agent-filters'
 import { claimTask } from '@/workers/task-claim'
 import { err } from './log'
 import { isStopping, runningTasks, workerConfig } from './state'
@@ -49,11 +50,7 @@ async function pollOnceInner() {
           ],
         },
       ],
-      agent: {
-        NOT: {
-          metadata: { path: ['archived'], equals: true },
-        },
-      },
+      agent: notArchivedAgentWhere(),
     },
     orderBy: [{ wave: 'asc' }, { priority: 'desc' }, { createdAt: 'asc' }],
     select: { id: true, dependsOn: true },

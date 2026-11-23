@@ -7,6 +7,7 @@
 import { EMBEDDING_MODEL_ERROR, refersToEmbeddingModel } from '@/lib/embedding-models'
 import { z } from 'zod'
 import { prisma } from '@/lib/db'
+import { notArchivedAgentWhere } from '@/lib/agent-filters'
 import { getDefaultModelId } from '@/lib/default-model'
 import { RESERVED_AGENT_NAMES, auditLog, parseToolArgs } from './shared'
 import type { ToolDefinition, ToolExecutionContext } from './registry'
@@ -67,11 +68,7 @@ async function handleCreateAgent(args: unknown, ctx: ToolExecutionContext): Prom
   // Cap total non-archived agents to prevent runaway agent-creation loops.
   const MAX_ACTIVE_AGENTS = 50
   const activeCount = await ctx.prisma.agent.count({
-    where: {
-      NOT: {
-        metadata: { path: ['archived'], equals: true },
-      },
-    },
+    where: notArchivedAgentWhere(),
   })
   if (activeCount >= MAX_ACTIVE_AGENTS) {
     return `Error: maximum active agent limit (${MAX_ACTIVE_AGENTS}) reached. Archive unused agents before creating new ones.`
