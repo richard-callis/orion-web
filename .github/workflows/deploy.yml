@@ -200,6 +200,7 @@ jobs:
           ./bootstrap.sh
 
       - name: Wait for ORION health
+        id: health
         if: steps.pins.outputs.skip != 'true'
         # Uses the container healthchecks (orion: /api/health). Fails the job
         # on timeout — a deploy that never became healthy is not a success.
@@ -234,7 +235,9 @@ jobs:
           fi
 
       - name: Watch the new version
+        id: watch
         if: steps.pins.outputs.skip != 'true'
+        timeout-minutes: 20
         # 10 minutes: orion, orion-worker and gateway must stay running and healthy,
         # not be recreated or restarted, and /api/health must answer. Only a version
         # that survives this is recorded as last-good.
@@ -269,4 +272,9 @@ jobs:
         # deploy changed database migrations; either way the job stays failed.
         # Outcome is written to deploy/.last-rollback.
         if: failure() && steps.bootstrap.outcome != 'skipped'
+        timeout-minutes: 30
+        env:
+          BOOTSTRAP_OUTCOME: ${{ steps.bootstrap.outcome }}
+          HEALTH_OUTCOME: ${{ steps.health.outcome }}
+          WATCH_OUTCOME: ${{ steps.watch.outcome }}
         run: $DEPLOY_DIR/auto-rollback.sh
