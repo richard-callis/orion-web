@@ -36,7 +36,7 @@ export async function ensureGitRepo(env: { name: string; gitOwner: string | null
     })
     resolvedGitOwner = createdRepo.fullName.split('/')[0]
     // Build the cluster-reachable clone URL — must match the base URL registered in
-    // the ArgoCD credential Secret by argocd-bootstrap.ts so ArgoCD can find credentials.
+    // the ArgoCD credential Secret by argocd-install.ts so ArgoCD can find credentials.
     // getPRUrl() uses publicUrl (Cloudflare/HTTPS), which ArgoCD can't match. Use the
     // internal URL instead: management IP for bundled Gitea, config.url for external.
     const gitCfg = await getGitProviderConfig()

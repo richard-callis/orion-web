@@ -67,7 +67,7 @@ export class OrionClient {
     const res = await this.fetchOrion(`${this.cfg.mccUrl}/api/environments/${this.cfg.environmentId}`, {
       method: 'PUT',
       headers: this.headers(),
-      body: JSON.stringify({ status: 'connected', gatewayUrl: this.cfg.gatewayUrl, lastSeen: new Date().toISOString(), gatewayVersion: version }),
+      body: JSON.stringify({ status: 'connected', gatewayUrl: this.cfg.gatewayUrl || undefined, lastSeen: new Date().toISOString(), gatewayVersion: version }),
     })
     if (res.status === 401 || res.status === 403) throw new OrionAuthError(res.status)
     if (!res.ok) throw new Error(`Failed to register with ORION: ${res.status} ${await res.text()}`)

@@ -6,10 +6,10 @@
  *
  * Returns { jobId } immediately — progress tracked via /api/jobs/[id].
  */
-import { gatewayHeaders } from '@/lib/gateway-headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { startJob, type JobLogger } from '@/lib/job-runner'
+import { gatewayCanWrite } from '@/lib/gateway-writable'
 import { GatewayClient } from '@/lib/agent-runner/gateway-client'
 import { requireAdmin } from '@/lib/auth'
 import { dropNodePorts } from '@/lib/drop-node-ports'
@@ -43,7 +43,7 @@ export async function POST(
 
   const env = point.environment
 
-  // Determine execution mode: gateway first, fallback to local kubeconfig
+  // Determine execution mode: a gateway that can write first, else the local kubeconfig
   const gwUrl = env.gatewayUrl
   const gwToken = env.gatewayToken
   const hasKubeconfig = Boolean(env.kubeconfig)
@@ -51,17 +51,7 @@ export async function POST(
   let useGateway = false
   let useLocal = false
 
-  if (gwUrl && gwToken) {
-    try {
-      const res = await fetch(`${gwUrl}/tools/execute`, {
-        method: 'POST',
-        headers: gatewayHeaders(gwToken),
-        body: JSON.stringify({ name: 'kubectl_get_nodes', arguments: { wide: false } }),
-        signal: AbortSignal.timeout(5000),
-      })
-      if (res.ok) useGateway = true
-    } catch { /* unreachable */ }
-  }
+  if (gwUrl && gwToken) useGateway = await gatewayCanWrite(gwUrl, gwToken, env.type)
 
   if (!useGateway && hasKubeconfig) {
     useLocal = true
@@ -69,7 +59,7 @@ export async function POST(
 
   if (!useGateway && !useLocal) {
     if (gwUrl && gwToken) {
-      return NextResponse.json({ error: `Gateway at ${gwUrl} is not reachable and no kubeconfig is stored.` }, { status: 422 })
+      return NextResponse.json({ error: `Gateway at ${gwUrl} is not reachable, or is read-only, and no kubeconfig is stored.` }, { status: 422 })
     }
     return NextResponse.json({ error: 'No gateway available and no kubeconfig stored for this environment.' }, { status: 422 })
   }
@@ -87,7 +77,12 @@ export async function POST(
         await bootstrapIngressPointWith(log, (tool, args) => gc.executeTool(tool, args), point, env, isDocker, (await params).id)
       } else if (useLocal) {
         await log(`Using local kubectl (stored kubeconfig)`)
-        await bootstrapIngressPointWith(log, makeLocalGx(env.kubeconfig!), point, env, isDocker, (await params).id)
+        const local = makeLocalGx(env.kubeconfig!)
+        try {
+          await bootstrapIngressPointWith(log, local.tool, point, env, isDocker, (await params).id)
+        } finally {
+          local.cleanup()
+        }
       }
     },
   )
@@ -359,7 +354,9 @@ function makeLocalGx(kubeconfig: string) {
     writeFileSync(`${tmpDir}/kubeconfig`, Buffer.from(kubeconfig, 'base64').toString('utf8'), { mode: 0o600 })
   } catch { /* best effort */ }
 
-  return async function kubectlTool(name: string, args: Record<string, unknown>): Promise<string> {
+  const cleanup = () => { try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* best effort */ } }
+
+  const tool = async (name: string, args: Record<string, unknown>): Promise<string> => {
     const kc = `${tmpDir}/kubeconfig`
 
     if (name === 'kubectl_apply_manifest' || name === 'kubectl_apply_url') {
@@ -411,4 +408,6 @@ function makeLocalGx(kubeconfig: string) {
     return (await exec('kubectl', [...argv, '--kubeconfig', kc],
       { timeout: name === 'kubectl_rollout_status' ? 300_000 : 30_000 })).stdout
   }
+
+  return { tool, cleanup }
 }

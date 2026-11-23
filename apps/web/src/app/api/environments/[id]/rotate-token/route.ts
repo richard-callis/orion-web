@@ -17,6 +17,7 @@ import { requireAdmin } from '@/lib/auth'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 import { randomBytes } from 'crypto'
 import { revokeEnvironmentGitCredential } from '@/lib/environment-git-credentials'
+import { refreshArgoCDRepo } from '@/lib/bootstrap/argocd-install'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // Require admin auth — only admins can rotate environment gateway tokens
@@ -45,9 +46,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   })
 
   // M2: rotate the gateway's repo-scoped git credential along with its token.
-  // The gateway exits on the 401 from its old token, restarts with the new one,
-  // and re-registers ArgoCD with a freshly minted credential.
+  // A writable gateway exits on the 401 from its old token, restarts with the new one
+  // and re-registers ArgoCD. A read-only one can't, so ORION does it when it has the
+  // cluster's admin kubeconfig.
   await revokeEnvironmentGitCredential(env.id)
+  void refreshArgoCDRepo(env.id)
 
   // SOC2: [M-005] Audit log the token rotation
   void logAudit({

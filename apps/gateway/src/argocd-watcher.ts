@@ -6,7 +6,7 @@
  * the state is re-sent every REPORT_REFRESH_MS (which also drops removed apps),
  * because ORION's drift detector ignores state reported more than 10 minutes ago.
  *
- * Requires: kubectl in PATH, cluster-admin ServiceAccount (provided by bootstrap).
+ * Requires: kubectl in PATH, and a ServiceAccount that may read Applications.
  */
 
 import { run } from './lib/run.js'

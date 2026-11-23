@@ -11,7 +11,7 @@
  *   GATEWAY_TOKEN          — Auth token stored in Environment.gatewayToken (gateway → ORION,
  *                            and ORION → gateway unless GATEWAY_INBOUND_TOKEN is set)
  *   GATEWAY_INBOUND_TOKEN  — Optional separate token ORION must present to this gateway
- *   GATEWAY_URL            — This gateway's own URL (reported to ORION), e.g. http://192.168.1.10:3001
+ *   GATEWAY_URL            — This gateway's own URL (reported to ORION), e.g. http://192.168.1.10:3001; empty = none
  *   PORT                   — Port to listen on (default 3001)
  *   GATEWAY_TYPE           — "cluster" | "docker" | "localhost" (controls built-in tools)
  *   GATEWAY_READ_ONLY      — any value but empty/false/0/no/off: only the read tools in
@@ -94,7 +94,8 @@ const JOIN_TOKEN          = process.env.JOIN_TOKEN           ?? ''
 const PORT                = parseInt(process.env.PORT ?? '3001', 10)
 const GATEWAY_TYPE        = process.env.GATEWAY_TYPE         ?? 'cluster'
 const rawGatewayUrl       = process.env.GATEWAY_URL          ?? `http://localhost:${PORT}`
-const GATEWAY_URL         = rawGatewayUrl.startsWith('http') ? rawGatewayUrl : `http://${rawGatewayUrl}`
+// Set but empty = no URL ORION can reach: the gateway joins and reports, without one.
+const GATEWAY_URL         = !rawGatewayUrl || rawGatewayUrl.startsWith('http') ? rawGatewayUrl : `http://${rawGatewayUrl}`
 const GATEWAY_SECRET_NAME = process.env.GATEWAY_SECRET_NAME  ?? ''
 const GATEWAY_CREDS_FILE  = process.env.GATEWAY_CREDS_FILE   ?? ''
 const SHUTDOWN_GRACE_MS   = parseInt(process.env.SHUTDOWN_GRACE_MS ?? '25000', 10)
@@ -291,7 +292,7 @@ async function joinWithToken(joinToken: string): Promise<void> {
   const res = await fetch(`${ORION_URL}/api/environments/join`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ joinToken, gatewayUrl: ACTUAL_GATEWAY_URL, gatewayType: GATEWAY_TYPE, machineId: MACHINE_ID }),
+    body: JSON.stringify({ joinToken, gatewayUrl: ACTUAL_GATEWAY_URL || undefined, gatewayType: GATEWAY_TYPE, machineId: MACHINE_ID }),
     signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) {

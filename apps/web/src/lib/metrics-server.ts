@@ -16,23 +16,21 @@ const MANAGED_BY = 'app.kubernetes.io/managed-by'
 const APISERVICE = 'v1beta1.metrics.k8s.io'
 
 /**
- * Permissions the gateway needs to install metrics-server and read metrics.
- * RBAC escalation prevention means the gateway can only create the
- * metrics-server roles/bindings if it already holds every permission they
- * grant — hence nodes/metrics, tokenreviews and subjectaccessreviews.
- * Shipped in the join manifest; re-applied here when the caller can.
+ * Permissions the gateway needs to read metrics and to see whether metrics-server is
+ * installed. Shipped in the join and bootstrap manifests.
  */
-export const GATEWAY_METRICS_RBAC = `apiVersion: rbac.authorization.k8s.io/v1
+export function gatewayMetricsRbac({ name, namespace }: { name: string; namespace: string }): string {
+  return `apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: orion-gateway-metrics
+  name: ${name}
   labels:
     ${MANAGED_BY}: orion
 rules:
   # Read-only: the gateway reads metrics and checks whether metrics-server is
   # installed. It no longer installs it (that needs RBAC-granting rights, which
-  # make the gateway admin-equivalent); metrics-server ships in the join
-  # manifest, applied with the installer's admin credentials.
+  # make the gateway admin-equivalent); metrics-server is applied with admin
+  # credentials: the join manifest, or ORION with a stored kubeconfig.
   - apiGroups: ["metrics.k8s.io"]
     resources: ["nodes", "pods"]
     verbs: ["get", "list", "watch"]
@@ -46,18 +44,22 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: orion-gateway-metrics
+  name: ${name}
   labels:
     ${MANAGED_BY}: orion
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: orion-gateway-metrics
+  name: ${name}
 subjects:
   - kind: ServiceAccount
     name: orion-gateway
-    namespace: management
+    namespace: ${namespace}
 `
+}
+
+/** The join manifest's copy (gateway in `management`). */
+export const GATEWAY_METRICS_RBAC = gatewayMetricsRbac({ name: 'orion-gateway-metrics', namespace: 'management' })
 
 /**
  * Upstream metrics-server components.yaml (${METRICS_SERVER_VERSION}), labelled as
@@ -286,12 +288,13 @@ export async function ensureMetricsServer(
   env: Pick<Environment, 'type' | 'gatewayUrl' | 'gatewayToken' | 'kubeconfig' | 'metadata'>,
 ): Promise<MetricsServerResult> {
   if (env.type !== 'cluster') return { status: 'skipped', reason: `not a Kubernetes environment (${env.type})` }
-  if (!env.gatewayUrl || !env.gatewayToken) return { status: 'skipped', reason: 'gateway not connected' }
+  const { gatewayUrl, gatewayToken } = env
+  // A stored kubeconfig does it all; the gateway is only asked without one.
+  if (!env.kubeconfig && !(gatewayUrl && gatewayToken)) return { status: 'skipped', reason: 'gateway not connected' }
 
-  const gc = new GatewayClient(env.gatewayUrl, env.gatewayToken)
-  const gateway: Exec = (tool, args) => gc.executeTool(tool, args)
+  const gateway: Exec = (tool, args) => new GatewayClient(gatewayUrl!, gatewayToken!).executeTool(tool, args)
   // Created lazily — makeLocalGx writes the kubeconfig to a temp file
-  let local: Exec | null = null
+  let local: ReturnType<typeof makeLocalGx> | null = null
   const getLocal = (): Exec | null => (env.kubeconfig ? (local ??= makeLocalGx(env.kubeconfig)) : null)
 
   // Writes need admin credentials; the gateway is read-only.
@@ -306,29 +309,33 @@ export async function ensureMetricsServer(
     return 'kubeconfig'
   }
 
-  // 2. Leave a metrics-server ORION doesn't manage alone.
-  let existed = false
   try {
-    // Prefer admin credentials for the check too: environments joined before
-    // the gateway had apiservices read would otherwise just see Forbidden.
-    const check = getLocal() ?? gateway
-    const raw = await check('kubectl_get', { resource: 'apiservices.apiregistration.k8s.io', name: APISERVICE, output: 'json' })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const svc: any = JSON.parse(raw)
-    existed = true
-    if (svc?.metadata?.labels?.[MANAGED_BY] !== 'orion') return { status: 'existing' }
-  } catch (e) {
-    // NotFound (kubectl error) means not installed; Forbidden means the gateway's
-    // metrics RBAC predates apiservices read; anything else is a real error
-    if (/forbidden/i.test(msg(e))) return { status: 'error', error: `The gateway may not read the metrics-server APIService. ${ADMIN_STEP}` }
-    if (!/NotFound|not found/i.test(msg(e))) return { status: 'error', error: `Checking for metrics-server failed: ${msg(e)}` }
-  }
+    // 2. Leave a metrics-server ORION doesn't manage alone.
+    let existed = false
+    try {
+      // Prefer admin credentials for the check too: environments joined before
+      // the gateway had apiservices read would otherwise just see Forbidden.
+      const check = getLocal() ?? gateway
+      const raw = await check('kubectl_get', { resource: 'apiservices.apiregistration.k8s.io', name: APISERVICE, output: 'json' })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const svc: any = JSON.parse(raw)
+      existed = true
+      if (svc?.metadata?.labels?.[MANAGED_BY] !== 'orion') return { status: 'existing' }
+    } catch (e) {
+      // NotFound (kubectl error) means not installed; Forbidden means the gateway's
+      // metrics RBAC predates apiservices read; anything else is a real error
+      if (/forbidden/i.test(msg(e))) return { status: 'error', error: `The gateway may not read the metrics-server APIService. ${ADMIN_STEP}` }
+      if (!/NotFound|not found/i.test(msg(e))) return { status: 'error', error: `Checking for metrics-server failed: ${msg(e)}` }
+    }
 
-  // 3. Install / update ORION's copy (metrics RBAC included, so the gateway can read).
-  try {
-    const via = await apply(`${GATEWAY_METRICS_RBAC}---\n${metricsServerManifest({ kubeletInsecureTls: kubeletInsecureTls(env) })}`)
-    return { status: existed ? 'updated' : 'installed', via }
-  } catch (e) {
-    return { status: 'error', error: `Installing metrics-server failed: ${msg(e)}` }
+    // 3. Install / update ORION's copy (metrics RBAC included, so the gateway can read).
+    try {
+      const via = await apply(`${GATEWAY_METRICS_RBAC}---\n${metricsServerManifest({ kubeletInsecureTls: kubeletInsecureTls(env) })}`)
+      return { status: existed ? 'updated' : 'installed', via }
+    } catch (e) {
+      return { status: 'error', error: `Installing metrics-server failed: ${msg(e)}` }
+    }
+  } finally {
+    (local as ReturnType<typeof makeLocalGx> | null)?.cleanup()
   }
 }

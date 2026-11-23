@@ -1,6 +1,6 @@
 /**
- * kubectl argv for the ingress bootstrap's local runner (used when the
- * environment has no gateway), shaped like the gateway's tools of the same
+ * kubectl argv for the local runners (used when the environment's gateway can't
+ * do the work), shaped like the gateway's tools of the same
  * name take their args. Returns null for a tool it does not handle. The caller
  * runs it with execFile (no shell) and appends --kubeconfig.
  */

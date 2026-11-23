@@ -4,16 +4,20 @@
  * spec are passed in rather than read from the environment here.
  */
 import type { GatewayImageSpec } from '../../gateway-image'
+import { gatewayReadRbac } from '../../gateway-rbac'
+import { gatewayMetricsRbac } from '../../metrics-server'
 
 export interface GatewayManifestInput {
   envName: string
   joinToken: string
   /** URL the gateway uses to reach ORION (stored in the credentials Secret). */
   orionUrl: string
+  /** URL ORION reaches the gateway at; '' when it has none (it then only reports). */
+  gatewayUrl: string
   image: GatewayImageSpec
 }
 
-export function renderGatewayManifest({ envName, joinToken, orionUrl, image }: GatewayManifestInput): string {
+export function renderGatewayManifest({ envName, joinToken, orionUrl, gatewayUrl, image }: GatewayManifestInput): string {
   return `---
 apiVersion: v1
 kind: Namespace
@@ -26,19 +30,8 @@ metadata:
   name: orion-gateway
   namespace: orion-management
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: orion-gateway-admin
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cluster-admin
-subjects:
-  - kind: ServiceAccount
-    name: orion-gateway
-    namespace: orion-management
----
+${gatewayReadRbac({ name: 'orion-management-gateway', namespace: 'orion-management' })}---
+${gatewayMetricsRbac({ name: 'orion-management-gateway-metrics', namespace: 'orion-management' })}---
 # Allows the gateway to write its registered credentials back to the Secret
 # so they survive pod restarts without needing a PVC.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -104,6 +97,10 @@ spec:
               value: "3001"
             - name: GATEWAY_TYPE
               value: "cluster"
+            # Read-only like its RBAC above: bootstrap does the cluster writes itself,
+            # with the environment's admin kubeconfig (lib/bootstrap/argocd-install.ts).
+            - name: GATEWAY_READ_ONLY
+              value: "true"
             - name: ENV_NAME
               value: "${envName}"
             - name: GATEWAY_NAMESPACE
@@ -150,7 +147,7 @@ spec:
                   key: machine-id
                   optional: true
             - name: GATEWAY_URL
-              value: "http://orion-gateway.orion-management.svc.cluster.local:3001"
+              value: ${JSON.stringify(gatewayUrl)}
           # /health exists in every gateway image; /readyz (503 until the gateway
           # has registered and loaded its tool policy) only when the image is
           # pinned to a release that has it. See lib/gateway-image.ts.

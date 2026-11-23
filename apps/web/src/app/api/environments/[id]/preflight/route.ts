@@ -360,7 +360,7 @@ export async function GET(
           log('Checking ArgoCD')
           const argoNs = await runQuiet('kubectl', ['get', 'namespace', 'argocd', '--no-headers'], kenv)
           if (!argoNs.ok) {
-            check({ id: 'argocd', label: 'ArgoCD', status: 'missing', detail: 'Not installed — will be deployed via Helm' })
+            check({ id: 'argocd', label: 'ArgoCD', status: 'missing', detail: 'Not installed — bootstrap will install it' })
           } else {
             const argoSvr = await runQuiet('kubectl', ['get', 'deployment', 'argocd-server', '-n', 'argocd', '--no-headers'], kenv)
             const match   = argoSvr.out.match(/(\d+)\/(\d+)/)
