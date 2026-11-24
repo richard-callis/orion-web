@@ -15,7 +15,7 @@
  *  3. unless the dispatcher is paused or a limit is reached, sends at most ONE
  *     request: the oldest open self-diagnosis Bug with no request yet, severity
  *     high/critical (or medium with 3+ occurrences), seen in the last 24 h. A Bug
- *     whose send failed with an error waits an hour behind the others.
+ *     whose send failed with an error or a 400 waits an hour behind the others.
  *
  * A Bug is requested once; closed, stuck, superseded or regressed requests stay
  * with the owner. Resolved-on-merge is the only verification: self-diagnosis
@@ -57,8 +57,6 @@ const ENDED = ['closed', 'stuck', 'superseded']
 type Bug = Prisma.BugGetPayload<object>
 type AgentId = () => Promise<string | null>
 export interface SelfImprovementResult { skipped?: string; synced: number; sent: string | null }
-
-export const isSelfImprovementOn = () => process.env.ORION_SELF_IMPROVEMENT === 'on' && isDispatcherConfigured()
 
 let warnedNotConfigured = false
 
@@ -168,8 +166,9 @@ async function sendOne(now: Date): Promise<string | null> {
     console.info(`[self-improvement] asked the dispatcher to fix ${bug.id} (${res.outcome}, task ${task_id})`)
     return bug.id
   }
-  // A failed send goes behind the other Bugs for an hour, so it does not block the queue every run.
-  if (res.reason === 'error') await prisma.bug.update({ where: { id: bug.id }, data: { fixRequestedAt: now } })
+  // A failed send (an error, or a 400 that may be about this Bug's content) goes behind the other Bugs for an hour,
+  // so it does not block the queue every run. fixRequestRef stays unset: the Bug is never burned.
+  if (res.reason === 'error' || res.reason === 'invalid') await prisma.bug.update({ where: { id: bug.id }, data: { fixRequestedAt: now } })
   console.warn(`[self-improvement] request for ${bug.id} not sent: ${res.reason}${res.status ? ` (HTTP ${res.status})` : ''}${res.detail ? `: ${res.detail}` : ''}`)
   return null
 }

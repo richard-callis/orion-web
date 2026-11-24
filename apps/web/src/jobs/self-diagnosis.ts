@@ -13,8 +13,8 @@
  *
  * Status: new → open. Seen again after resolved/closed → open again with a
  * "regressed after being resolved" note in the evidence, unless every new signal
- * is within 30 min of a merged-fix note (jobs/self-improvement.ts; the fix may not
- * be deployed yet). triaged / in_progress keep their status.
+ * is from before, or within 30 min after, the newest merged-fix note
+ * (jobs/self-improvement.ts; the fix may not be deployed yet). triaged / in_progress keep their status.
  *
  * Re-reads are mostly harmless: evidence entries carry the id of the row they
  * came from and windowed signals older than the Bug's lastSeenAt are skipped,
@@ -41,7 +41,7 @@ const WATERMARK_KEY = 'self-diagnosis.watermark'
 const FIRST_RUN_LOOKBACK_MS = 24 * 60 * 60 * 1000
 const OVERLAP_MS = 2 * 60_000
 const REGRESSION_NOTE = 'regressed after being resolved'
-// Signals this soon after a merged fix (note ref "fix:<task>", jobs/self-improvement.ts) may come from before it deployed.
+// Signals from before a merged fix (note ref "fix:<task>", jobs/self-improvement.ts) or this soon after it may predate its deploy.
 const DEPLOY_GRACE_MS = 30 * 60_000
 const SEVERITIES = ['low', 'medium', 'high', 'critical']
 

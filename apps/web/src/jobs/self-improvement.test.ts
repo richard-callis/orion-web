@@ -181,13 +181,14 @@ describe('send outcomes', () => {
     expect((await runSelfImprovement(NOW)).sent).toBeNull()
     expect(b.fixRequestRef).toBeNull()
   })
-  it('stops on an invalid request without marking the bug, and logs the dispatcher text', async () => {
-    const b = bug(); db.bugs = [b]
-    client.create.mockResolvedValue({ ok: false, reason: 'invalid', status: 400, detail: 'repo not allowed' })
+  it('backs off an invalid request for an hour without burning the bug, and logs the dispatcher text', async () => {
+    const a = bug({ createdAt: hoursAgo(9) }), b = bug({ createdAt: hoursAgo(8) }); db.bugs = [a, b]
+    client.create.mockResolvedValueOnce({ ok: false, reason: 'invalid', status: 400, detail: 'repo not allowed' })
     expect((await runSelfImprovement(NOW)).sent).toBeNull()
-    expect(b.fixRequestRef).toBeNull()
-    expect(b.fixRequestedAt).toBeNull()
+    expect(a.fixRequestRef).toBeNull()
+    expect(a.fixRequestedAt).toEqual(NOW)
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('(HTTP 400): repo not allowed'))
+    expect((await runSelfImprovement(new Date(NOW.getTime() + 60_000))).sent).toBe(b.id)
   })
   it('stores state "requested" for a 202 without a state', async () => {
     const b = bug(); db.bugs = [b]
@@ -283,7 +284,7 @@ describe('sync and usage', () => {
     expect(db.updates).toBe(1)
   })
 
-  it('ignores requests for another repo and malformed ones', async () => {
+  it('ignores requests for another repo', async () => {
     const b = bug({ fixRequestRef: 'x' }); db.bugs = [b]
     client.list.mockResolvedValue(overview({ paused: true }, [remote(b, { repo: 'other/repo', state: 'done' }), remote(b)]))
     await runSelfImprovement(NOW)
