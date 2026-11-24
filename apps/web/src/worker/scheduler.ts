@@ -16,6 +16,7 @@ import { runGoalHeartbeat } from '@/jobs/goal-heartbeat'
 import { detectGitOpsDrift } from '@/jobs/gitops-drift'
 import { runScheduler } from '@/jobs/task-scheduler'
 import { runSelfDiagnosis } from '@/jobs/self-diagnosis'
+import { runSelfImprovement } from '@/jobs/self-improvement'
 import { err } from './log'
 import { isStopping, workerConfig } from './state'
 import { recoverStuckTasks } from './recovery'
@@ -86,6 +87,8 @@ export function workerJobs(): ScheduledJob[] {
     { name: 'GitOps drift detection',       intervalMs: 5 * MINUTE, fn: detectGitOpsDrift },
     // File deduplicated Bugs for ORION's own failures (see jobs/self-diagnosis.ts).
     { name: 'Self-diagnosis',               intervalMs: 10 * MINUTE, fn: runSelfDiagnosis },
+    // Ask the agent dispatcher to fix self-diagnosed Bugs; off unless ORION_SELF_IMPROVEMENT=on (see jobs/self-improvement.ts).
+    { name: 'Self-improvement',             intervalMs: 15 * MINUTE, fn: runSelfImprovement },
     // Check in-flight federated tasks for completion.
     { name: 'Federation spoke polling',     intervalMs: MINUTE, fn: pollFederatedTasks },
   ]

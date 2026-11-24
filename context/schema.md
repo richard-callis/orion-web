@@ -591,6 +591,13 @@
 | occurrences | Int | `@default(1)` |  |
 | firstSeenAt | DateTime? |  |  |
 | lastSeenAt | DateTime? |  |  |
+| fixRequestRef | String? |  | the request's ref (this bug's id) |
+| fixTaskId | String? |  |  |
+| fixBranch | String? |  |  |
+| fixPrUrl | String? |  |  |
+| fixState | String? |  | gate state, else task state |
+| fixRequestedAt | DateTime? |  |  |
+| fixUsage | Json? |  | last seen usage of the request: { cost_usd, input_tokens, output_tokens, ... } |
 
 ### ExternalModel
 
