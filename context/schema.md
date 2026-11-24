@@ -595,7 +595,7 @@
 | fixTaskId | String? |  |  |
 | fixBranch | String? |  |  |
 | fixPrUrl | String? |  |  |
-| fixState | String? |  | gate state, else task state |
+| fixState | String? |  | gate state, else task state; 'requested' when the dispatcher already had it (409) |
 | fixRequestedAt | DateTime? |  |  |
 | fixUsage | Json? |  | last seen usage of the request: { cost_usd, input_tokens, output_tokens, ... } |
 

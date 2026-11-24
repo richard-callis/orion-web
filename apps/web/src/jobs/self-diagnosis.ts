@@ -12,8 +12,9 @@
  * raised, never lowered, and never touched on a Bug a human has triaged.
  *
  * Status: new → open. Seen again after resolved/closed → open again with a
- * "regressed after being resolved" note in the evidence. triaged / in_progress
- * keep their status.
+ * "regressed after being resolved" note in the evidence, unless every new signal
+ * is within 30 min of a merged-fix note (jobs/self-improvement.ts; the fix may not
+ * be deployed yet). triaged / in_progress keep their status.
  *
  * Re-reads are mostly harmless: evidence entries carry the id of the row they
  * came from and windowed signals older than the Bug's lastSeenAt are skipped,
@@ -40,6 +41,8 @@ const WATERMARK_KEY = 'self-diagnosis.watermark'
 const FIRST_RUN_LOOKBACK_MS = 24 * 60 * 60 * 1000
 const OVERLAP_MS = 2 * 60_000
 const REGRESSION_NOTE = 'regressed after being resolved'
+// Signals this soon after a merged fix (note ref "fix:<task>", jobs/self-improvement.ts) may come from before it deployed.
+const DEPLOY_GRACE_MS = 30 * 60_000
 const SEVERITIES = ['low', 'medium', 'high', 'critical']
 
 interface EvidenceEntry { ref: string; at: string; excerpt: string; note?: string }
@@ -172,7 +175,9 @@ async function bumpBug(bug: Prisma.BugGetPayload<object>, group: Signal[]): Prom
   const fresh = uniqueSignals(group).filter(s => !known.has(s.ref) && !(s.windowed && bug.lastSeenAt && s.at.getTime() < bug.lastSeenAt.getTime() - OVERLAP_MS))
   if (fresh.length === 0) return false
 
-  const regressed = bug.status === 'resolved' || bug.status === 'closed'
+  // Older signals still count, but do not reopen a Bug within the deploy grace of its merged fix.
+  const fixedAt = old.filter(e => e.ref.startsWith('fix:')).map(e => Date.parse(e.at)).filter(t => !Number.isNaN(t)).sort((a, b) => b - a)[0]
+  const regressed = (bug.status === 'resolved' || bug.status === 'closed') && fresh.some(s => fixedAt === undefined || s.at.getTime() > fixedAt + DEPLOY_GRACE_MS)
   const entries = fresh.map(toEntry)
   const occurrences = bug.occurrences + fresh.length
   const wanted = severityFor(fresh[0].high, occurrences)

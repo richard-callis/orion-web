@@ -48,7 +48,7 @@ describe('createRequest', () => {
 
   it.each([[429, 'limit'], [503, 'paused'], [400, 'invalid'], [401, 'unauthorized'], [404, 'disabled'], [500, 'error']])('maps %i to %s', async (status, reason) => {
     reply(status, { error: 'x' })
-    expect(await createRequest(req)).toEqual({ ok: false, reason, status })
+    expect(await createRequest(req)).toMatchObject({ ok: false, reason, status })
   })
 
   it('never logs the token when the network fails', async () => {
@@ -58,6 +58,35 @@ describe('createRequest', () => {
     expect(JSON.stringify(log.mock.calls)).not.toContain(TOKEN)
     expect(log).toHaveBeenCalledWith(expect.stringContaining('[REDACTED]'))
   })
+
+  it('logs the network cause, with the token scrubbed', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cause = Object.assign(new Error(`connect ECONNREFUSED 10.0.0.5:443 ${TOKEN}`), { code: 'ECONNREFUSED' })
+    fetchMock.mockRejectedValueOnce(new TypeError('fetch failed', { cause }))
+    await createRequest(req)
+    const line = String(log.mock.calls[0][0])
+    expect(line).toContain('TypeError: fetch failed (ECONNREFUSED connect ECONNREFUSED 10.0.0.5:443 [REDACTED])')
+    expect(JSON.stringify(log.mock.calls)).not.toContain(TOKEN)
+  })
+
+  it('maps 202 without task_id to error', async () => {
+    reply(202, { branch: 'b1' })
+    expect(await createRequest(req)).toEqual({ ok: false, reason: 'error', status: 202 })
+  })
+
+  it('maps a 200 with a non-JSON body to error', async () => {
+    fetchMock.mockResolvedValueOnce({ status: 200, json: async () => { throw new SyntaxError('bad json') } })
+    expect(await createRequest(req)).toEqual({ ok: false, reason: 'error', status: 200 })
+  })
+
+  it('returns the 400 error text, scrubbed of the token and cut to 200 characters', async () => {
+    reply(400, { error: `repo not allowed ${TOKEN} ${'x'.repeat(300)}` })
+    const r = await createRequest(req)
+    expect(r).toMatchObject({ ok: false, reason: 'invalid', status: 400 })
+    const detail = (r as { detail?: string }).detail!
+    expect(detail.length).toBe(200)
+    expect(detail).toContain('repo not allowed [REDACTED]')
+  })
 })
 
 describe('listRequests', () => {
@@ -66,6 +95,13 @@ describe('listRequests', () => {
     const r = await listRequests()
     expect(r.ok && r.overview.requests).toEqual([])
     expect(fetchMock.mock.calls[0][1].method).toBe('GET')
+  })
+
+  it('keeps only entries with a string ref and task_id', async () => {
+    const ok = { ref: 'bug1', task_id: 't1' }
+    reply(200, { requests: [null, 'x', { ref: 5, task_id: 't' }, { ref: 'a' }, ok] })
+    const r = await listRequests()
+    expect(r.ok && r.overview.requests).toEqual([ok])
   })
 
   it('rejects a 200 without a requests list', async () => {

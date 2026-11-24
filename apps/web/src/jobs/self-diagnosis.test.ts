@@ -172,6 +172,25 @@ describe('runSelfDiagnosis', () => {
     expect(db.bugs[2].evidence.some((e: Row) => e.note)).toBe(false)
   })
 
+  it('does not reopen a bug for signals within 30 min of a merged fix, but does for later ones', async () => {
+    db.jobRuns.push(failedRun({ finishedAt: minsAgo(100) }))
+    await runSelfDiagnosis(NOW)
+    const bug = db.bugs[0]
+    bug.status = 'resolved'
+    bug.evidence = [{ ref: 'fix:task1', at: minsAgo(90).toISOString(), excerpt: '', note: 'fix merged' }, ...bug.evidence]
+    db.jobRuns.length = 0; db.settings.clear()
+    db.jobRuns.push(failedRun({ finishedAt: minsAgo(80) })) // 10 min after the fix: may predate the deploy
+    await runSelfDiagnosis(NOW)
+    expect(bug.status).toBe('resolved')
+    expect(bug.occurrences).toBe(2)
+    expect(bug.evidence.some((e: Row) => e.note === 'regressed after being resolved')).toBe(false)
+    db.jobRuns.length = 0; db.settings.clear()
+    db.jobRuns.push(failedRun({ finishedAt: minsAgo(20) })) // 70 min after the fix
+    await runSelfDiagnosis(NOW)
+    expect(bug.status).toBe('open')
+    expect(bug.evidence.some((e: Row) => e.note === 'regressed after being resolved')).toBe(true)
+  })
+
   it('files down heartbeat sources once per source and does not re-count the same outage', async () => {
     const stale = minsAgo(60)
     db.sourceHealth.push({ id: 's1', source: 'host-agent', environmentId: null, lastSeenAt: stale, staleAfterMs: 60_000 })

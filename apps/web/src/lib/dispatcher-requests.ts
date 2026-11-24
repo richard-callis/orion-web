@@ -59,7 +59,7 @@ export type ListResult =
 export type CreateResult =
   | { ok: true; outcome: 'accepted'; request: Accepted }
   | { ok: true; outcome: 'duplicate'; request: { task_id: string; branch: string; pr_url: string | null } }
-  | { ok: false; reason: 'not_configured' | 'limit' | 'paused' | 'invalid' | 'unauthorized' | 'disabled' | 'error'; status?: number }
+  | { ok: false; reason: 'not_configured' | 'limit' | 'paused' | 'invalid' | 'unauthorized' | 'disabled' | 'error'; status?: number; detail?: string }
 
 interface Config { url: string; token: string; repo: string }
 
@@ -72,7 +72,7 @@ export function dispatcherConfig(env: NodeJS.ProcessEnv = process.env): Config |
 
 export const isDispatcherConfigured = () => dispatcherConfig() !== null
 
-interface ReplyBody { task_id?: string; branch?: string; state?: string; pr_url?: string | null; requests?: unknown }
+interface ReplyBody { error?: unknown; task_id?: string; branch?: string; state?: string; pr_url?: string | null; requests?: unknown }
 
 async function call(cfg: Config, method: 'GET' | 'POST', body?: unknown): Promise<{ status: number; json: ReplyBody | null }> {
   const res = await fetch(`${cfg.url}/api/v1/requests`, {
@@ -85,16 +85,26 @@ async function call(cfg: Config, method: 'GET' | 'POST', body?: unknown): Promis
   return { status: res.status, json }
 }
 
-// Log the error name and message only, with the token scrubbed in case a message echoes it.
+// Log the error name, message and the network cause (fetch puts ECONNREFUSED, ENOTFOUND or a
+// certificate error there), with the token scrubbed in case a message echoes it.
+function describeError(cfg: Config, e: unknown): string {
+  if (!(e instanceof Error)) return 'unknown error'
+  const cause = e.cause instanceof Error ? ` (${(e.cause as { code?: string }).code ?? ''} ${e.cause.message})` : ''
+  return `${e.name}: ${e.message}${cause}`.split(cfg.token).join('[REDACTED]')
+}
 const logFailure = (cfg: Config, what: string, e: unknown) =>
-  console.error(`[dispatcher-requests] ${what} failed: ${e instanceof Error ? `${e.name}: ${e.message}`.split(cfg.token).join('[REDACTED]') : 'unknown error'}`)
+  console.error(`[dispatcher-requests] ${what} failed: ${describeError(cfg, e)}`)
 
 export async function listRequests(): Promise<ListResult> {
   const cfg = dispatcherConfig()
   if (!cfg) return { ok: false, reason: 'not_configured' }
   try {
     const { status, json } = await call(cfg, 'GET')
-    if (status === 200 && json && Array.isArray(json.requests)) return { ok: true, overview: json as unknown as DispatcherOverview }
+    if (status === 200 && json && Array.isArray(json.requests)) {
+      const requests = (json.requests as unknown[]).filter((r): r is DispatcherRequest =>
+        !!r && typeof r === 'object' && typeof (r as DispatcherRequest).ref === 'string' && typeof (r as DispatcherRequest).task_id === 'string')
+      return { ok: true, overview: { ...(json as unknown as DispatcherOverview), requests } }
+    }
     if (status === 401) return { ok: false, reason: 'unauthorized', status }
     if (status === 404) return { ok: false, reason: 'disabled', status }
     if (status === 503) return { ok: false, reason: 'unavailable', status }
@@ -113,7 +123,9 @@ export async function createRequest(req: NewRequest): Promise<CreateResult> {
     if (status === 202 && json?.task_id) return { ok: true, outcome: 'accepted', request: { task_id: json.task_id, branch: json.branch ?? '', state: json.state ?? '' } }
     if (status === 409 && json?.task_id) return { ok: true, outcome: 'duplicate', request: { task_id: json.task_id, branch: json.branch ?? '', pr_url: json.pr_url ?? null } }
     const reason = ({ 429: 'limit', 503: 'paused', 400: 'invalid', 401: 'unauthorized', 404: 'disabled' } as const)[status as 429 | 503 | 400 | 401 | 404]
-    return { ok: false, reason: reason ?? 'error', status }
+    // The dispatcher's error text for a 400 (token scrubbed, capped) tells a bad repo setting from a bad request.
+    const detail = status === 400 && typeof json?.error === 'string' ? json.error.split(cfg.token).join('[REDACTED]').slice(0, 200) : undefined
+    return { ok: false, reason: reason ?? 'error', status, ...(detail ? { detail } : {}) }
   } catch (e) {
     logFailure(cfg, 'create', e)
     return { ok: false, reason: 'error' }
