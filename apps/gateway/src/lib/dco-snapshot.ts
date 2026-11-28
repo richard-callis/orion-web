@@ -6,7 +6,7 @@
  * narrowly, so the output stays near 150 B/pod: nodes and pods with -o custom-columns (fields
  * that never hold whitespace), the Longhorn kinds with tab-separated -o jsonpath (a blank cell
  * is a real value there, and maps print as one-line JSON). jsonpath prints a string raw, so no
- * free-text string is projected: backups carry the whole .status map as JSON, parsed per listing. Output is never truncated:
+ * free-text string is projected: backups carry the whole .status map and recurringJobs the whole .spec map as JSON, parsed per listing. Output is never truncated:
  * the cap is turned off and the 16 MB maxBuffer fails the call loudly instead.
  * No Secret is ever listed.
  */
@@ -39,7 +39,7 @@ export const LISTINGS = {
   ]),
   backups: tabList('backups', 'backups.longhorn.io', ['.metadata.name', '.status']),
   volumes: tabList('volumes', 'volumes.longhorn.io', ['.metadata.name', '.spec.size', '.status.actualSize', '.metadata.labels']),
-  recurringJobs: tabList('recurringJobs', 'recurringjobs.longhorn.io', ['.metadata.name', '.spec.task', '.spec.retain', '.spec.groups[*]', '.spec.cron']),
+  recurringJobs: tabList('recurringJobs', 'recurringjobs.longhorn.io', ['.metadata.name', '.spec']),
 } as const
 
 const val = (s: string | undefined): string | null => (s === undefined || s === '<none>' || s === '' ? null : s)
@@ -111,7 +111,10 @@ export async function collectSnapshot(): Promise<Snapshot> {
       exec(LISTINGS.volumes, ([name, size, actualSize, labels]) => ({
         name, size: num(size), actualSize: num(actualSize), recurringJobs: Object.keys(jsonMap(labels) ?? {}).filter(k => k.startsWith('recurring-job')),
       })),
-      exec(LISTINGS.recurringJobs, ([name, task, retain, groups, cron]) => ({ name, task: val(task), retain: num(retain), groups: val(groups)?.split(' ') ?? [], cron: val(cron) })),
+      exec(LISTINGS.recurringJobs, ([name, spec]) => {
+        const sp = jsonMap(spec) ?? {}
+        return { name, task: str(sp.task), retain: numOf(sp.retain), groups: Array.isArray(sp.groups) ? sp.groups.filter((g): g is string => typeof g === 'string' && g !== '') : [], cron: str(sp.cron) }
+      }),
     ]),
   ])
   const failed = lh.flatMap(r => r.status === 'rejected' ? [(r.reason as Error).message] : [])

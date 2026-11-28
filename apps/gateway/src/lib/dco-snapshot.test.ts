@@ -53,7 +53,10 @@ beforeEach(() => {
     ['bk-7', ''],
   ))
   fix('volumes.longhorn.io', tsv(['vol-a', '6000000000', '5000000000', labels], ['vol-b', '1', '0', '']))
-  fix('recurringjobs.longhorn.io', tsv(['nightly', 'backup', '7', 'default extra', '0 2 * * *']))
+  fix('recurringjobs.longhorn.io', tsv(
+    ['nightly', st({ task: 'backup', retain: 7, groups: ['default', 'extra'], cron: '0 2 * * *' })],
+    ['tabbed', st({ task: 'snapshot', retain: 3, groups: [], cron: '0\t2 * * *' })],
+  ))
 })
 
 describe('collectSnapshot', () => {
@@ -85,7 +88,10 @@ describe('collectSnapshot', () => {
     expect(bk[5].messages).toEqual({ error: 'line one\nline two\ttabbed a b c d e f g h' })
     expect(s.longhorn.items.volumes![0]).toEqual({ name: 'vol-a', size: 6000000000, actualSize: 5000000000, recurringJobs: ['recurring-job-group.longhorn.io/default', 'recurring-job.longhorn.io/nightly'] })
     expect(s.longhorn.items.volumes![1].recurringJobs).toEqual([])
-    expect(s.longhorn.items.recurringJobs).toEqual([{ name: 'nightly', task: 'backup', retain: 7, groups: ['default', 'extra'], cron: '0 2 * * *' }])
+    expect(s.longhorn.items.recurringJobs).toEqual([
+      { name: 'nightly', task: 'backup', retain: 7, groups: ['default', 'extra'], cron: '0 2 * * *' },
+      { name: 'tabbed', task: 'snapshot', retain: 3, groups: [], cron: '0\t2 * * *' },
+    ])
   })
 
   it('returns a 3000-pod listing (>256 KB) untruncated', async () => {
@@ -150,7 +156,7 @@ describe('collectSnapshot', () => {
     expect(s.longhorn.error).not.toMatch(/volumes|recurringJobs/)
     expect(s.longhorn.items.backups).toBeNull()
     expect(s.longhorn.items.volumes).toHaveLength(2)
-    expect(s.longhorn.items.recurringJobs).toHaveLength(1)
+    expect(s.longhorn.items.recurringJobs).toHaveLength(2)
     expect(s.nodes).toHaveLength(3)
     expect(s.pods).toHaveLength(4)
   })
