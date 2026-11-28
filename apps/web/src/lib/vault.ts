@@ -150,11 +150,12 @@ async function resolveVaultAdminToken(): Promise<string> {
 
 // ── Secret reader ─────────────────────────────────────────────────────────────
 
-/** Thrown by readVaultSecret when no Vault token can be resolved (retrying cannot help). */
+/** Thrown by readVaultSecret on a non-404 error status; callers treat 4xx as final and 5xx as retryable. */
 export class VaultHttpError extends Error {
   constructor(public status: number) { super(`Vault read responded ${status}`); this.name = 'VaultHttpError' }
 }
 
+/** Thrown by readVaultSecret when no Vault token can be resolved (retrying cannot help). */
 export class NoVaultTokenError extends Error {
   constructor() { super('No Vault token available'); this.name = 'NoVaultTokenError' }
 }

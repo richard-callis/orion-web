@@ -62,7 +62,7 @@ export async function loadAuthentikVaultConfig(
   const msg = (e: unknown) => (e instanceof Error ? e.message : 'error')
   const outcome = await tryLoad(path, read, (e) => console.warn(`[authentik-oidc] Vault config unavailable (${msg(e)}); using env`))
   if (outcome === 'unavailable') {
-    // Sealed/unreachable Vault recovers by itself (a missing token does not, so it is not retried).
+    // Sealed/unreachable Vault (5xx, network) recovers by itself; a missing or denied token (4xx) does not, so it is not retried.
     if (!g.__orionAuthentikVaultTimer) {
       let busy = false
       const timer = setInterval(() => {
