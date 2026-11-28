@@ -15,6 +15,7 @@ interface User {
   email: string
   role: string
   provider: string
+  hasPassword?: boolean
   lastSeen: string | null
   active: boolean
   createdAt: string
@@ -134,7 +135,7 @@ export function UsersClient({ initialUsers }: { initialUsers: User[] }) {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1">
-                      {u.provider === 'local' && (
+                      {(u.provider === 'local' || u.hasPassword) && (
                         <button
                           onClick={() => setPwUser(u)}
                           disabled={busy[u.id]}

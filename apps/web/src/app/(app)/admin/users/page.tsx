@@ -9,13 +9,14 @@ export default async function UsersPage() {
     orderBy: { createdAt: 'desc' },
     select: {
       id: true, username: true, name: true, email: true, role: true,
-      provider: true, lastSeen: true, active: true, createdAt: true,
+      provider: true, lastSeen: true, active: true, createdAt: true, passwordHash: true,
     },
   })
 
   // Serialize dates for client component
-  const users = rawUsers.map(u => ({
+  const users = rawUsers.map(({ passwordHash, ...u }) => ({
     ...u,
+    hasPassword: passwordHash != null,
     lastSeen: u.lastSeen?.toISOString() ?? null,
     createdAt: u.createdAt.toISOString(),
   }))

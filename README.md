@@ -216,6 +216,7 @@ Pushing to `main` triggers GitHub Actions that build `linux/amd64` Docker images
 | `VAULT_DOMAIN` | Domain for Vault UI | `vault.internal` |
 | `POSTGRES_PASSWORD` | PostgreSQL password | — |
 | `NEXTAUTH_SECRET` | NextAuth secret (generate with `openssl rand -base64 32`) | — |
+| `AUTHENTIK_OIDC_ISSUER` / `AUTHENTIK_OIDC_CLIENT_ID` / `AUTHENTIK_OIDC_CLIENT_SECRET` | Authentik OIDC login; all three empty = off (see [docs/AUTHENTIK_OIDC.md](docs/AUTHENTIK_OIDC.md)) | — |
 | `ORION_VERSION` | Image tag to deploy (a CI deploy pins each image itself, in `ORION_*_VERSION`) | `latest` |
 | `FALCO_WEBHOOK_SECRET` | Shared token — Falcosidekick → ORION Falco webhook | — |
 | `HOST_AGENT_WEBHOOK_SECRET` | HMAC secret — Vector → ORION host-agent webhook | — |
