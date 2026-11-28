@@ -5,41 +5,93 @@ ID token signature, `state` and `nonce`). Local username/password + TOTP stays a
 a break-glass fallback (a local account with TOTP enabled cannot currently complete the
 login page's password form, so the break-glass account should not rely on TOTP).
 
-## 1. Create the provider in Authentik
+## 1. Automated setup (recommended)
 
-1. *Applications → Providers → Create → OAuth2/OpenID Provider*.
-2. Client type **Confidential**; note the generated client ID and secret.
-3. Redirect URI (strict): `https://<orion-host>/api/auth/callback/authentik`
-4. Signing key: any key (RS256). Under *Advanced protocol settings* set **Scopes** to
-   `openid`, `email`, `profile` plus a **groups** scope mapping. Depending on the Authentik
-   version the default `profile` mapping may already emit `groups`; if not, create
-   *Customization → Property Mappings → Scope Mapping* with scope name `groups` and
-   expression `return {"groups": [g.name for g in request.user.ak_groups.all()]}`.
-   Keep **Subject mode** = *Based on the User's hashed ID* (email- or username-based modes
-   change `sub` when that attribute changes and would create a duplicate account) and keep
-   **Include claims in id_token** = on (Orion only reads ID-token claims; without `groups`
-   there, roles are left unchanged for existing users and new users get `user`).
-5. The provider must use the `authorization_code` flow with refresh tokens enabled
-   (check the field names against your Authentik version's UI).
-6. Create an Application using this provider (the slug appears in the issuer URL).
-7. Enroll MFA in Authentik's authentication flow — Orion does **not** ask OIDC users for
-   its local TOTP.
+`deploy/authentik-oidc-bootstrap.sh` creates everything in Authentik through its API and stores
+the credentials in Vault. It is optional, idempotent (re-running updates in place; existing
+objects are matched by slug/name client-side) and runs inside the `orion` container, so the stack
+must be up and Vault unsealed.
 
-## 2. Configure Orion
+1. In Authentik create an API token for a user that may manage providers, applications, flows,
+   groups and policies (*Directory → Tokens and App passwords*, intent *API*). Save it in a
+   root-only file: `install -m 600 /dev/null /root/.orion-authentik-token`, then paste the token.
+2. Run (from `deploy/`):
 
-In `deploy/.env` (a fresh install's `.env.example` already has the keys, empty):
+   ```bash
+   ./authentik-oidc-bootstrap.sh https://authentik.example.com \
+     --token-file /root/.orion-authentik-token \
+     [--slug orion] [--group "authentik Admins"] [--vault-path secret/orion/authentik-oidc]
+   ```
+
+   The token can instead be piped on stdin (`printf %s "$TOKEN" | ./authentik-oidc-bootstrap.sh <url>`).
+   It is never taken from argv and never printed. `deploy/bootstrap.sh` runs the same step when
+   `AUTHENTIK_BOOTSTRAP_URL` and `AUTHENTIK_BOOTSTRAP_TOKEN_FILE` are set in `deploy/.env`
+   (optionally `AUTHENTIK_BOOTSTRAP_SLUG` / `AUTHENTIK_BOOTSTRAP_GROUP`), and skips it otherwise.
+3. Exit code 0 means Vault was updated and Orion must reload it (`bootstrap.sh` restarts `orion` and
+   `orion-worker` for you; by hand: `docker compose restart orion orion-worker`). 3 means nothing changed.
+
+It creates, with the default authorization (explicit consent) and invalidation flows and the
+default self-signed certificate as signing key:
+
+- an OAuth2 provider `<slug>-oidc`: confidential client, `grant_types` explicitly
+  `["authorization_code","refresh_token"]` (the API otherwise leaves it empty and authorize fails
+  with "Invalid grant_type for provider"), strict redirect URI
+  `https://<ORION_DOMAIN>/api/auth/callback/authentik`, subject mode *hashed user ID*, claims in the
+  ID token, and the `openid`, `profile` and a custom email scope mapping;
+- the scope mapping `ORION: email (email_verified true)`, which returns the user's email with
+  `email_verified: true` (Authentik's default email mapping hard-codes `false`). **This trusts
+  Authentik admins**: whoever can edit a user's email in Authentik can make Orion see it as
+  verified. It only matters if `AUTHENTIK_OIDC_LINK_BY_EMAIL` is on (see section 4);
+- an application `ORION` (slug `orion` by default) bound to the provider;
+- a policy binding to the operator-chosen group (default `authentik Admins`), so only members can
+  log in. The group must already exist. Bindings from earlier runs with a different group are left in place.
+
+Needs an Authentik version with `redirect_uris` as `{matching_mode, url}` objects and the
+`/propertymappings/provider/scope/` endpoint (2024.2 or later).
+
+Vault secret (KV v2) at `secret/orion/authentik-oidc`: `issuer`
+(`https://<authentik-host>/application/o/<slug>/`), `client_id`, `client_secret`.
+
+## 2. Manual setup (fallback)
+
+Do this when the API route is not an option. Create in Authentik:
+
+1. *Applications → Providers → Create → OAuth2/OpenID Provider*, client type **Confidential**.
+2. Redirect URI (strict): `https://<orion-host>/api/auth/callback/authentik`
+3. Scopes `openid`, `email`, `profile` (plus `groups` if your `profile` mapping does not emit it:
+   scope mapping `return {"groups": [g.name for g in request.user.ak_groups.all()]}`). Keep **Subject
+   mode** = *Based on the User's hashed ID* and **Include claims in id_token** = on.
+4. Allowed grant types must include `authorization_code` and `refresh_token`.
+5. Create an Application using the provider and bind your admin group to it.
+6. Enroll MFA in Authentik's authentication flow; Orion does **not** ask OIDC users for its local TOTP.
+
+Then give Orion the values, preferably in Vault (`vault kv put secret/orion/authentik-oidc
+issuer=... client_id=... client_secret=-` with the secret on stdin) or in `deploy/.env`:
 
 | Key | Value |
 | --- | --- |
 | `AUTHENTIK_OIDC_ISSUER` | `https://<authentik-host>/application/o/<slug>/` |
-| `AUTHENTIK_OIDC_CLIENT_ID` | client ID from step 1 |
-| `AUTHENTIK_OIDC_CLIENT_SECRET` | client secret from step 1 (secret; never stored in the DB) |
+| `AUTHENTIK_OIDC_CLIENT_ID` | client ID |
+| `AUTHENTIK_OIDC_CLIENT_SECRET` | client secret (never stored in the DB) |
 
-Run `docker compose up -d orion orion-worker` (a plain restart does not reload `.env`).
-All three empty/missing = provider off and the button is hidden.
-`AUTHENTIK_OIDC_LINK_BY_EMAIL` is optional and off by default (see section 3).
+## 3. How Orion resolves the config
 
-Before setting the keys, check `/admin/sso`: an existing `OIDCProvider` row's `groupMapping`
+At startup Orion reads `secret/orion/authentik-oidc` from Vault (override the path with
+`AUTHENTIK_OIDC_VAULT_PATH`). If it has a complete `issuer`/`client_id`/`client_secret`, those are
+used; otherwise the three `AUTHENTIK_OIDC_*` env values are used. Neither complete = provider off
+and the button is hidden. The secret is never written to the DB or logged. Vault is read once at
+start (retried for ~12s if it is not reachable yet), so after changing it run
+`docker compose up -d orion orion-worker`. If Vault is down at start, Orion silently uses the env
+values (or turns the provider off if you removed them) until the next restart.
+
+**Migrating an install that has the values in `.env`:** run the automated step above (it creates or
+reuses the Authentik provider and writes Vault; or write the three existing values into Vault by
+hand), restart Orion, confirm *Sign in with Authentik* still works, then delete the three
+`AUTHENTIK_OIDC_ISSUER/CLIENT_ID/CLIENT_SECRET` lines from `deploy/.env`. Vault wins when both
+exist, so do not leave stale values in Vault. If the automated step created a new provider, the old
+one in Authentik can be deleted.
+
+Before enabling, check `/admin/sso`: an existing `OIDCProvider` row's `groupMapping`
 overrides the default mapping below.
 
 The `OIDCProvider.enabled` flag (set via `PATCH /api/admin/sso`; there is no toggle on the
@@ -48,7 +100,7 @@ existing sessions last until expiry (up to 8h). It is the same flag that gates t
 `x-authentik-*` header mode, so disabling OIDC also disables header mode, and re-enabling
 it re-arms header mode (turn `headerMode` off separately if you do not want that).
 
-## 3. Users and roles
+## 4. Users and roles
 
 - Users are identified by the OIDC `sub` (stored in `User.externalId`, `provider=authentik`).
   A changed Authentik username or email never re-points a linked account.
@@ -56,10 +108,11 @@ it re-arms header mode (turn `headerMode` off separately if you do not want that
   account, the new user gets a placeholder email instead). Setting
   `AUTHENTIK_OIDC_LINK_BY_EMAIL=true` instead links to an existing local user when the ID
   token has `email_verified: true` and the email matches. **Caveat:** Authentik's default
-  `email` scope mapping reports `email_verified` as always true and its default user-settings
-  flow lets users edit their own email, so any Authentik user could claim a local account's
-  address and take it over. Enable this only with a custom `email` scope mapping that returns
-  a real verification state and with the email field removed from the user-settings flow.
+  `email` scope mapping hard-codes `email_verified` (false in current releases, so linking would
+  never match), and the automated setup replaces it with a mapping that always reports true. Its
+  default user-settings flow also lets users edit their own email, so with linking on any Authentik
+  user could claim a local account's address and take it over. Enable linking only after removing
+  the email field from the user-settings flow, and only if you trust every Authentik admin to set emails.
   If the matching local user is already bound to another external identity, or the email
   matches more than one account, the login is denied.
   Linking keeps the local password, so break-glass login still works (the admin Users page

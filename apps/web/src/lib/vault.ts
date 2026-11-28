@@ -144,6 +144,26 @@ async function resolveVaultAdminToken(): Promise<string> {
   )
 }
 
+// ── Secret reader ─────────────────────────────────────────────────────────────
+
+/**
+ * Read a Vault KV v2 secret. Returns null when the secret does not exist; throws on any
+ * other failure (Vault down/sealed, no token) so callers can tell "absent" from "unavailable".
+ * Uses the wizard-minted admin token, else the VAULT_TOKEN the container already holds.
+ * Read-only and never agent-reachable, so unlike writes it needs no VAULT_ALLOW_ENV_TOKEN.
+ */
+export async function readVaultSecret(kvPath: string): Promise<Record<string, string> | null> {
+  let token: string | undefined
+  try { token = await resolveVaultAdminToken() } catch { token = process.env.VAULT_TOKEN }
+  if (!token) throw new Error('No Vault token available')
+  const normalised = kvPath.replace(/^secret\/(data\/)?/, '')
+  const res = await vaultFetch(`${VAULT_ADDR}/v1/secret/data/${normalised}`, { headers: { 'X-Vault-Token': token } })
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`Vault read responded ${res.status}`)
+  const body = await res.json() as { data?: { data?: Record<string, string> | null } }
+  return body.data?.data ?? null
+}
+
 // ── Secret writer ─────────────────────────────────────────────────────────────
 
 /**

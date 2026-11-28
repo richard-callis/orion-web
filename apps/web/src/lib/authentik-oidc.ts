@@ -1,15 +1,19 @@
 import type { OAuthConfig } from 'next-auth/providers/oauth'
 import { prisma } from './db'
+import { readVaultSecret } from './vault'
 
 /**
  * Authentik OIDC login (authorization code + PKCE; NextAuth verifies the ID token).
  *
- * Config comes from env (injected by deploy/docker-compose.yml from deploy/.env):
+ * Config is read from Vault at startup (loadAuthentikVaultConfig, called from instrumentation.ts)
+ * at AUTHENTIK_OIDC_VAULT_PATH (default secret/orion/authentik-oidc: issuer, client_id,
+ * client_secret), written by deploy/authentik-oidc-bootstrap.sh. If Vault has no complete config,
+ * it falls back to env (injected by deploy/docker-compose.yml from deploy/.env):
  *   AUTHENTIK_OIDC_ISSUER         e.g. https://authentik.example.com/application/o/orion/
  *   AUTHENTIK_OIDC_CLIENT_ID
  *   AUTHENTIK_OIDC_CLIENT_SECRET  (secret — never stored in the DB, never logged)
  *   AUTHENTIK_OIDC_LINK_BY_EMAIL  optional; 'true' allows first-login linking to a local user by verified email
- * Any of the three empty = provider off. OIDCProvider.enabled=false is a runtime kill
+ * No complete source = provider off. OIDCProvider.enabled=false is a runtime kill
  * switch; OIDCProvider.groupMapping overrides the default group → role mapping.
  */
 
@@ -21,12 +25,52 @@ export const DEFAULT_GROUP_MAPPING: Record<string, OrionRole> = { 'authentik Adm
 
 export interface AuthentikConfig { issuer: string; clientId: string; clientSecret: string; linkByEmail: boolean }
 
-export function getAuthentikConfig(env: Record<string, string | undefined> = process.env): AuthentikConfig | null {
+type OidcCreds = Pick<AuthentikConfig, 'issuer' | 'clientId' | 'clientSecret'>
+
+// Shared via globalThis: instrumentation.ts and the route bundles are separate module graphs.
+const g = globalThis as { __orionAuthentikVault?: OidcCreds | null }
+
+export const DEFAULT_VAULT_PATH = 'secret/orion/authentik-oidc'
+
+/** Load issuer/client_id/client_secret from Vault into the process cache (null = none/unavailable).
+ *  Vault being down or sealed at boot is retried briefly, then logged (never the values) and
+ *  env is used; an absent secret returns immediately. */
+export async function loadAuthentikVaultConfig(
+  env: Record<string, string | undefined> = process.env,
+  read: typeof readVaultSecret = readVaultSecret,
+  retryDelayMs = 3000,
+): Promise<OidcCreds | null> {
+  const path = env.AUTHENTIK_OIDC_VAULT_PATH?.trim() || DEFAULT_VAULT_PATH
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      const d = await read(path)
+      const issuer = d?.issuer?.trim(), clientId = d?.client_id?.trim(), clientSecret = d?.client_secret?.trim()
+      g.__orionAuthentikVault = issuer && clientId && clientSecret ? { issuer, clientId, clientSecret } : null
+      return g.__orionAuthentikVault
+    } catch (e) {
+      // No token → Vault can't be asked at all; don't wait for it.
+      if (attempt === 5 || !env.VAULT_TOKEN) {
+        console.warn(`[authentik-oidc] Vault config unavailable (${e instanceof Error ? e.message : 'error'}); using env`)
+        break
+      }
+      await new Promise((r) => setTimeout(r, retryDelayMs))
+    }
+  }
+  g.__orionAuthentikVault = null
+  return null
+}
+
+/** Vault-first, then AUTHENTIK_OIDC_* env. Null = provider off. */
+export function getAuthentikConfig(
+  env: Record<string, string | undefined> = process.env,
+  vault: OidcCreds | null = g.__orionAuthentikVault ?? null,
+): AuthentikConfig | null {
+  // Opt-in: Authentik's email_verified is not trustworthy by default (see docs/AUTHENTIK_OIDC.md).
+  const linkByEmail = env.AUTHENTIK_OIDC_LINK_BY_EMAIL?.trim().toLowerCase() === 'true'
+  if (vault) return { ...vault, linkByEmail }
   const issuer = env.AUTHENTIK_OIDC_ISSUER?.trim()
   const clientId = env.AUTHENTIK_OIDC_CLIENT_ID?.trim()
   const clientSecret = env.AUTHENTIK_OIDC_CLIENT_SECRET?.trim()
-  // Opt-in: Authentik's email_verified is not trustworthy by default (see docs/AUTHENTIK_OIDC.md).
-  const linkByEmail = env.AUTHENTIK_OIDC_LINK_BY_EMAIL?.trim().toLowerCase() === 'true'
   return issuer && clientId && clientSecret ? { issuer, clientId, clientSecret, linkByEmail } : null
 }
 
@@ -54,7 +98,7 @@ export interface AuthentikClaims {
   groups?: unknown
 }
 
-/** Provider is offered only when env is complete and the DB row (if any) is not disabled. */
+/** Provider is offered only when config (Vault or env) is complete and the DB row (if any) is not disabled. */
 export async function isAuthentikEnabled(): Promise<boolean> {
   if (!getAuthentikConfig()) return false
   const row = await prisma.oIDCProvider.findFirst({ select: { enabled: true } })

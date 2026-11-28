@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const db = vi.hoisted(() => ({
   user: { findFirst: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
@@ -6,8 +6,11 @@ const db = vi.hoisted(() => ({
 }))
 vi.mock('./db', () => ({ prisma: db }))
 
+vi.mock('./vault', () => ({ readVaultSecret: vi.fn() }))
+
 import {
   getAuthentikConfig, authentikProviders, isAuthentikEnabled, mapGroupsToRole, resolveAuthentikUser,
+  loadAuthentikVaultConfig, DEFAULT_VAULT_PATH,
 } from './authentik-oidc'
 
 const row = (o: Record<string, unknown> = {}) => ({
@@ -22,6 +25,58 @@ beforeEach(() => {
   db.user.findUnique.mockResolvedValue(null)
   db.user.update.mockImplementation(async ({ where, data }) => row({ id: where.id, ...data }))
   db.user.create.mockImplementation(async ({ data }) => row({ id: 'new', ...data }))
+})
+
+describe('Vault-first config', () => {
+  const env = { AUTHENTIK_OIDC_ISSUER: 'https://env.example.com/application/o/orion/', AUTHENTIK_OIDC_CLIENT_ID: 'env-id', AUTHENTIK_OIDC_CLIENT_SECRET: 'env-secret', VAULT_TOKEN: 't' }
+  const secret = { issuer: 'https://sso.example.com/application/o/orion/', client_id: 'vault-id', client_secret: 'vault-secret' }
+  const g = globalThis as { __orionAuthentikVault?: unknown }
+  afterEach(() => { delete g.__orionAuthentikVault })
+
+  it('prefers Vault over env and reads the default path', async () => {
+    const read = vi.fn().mockResolvedValue(secret)
+    await loadAuthentikVaultConfig(env, read)
+    expect(read).toHaveBeenCalledWith(DEFAULT_VAULT_PATH)
+    expect(getAuthentikConfig(env)).toMatchObject({ issuer: secret.issuer, clientId: 'vault-id', clientSecret: 'vault-secret' })
+    expect(authentikProviders(env)[0]).toMatchObject({ clientId: 'vault-id', wellKnown: expect.stringContaining('sso.example.com') })
+  })
+
+  it('honours AUTHENTIK_OIDC_VAULT_PATH', async () => {
+    const read = vi.fn().mockResolvedValue(secret)
+    await loadAuthentikVaultConfig({ ...env, AUTHENTIK_OIDC_VAULT_PATH: 'secret/custom' }, read)
+    expect(read).toHaveBeenCalledWith('secret/custom')
+  })
+
+  it.each([
+    ['absent secret', null],
+    ['incomplete secret', { issuer: secret.issuer, client_id: 'x' }],
+  ])('falls back to env for %s', async (_n, value) => {
+    await loadAuthentikVaultConfig(env, vi.fn().mockResolvedValue(value))
+    expect(getAuthentikConfig(env)).toMatchObject({ clientId: 'env-id', clientSecret: 'env-secret' })
+  })
+
+  it('retries when Vault is unavailable, then falls back to env without logging values', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const read = vi.fn().mockRejectedValue(new Error('Vault read responded 503'))
+    await loadAuthentikVaultConfig(env, read, 0)
+    expect(read).toHaveBeenCalledTimes(5)
+    expect(getAuthentikConfig(env)?.clientId).toBe('env-id')
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/env-secret|vault-secret/)
+    warn.mockRestore()
+  })
+
+  it('does not retry without a VAULT_TOKEN', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const read = vi.fn().mockRejectedValue(new Error('No Vault token available'))
+    await loadAuthentikVaultConfig({}, read, 0)
+    expect(read).toHaveBeenCalledTimes(1)
+  })
+
+  it('provider is off when neither Vault nor env is configured', async () => {
+    await loadAuthentikVaultConfig({ VAULT_TOKEN: 't' }, vi.fn().mockResolvedValue(null))
+    expect(getAuthentikConfig({})).toBeNull()
+    expect(authentikProviders({})).toEqual([])
+  })
 })
 
 describe('provider config', () => {

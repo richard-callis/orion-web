@@ -69,6 +69,11 @@ export async function register() {
     // Security configuration first, and fatal — before any seeding touches the DB.
     validateSecurityEnv()
 
+    await step('loadAuthentikVaultConfig', async () => {
+      // Before the first auth request builds the NextAuth providers (Vault-first, env fallback).
+      const { loadAuthentikVaultConfig } = await import('./lib/authentik-oidc')
+      await loadAuthentikVaultConfig()
+    })
     await step('ensureSetupToken', async () => {
       const { ensureSetupToken } = await import('./lib/setup-token')
       await ensureSetupToken()
