@@ -27,6 +27,9 @@ authOptions (NextAuthOptions)
   │    ├─ prisma.user.update({ lastSeen: new Date() })
   │    └─ returns { id, username, email, name, role }
   │
+  ├─ authentikProviders() (lib/authentik-oidc.ts) → 'authentik' OIDC provider, only when AUTHENTIK_OIDC_* env is set
+  │    └─ signIn callback (provider=authentik): isAuthentikEnabled → resolveAuthentikUser (link by sub, role from groups) → audit
+  │
   ├─ jwt callback(token, user)
   │    ├─ on sign-in: set token.{id, username, role}
   │    └─ on refresh: prisma.user.findUnique(id)  → verify still active
