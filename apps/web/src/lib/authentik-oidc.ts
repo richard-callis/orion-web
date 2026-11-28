@@ -141,11 +141,13 @@ export async function resolveAuthentikUser(
       const base = (claims.preferred_username || email?.split('@')[0] || `authentik-${sub.slice(0, 8)}`).slice(0, 60)
       let username = base
       for (let i = 2; await prisma.user.findUnique({ where: { username }, select: { id: true } }); i++) username = `${base}-${i}`
+      // Unverified/missing/already-taken email must not collide with (or claim) a real address.
+      const emailFree = claims.email_verified === true && !!email
+        && !(await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } }, select: { id: true } }))
       user = await prisma.user.create({
         data: {
           username, name, role, provider: 'authentik', externalId: sub, lastSeen: now,
-          // Unverified/missing email must not collide with (or claim) a real address.
-          email: claims.email_verified === true && email ? email : `${sub}@oidc.invalid`,
+          email: emailFree ? email : `${sub}@oidc.invalid`,
         },
       })
       created = true

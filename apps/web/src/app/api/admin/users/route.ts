@@ -21,11 +21,10 @@ export async function GET() {
   }
   const users = await prisma.user.findMany({
     orderBy: { createdAt: 'desc' },
-    select: { ...SAFE_USER_SELECT, passwordHash: true },
+    select: SAFE_USER_SELECT,
     take: 500,
   })
-  // hasPassword lets the UI offer "Set password" for linked (e.g. OIDC) accounts that keep a local password.
-  return NextResponse.json(users.map(({ passwordHash, ...u }) => ({ ...u, hasPassword: passwordHash != null })))
+  return NextResponse.json(users)
 }
 
 export async function POST(req: NextRequest) {

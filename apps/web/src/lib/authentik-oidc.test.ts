@@ -100,6 +100,13 @@ describe('resolveAuthentikUser', () => {
     expect(r).toMatchObject({ ok: true, created: true, linked: false })
   })
 
+  it('uses a placeholder email when a new user\'s verified email already belongs to another account', async () => {
+    db.user.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'u1' })
+    const r = await resolveAuthentikUser({ sub: 'sub-x', email: 'alice@example.com', email_verified: true }, null)
+    expect(db.user.create.mock.calls[0][0].data).toMatchObject({ email: 'sub-x@oidc.invalid' })
+    expect(r).toMatchObject({ ok: true, created: true })
+  })
+
   it('links a local user by verified email on first login (opt-in) and keeps the password', async () => {
     db.user.findMany.mockResolvedValueOnce([row({ passwordHash: 'x' })])
     const r = await resolveAuthentikUser({ sub: 'sub-2', email: 'Alice@Example.com', email_verified: true, groups: ['authentik Admins'] }, null, { linkByEmail: true })

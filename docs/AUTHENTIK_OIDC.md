@@ -52,7 +52,8 @@ it re-arms header mode (turn `headerMode` off separately if you do not want that
 
 - Users are identified by the OIDC `sub` (stored in `User.externalId`, `provider=authentik`).
   A changed Authentik username or email never re-points a linked account.
-- By default a first OIDC login always creates a new user. Setting
+- By default a first OIDC login always creates a new user (if its verified email already belongs to another
+  account, the new user gets a placeholder email instead). Setting
   `AUTHENTIK_OIDC_LINK_BY_EMAIL=true` instead links to an existing local user when the ID
   token has `email_verified: true` and the email matches. **Caveat:** Authentik's default
   `email` scope mapping reports `email_verified` as always true and its default user-settings
