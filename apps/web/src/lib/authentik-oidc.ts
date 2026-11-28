@@ -1,6 +1,6 @@
 import type { OAuthConfig } from 'next-auth/providers/oauth'
 import { prisma } from './db'
-import { readVaultSecret } from './vault'
+import { readVaultSecret, NoVaultTokenError } from './vault'
 
 /**
  * Authentik OIDC login (authorization code + PKCE; NextAuth verifies the ID token).
@@ -28,36 +28,55 @@ export interface AuthentikConfig { issuer: string; clientId: string; clientSecre
 type OidcCreds = Pick<AuthentikConfig, 'issuer' | 'clientId' | 'clientSecret'>
 
 // Shared via globalThis: instrumentation.ts and the route bundles are separate module graphs.
-const g = globalThis as { __orionAuthentikVault?: OidcCreds | null }
+const g = globalThis as { __orionAuthentikVault?: OidcCreds | null; __orionAuthentikVaultTimer?: ReturnType<typeof setInterval> }
 
 export const DEFAULT_VAULT_PATH = 'secret/orion/authentik-oidc'
 
-/** Load issuer/client_id/client_secret from Vault into the process cache (null = none/unavailable).
- *  Vault being down or sealed at boot is retried briefly, then logged (never the values) and
- *  env is used; an absent secret returns immediately. */
+const RETRY_MS = 15_000
+const s = (v: unknown) => (typeof v === 'string' ? v.trim() : undefined)
+
+type LoadOutcome = 'done' | 'unavailable' | 'no-token'
+
+async function tryLoad(path: string, read: typeof readVaultSecret, onError: (e: unknown) => void): Promise<LoadOutcome> {
+  try {
+    const d = await read(path)
+    const issuer = s(d?.issuer), clientId = s(d?.client_id), clientSecret = s(d?.client_secret)
+    g.__orionAuthentikVault = issuer && clientId && clientSecret ? { issuer, clientId, clientSecret } : null
+    return 'done'
+  } catch (e) {
+    onError(e)
+    return e instanceof NoVaultTokenError ? 'no-token' : 'unavailable'
+  }
+}
+
+/** Load issuer/client_id/client_secret from Vault into the process cache. A definite answer
+ *  (secret absent or incomplete) is cached as null. If Vault is unavailable (down, sealed after a
+ *  host reboot) this returns at once, so boot is not blocked, and keeps retrying in the background
+ *  until Vault answers; env is used meanwhile. Errors are logged without values. */
 export async function loadAuthentikVaultConfig(
   env: Record<string, string | undefined> = process.env,
-  read: typeof readVaultSecret = readVaultSecret,
-  retryDelayMs = 3000,
+  read: typeof readVaultSecret = (p) => readVaultSecret(p, { allowEnvToken: true }),
+  retryMs = RETRY_MS,
 ): Promise<OidcCreds | null> {
   const path = env.AUTHENTIK_OIDC_VAULT_PATH?.trim() || DEFAULT_VAULT_PATH
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    try {
-      const d = await read(path)
-      const issuer = d?.issuer?.trim(), clientId = d?.client_id?.trim(), clientSecret = d?.client_secret?.trim()
-      g.__orionAuthentikVault = issuer && clientId && clientSecret ? { issuer, clientId, clientSecret } : null
-      return g.__orionAuthentikVault
-    } catch (e) {
-      // No token → Vault can't be asked at all; don't wait for it.
-      if (attempt === 5 || !env.VAULT_TOKEN) {
-        console.warn(`[authentik-oidc] Vault config unavailable (${e instanceof Error ? e.message : 'error'}); using env`)
-        break
-      }
-      await new Promise((r) => setTimeout(r, retryDelayMs))
+  const msg = (e: unknown) => (e instanceof Error ? e.message : 'error')
+  const outcome = await tryLoad(path, read, (e) => console.warn(`[authentik-oidc] Vault config unavailable (${msg(e)}); using env`))
+  if (outcome === 'unavailable') {
+    // Sealed/unreachable Vault recovers by itself (a missing token does not, so it is not retried).
+    if (!g.__orionAuthentikVaultTimer) {
+      let busy = false
+      const timer = setInterval(() => {
+        if (busy) return
+        busy = true
+        tryLoad(path, read, () => {}).then((o) => {
+          if (o !== 'unavailable') { clearInterval(timer); g.__orionAuthentikVaultTimer = undefined }
+        }).finally(() => { busy = false })
+      }, retryMs)
+      timer.unref?.()
+      g.__orionAuthentikVaultTimer = timer
     }
   }
-  g.__orionAuthentikVault = null
-  return null
+  return g.__orionAuthentikVault ?? null
 }
 
 /** Vault-first, then AUTHENTIK_OIDC_* env. Null = provider off. */

@@ -10,12 +10,15 @@ login page's password form, so the break-glass account should not rely on TOTP).
 `deploy/authentik-oidc-bootstrap.sh` creates everything in Authentik through its API and stores
 the credentials in Vault. It is optional, idempotent (re-running updates in place; existing
 objects are matched by slug/name client-side) and runs inside the `orion` container, so the stack
-must be up and Vault unsealed.
+must be up and Vault unsealed. It writes to Vault with the `VAULT_TOKEN` in `deploy/.env`, which
+therefore must be set and have write access on `secret/orion/*` (without it the step is skipped).
 
 1. In Authentik create an API token for a user that may manage providers, applications, flows,
-   groups and policies (*Directory → Tokens and App passwords*, intent *API*). Save it in a
-   root-only file: `install -m 600 /dev/null /root/.orion-authentik-token`, then paste the token.
-2. Run (from `deploy/`):
+   groups, policies, property mappings and certificate key pairs (read)
+   (*Directory → Tokens and App passwords*, intent *API*). Save it in a
+   root-only file (owned by root, mode 600): `install -m 600 /dev/null /root/.orion-authentik-token`,
+   then paste the token.
+2. Run (from `deploy/`). Use the public Authentik URL: it becomes the OIDC issuer.
 
    ```bash
    ./authentik-oidc-bootstrap.sh https://authentik.example.com \
@@ -27,8 +30,11 @@ must be up and Vault unsealed.
    It is never taken from argv and never printed. `deploy/bootstrap.sh` runs the same step when
    `AUTHENTIK_BOOTSTRAP_URL` and `AUTHENTIK_BOOTSTRAP_TOKEN_FILE` are set in `deploy/.env`
    (optionally `AUTHENTIK_BOOTSTRAP_SLUG` / `AUTHENTIK_BOOTSTRAP_GROUP`), and skips it otherwise.
-3. Exit code 0 means Vault was updated and Orion must reload it (`bootstrap.sh` restarts `orion` and
-   `orion-worker` for you; by hand: `docker compose restart orion orion-worker`). 3 means nothing changed.
+   Without `--token-file` on a terminal the token is prompted for (hidden). After a successful run the
+   `AUTHENTIK_BOOTSTRAP_*` lines and the token file can be removed (`bootstrap.sh` then skips the
+   step); keep them only if you want every deploy to re-converge Authentik.
+3. Exit code 0 means Vault was updated and Orion must reload it (`bootstrap.sh` restarts `orion` for
+   you; by hand: `docker compose restart orion`). 3 means nothing changed.
 
 It creates, with the default authorization (explicit consent) and invalidation flows and the
 default self-signed certificate as signing key:
@@ -41,13 +47,16 @@ default self-signed certificate as signing key:
 - the scope mapping `ORION: email (email_verified true)`, which returns the user's email with
   `email_verified: true` (Authentik's default email mapping hard-codes `false`). **This trusts
   Authentik admins**: whoever can edit a user's email in Authentik can make Orion see it as
-  verified. It only matters if `AUTHENTIK_OIDC_LINK_BY_EMAIL` is on (see section 4);
-- an application `ORION` (slug `orion` by default) bound to the provider;
+  verified. It also means new OIDC users are created with the email Authentik reports, and with
+  `AUTHENTIK_OIDC_LINK_BY_EMAIL` on it is used for account linking (see section 4);
+- an application `ORION` (slug `orion` by default) bound to the provider. On a re-run an existing
+  provider keeps any extra property mappings you added (e.g. a `groups` scope) and its name; an
+  application whose provider is not OAuth2 is refused (choose another `--slug`);
 - a policy binding to the operator-chosen group (default `authentik Admins`), so only members can
   log in. The group must already exist. Bindings from earlier runs with a different group are left in place.
 
 Needs an Authentik version with `redirect_uris` as `{matching_mode, url}` objects and the
-`/propertymappings/provider/scope/` endpoint (2024.2 or later).
+`/propertymappings/provider/scope/` endpoint (Authentik 2024.10 or later).
 
 Vault secret (KV v2) at `secret/orion/authentik-oidc`: `issuer`
 (`https://<authentik-host>/application/o/<slug>/`), `client_id`, `client_secret`.
@@ -79,15 +88,19 @@ issuer=... client_id=... client_secret=-` with the secret on stdin) or in `deplo
 At startup Orion reads `secret/orion/authentik-oidc` from Vault (override the path with
 `AUTHENTIK_OIDC_VAULT_PATH`). If it has a complete `issuer`/`client_id`/`client_secret`, those are
 used; otherwise the three `AUTHENTIK_OIDC_*` env values are used. Neither complete = provider off
-and the button is hidden. The secret is never written to the DB or logged. Vault is read once at
-start (retried for ~12s if it is not reachable yet), so after changing it run
-`docker compose up -d orion orion-worker`. If Vault is down at start, Orion silently uses the env
-values (or turns the provider off if you removed them) until the next restart.
+and the button is hidden. The secret is never written to the DB or logged. Vault is read at start;
+if it is sealed or unreachable then (e.g. after a host reboot), Orion logs a warning, uses the env
+values (or has the provider off if you removed them) only until Vault answers, and retries in the
+background every 15s, so the Vault config appears without a restart. Once read it is cached, so
+after changing the secret run `docker compose restart orion` (`orion-worker` does not read it).
+The token used is the wizard-minted admin token, else `VAULT_TOKEN`.
+
 
 **Migrating an install that has the values in `.env`:** run the automated step above (it creates or
 reuses the Authentik provider and writes Vault; or write the three existing values into Vault by
 hand), restart Orion, confirm *Sign in with Authentik* still works, then delete the three
-`AUTHENTIK_OIDC_ISSUER/CLIENT_ID/CLIENT_SECRET` lines from `deploy/.env`. Vault wins when both
+`AUTHENTIK_OIDC_ISSUER/CLIENT_ID/CLIENT_SECRET` lines from `deploy/.env` and run
+`docker compose up -d orion` so the container drops the old env values. Vault wins when both
 exist, so do not leave stale values in Vault. If the automated step created a new provider, the old
 one in Authentik can be deleted.
 

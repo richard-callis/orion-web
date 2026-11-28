@@ -4,7 +4,7 @@ const db = vi.hoisted(() => ({ systemSetting: { findUnique: vi.fn() } }))
 vi.mock('./db', () => ({ prisma: db }))
 vi.mock('./encryption', () => ({ PREFIX: 'enc:', decrypt: () => 'admin-token' }))
 
-import { readVaultSecret } from './vault'
+import { readVaultSecret, NoVaultTokenError } from './vault'
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status })
 
@@ -29,12 +29,22 @@ describe('readVaultSecret', () => {
     await expect(readVaultSecret('x')).rejects.toThrow(/503/)
   })
 
-  it('falls back to VAULT_TOKEN when no admin token is configured, and fails without any', async () => {
+  it('does not use VAULT_TOKEN unless the caller opts in, and then only without an admin token setting', async () => {
     db.systemSetting.findUnique.mockResolvedValue(null)
     vi.stubEnv('VAULT_TOKEN', 'env-token')
-    await readVaultSecret('x')
+    await expect(readVaultSecret('x')).rejects.toBeInstanceOf(NoVaultTokenError)
+    expect(fetch).not.toHaveBeenCalled()
+    await readVaultSecret('x', { allowEnvToken: true })
     expect(((vi.mocked(fetch).mock.calls[0][1] as RequestInit).headers as Record<string, string>)['X-Vault-Token']).toBe('env-token')
     vi.stubEnv('VAULT_TOKEN', '')
-    await expect(readVaultSecret('x')).rejects.toThrow(/token/i)
+    await expect(readVaultSecret('x', { allowEnvToken: true })).rejects.toBeInstanceOf(NoVaultTokenError)
+  })
+
+  it('does not swallow an unencrypted admin token by falling back to VAULT_TOKEN', async () => {
+    db.systemSetting.findUnique.mockResolvedValue({ value: 'plaintext' })
+    vi.stubEnv('VAULT_TOKEN', 'env-token')
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(readVaultSecret('x', { allowEnvToken: true })).rejects.toThrow(/encrypted/)
+    expect(fetch).not.toHaveBeenCalled()
   })
 })

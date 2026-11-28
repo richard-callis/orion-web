@@ -247,8 +247,6 @@ export const authOptions: NextAuthOptions = {
         }
       },
     }),
-    // Authentik OIDC — empty unless AUTHENTIK_OIDC_* env is fully set (see authentik-oidc.ts)
-    ...authentikProviders(),
   ],
   callbacks: {
     async signIn({ user, account, profile }) {
@@ -347,6 +345,11 @@ export const authOptions: NextAuthOptions = {
     },
   },
 }
+
+// Authentik OIDC provider is late-bound: it appears once its Vault config has loaded (authentik-oidc.ts),
+// which can be after boot if Vault was sealed. NextAuth reads options.providers on every request.
+const baseProviders = authOptions.providers
+Object.defineProperty(authOptions, 'providers', { enumerable: true, get: () => [...baseProviders, ...authentikProviders()] })
 
 /**
  * SOC2 [SSO-001]: Validate HMAC signature on SSO headers.

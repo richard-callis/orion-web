@@ -1,9 +1,12 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 // @ts-expect-error plain ESM installer script (deploy/), no type declarations
 import * as installer from '../../../../../deploy/authentik-oidc.mjs'
 
 type Obj = Record<string, unknown> & { pk: string | number }
-const { AuthentikApi, provisionAuthentik, storeInVault, providerPayload, EMAIL_MAPPING_NAME } = installer
+const { AuthentikApi, provisionAuthentik, storeInVault, providerPayload, EMAIL_MAPPING_NAME, readToken, main, vaultRequester } = installer
 
 /** In-memory Authentik that ignores query filters (like the real /core/applications/?slug=). */
 function fakeAuthentik(seed: Record<string, Obj[]> = {}) {
@@ -39,7 +42,7 @@ function fakeAuthentik(seed: Record<string, Obj[]> = {}) {
     }
     return res(404, { detail: 'nope' })
   })
-  return { api: new AuthentikApi('https://sso.example.com/', 'tok', fetchImpl), db, calls, fetchImpl }
+  return { api: new AuthentikApi('https://sso.example.com/', 'tok-s3cr3t', fetchImpl), db, calls, fetchImpl }
 }
 
 const opts = { orionHost: 'orion.example.com' }
@@ -69,13 +72,30 @@ describe('Authentik provisioning payloads', () => {
     expect(calls.find((c) => c.path === '/policies/bindings/' && c.method === 'POST')!.body).toMatchObject({ group: 'g-admins', target: db['/core/applications/'][0].pk })
   })
 
-  it('fails clearly when the group does not exist, and never sends the token anywhere but the header', async () => {
-    const { api, fetchImpl } = fakeAuthentik({ '/core/groups/': [] })
+  it('fails clearly when the group does not exist', async () => {
+    const { api } = fakeAuthentik({ '/core/groups/': [] })
     await expect(provisionAuthentik(api, opts)).rejects.toThrow(/group "authentik Admins" not found/)
+  })
+
+  it('sends the token only in the Authorization header, on every request', async () => {
+    const { api, fetchImpl } = fakeAuthentik()
+    await provisionAuthentik(api, opts)
+    expect(fetchImpl.mock.calls.length).toBeGreaterThan(5)
     for (const [url, init] of fetchImpl.mock.calls) {
-      expect(url).not.toContain('tok')
-      expect(String(init.body ?? '')).not.toContain('tok')
+      expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-s3cr3t')
+      expect(url).not.toContain('tok-s3cr3t')
+      expect(String(init.body ?? '')).not.toContain('tok-s3cr3t')
     }
+  })
+
+  it('prefers the managed profile mapping over an unmanaged one listed first, and writes nothing if openid is missing', async () => {
+    const scope = fakeAuthentik().db['/propertymappings/provider/scope/']
+    const { api, calls } = fakeAuthentik({ '/propertymappings/provider/scope/': [{ pk: 'custom-profile', managed: null, scope_name: 'profile' }, ...scope] })
+    await provisionAuthentik(api, opts)
+    expect(calls.find((c) => c.path === '/providers/oauth2/' && c.method === 'POST')!.body!.property_mappings).toContain('m-profile')
+    const none = fakeAuthentik({ '/propertymappings/provider/scope/': [] })
+    await expect(provisionAuthentik(none.api, opts)).rejects.toThrow(/openid scope mapping not found/)
+    expect(none.calls.filter((c) => c.method !== 'GET')).toEqual([])
   })
 
   it('providerPayload builds the redirect URI from the host', () => {
@@ -112,6 +132,29 @@ describe('idempotent re-run', () => {
   })
 })
 
+describe('re-run keeps operator changes', () => {
+  it('merges property mappings, drops only the default email mapping, and keeps names', async () => {
+    const { api, db, calls } = fakeAuthentik({
+      '/providers/oauth2/': [{ pk: 7, name: 'my-provider', grant_types: [], property_mappings: ['m-openid', 'm-email', 'm-groups'] }],
+      '/core/applications/': [{ pk: 'a1', slug: 'orion', name: 'My Orion', provider: 7 }],
+    })
+    await provisionAuthentik(api, opts)
+    const p = db['/providers/oauth2/'][0]
+    expect(p.name).toBe('my-provider')
+    expect(p.property_mappings).toEqual(expect.arrayContaining(['m-openid', 'm-profile', 'm-groups']))
+    expect(p.property_mappings).not.toContain('m-email')
+    expect(p.property_mappings).toHaveLength(4)
+    expect(db['/core/applications/'][0].name).toBe('My Orion')
+    expect(calls.find((c) => c.method === 'PATCH' && c.path === '/core/applications/orion/')!.body).toEqual({ provider: 7, slug: 'orion' })
+  })
+
+  it('refuses an application that uses a non-OAuth2 provider', async () => {
+    const { api, calls } = fakeAuthentik({ '/core/applications/': [{ pk: 'a1', slug: 'orion', provider: 55 }] })
+    await expect(provisionAuthentik(api, opts)).rejects.toThrow(/non-OAuth2 provider/)
+    expect(calls.filter((c) => c.method !== 'GET')).toEqual([])
+  })
+})
+
 describe('Vault storage', () => {
   const data = { issuer: 'https://sso.example.com/application/o/orion/', client_id: 'cid', client_secret: 'csecret' }
   const vaultWith = (cur: { status: number; json?: unknown }) => {
@@ -134,5 +177,65 @@ describe('Vault storage', () => {
 
   it('surfaces Vault errors', async () => {
     await expect(storeInVault(vaultWith({ status: 503 }).v, 'p', data)).rejects.toThrow(/503/)
+  })
+})
+
+describe('CLI', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('readToken trims and rejects empty input', () => {
+    expect(readToken(undefined, () => '  tok\n')).toBe('tok')
+    expect(() => readToken(undefined, () => ' \n')).toThrow(/No Authentik API token/)
+  })
+
+  it('vaultRequester sends the token in X-Vault-Token', async () => {
+    const f = vi.fn(async () => new Response('{}', { status: 200 }))
+    await vaultRequester({ VAULT_ADDR: 'http://vault:8200', VAULT_TOKEN: 'vt' }, f)('GET', 'secret/data/x')
+    expect((f.mock.calls[0] as unknown as [string, RequestInit])[1].headers).toMatchObject({ 'X-Vault-Token': 'vt' })
+  })
+
+  function setup() {
+    const ak = fakeAuthentik()
+    const kv: Record<string, unknown> = {}
+    const seen: Array<[string, RequestInit]> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      seen.push([url, init])
+      if (url.startsWith('http://vault:8200/')) {
+        const p = url.slice('http://vault:8200/v1/'.length)
+        if (init.method === 'POST') { kv[p] = JSON.parse(String(init.body)); return new Response('{}', { status: 200 }) }
+        return kv[p] ? new Response(JSON.stringify({ data: kv[p] }), { status: 200 }) : new Response('{}', { status: 404 })
+      }
+      return ak.fetchImpl(url, init)
+    }))
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'akt-'))
+    const tokenFile = path.join(dir, 'token')
+    fs.writeFileSync(tokenFile, 'tok-s3cr3t\n')
+    const env = { AUTHENTIK_URL: 'https://sso.example.com', ORION_HOST: 'orion.example.com', AUTHENTIK_TOKEN_FILE: tokenFile, VAULT_ADDR: 'http://vault:8200', VAULT_TOKEN: 'vt' }
+    return { env, kv, seen, dir }
+  }
+
+  it('main returns 0 when it writes Vault, 3 on an unchanged re-run, and never leaks the token', async () => {
+    const { env, kv, seen, dir } = setup()
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      await expect(main(env)).resolves.toBe(0)
+      expect(Object.keys(kv)).toEqual(['secret/data/orion/authentik-oidc'])
+      await expect(main(env)).resolves.toBe(3)
+      for (const [url, init] of seen) {
+        if (url.startsWith('http://vault:8200/')) continue
+        expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-s3cr3t')
+        expect(url + String(init.body ?? '')).not.toContain('tok-s3cr3t')
+      }
+    } finally { fs.rmSync(dir, { recursive: true }) }
+  })
+
+  it('main rejects an http:// Authentik URL, missing inputs and a missing VAULT_TOKEN before any request', async () => {
+    const { env, seen, dir } = setup()
+    try {
+      await expect(main({ ...env, AUTHENTIK_URL: 'http://sso.example.com' })).rejects.toThrow(/https/)
+      await expect(main({ ...env, ORION_HOST: '' })).rejects.toThrow(/required/)
+      await expect(main({ ...env, VAULT_TOKEN: '' })).rejects.toThrow(/VAULT_TOKEN/)
+      expect(seen).toEqual([])
+    } finally { fs.rmSync(dir, { recursive: true }) }
   })
 })
