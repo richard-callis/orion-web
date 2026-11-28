@@ -12,9 +12,9 @@ interface OIDCConfig {
   groupMapping: Record<string, string> | null
 }
 
+// Keep in sync with DEFAULT_GROUP_MAPPING in lib/authentik-oidc.ts (not imported: that module pulls in the DB client).
 const DEFAULT_MAPPING = {
-  'orion-admins': 'admin',
-  'orion-users': 'user',
+  'authentik Admins': 'admin',
 }
 
 export default function SSOPage() {

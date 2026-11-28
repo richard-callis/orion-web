@@ -25,7 +25,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import { logAudit } from './audit'
 import { decrypt, decryptStrict } from './encryption'
 import { sendNotification } from './security/notification-service'
-import { authentikProviders, isAuthentikEnabled, resolveAuthentikUser, type AuthentikClaims } from './authentik-oidc'
+import { authentikProviders, getAuthentikConfig, isAuthentikEnabled, resolveAuthentikUser, type AuthentikClaims } from './authentik-oidc'
 
 export interface AppUser {
   id: string
@@ -112,6 +112,7 @@ export const authOptions: NextAuthOptions = {
   },
   pages: {
     signIn: '/login',
+    error: '/login',
   },
   providers: [
     CredentialsProvider({
@@ -252,18 +253,37 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async signIn({ user, account, profile }) {
       if (account?.provider !== 'authentik') return true
-      // Checked per login so OIDCProvider.enabled=false works without a restart.
-      if (!(await isAuthentikEnabled())) return false
-      const row = await prisma.oIDCProvider.findFirst({ select: { groupMapping: true } })
-      const result = await resolveAuthentikUser(profile as unknown as AuthentikClaims, row?.groupMapping)
-      if (!result.ok) {
-        void logAudit({ userId: 'ANONYMOUS', action: 'user_login_failure', target: 'authentik-oidc', detail: { reason: result.reason } })
+      const claims = profile as unknown as AuthentikClaims
+      const fail = (reason: string) => {
+        void logAudit({ userId: 'ANONYMOUS', action: 'user_login_failure', target: 'authentik-oidc', detail: { reason, sub: claims?.sub } })
         return false
       }
-      // NextAuth hands this same object to the jwt callback; swap the OIDC `sub` for the Orion user.
-      Object.assign(user, result.user)
-      void logAudit({ userId: result.user.id, action: 'user_login', target: result.user.id, detail: { provider: 'authentik' } })
-      return true
+      try {
+        // Checked per login so OIDCProvider.enabled=false works without a restart.
+        if (!(await isAuthentikEnabled())) return '/login?error=AuthentikDisabled'
+        const row = await prisma.oIDCProvider.findFirst({ select: { groupMapping: true } })
+        const result = await resolveAuthentikUser(claims, row?.groupMapping, { linkByEmail: getAuthentikConfig()?.linkByEmail })
+        if (!result.ok) return fail(result.reason)
+        // NextAuth hands this same object to the jwt callback; swap the OIDC `sub` for the Orion user.
+        Object.assign(user, result.user)
+        const id = result.user.id
+        if (result.created) {
+          void logAudit({ userId: id, action: 'user_create', target: id, detail: { provider: 'authentik', source: 'auto-provision' } })
+        } else if (result.linked || result.previousRole !== result.user.role) {
+          void logAudit({
+            userId: id, action: 'user_update', target: id,
+            detail: {
+              provider: 'authentik',
+              ...(result.linked ? { linkedBy: 'email' } : {}),
+              ...(result.previousRole !== result.user.role ? { role: { from: result.previousRole, to: result.user.role } } : {}),
+            },
+          })
+        }
+        void logAudit({ userId: id, action: 'user_login', target: id, detail: { provider: 'authentik' } })
+        return true
+      } catch {
+        return fail('error')
+      }
     },
     async jwt({ token, user, account }) {
       if (user) {

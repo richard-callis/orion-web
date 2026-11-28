@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
+import { DEFAULT_GROUP_MAPPING } from '@/lib/authentik-oidc'
 import { logAudit, getClientIp, getUserAgent } from '@/lib/audit'
 
 export async function GET() {
@@ -14,7 +15,7 @@ export async function GET() {
       enabled: true,
       headerMode: true,
       issuerUrl: '',
-      groupMapping: { 'orion-admins': 'admin', 'orion-users': 'user' },
+      groupMapping: DEFAULT_GROUP_MAPPING,
     })
   }
   return NextResponse.json(provider)
@@ -74,7 +75,7 @@ export async function PATCH(req: NextRequest) {
       enabled:      parsed.data.enabled      ?? true,
       headerMode:   parsed.data.headerMode   ?? true,
       issuerUrl:    parsed.data.issuerUrl    ?? '',
-      groupMapping: parsed.data.groupMapping ?? { 'orion-admins': 'admin', 'orion-users': 'user' },
+      groupMapping: parsed.data.groupMapping ?? DEFAULT_GROUP_MAPPING,
     },
   })
 

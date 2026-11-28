@@ -5,22 +5,18 @@ import { signIn } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AlertTriangle, Loader2 } from 'lucide-react'
 import { Input } from '@/components/ui/Input'
+import { safeCallbackPath, loginErrorMessage } from '@/lib/login-helpers'
 
 export default function LoginForm({ authentikEnabled = false }: { authentikEnabled?: boolean }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   // After an OIDC round-trip `next` carries the real target (see handleAuthentik).
   const oidcDone = searchParams.get('oidc') === 'done'
-  const rawCallbackUrl = (oidcDone ? searchParams.get('next') : searchParams.get('callbackUrl')) ?? '/'
-  function isSafeCallbackUrl(url: string): boolean {
-    // Must start with / but not // (protocol-relative URLs would redirect off-origin)
-    return url.startsWith('/') && !url.startsWith('//')
-  }
-  const callbackUrl = isSafeCallbackUrl(rawCallbackUrl) ? rawCallbackUrl : '/'
+  const callbackUrl = safeCallbackPath(oidcDone ? searchParams.get('next') : searchParams.get('callbackUrl'))
 
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
+  const [error, setError] = useState(() => loginErrorMessage(searchParams.get('error')))
   const [loading, setLoading] = useState(false)
 
   // The session cookie is SameSite=Strict, so it is not sent on the server-redirect chain that
