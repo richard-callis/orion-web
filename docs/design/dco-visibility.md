@@ -30,9 +30,6 @@ and MACs (`xx:xx:…`) are placeholders, not the real install. Figures in the "w
 | Talos tools | `apps/gateway/src/builtin-tools/talos.ts` | n/a | The caller passes a base64 talosconfig **in each tool call**; it is written to a 0600 temp file and passed as `--talosconfig`. The module also has write tools (patch, upgrade, reboot). |
 | Monitoring installer | `apps/web/src/lib/bootstrap/monitoring.ts`, `deploy/monitoring/**` | n/a | Imperative `kubectl apply`/`helm`. Applies `ntopng/service.yaml` but **never the DaemonSet**. Its VictoriaMetrics stack values enable node-exporter and kubelet scraping; whether it runs here is open (Q1). |
 | Orion CoreDNS | `deploy/docker-compose.yml` (`coredns`), `deploy/coredns/Corefile.example` | Logs to stdout only | Resolver for the trusted main VLAN. The template has `log`; the live Corefile is runtime state (gitignored). |
-| Infra UI | `apps/web/src/components/infrastructure/NodeGrid.tsx` | Yes (k8s) | Nodes only. No non-k8s hosts, no MACs. |
-
-Falco (via falcosidekick) is the only security source feeding Orion live today. Nothing collects flows, inventory or power state.
 
 ## 3. Requirements
 
@@ -75,8 +72,7 @@ flowchart LR
     UI[Orion UI + Postgres]
     TMR[backup-window<br/>systemd]
   end
-  UDM -- IPFIX --> GF
-  CT -- IPFIX --> GF
+  UDM & CT -- IPFIX --> GF
   GF -- JSON --> VEC
   UDM -- syslog: fw log, IPS --> VEC
   DNS -- query log --> VEC
@@ -86,8 +82,7 @@ flowchart LR
   UDM -- clients/device API --> W
   BMC -- power state --> W
   TMR -- window open/heartbeat/close --> WEB
-  WEB --> UI
-  W --> UI
+  WEB & W --> UI
 ```
 
 All flow sources are normalised into one `FlowBatch` (5-tuple, bytes/packets each way, exporter, observation window).
@@ -131,10 +126,7 @@ NIC's MAC is an `AssetAddress` (source `bmc`) of the host asset.
 | k8s Node `Ready` (from the snapshot) | Node health | **Primary** for nodes |
 | BMC Redfish (`/redfish/v1/Systems/*` `PowerState`) | On/off even when the OS is hung | **Yes for the NAS.** Separates *off* from *hung* |
 | `mgmt` reboot | The worker records boot-id/uptime at start; a change emits `dco.host.rebooted` (sev 30) | Off-host liveness of `mgmt` needs an external prober (out of scope) |
-| Window reporter: the systemd unit `curl`s Orion on open, every 5 min, and on close | **Why it is up**, owner, expected-off | **Required.** Turns "up" into "up on purpose" |
-
-The window reporter is a ~10-line change in the homelab repo, not Orion; its token comes from a file (`curl -H @/run/credentials/...`),
-never argv. Orion, not the unit, remembers an open window, so a reboot yields an *orphaned window* alert instead of silence.
+| Window reporter: the systemd unit `curl`s Orion on open, every 5 min, and on close (~10 lines in the homelab repo, not Orion; token from a file via `curl -H @/run/credentials/...`, never argv) | **Why it is up**, owner, expected-off | **Required.** Turns "up" into "up on purpose". Orion, not the unit, remembers an open window, so a reboot yields an *orphaned window* alert instead of silence |
 
 ### 5.4 In-cluster flows and pod attribution (R6, R7)
 | Option | Pros | Cons | Verdict |
@@ -144,9 +136,7 @@ never argv. Orion, not the unit, remembers an open window, so a reboot yields an
 | C. eBPF agent (e.g. Microsoft Retina, CNI-agnostic) | Packaged, pod-aware | Privileged and heavier; Talos support unverified | Fallback if B fails on Talos |
 | D. Hubble (post-Cilium) via Relay gRPC | Native identity, drops, L7 | Needs Cilium; Relay mTLS | **Recommended after Cilium.** Replaces B. With kube-proxy replacement, netfilter conntrack misses pod traffic, so B must go |
 
-Attribution: the worker joins `srcIp` against the `WorkloadAddress`/`AssetAddress` row valid at that time (§5.2).
-
-### 5.5 Network-edge flows and IDS (R7, R9): UniFi Dream Machine Pro
+### 5.5 Network-edge flows and IDS (R7, R9): UniFi Dream Machine Pro (answered 2026-11-28: no NetFlow toggle)
 Verified: UniFi OS 6.x / Network 11.x has **no NetFlow/IPFIX toggle**. The box ships `ulogd2` with the NFCT input and IPFIX
 output plugins, and UniFi already runs its own NFCT stack. Suricata 8 runs on it in IPS mode.
 
@@ -156,14 +146,12 @@ output plugins, and UniFi already runs its own NFCT stack. Suricata 8 runs on it
 | What it sees | Every routed flow: WAN and inter-VLAN, for all devices (NAS, IoT, nodes). Pods appear as their node IP (Flannel SNAT). Same-L2 traffic (e.g. Longhorn sync) does not cross the gateway |
 | Re-apply | Firmware updates likely overwrite `/etc` and may drop boot hooks. An idempotent `apply/status/remove` script kept under `/data`, run by an on-boot hook there. Drift detection: the `flows_edge` source goes stale → `source_stale`; runbook: re-run `apply` |
 | Approval | **Gateway modification outside UniFi support; needs explicit owner approval** and is applied by the owner over SSH. `remove` is the rollback |
-| IDS | Suricata alerts via UniFi's remote syslog (already reaching Vector on 5514) → extend the existing `udm_to_event` transform (it already tags `ids.alert`/`firewall.drop` but sinks only to Loki) and route `ids.*`/`firewall.drop` to the DCO route. Verify the lines carry signature id, src/dst and action; fallback is shipping Suricata `eve.json` alerts, a further gateway modification under the same approval |
+| IDS | Suricata alerts via UniFi's remote syslog (already reaching Vector on 5514) → extend the existing `udm_to_event` transform (it already tags `ids.alert`/`firewall.drop` but sinks only to Loki) and route `ids.*` and only those `firewall.drop` lines whose source is in a `dco.vlans` IoT CIDR (or that carry the IoT isolation rule's log prefix) to the DCO route; other drops stay Loki-only. Verify the lines carry signature id, src/dst and action; fallback is shipping Suricata `eve.json` alerts, a further gateway modification under the same approval |
 | ntopng / mirror port | ntopng stays an optional integration (installer gap, env-var mismatch, single-node view). Zeek/Suricata on a SPAN port: deferred, phase 7 |
 
-### 5.6 DNS (R8): Orion CoreDNS only
-Owner decision: only the Orion CoreDNS on `mgmt` (the main VLAN's resolver) is ingested; the gateway's dnsmasq (other VLANs) and the cluster CoreDNS are **out of scope**. A new Vector
-`docker_logs` source with `include_labels = ["com.docker.compose.service=coredns"]` (labels are ANDed, so not the existing source). `log` gives client, qname, qtype, rcode but no
-answers; passive DNS needs an opt-in CoreDNS `dnstap` block (setup wizard) → Vector's `dnstap` source. IoT/guest flows show IP and /24, plus a name only if a main-VLAN client resolved
-that IP.
+### 5.6 DNS (R8): Orion CoreDNS only (owner decision 2026-11-28)
+Gateway dnsmasq and cluster CoreDNS are **out of scope**. A new Vector `docker_logs` source, `include_labels = ["com.docker.compose.service=coredns"]`: `log` gives client, qname, qtype,
+rcode; answers need opt-in CoreDNS `dnstap` → Vector `dnstap`. Not the existing source (labels are ANDed). IoT/guest flows show IP and /24, plus a name only if a main-VLAN client resolved it.
 
 ### 5.7 IoT VLAN (R13)
 IoT CIDRs come from `SecurityConfig` (`dco.vlans`: name, cidr, trust `trusted|iot|guest`, `allow` [`cidr:port`] owner-approved exceptions). Excluded everywhere: the gateway's own
@@ -191,22 +179,18 @@ linked to the open window, so the window's expected-off becomes "when the last l
 
 ## 6. Flow storage
 
-Volume estimate for about 60 active LAN assets and ~150 pods. The VPN sidecar hides the torrent swarm behind one endpoint.
+Volume estimate for about 60 active LAN assets and ~150 pods; raw records (0.5–3 M/day, 150–600 MB) are not stored. The VPN sidecar hides the torrent swarm behind one endpoint.
 
 | Layer | Rows/day | Size/day | Retention | Size at retention |
 |---|---|---|---|---|
-| Raw flow records (not stored) | 0.5–3 M | 150–600 MB | – | – |
 | 5-min rollup (asset/workload × dst × port × proto × scope), top 50 dsts per src per bucket, rest folded into `other` | ~60–180 k | ~15–40 MB | 30 d | ~0.5–1.2 GB |
 | 1-hour rollup | ~10–20 k | ~3 MB | 365 d | ~1 GB |
 | `AssetPeer` baseline (first/last seen per peer) | grows slowly | <1 MB | 180 d idle | <100 MB |
 
 Never sum across exporters: node/host WAN totals come from `flows_edge`, per-pod rows from `flows_cluster`; the UI labels the source.
 
-| Store | For | Against | Verdict |
-|---|---|---|---|
-| **Postgres (existing `pgvector/pgvector:pg16`)**, rollups only | No new service, backup or installer piece. Prisma, joins with `Asset`, retention via the existing `security-retention-daily` job | Not suited to raw per-connection forensics | **Chosen** |
-| ClickHouse | Raw flows cheaply, fast aggregation | New stateful service, backup, installer, ~1 GB RAM | Escape hatch if raw forensics are ever needed |
-| Elasticsearch | Manifests and tool already exist | 2–4 GB heap, not deployed, route broken | No (keep the tool for installs that already have ES) |
+Store: **Postgres (existing `pgvector/pgvector:pg16`), rollups only**: no new service, backup or installer piece; Prisma, joins with `Asset`, retention via `security-retention-daily`; not
+for raw forensics. Rejected: ClickHouse (new stateful service, ~1 GB RAM; escape hatch for raw forensics, Q5) and Elasticsearch (2–4 GB heap, not deployed; tool kept for existing ES).
 
 Adapting existing code: the flows route gets a `FlowBackend` interface: `postgres` (default) reads `FlowRollup`; `elk` keeps
 today's gateway call with the `query`/`size` mismatch fixed. The response keeps `src_ip`/`dst_ip`/... and adds `src_asset`,
@@ -222,7 +206,7 @@ model Asset {             // one per physical/virtual device
   environmentId String?; kind String // host|k8s_node|nas|network|iot|vip|unknown; env set for k8s nodes
   name String; primaryMac String?; macRandomised Boolean @default(false) // MAC is display only
   primaryIp String?; vendor String?; vlan String?; tags String[]; k8sNodeName String? // vendor = OUI, tags e.g. static
-  expectedPower String @default("unknown") // always_on|scheduled|on_demand|unknown; only always_on raises host.down
+  expectedPower String @default("unknown") // always_on|scheduled|on_demand|unknown; only always_on raises host.down; k8s_node and vip assets are created always_on; others default unknown
   known Boolean @default(false)              // set on the Inventory/host page only; acking an alert never sets it
   state String @default("unknown"); powerState String?; stateSince DateTime? // up|down|unknown; BMC on|off
   muteUntil DateTime?; mergedIntoId String?  // maintenance mute; redirect after a merge
@@ -273,16 +257,15 @@ model AssetPeer { subject String; peer String; port Int; firstSeen DateTime; las
 model FlowBatchSeen { batchId String @id; receivedAt DateTime } // replay dedup, pruned after 24 h by security-retention-daily
 model DnsObservation { clientIp String; qname String; answer String @default(""); firstSeen DateTime; lastSeen DateTime; count Int; @@id([clientIp, qname, answer]) } // answer needs dnstap
 ```
-Each schema slice ships its own `tYYYYMMDDHHMMSS_<name>` migration and regenerates
-`context/schema.md`. LAN CIDRs (RFC 1918 plus the pod/service CIDRs), `dco.vlans` and known VPN endpoints live in
-`SecurityConfig` and drive `scope`.
+Each schema slice ships its own `tYYYYMMDDHHMMSS_<name>` migration and regenerates `context/schema.md`. LAN CIDRs (RFC 1918 plus the pod/service
+CIDRs), `dco.vlans`, `dco.peerAllow` and known VPN endpoints live in `SecurityConfig` and drive `scope`.
 
 **Not-configured state (no schema change).** A code catalog lists the DCO sources: global `unifi`, `power_probe`, `bmc`, `flows_edge`, `dns`, `udm_ids`, `udm_fw`; per-env
 `k8s_inventory`, `longhorn_backups`, `flows_cluster`, `hubble`. (1) An unconfigured source writes **no** health row, so `security-stale-check` never sees it. (2) The sources route
 returns catalog entries without a row as `status: 'not_configured'` (fourth value beside `healthy/stale/down`); the panel shows them grey, outside the counts, linking to settings.
 Per-env DCO sources are returned per (`environmentId`, source), not collapsed per name as today; `not_configured` is decided per env; the panel groups per-env rows by environment. (3)
 Saving settings creates the row with `lastSeenAt = now` (one `staleAfterMs` of grace). (4) Disabling deletes the row. (5) Liveness is separate from alerts. Vector sends a signed
-heartbeat every 60 s per input (5514 syslog, coredns), carrying the last-line time, to a new `/webhooks/dco` route (HMAC, `batch_id` dedup). That route updates `udm_ids`, `udm_fw`,
+heartbeat every 60 s per input (5514 syslog, coredns, goflow2 flows), carrying the last-line time, to a new `/webhooks/dco` route (HMAC, `batch_id` dedup). That route updates `udm_ids`, `udm_fw`,
 `dns` and `flows_edge` health and maps `subtype` to the event source (the host-agent route hardcodes `host_agent`). Catalog `staleAfterMs`: `unifi`, `flows_edge`, `flows_cluster`,
 `hubble` 5 min · `k8s_inventory`, `longhorn_backups`, `power_probe` 3 min · `udm_ids`, `udm_fw`, `dns`, `bmc` 10 min.
 
@@ -307,12 +290,13 @@ heartbeat every 60 s per input (5514 syslog, coredns), carrying the last-line ti
 DCO jobs write `SecurityEvent`s directly (check-then-insert on `dedupKey` like `security-stale-check.ts`; a repeat updates `lastSeen` and `rawEvent`). Every `dedupKey` is prefixed with
 its event type. Events carry `rawEvent.assetId`, `src_ip` (for the `attackerKey` extractor) and `runId` where it applies. Event `source` values reuse the §7 catalog names, so the
 panel's 24 h alert count matches. `Asset.muteUntil` suppresses host/power alerts. Incidents come only from the CorrelationRules below, seeded in `lib/seed-correlation-rules.ts` with the
-existing `pattern`/`threshold` types; every pattern rule uses `field: 'type'` and a `sourceFilter` of the §7 catalog names in its row; threshold rules and the flow rules seed disabled
-until tuned.
+existing `pattern`/`threshold` types; every pattern rule uses `field: 'type'` and a `sourceFilter` of the §7 catalog names in its row; threshold rules always set
+`typeFilter` to their event type (threshold matching ignores `field` on main); threshold rules and the flow rules seed disabled until tuned.
 
 **Prerequisite (slice 1d, its own security-path PR).** On `main`, pattern and threshold queries take every event since the lookback and never filter `incidentId: null`, and pattern
 drafts have no `attackerKey`, so the correlator's DB dedup is skipped: one `dco.host.down` would open a new incident every 30 s run until the per-rule rate limit. The fix: rule-engine
-pattern/threshold queries add `incidentId: null`, and pattern drafts set `hostKey = rawEvent.assetId`.
+pattern/threshold queries add `incidentId: null` (this alone stops the re-match). Pattern drafts set `hostKey` to the newest matched event's `rawEvent.assetId` for display and linking
+only; the DB dedup still keys on `attackerKey`.
 
 | Event type (source) | Trigger and threshold | Dedup key (window) | Event sev | CorrelationRule → Incident |
 |---|---|---|---|---|
@@ -323,7 +307,7 @@ pattern/threshold queries add `incidentId: null`, and pattern drafts set `hostKe
 | `dco.power.unplanned_up` (`power_probe` / `bmc`) | `scheduled` asset up (probe or BMC) with no open run for > `graceMin` | `dco.power.unplanned_up:<assetId>:<upSince>` | 60 | `dco_power`: pattern `^dco\.power\.`, minSeverity 50 |
 | `dco.power.window` (`power_probe`) | Open run and either now > min(`expectedOffAt`, `openedAt` + `maxDurationMin`) + `graceMin` (overdue) or no heartbeat for > 3 × `heartbeatEveryMin` (orphaned); checked every 5 min. One event per run; the title escalates ("overdue" → "overdue · owner heartbeat lost") and carries backup progress/ETA | `dco.power.window:<runId>` (per run) | 50 | `dco_power` |
 | `dco.backup.stalled` / `.failed` (`longhorn_backups`) | `InProgress` with progress unchanged for > max(30 min, 3 × the observed time per 1 %) / state `Error` | `dco.backup.stalled:<env>:<backup>` / `dco.backup.failed:…` | 50 / 60 | `dco_backup`: pattern `^dco\.backup\.`, minSeverity 50 |
-| `dco.iot.isolation_attempt` (`udm_fw`) | Firewall-log drop, src in an IoT CIDR, dst RFC 1918 / other VLAN, minus §5.7 exclusions | `dco.iot.isolation_attempt:<srcMac>:<dst>:<port>:<hour>` | 40 | `dco_iot_probe`: threshold ≥ 10 in 600 s, groupBy `attackerKey`; incident sev = 40 + 5 × (count − 10) |
+| `dco.iot.isolation_attempt` (`udm_fw`) | Firewall-log drop, src in an IoT CIDR, dst RFC 1918 / other VLAN, minus §5.7 exclusions | `dco.iot.isolation_attempt:<srcMac>:<dst>:<port>:<hour>` | 40 | `dco_iot_probe`: threshold, field `"type"`, typeFilter `["dco.iot.isolation_attempt"]`, sourceFilter `["udm_fw"]`, op `gte`, value 10, window 600, groupBy `["attackerKey"]`; incident sev = 40 + 5 × (count − 10) |
 | `dco.iot.isolation_breach` (`flows_edge`) | Accepted edge flow whose conntrack original direction is src ∈ IoT CIDR → dst RFC 1918 outside the source VLAN, minus §5.7 exclusions and `dco.vlans[].allow` (`cidr:port`) | `dco.iot.isolation_breach:<src>:<dst>:<port>:<day>` | 70 | `dco_iot_breach`: pattern `^dco\.iot\.isolation_breach$`, minSeverity 70 |
 | `dco.flow.new_destination` (`flows_edge` / `flows_cluster`) | WAN peer (IP or /24; name if known) not in `AssetPeer` for 14 d, not in `dco.peerAllow` (registries/CDNs), and > 1 MB in the hour; silent during an asset's first 14 d | `dco.flow.new_destination:<subject>:<peer>:<day>` | 30; 40 IoT; 60 `mgmt`/nodes | `dco_new_dest_high`: pattern `^dco\.flow\.new_destination$`, minSeverity 60, seeded disabled |
 | `dco.flow.upload_spike` (`flows_edge` / `flows_cluster`) | Hourly WAN `bytesOut` > 3 × 14-day p95 and > 500 MB (the job computes the p95) | `dco.flow.upload_spike:<subject>:<hour>` | 40 | `dco_upload_spike`: pattern `^dco\.flow\.upload_spike$`, minSeverity 40, seeded disabled |
@@ -369,10 +353,10 @@ listener and no token. Cluster changes (DaemonSet, sysctl patch) go through the 
 | 1a | Schema: `Asset`, `AssetAddress`, `WorkloadAddress`, `AssetStateChange`, `PowerWindow`, `PowerWindowRun` + migration; source catalog + `not_configured` in route/panel + panel error banner | Foundation, R12 | – | `prisma validate`; route test: catalog without rows → `not_configured`; env A stale + env B healthy shows both; env without row shows `not_configured`; stale-check ignores catalog sources without a row; panel component test: fetch error shows the error banner | Merge (migration) |
 | 1b | Gateway `dco_k8s_snapshot` + read-only list + audit severity | k8s data path | – | Gateway unit tests: projection, 2 k-pod fixture returns untruncated, CRD absent → nodes/pods still returned, no user args reach kubectl | Merge (gateway path) |
 | 1c | Inventory sync: UniFi clients + snapshot, identity resolution, `asset.new` / `ip_changed`; Sources settings form: UniFi + VLANs (creds to Vault) | R1, R2 | 1a, 1b | Fixtures: random MAC, DHCP move, multi-NIC merge, VIP flip, pod IP reuse, identity upgrade (mac → k8s/bmc alias, no second asset); first sync creates no events; dedup tests; settings: save creates the health row with `lastSeenAt=now`, disable deletes it, GET never returns secrets | Enter UniFi creds |
-| 1d | Rule-engine prerequisite (§9); power probe (TCP + Redfish) + window endpoint (bearer token, constant-time compare) + power/host rules + their CorrelationRules; Sources form: BMC, power windows, mute | **Incident #1 alert** | 1a | State-machine tests: overdue, orphaned (reboot), unplanned, mute; probe + NotReady → one event; 401 without or with a wrong token; rule seed test; an event already linked to an incident is not re-matched; one `dco.host.down` gives exactly one incident; settings save/disable/no-secrets tests | Merge (security path); enter BMC creds; define the window |
+| 1d | Rule-engine prerequisite (§9); power probe (TCP + Redfish) + window endpoint (bearer token, constant-time compare) + power/host rules + their CorrelationRules; Sources form: BMC, power windows, mute | **Incident #1 alert** | 1a, 1c | State-machine tests: overdue, orphaned (reboot), unplanned, mute; probe + NotReady → one event; 401 without or with a wrong token; rule seed test; an event already linked to an incident is not re-matched; one `dco.host.down` gives exactly one incident; settings save/disable/no-secrets tests | Merge (security path); enter BMC creds; define the window |
 | 1e | Inventory tab + host page (state, window, history), all §8 states; AlertFeed and alert detail show "Open host" when `rawEvent.assetId` is set | **Incident #1 in 1 click, MAC lookup** | 1c, 1d | Component tests for loading/empty/error/stale; ack-all leaves `Asset.known` false; `npm run build` | – |
 | 1f | Homelab repo (outside Orion): window reporter in the backup-window unit | Feeds 1d | 1d | Manual: open/heartbeat/close visible | Change + deploy homelab repo |
-| 2a | `BackupJob` + migration + poller via snapshot + ETA, window link, backup rules | R5 | 1b, 1d | Rate/ETA maths, stalled/failed fixtures; 5 TB fixture at 24 MB/s does not stall | Merge (migration) |
+| 2a | `BackupJob` + migration + poller via snapshot + ETA, window link, backup rules | R5 | 1b, 1d | Rate/ETA maths, stalled/failed fixtures; 5 TB fixture at 24 MB/s does not stall | Merge (migration + security path) |
 | 2b | Traffic panel: cAdvisor + node-exporter via VictoriaMetrics, UniFi WAN counters, LAN lower bound | R6, **#2 top talker + LAN bound** | 1e | Query builder + bound maths unit tests | Confirm VM is running (Q1) |
 | 3a | `FlowRollup` + `FlowBatchSeen` + migration + `/webhooks/dco` route (HMAC, `batch_id` dedup, heartbeats) + enrichment | R7 storage | 1c | Rollup/top-50 folding, scope classification, attribution at flow time, replayed `batch_id` rejected | Merge (migration + security path) |
 | 3b | goflow2 + Vector config + `dco` compose profile | R7 collector | 3a | Container smoke test; Vector config `validate` | Merge (deployment path) |
@@ -380,17 +364,13 @@ listener and no token. Cluster changes (DaemonSet, sysctl patch) go through the 
 | 3d | Flows route `FlowBackend` + `FlowTable` columns + host-page node LAN/WAN; fix the ELK arg mismatch | R7 UI | 3a | Route tests for both backends; ELK args test | – |
 | 4a | conntrack exporter manifest + Talos sysctl patch | R7 pod destinations, **#2 per-pod LAN/WAN** | 3b | Manifest lint; staging-node smoke test; a pod→WAN flow seen by both exporters is not double-counted in node/host totals | GitOps PRs to the cluster repo |
 | 4b | Hubble Relay consumer (after Cilium); retire 4a | R11 | Cilium | Fixture-based decoder tests | Relay cert in Vault |
-| 5a | Gateway Suricata via syslog → `ids.*` + `dco_ids_high` | R9 | 3b | Normaliser fixtures from real-format lines (scrubbed) | Merge (deployment path); enable UniFi remote logging of IPS events |
+| 5a | Gateway Suricata via syslog → `ids.*` + `dco_ids_high` | R9 | 3b | Normaliser fixtures from real-format lines (scrubbed) | Merge (deployment + security path); enable UniFi remote logging of IPS events |
 | 5b | Orion CoreDNS `log` → `DnsObservation`; `dnstap` opt-in | R8 | 3a | Parser fixtures; dedup counting | Merge (migration + deployment path); opt in to dnstap |
-| 5c | IoT isolation: fw-log attempts + NFCT breaches + VLAN settings | R13 | 3c, 5a | Exclusion list tests (DNS/DHCP/NTP/mDNS); threshold rule test; LAN-initiated session reply is not a breach; allow-listed pair is not a breach | Enable logging on the IoT block rule; enter IoT CIDRs |
-| 6 | `AssetPeer` baseline + new-destination (incl. IoT) / upload-spike rules | R10, R13 | 3a | Baseline learning period, p95 maths, dedup | Merge (migration) |
+| 5c | IoT isolation: fw-log attempts + NFCT breaches + VLAN settings | R13 | 3c, 5a | Exclusion list tests (DNS/DHCP/NTP/mDNS); threshold rule test; non-IoT events with the same `src_ip` do not count; LAN-initiated session reply is not a breach; allow-listed pair is not a breach | Merge (security path); enable logging on the IoT block rule; enter IoT CIDRs |
+| 6 | `AssetPeer` baseline + new-destination (incl. IoT) / upload-spike rules; `peerAllow` list in the Sources form | R10, R13 | 3a | Baseline learning period, p95 maths, dedup | Merge (migration + security path) |
 | 7 | Optional: Suricata/Zeek on a mirror port; read-only `dco_*` agent tools | depth | 5 | Tool schema tests | Merge (agent tools path) |
 
-Phases 1–2 need neither flows nor Cilium. Together they cover incident #1 fully and incident #2 up to a LAN lower bound (§5.9).
-
 ## 13. Open questions for the owner
-
-Answered on 2026-11-28 and folded in above: the gateway has no NetFlow/IPFIX toggle, so it gets a ulogd stack (§5.5); DNS scope is Orion CoreDNS only (§5.6).
 
 1. Is VictoriaMetrics (with cAdvisor and node-exporter scraping) running in the cluster? Slice 2b depends on it.
 2. Should Orion only *observe* the NAS window, or should it later *own* the shutdown (approval-gated action) when the linked backups finish?
