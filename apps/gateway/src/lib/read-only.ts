@@ -19,6 +19,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   // Kubernetes
   'kubectl_get', 'kubectl_get_pods', 'kubectl_get_nodes', 'kubectl_get_events', 'kubectl_describe',
   'kubectl_logs', 'kubectl_top_pods', 'kubectl_rollout_status', 'kubectl_wait_nodes_ready', 'storage_stats',
+  'dco_k8s_snapshot',
   // Talos
   'talos_get_version', 'talos_get_extensions',
   // Docker

@@ -15,14 +15,14 @@ new tool is left out until it is added there (a test lists what is left out).
 
 ## Registration by GATEWAY_TYPE
 
-> Counts verified 2026-09-26 by importing each module's exported tool array (63 in total).
+> Counts verified 2026-09-26 by importing each module's exported tool array (63 in total; 64 after dco_k8s_snapshot).
 > Registration lives in `apps/gateway/src/index.ts` (~line 286). The gateway
 > workstream (fix/review-gateway) additionally gates velero tools on the binary
 > existing or `ENABLE_VELERO=true`.
 
 | Tool Set | File | Tools | GATEWAY_TYPE that activates it |
 |----------|------|------:|-------------------------------|
-| kubernetesTools | kubernetes.ts | 19 | cluster, localhost |
+| kubernetesTools | kubernetes.ts | 20 | cluster, localhost |
 | talosTools | talos.ts | 5 | cluster, localhost |
 | dockerTools | docker.ts | 6 | docker, localhost, cluster+ENABLE_DOCKER=true |
 | localhostTools | localhost.ts | 3 | localhost only |
@@ -70,6 +70,7 @@ finally { unlinkSync(tmpFile) }   // always cleaned up
 | `kubectl_get` | `kubectl get {resource} [{name}] [-n {ns}] [-o {fmt}]` | resource, name?, namespace?, output? | 30s | output: wide/json/yaml/name |
 | `kubectl_rollout_restart` | `kubectl rollout restart {kind}/{name} -n {ns}` | kind, name, namespace | 30s | kind: deployment/statefulset/daemonset |
 | `kubectl_top_pods` | `kubectl top pods [-n {ns}]` | namespace? | 30s | |
+| `dco_k8s_snapshot` | fixed `kubectl get nodes/pods -A` + Longhorn backups/volumes/recurringjobs -n longhorn-system, --chunk-size=250, projected | none | 45s per listing | maxOutput 0 (fails over 16 MB); Longhorn failure → longhorn.ok=false, failed listing null |
 | `kubectl_apply_url` | `kubectl apply -f {url} [-n {ns}]` | url, namespace? | 120s | |
 | `kubectl_apply_manifest` | write YAML to /tmp → `kubectl apply -f /tmp/...` | manifest (YAML string) | 60s | temp file, cleaned up |
 | `kubectl_rollout_status` | `kubectl rollout status {kind}/{name} -n {ns} --timeout={t}` | kind, name, namespace, timeout?="120s" | timeout+5s | |

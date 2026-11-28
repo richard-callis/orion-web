@@ -7,6 +7,7 @@ import {
   oneOf, duration, durationSeconds, positiveInt, helmName, httpUrl,
 } from '../lib/validate-args.js'
 import { refuseSecrets } from '../lib/read-only.js'
+import { collectSnapshot } from '../lib/dco-snapshot.js'
 
 // Every agent-supplied value goes through validate-args before reaching argv, and
 // positionals follow a `--` terminator: a value such as `--server=https://attacker`
@@ -453,6 +454,15 @@ export const kubernetesTools = ([
         '--timeout', duration('timeout', args.timeout ?? '60s'),
         '--', helmName('release', args.release),
       ]))
+    },
+  },
+
+  {
+    name: 'dco_k8s_snapshot',
+    description: 'Read-only inventory snapshot for DCO: returns { nodes (ready: True/False/Unknown/null), pods, longhorn: { ok, error?, items: { backups, volumes, recurringJobs } } }. Takes no arguments. Fails instead of truncating; Longhorn absent or forbidden gives longhorn.ok=false (each failed listing null) and nodes/pods still returned. For the DCO poller; output is large (all pods), not for interactive use.',
+    inputSchema: { type: 'object', properties: {} },
+    async execute(_args: Record<string, unknown>) {
+      return JSON.stringify(await collectSnapshot())
     },
   },
 
