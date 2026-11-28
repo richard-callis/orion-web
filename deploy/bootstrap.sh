@@ -474,6 +474,30 @@ else
   echo "Vault file audit device already enabled."
 fi
 
+# ── Authentik OIDC login (optional) ─────────────────────────────────────────
+# Runs only when AUTHENTIK_BOOTSTRAP_URL and AUTHENTIK_BOOTSTRAP_TOKEN_FILE (a root-only file
+# holding an Authentik API token; never put the token itself in .env) are set. Creates the
+# provider/application in Authentik and stores the credentials in Vault. Idempotent.
+# See docs/AUTHENTIK_OIDC.md.
+if [[ -n "${AUTHENTIK_BOOTSTRAP_URL:-}" && -n "${AUTHENTIK_BOOTSTRAP_TOKEN_FILE:-}" && -z "${VAULT_TOKEN:-}" ]]; then
+  echo "NOTE: VAULT_TOKEN not set — skipping Authentik OIDC bootstrap."
+elif [[ -n "${AUTHENTIK_BOOTSTRAP_URL:-}" && -n "${AUTHENTIK_BOOTSTRAP_TOKEN_FILE:-}" && ! -r "$AUTHENTIK_BOOTSTRAP_TOKEN_FILE" ]]; then
+  echo "NOTE: Authentik token file not found or not readable by $(id -un) — skipping Authentik OIDC bootstrap (run deploy/authentik-oidc-bootstrap.sh as root)."
+elif [[ -n "${AUTHENTIK_BOOTSTRAP_URL:-}" && -n "${AUTHENTIK_BOOTSTRAP_TOKEN_FILE:-}" ]]; then
+  echo ""
+  echo "Bootstrapping Authentik OIDC login..."
+  rc=0
+  "$DEPLOY_DIR/authentik-oidc-bootstrap.sh" "$AUTHENTIK_BOOTSTRAP_URL" \
+    --token-file "$AUTHENTIK_BOOTSTRAP_TOKEN_FILE" \
+    ${AUTHENTIK_BOOTSTRAP_SLUG:+--slug "$AUTHENTIK_BOOTSTRAP_SLUG"} \
+    ${AUTHENTIK_BOOTSTRAP_GROUP:+--group "$AUTHENTIK_BOOTSTRAP_GROUP"} </dev/null || rc=$?
+  case "$rc" in
+    0) $COMPOSE restart orion >/dev/null 2>&1 || echo "NOTE: restart orion to load the new OIDC config." ;;
+    3) ;;
+    *) echo "NOTE: Authentik OIDC bootstrap failed (exit $rc); login falls back to local accounts. Re-run: deploy/authentik-oidc-bootstrap.sh" ;;
+  esac
+fi
+
 # ── Start Vector shipper ────────────────────────────────────────────────────
 # Two non-obvious requirements for vector to actually deliver:
 #   1. Its data_dir (/var/lib/vector inside the container) must be writable by

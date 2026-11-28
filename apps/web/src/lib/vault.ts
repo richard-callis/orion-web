@@ -115,16 +115,20 @@ export function vaultFetch(url: string, options: RequestInit = {}): Promise<Resp
  * identity. Requiring the explicit flag keeps that a deliberate operator
  * choice instead of an invisible default.
  */
-async function resolveVaultAdminToken(): Promise<string> {
+async function adminTokenFromDb(): Promise<string | null> {
   const setting = await prisma.systemSetting.findUnique({ where: { key: 'vault.adminToken' } })
-  if (setting?.value) {
-    const rawValue = String(setting.value)
-    if (!rawValue.startsWith(PREFIX)) {
-      console.error('[vault] admin token is not encrypted — refusing to use plaintext token (possible substitution attack)')
-      throw new Error('Vault admin token must be encrypted')
-    }
-    return decrypt(rawValue)
+  if (!setting?.value) return null
+  const rawValue = String(setting.value)
+  if (!rawValue.startsWith(PREFIX)) {
+    console.error('[vault] admin token is not encrypted — refusing to use plaintext token (possible substitution attack)')
+    throw new Error('Vault admin token must be encrypted')
   }
+  return decrypt(rawValue)
+}
+
+async function resolveVaultAdminToken(): Promise<string> {
+  const fromDb = await adminTokenFromDb()
+  if (fromDb) return fromDb
 
   if (process.env.VAULT_ALLOW_ENV_TOKEN === '1' && process.env.VAULT_TOKEN) {
     console.warn(
@@ -142,6 +146,39 @@ async function resolveVaultAdminToken(): Promise<string> {
         '(it is typically a root token and this app refuses to fall back to it silently).'
       : "(No 'vault.adminToken' SystemSetting and no VAULT_TOKEN environment variable.)")
   )
+}
+
+// ── Secret reader ─────────────────────────────────────────────────────────────
+
+/** Thrown by readVaultSecret on a non-404 error status; callers treat 4xx as final and 5xx as retryable. */
+export class VaultHttpError extends Error {
+  constructor(public status: number) { super(`Vault read responded ${status}`); this.name = 'VaultHttpError' }
+}
+
+/** Thrown by readVaultSecret when no Vault token can be resolved (retrying cannot help). */
+export class NoVaultTokenError extends Error {
+  constructor() { super('No Vault token available'); this.name = 'NoVaultTokenError' }
+}
+
+/**
+ * Read a Vault KV v2 secret. Returns null when the secret does not exist; throws on any
+ * other failure (Vault down/sealed, no token) so callers can tell "absent" from "unavailable".
+ * Uses the wizard-minted admin token. Only a caller that passes `allowEnvToken` (boot-time
+ * config reads, never agent-reachable) falls back to the container's VAULT_TOKEN, and only when
+ * no admin token setting exists; a rejected (unencrypted) admin token is never papered over.
+ */
+export async function readVaultSecret(
+  kvPath: string,
+  opts: { allowEnvToken?: boolean } = {},
+): Promise<Record<string, string> | null> {
+  const token = (await adminTokenFromDb()) ?? (opts.allowEnvToken ? process.env.VAULT_TOKEN : undefined)
+  if (!token) throw new NoVaultTokenError()
+  const normalised = kvPath.replace(/^secret\/(data\/)?/, '')
+  const res = await vaultFetch(`${VAULT_ADDR}/v1/secret/data/${normalised}`, { headers: { 'X-Vault-Token': token } })
+  if (res.status === 404) return null
+  if (!res.ok) throw new VaultHttpError(res.status)
+  const body = await res.json() as { data?: { data?: Record<string, string> | null } }
+  return body.data?.data ?? null
 }
 
 // ── Secret writer ─────────────────────────────────────────────────────────────
