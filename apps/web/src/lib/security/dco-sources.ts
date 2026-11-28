@@ -3,8 +3,9 @@
  *
  * A source that is not configured writes NO health row, so security-stale-check
  * (which only scans rows) never alerts on it. The sources route turns a catalog
- * entry without a row into `status: 'not_configured'`. Saving a source's
- * settings creates its row (lastSeenAt = now); disabling deletes it.
+ * entry without a row into `status: 'not_configured'`. From slice 1c, saving a
+ * source's settings creates its row (lastSeenAt = now) and disabling deletes it
+ * (design §7 (3)-(4)).
  */
 
 /** Global DCO sources → staleAfterMs. */

@@ -7,6 +7,10 @@
  *   - EnvironmentSourceHealth — per-env sources (falco, k8s_events)
  *                        written by Phase 2 Falco/K8s webhook handlers
  *
+ *   - DCO catalog (lib/security/dco-sources.ts): per-env DCO sources are reported per
+ *                        (environment, source); catalog entries with no row are returned as
+ *                        status "not_configured"
+ *
  * Previously only queried SourceHealth, so Falco (which writes to
  * EnvironmentSourceHealth) always showed "No sources configured."
  */
@@ -35,9 +39,8 @@ export async function GET() {
     },
   })
 
-  // Per-environment sources (Phase 2 — Falco, k8s_events)
-  // Group by source name and take the most recent lastSeenAt across all envs
-  // so the panel shows one row per source type, not one per environment.
+  // Per-environment sources. Legacy ones (falco, k8s_events) are collapsed per name below;
+  // DCO per-env sources stay one row per environment.
   const envSources = await prisma.environmentSourceHealth.findMany({
     select: {
       source: true,
@@ -76,6 +79,7 @@ export async function GET() {
   const environments = await prisma.environment.findMany({
     where: { type: 'cluster' },
     select: { id: true, name: true },
+    orderBy: { name: 'asc' },
   })
   const envNames = new Map(environments.map(e => [e.id, e.name]))
   const notConfigured = listNotConfigured(
@@ -91,11 +95,16 @@ export async function GET() {
   // defensively — any source name with no matching event group gets 0.
   const since24h = new Date(Date.now() - 86_400_000)
   const alertCounts = await prisma.securityEvent.groupBy({
-    by: ['source'],
+    by: ['source', 'environmentId'],
     where: { createdAt: { gte: since24h } },
     _count: { id: true },
   })
-  const alertCountMap = new Map(alertCounts.map(r => [r.source, r._count.id]))
+  const alertCountMap = new Map<string, number>()
+  const envAlertCountMap = new Map<string, number>()
+  for (const r of alertCounts) {
+    alertCountMap.set(r.source, (alertCountMap.get(r.source) ?? 0) + r._count.id)
+    envAlertCountMap.set(`${r.environmentId}:${r.source}`, r._count.id)
+  }
 
   const result = merged.map(s => {
     const lastSeen = s.lastSeenAt ? new Date(s.lastSeenAt).getTime() : 0
@@ -106,9 +115,11 @@ export async function GET() {
       lastWatermark: s.lastWatermark,
       staleAfterMs: s.staleAfterMs,
       environmentId: s.environmentId,
-      environmentName: s.source in DCO_ENV_SOURCES ? (envNames.get(s.environmentId ?? '') ?? null) : null,
+      environmentName: s.source in DCO_ENV_SOURCES ? (envNames.get(s.environmentId ?? '') ?? s.environmentId) : null,
       status,
-      alertCount24h: alertCountMap.get(s.source) ?? 0,
+      alertCount24h: s.source in DCO_ENV_SOURCES
+        ? (envAlertCountMap.get(`${s.environmentId}:${s.source}`) ?? 0)
+        : (alertCountMap.get(s.source) ?? 0),
     }
   })
 

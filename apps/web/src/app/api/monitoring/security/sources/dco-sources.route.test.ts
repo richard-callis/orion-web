@@ -17,11 +17,12 @@ vi.mock('@/lib/db', () => ({
     sourceHealth: { findMany: vi.fn(async () => h.global) },
     environmentSourceHealth: { findMany: vi.fn(async () => h.env) },
     environment: { findMany: vi.fn(async () => h.envs) },
-    securityEvent: { groupBy: vi.fn(async () => []) },
+    securityEvent: { groupBy: vi.fn(async (): Promise<any[]> => []) },
   },
 }))
 
 import { GET } from './route'
+import { prisma } from '@/lib/db'
 import { DCO_ENV_SOURCES, DCO_GLOBAL_SOURCES } from '@/lib/security/dco-sources'
 
 const row = (source: string, environmentId: string | null, ageMs: number, staleAfterMs = 180_000) => ({
@@ -41,6 +42,7 @@ beforeEach(() => {
 describe('sources route: DCO catalog', () => {
   it('returns every catalog source without a row as not_configured', async () => {
     const out = await sources()
+    expect(prisma.environment.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { type: 'cluster' } }))
     const nc = out.filter(s => s.status === 'not_configured')
     expect(nc.filter(s => s.environmentId === null).map(s => s.source).sort()).toEqual(Object.keys(DCO_GLOBAL_SOURCES).sort())
     expect(nc.filter(s => s.environmentId === 'envA').map(s => s.source).sort()).toEqual(Object.keys(DCO_ENV_SOURCES).sort())
@@ -62,6 +64,16 @@ describe('sources route: DCO catalog', () => {
     expect(by.envA).toMatchObject({ status: 'stale', environmentName: 'prod' })
     expect(by.envB).toMatchObject({ status: 'healthy', environmentName: 'lab' })
     expect(by.envC).toMatchObject({ status: 'not_configured', environmentName: 'dev' })
+  })
+
+  it('alertCount24h of a per-env DCO source is scoped to its environment', async () => {
+    h.env = [row('k8s_inventory', 'envA', 5 * 60_000), row('k8s_inventory', 'envB', 1000)]
+    vi.mocked(prisma.securityEvent.groupBy).mockResolvedValueOnce([
+      { source: 'k8s_inventory', environmentId: 'envA', _count: { id: 3 } },
+    ])
+    const by = Object.fromEntries((await sources()).filter(s => s.source === 'k8s_inventory').map(s => [s.environmentId, s]))
+    expect(by.envA.alertCount24h).toBe(3)
+    expect(by.envB.alertCount24h).toBe(0)
   })
 
   it('legacy per-env sources (falco) are still collapsed per name', async () => {

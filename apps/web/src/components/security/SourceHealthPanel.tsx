@@ -61,17 +61,21 @@ const SOURCE_LABELS: Record<string, string> = {
 function groupSources(sources: SourceHealth[]) {
   const groups = new Map<string, { key: string; title: string | null; items: SourceHealth[] }>()
   for (const s of sources) {
-    const key = s.environmentName ? `env:${s.environmentId}` : 'global'
-    const g = groups.get(key) ?? { key, title: s.environmentName ? `Environment: ${s.environmentName}` : null, items: [] }
+    const perEnv = s.environmentId !== null && s.environmentName != null
+    const key = perEnv ? `env:${s.environmentId}` : 'global'
+    const g = groups.get(key) ?? { key, title: perEnv ? `Environment: ${s.environmentName}` : null, items: [] }
     g.items.push(s)
     groups.set(key, g)
   }
-  return [...groups.values()].sort((a, b) => Number(a.key !== 'global') - Number(b.key !== 'global'))
+  const label = (s: SourceHealth) => SOURCE_LABELS[s.source] || s.source
+  for (const g of groups.values()) g.items.sort((a, b) => label(a).localeCompare(label(b)))
+  return [...groups.values()].sort((a, b) =>
+    Number(a.key !== 'global') - Number(b.key !== 'global') || (a.title ?? '').localeCompare(b.title ?? ''))
 }
 
 export default function SourceHealthPanel() {
   // A failed load keeps the last data (SWR) and shows an error banner with retry.
-  const { data, error, isLoading: loading, mutate } = useSWR<{ sources?: SourceHealth[] }>('/api/monitoring/security/sources')
+  const { data, error, isLoading: loading, isValidating, mutate } = useSWR<{ sources?: SourceHealth[] }>('/api/monitoring/security/sources')
   const sources = data?.sources ?? []
 
   // Real-time: refetch on any 'sources' SSE frame. We do a full refetch
@@ -98,25 +102,35 @@ export default function SourceHealthPanel() {
         <div role="alert" className="flex items-center gap-3 rounded-lg border border-status-error/40 bg-status-error/5 px-4 py-2 text-sm text-status-error">
           <AlertTriangle size={14} />
           <span>Could not load source health{data ? ' (showing last data)' : ''}.</span>
-          <button onClick={() => { void mutate() }} className="ml-auto underline">Retry</button>
+          <button
+            type="button"
+            onClick={() => { void mutate() }}
+            disabled={isValidating}
+            aria-busy={isValidating}
+            className="ml-auto underline disabled:opacity-60"
+          >
+            {isValidating ? 'Retrying…' : 'Retry'}
+          </button>
         </div>
       )}
-      <div className="flex items-center gap-3 text-xs text-text-muted mb-2">
-        <span className="flex items-center gap-1">
-          <Wifi size={12} className="text-status-healthy" /> {healthyCount} healthy
-        </span>
-        {staleCount > 0 && (
+      {data && (
+        <div className="flex items-center gap-3 text-xs text-text-muted mb-2">
           <span className="flex items-center gap-1">
-            <AlertTriangle size={12} className="text-status-warning" /> {staleCount} stale
+            <Wifi size={12} className="text-status-healthy" /> {healthyCount} healthy
           </span>
-        )}
-        {downCount > 0 && (
-          <span className="flex items-center gap-1">
-            <WifiOff size={12} className="text-status-error" /> {downCount} down
-          </span>
-        )}
-        {notConfiguredCount > 0 && <span>{notConfiguredCount} not configured</span>}
-      </div>
+          {staleCount > 0 && (
+            <span className="flex items-center gap-1">
+              <AlertTriangle size={12} className="text-status-warning" /> {staleCount} stale
+            </span>
+          )}
+          {downCount > 0 && (
+            <span className="flex items-center gap-1">
+              <WifiOff size={12} className="text-status-error" /> {downCount} down
+            </span>
+          )}
+          {notConfiguredCount > 0 && <span>{notConfiguredCount} not configured</span>}
+        </div>
+      )}
 
       {sources.length === 0 ? (
         !error && (
@@ -141,14 +155,14 @@ export default function SourceHealthPanel() {
               <div
                 key={`${source.environmentId ?? ''}:${source.source}`}
                 className={`rounded-xl border p-4 ${
-                  notConfigured ? 'border-border-subtle opacity-60' :
+                  notConfigured ? 'border-dashed border-border-subtle' :
                   source.status === 'healthy' ? 'border-border-subtle' :
                   source.status === 'stale' ? 'border-status-warning/40 bg-status-warning/5' :
                   'border-status-error/40 bg-status-error/5'
                 }`}
               >
                 <div className="flex items-center gap-3 mb-2">
-                  <Icon size={16} className={statusColor} />
+                  <Icon size={16} className={notConfigured ? `${statusColor} opacity-60` : statusColor} />
                   <span className="text-sm font-medium text-text-primary">{label}</span>
                   {source.alertCount24h > 0 && (
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-status-warning/15 text-status-warning">

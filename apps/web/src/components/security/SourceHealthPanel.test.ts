@@ -43,8 +43,19 @@ describe('SourceHealthPanel', () => {
     const html = render()
     expect(html).toContain('1 healthy')
     expect(html).toContain('2 not configured')
-    expect(html).not.toContain('down')
-    expect(html).toContain('not configured</span>')
+    expect(html).not.toMatch(/\d+( )? down/)
+    expect(html).toMatch(/text-text-muted">not configured<\/span>/)
+    expect(html).toContain('opacity-60')
     expect(html).toContain('Environment: prod')
+  })
+
+  it('a not_configured-only render shows no last-seen details', () => {
+    h.swr.data = { sources: [src({ source: 'unifi' })] }
+    expect(render()).not.toContain('Last seen')
+  })
+
+  it('hides the counts row when the first fetch failed', () => {
+    h.swr.error = new Error('boom')
+    expect(render()).not.toContain('healthy')
   })
 })
