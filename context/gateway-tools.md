@@ -15,7 +15,7 @@ new tool is left out until it is added there (a test lists what is left out).
 
 ## Registration by GATEWAY_TYPE
 
-> Counts verified 2026-09-26 by importing each module's exported tool array (63 in total).
+> Counts verified 2026-09-26 by importing each module's exported tool array (63 in total; 64 after dco_k8s_snapshot).
 > Registration lives in `apps/gateway/src/index.ts` (~line 286). The gateway
 > workstream (fix/review-gateway) additionally gates velero tools on the binary
 > existing or `ENABLE_VELERO=true`.

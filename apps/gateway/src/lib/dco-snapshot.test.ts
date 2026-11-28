@@ -42,13 +42,15 @@ beforeEach(() => {
   const tsv = (...r: string[][]) => r.map(c => c.join('\t') + '\n').join('')
   const labels = '{"other":"x","recurring-job-group.longhorn.io/default":"enabled","recurring-job.longhorn.io/nightly":"enabled"}'
   // kubectl jsonpath shape: an empty string is a blank cell, an absent field is blank, a map is one-line JSON.
+  const st = (o: Record<string, unknown>) => JSON.stringify(o)
   fix('backups.longhorn.io', tsv(
-    ['bk-1', 'InProgress', '61', 'vol-a', '5000000000', '2026-01-01T00:00:00Z', '{"note":"disk is slow"}', ''],
-    ['bk-2', 'Completed', '100', 'vol-b', '10', '2026-01-02T00:00:00Z', '{}', ''],
-    ['bk-3', 'InProgress', '37', 'vol-a', '', '', '', ''],
-    ['bk-4', '', '0', '', '', '', '{"error":"engine is not ready for backup","detail":"a b c d e f g h"}', ''],
-    ['bk-5', 'Error', '0', 'vol-a', '', '', '{}', 'proxyAddress is unreachable'],
-    ['bk-6', 'Error', '0', 'vol-a', '', '', JSON.stringify({ error: 'line one\nline two\ttabbed a b c d e f g h' }), ''],
+    ['bk-1', st({ state: 'InProgress', progress: 61, volumeName: 'vol-a', size: '5000000000', backupCreatedAt: '2026-01-01T00:00:00Z', messages: { note: 'disk is slow' } })],
+    ['bk-2', st({ state: 'Completed', progress: 100, volumeName: 'vol-b', size: '10', backupCreatedAt: '2026-01-02T00:00:00Z', messages: {} })],
+    ['bk-3', st({ state: 'InProgress', progress: 37, volumeName: 'vol-a' })],
+    ['bk-4', st({ progress: 0, messages: { error: 'engine is not ready for backup', detail: 'a b c d e f g h' } })],
+    ['bk-5', st({ state: 'Error', progress: 0, volumeName: 'vol-a', error: 'proxyAddress is unreachable' })],
+    ['bk-6', st({ state: 'Error', progress: 0, volumeName: 'vol-a', error: 'line one\nline two\tx', messages: { error: 'line one\nline two\ttabbed a b c d e f g h' } })],
+    ['bk-7', ''],
   ))
   fix('volumes.longhorn.io', tsv(['vol-a', '6000000000', '5000000000', labels], ['vol-b', '1', '0', '']))
   fix('recurringjobs.longhorn.io', tsv(['nightly', 'backup', '7', 'default extra', '0 2 * * *']))
@@ -68,7 +70,7 @@ describe('collectSnapshot', () => {
     expect(s.pods[3].podIPs).toEqual(['10.244.0.9', 'fd00::9'])
     expect(s.longhorn.ok).toBe(true)
     const bk = s.longhorn.items.backups!
-    expect(bk).toHaveLength(6)
+    expect(bk).toHaveLength(7)
     expect(bk[0]).toEqual({ name: 'bk-1', state: 'InProgress', progress: 61, volume: 'vol-a', size: 5000000000, createdAt: '2026-01-01T00:00:00Z', messages: { note: 'disk is slow' }, error: null })
     expect(bk[1]).toMatchObject({ size: 10, createdAt: '2026-01-02T00:00:00Z', messages: null })
     // in progress: blank size/createdAt cells stay in their columns
@@ -76,8 +78,10 @@ describe('collectSnapshot', () => {
     // pending: blank state/volume, a message with spaces
     expect(bk[3]).toMatchObject({ state: null, volume: null, messages: { error: 'engine is not ready for backup', detail: 'a b c d e f g h' } })
     expect(bk[4]).toMatchObject({ state: 'Error', error: 'proxyAddress is unreachable', messages: null })
-    // newline and tab inside a message cannot split the row or merge cells
+    // newline and tab inside error/messages cannot split the row or merge cells: JSON-encoded in the status map
     expect(bk[5].name).toBe('bk-6')
+    expect(bk[5].error).toBe('line one\nline two\tx')
+    expect(bk[6]).toEqual({ name: 'bk-7', state: null, progress: null, volume: null, size: null, createdAt: null, messages: null, error: null })
     expect(bk[5].messages).toEqual({ error: 'line one\nline two\ttabbed a b c d e f g h' })
     expect(s.longhorn.items.volumes![0]).toEqual({ name: 'vol-a', size: 6000000000, actualSize: 5000000000, recurringJobs: ['recurring-job-group.longhorn.io/default', 'recurring-job.longhorn.io/nightly'] })
     expect(s.longhorn.items.volumes![1].recurringJobs).toEqual([])
@@ -106,7 +110,18 @@ describe('collectSnapshot', () => {
     fix('backups.longhorn.io', 'bk-1\tInProgress\t37\tvol-a\n')
     const s = await collectSnapshot()
     expect(s.longhorn.ok).toBe(false)
-    expect(s.longhorn.error).toMatch(/^backups: unparsable kubectl row \(4 of 8 columns\)/)
+    expect(s.longhorn.error).toMatch(/^backups: unparsable kubectl row \(4 of 2 columns\)/)
+  })
+
+  it('names a Longhorn map parse failure per listing and still returns nodes and pods', async () => {
+    fix('volumes.longhorn.io', 'vol-a\t6000000000\t5000000000\tnot json\n')
+    const s = await collectSnapshot()
+    expect(s.nodes).toHaveLength(3)
+    expect(s.pods).toHaveLength(4)
+    expect(s.longhorn.ok).toBe(false)
+    expect(s.longhorn.error).toMatch(/^volumes: unparsable kubectl map/)
+    expect(s.longhorn.items.volumes).toBeNull()
+    expect(s.longhorn.items.backups).toHaveLength(7)
   })
 
   it('still returns nodes and pods when the Longhorn CRDs are absent', async () => {

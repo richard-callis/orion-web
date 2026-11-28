@@ -100,7 +100,7 @@ exporter for Hubble changes no storage or UI.
 | Talos API (`LinkStatus`) | Per-NIC MAC on nodes | Separate read-only tool with an `os:reader` config (owner path) | Later; helps merge multi-NIC nodes |
 
 Why not `kubectl_get`: `-o json` for ~150 pods is 2–3 MB and `run.ts` cuts returned output at 256 KB, so the worker would get partial, unparsable JSON. `dco_k8s_snapshot` runs fixed,
-argument-free `kubectl get` calls (API paging via `--chunk-size=250`, narrow projections, ~150 B/pod: `-o custom-columns` for nodes/pods, tab-separated `-o jsonpath` for Longhorn, where an empty string is a blank cell and maps print as one-line JSON) and returns `{nodes, pods, longhorn:{ok, error?, items}}` with
+argument-free `kubectl get` calls (API paging via `--chunk-size=250`, narrow projections, ~150 B/pod: `-o custom-columns` for nodes/pods, tab-separated `-o jsonpath` for Longhorn, where an empty string is a blank cell, maps print as one-line JSON, and backups carry the `.status` map as JSON so no free-text string is printed raw) and returns `{nodes, pods, longhorn:{ok, error?, items}}` with
 `maxOutput: 0` (still bounded by the 16 MB `maxBuffer`, failing loudly, never truncating); each kind feeds its own health row, and the poller writes the env row on its first attempt, so
 a 404 (tool missing on the gateway: "gateway too old") or a 403 (no enabled `McpTool` row: "not enabled") both show as down. One call/min for all three kinds adds ~1.4 k `gateway_audit` events/day/env (sev 10; the k8s events poller adds ~2.9 k). Rejected: an
 in-cluster poller with its own ServiceAccount pushing to Orion (new workload, token, ingress; revisit above ~5 k pods) and kube credentials in the worker (breaks the gateway boundary).

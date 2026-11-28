@@ -5,7 +5,8 @@
  * Each listing is paged by kubectl itself (--chunk-size, API continue tokens) and projected
  * narrowly, so the output stays near 150 B/pod: nodes and pods with -o custom-columns (fields
  * that never hold whitespace), the Longhorn kinds with tab-separated -o jsonpath (a blank cell
- * is a real value there, and maps print as one-line JSON). Output is never truncated:
+ * is a real value there, and maps print as one-line JSON). jsonpath prints a string raw, so no
+ * free-text string is projected: backups carry the whole .status map as JSON, parsed per listing. Output is never truncated:
  * the cap is turned off and the 16 MB maxBuffer fails the call loudly instead.
  * No Secret is ever listed.
  */
@@ -36,7 +37,7 @@ export const LISTINGS = {
     '.metadata.ownerReferences[?(@.controller==true)].kind', '.metadata.ownerReferences[?(@.controller==true)].name',
     '.spec.nodeName', '.status.podIPs[*].ip', '.spec.hostNetwork',
   ]),
-  backups: tabList('backups', 'backups.longhorn.io', ['.metadata.name', '.status.state', '.status.progress', '.status.volumeName', '.status.size', '.status.backupCreatedAt', '.status.messages', '.status.error']),
+  backups: tabList('backups', 'backups.longhorn.io', ['.metadata.name', '.status']),
   volumes: tabList('volumes', 'volumes.longhorn.io', ['.metadata.name', '.spec.size', '.status.actualSize', '.metadata.labels']),
   recurringJobs: tabList('recurringJobs', 'recurringjobs.longhorn.io', ['.metadata.name', '.spec.task', '.spec.retain', '.spec.groups[*]', '.spec.cron']),
 } as const
@@ -55,13 +56,15 @@ export function rows(out: string, { cols, tab }: Listing): string[][] {
 }
 
 /** A jsonpath-printed map (one-line JSON) → the object; absent, empty or not a map → null. */
+const asMap = (m: unknown): Record<string, unknown> | null =>
+  m && typeof m === 'object' && !Array.isArray(m) && Object.keys(m).length ? m as Record<string, unknown> : null
 const jsonMap = (s: string | undefined): Record<string, unknown> | null => {
   const v = val(s)
   if (v === null) return null
-  let m: unknown
-  try { m = JSON.parse(v) } catch { throw new Error(`unparsable kubectl map: ${v.slice(0, 40)}`) }
-  return m && typeof m === 'object' && !Array.isArray(m) && Object.keys(m).length ? m as Record<string, unknown> : null
+  try { return asMap(JSON.parse(v)) } catch { throw new Error(`unparsable kubectl map: ${v.slice(0, 40)}`) }
 }
+const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null)
+const numOf = (v: unknown): number | null => num(v === undefined || v === null ? undefined : String(v))
 
 export interface Snapshot {
   nodes: Array<{ name: string; internalIPs: string[]; ready: 'True' | 'False' | 'Unknown' | null }>
@@ -86,9 +89,9 @@ const reason = (e: unknown): string => {
   return redactSensitive(lines.find(l => /^(error:|Error from server)/.test(l)) ?? lines[0]).slice(0, 200)
 }
 
-/** Run one listing; every failure (kubectl, timeout, buffer, parse) is an Error naming the listing. */
-const exec = async (l: Listing) => {
-  try { return rows((await run('kubectl', l.args, { timeoutMs: TIMEOUT_MS, maxOutput: 0 })).stdout, l) }
+/** Run one listing and map its rows; every failure (kubectl, timeout, buffer, parse, map) is an Error naming the listing. */
+const exec = async <T = string[]>(l: Listing, map: (r: string[]) => T = (r => r) as (r: string[]) => T): Promise<T[]> => {
+  try { return rows((await run('kubectl', l.args, { timeoutMs: TIMEOUT_MS, maxOutput: 0 })).stdout, l).map(map) }
   catch (e) { throw new Error(`${l.name}: ${reason(e)}`, { cause: e }) }
 }
 
@@ -100,10 +103,18 @@ const exec = async (l: Listing) => {
 export async function collectSnapshot(): Promise<Snapshot> {
   const [nodes, pods, lh] = await Promise.all([
     exec(LISTINGS.nodes), exec(LISTINGS.pods),
-    Promise.allSettled([exec(LISTINGS.backups), exec(LISTINGS.volumes), exec(LISTINGS.recurringJobs)]),
+    Promise.allSettled([
+      exec(LISTINGS.backups, ([name, status]) => {
+        const st = jsonMap(status) ?? {}
+        return { name, state: str(st.state), progress: numOf(st.progress), volume: str(st.volumeName), size: numOf(st.size), createdAt: str(st.backupCreatedAt), messages: asMap(st.messages), error: str(st.error) }
+      }),
+      exec(LISTINGS.volumes, ([name, size, actualSize, labels]) => ({
+        name, size: num(size), actualSize: num(actualSize), recurringJobs: Object.keys(jsonMap(labels) ?? {}).filter(k => k.startsWith('recurring-job')),
+      })),
+      exec(LISTINGS.recurringJobs, ([name, task, retain, groups, cron]) => ({ name, task: val(task), retain: num(retain), groups: val(groups)?.split(' ') ?? [], cron: val(cron) })),
+    ]),
   ])
   const failed = lh.flatMap(r => r.status === 'rejected' ? [(r.reason as Error).message] : [])
-  const get = (i: number): string[][] | null => { const r = lh[i]; return r.status === 'fulfilled' ? r.value : null }
   return {
     nodes: nodes.map(([name, ips, ready]) => ({ name, internalIPs: csv(ips), ready: ready === 'True' || ready === 'False' || ready === 'Unknown' ? ready : null })),
     pods: pods.map(([uid, namespace, name, ownerKind, ownerName, node, ips, hostNet]) => ({
@@ -113,13 +124,9 @@ export async function collectSnapshot(): Promise<Snapshot> {
       ok: failed.length === 0,
       ...(failed.length ? { error: failed.join('; ') } : {}),
       items: {
-        backups: get(0)?.map(([name, state, progress, volume, size, createdAt, messages, error]) => ({
-          name, state: val(state), progress: num(progress), volume: val(volume), size: num(size), createdAt: val(createdAt), messages: jsonMap(messages), error: val(error),
-        })) ?? null,
-        volumes: get(1)?.map(([name, size, actualSize, labels]) => ({
-          name, size: num(size), actualSize: num(actualSize), recurringJobs: Object.keys(jsonMap(labels) ?? {}).filter(k => k.startsWith('recurring-job')),
-        })) ?? null,
-        recurringJobs: get(2)?.map(([name, task, retain, groups, cron]) => ({ name, task: val(task), retain: num(retain), groups: val(groups)?.split(' ') ?? [], cron: val(cron) })) ?? null,
+        backups: lh[0].status === 'fulfilled' ? lh[0].value : null,
+        volumes: lh[1].status === 'fulfilled' ? lh[1].value : null,
+        recurringJobs: lh[2].status === 'fulfilled' ? lh[2].value : null,
       },
     },
   }
