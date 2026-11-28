@@ -265,8 +265,9 @@ CIDRs), `dco.vlans`, `dco.peerAllow` and known VPN endpoints live in `SecurityCo
 returns catalog entries without a row as `status: 'not_configured'` (fourth value beside `healthy/stale/down`); the panel shows them grey, outside the counts, linking to settings.
 Per-env DCO sources are returned per (`environmentId`, source), not collapsed per name as today; `not_configured` is decided per env; the panel groups per-env rows by environment. (3)
 Saving settings creates the row with `lastSeenAt = now` (one `staleAfterMs` of grace). (4) Disabling deletes the row. (5) Liveness is separate from alerts. Vector sends a signed
-heartbeat every 60 s per input (5514 syslog, coredns, goflow2 flows), carrying the last-line time, to a new `/webhooks/dco` route (HMAC, `batch_id` dedup). That route updates `udm_ids`, `udm_fw`,
-`dns` and `flows_edge` health and maps `subtype` to the event source (the host-agent route hardcodes `host_agent`). Catalog `staleAfterMs`: `unifi`, `flows_edge`, `flows_cluster`,
+heartbeat every 60 s per input (5514 syslog, coredns, goflow2 flows), carrying the last-line time, to a new `/webhooks/dco` route (HMAC, `batch_id` dedup). That route updates `udm_ids`, `udm_fw`
+and `dns` health and maps `subtype` to the event source (the host-agent route hardcodes `host_agent`). `flows_edge` and `flows_cluster`
+health is not taken from the goflow2 input heartbeat. It is updated from each accepted flow batch, keyed by exporter address: gateway → `flows_edge`, a node of env E → `flows_cluster` for E. So a silent gateway goes stale even while node exporters keep sending. Catalog `staleAfterMs`: `unifi`, `flows_edge`, `flows_cluster`,
 `hubble` 5 min · `k8s_inventory`, `longhorn_backups`, `power_probe` 3 min · `udm_ids`, `udm_fw`, `dns`, `bmc` 10 min.
 
 ## 8. UI surfaces
@@ -358,7 +359,7 @@ listener and no token. Cluster changes (DaemonSet, sysctl patch) go through the 
 | 1f | Homelab repo (outside Orion): window reporter in the backup-window unit | Feeds 1d | 1d | Manual: open/heartbeat/close visible | Change + deploy homelab repo |
 | 2a | `BackupJob` + migration + poller via snapshot + ETA, window link, backup rules | R5 | 1b, 1d | Rate/ETA maths, stalled/failed fixtures; 5 TB fixture at 24 MB/s does not stall | Merge (migration + security path) |
 | 2b | Traffic panel: cAdvisor + node-exporter via VictoriaMetrics, UniFi WAN counters, LAN lower bound | R6, **#2 top talker + LAN bound** | 1e | Query builder + bound maths unit tests | Confirm VM is running (Q1) |
-| 3a | `FlowRollup` + `FlowBatchSeen` + migration + `/webhooks/dco` route (HMAC, `batch_id` dedup, heartbeats) + enrichment | R7 storage | 1c | Rollup/top-50 folding, scope classification, attribution at flow time, replayed `batch_id` rejected | Merge (migration + security path) |
+| 3a | `FlowRollup` + `FlowBatchSeen` + migration + `/webhooks/dco` route (HMAC, `batch_id` dedup, heartbeats) + enrichment | R7 storage | 1c | Rollup/top-50 folding, scope classification, attribution at flow time, replayed `batch_id` rejected; batch from a node exporter does not refresh `flows_edge` | Merge (migration + security path) |
 | 3b | goflow2 + Vector config + `dco` compose profile | R7 collector | 3a | Container smoke test; Vector config `validate` | Merge (deployment path) |
 | 3c | UDM ulogd IPFIX script + runbook | R7 edge, **#2 node-level WAN** | 3b | Script `status` dry run; captured IPFIX fixture decodes | **Approve and apply the gateway change** |
 | 3d | Flows route `FlowBackend` + `FlowTable` columns + host-page node LAN/WAN; fix the ELK arg mismatch | R7 UI | 3a | Route tests for both backends; ELK args test | – |
