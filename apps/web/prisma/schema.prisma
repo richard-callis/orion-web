@@ -2227,7 +2227,7 @@ model PowerWindowRun {
   @@index([status])
 }
 
-// Container health (owner addition, slice 1c consumes it). One row per container the operator
+// Container health (owner addition, slice 1d consumes it). One row per container the operator
 // expects on a host asset: what should run (expected*) plus the latest observation (observed*).
 // No per-sample history: transitions surface as alert events, and `restartCount` deltas between
 // observations expose a crash loop.

@@ -12,7 +12,7 @@
 
 // Severity map: write-tier tools get high severity (triggers incident),
 // read-tier tools get low severity (logged but no incident).
-const TOOL_SEVERITY: Record<string, number> = {
+export const TOOL_SEVERITY: Record<string, number> = {
   // Write-tier: state-changing actions
   crowdsec_decision_create: 80,
   crowdsec_decision_delete: 80,
