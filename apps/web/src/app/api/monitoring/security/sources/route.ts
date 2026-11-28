@@ -15,6 +15,7 @@ import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { computeSourceStatus } from '@/lib/security/source-health-utils'
+import { DCO_ENV_SOURCES, listNotConfigured } from '@/lib/security/dco-sources'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,9 +48,14 @@ export async function GET() {
     },
   })
 
+  // Per-env DCO sources are reported per (environment, source); the legacy
+  // per-env sources (falco, k8s_events) are collapsed per name below.
+  const dcoEnvRows = envSources.filter(s => s.source in DCO_ENV_SOURCES)
+  const legacyEnvRows = envSources.filter(s => !(s.source in DCO_ENV_SOURCES))
+
   // Deduplicate per-env sources by name, keeping the most recently seen row
   const envBySource = new Map<string, typeof envSources[number]>()
-  for (const s of envSources) {
+  for (const s of legacyEnvRows) {
     const existing = envBySource.get(s.source)
     const existingTs = existing?.lastSeenAt ? new Date(existing.lastSeenAt).getTime() : 0
     const thisTs = s.lastSeenAt ? new Date(s.lastSeenAt).getTime() : 0
@@ -63,7 +69,20 @@ export async function GET() {
   const merged = [
     ...globalSources,
     ...[...envBySource.values()].filter(s => !globalNames.has(s.source)),
+    ...dcoEnvRows,
   ]
+
+  // DCO catalog entries with no health row are 'not_configured' (not counted, never alerted).
+  const environments = await prisma.environment.findMany({
+    where: { type: 'cluster' },
+    select: { id: true, name: true },
+  })
+  const envNames = new Map(environments.map(e => [e.id, e.name]))
+  const notConfigured = listNotConfigured(
+    new Set(globalSources.map(s => s.source)),
+    new Set(dcoEnvRows.map(s => `${s.environmentId}:${s.source}`)),
+    environments,
+  )
 
   // Count SecurityEvents per source in the last 24h to surface alert volume.
   // Known limitation (best-effort): ELK events are written with source='elk'
@@ -87,10 +106,19 @@ export async function GET() {
       lastWatermark: s.lastWatermark,
       staleAfterMs: s.staleAfterMs,
       environmentId: s.environmentId,
+      environmentName: s.source in DCO_ENV_SOURCES ? (envNames.get(s.environmentId ?? '') ?? null) : null,
       status,
       alertCount24h: alertCountMap.get(s.source) ?? 0,
     }
   })
 
-  return NextResponse.json({ sources: result })
+  const unconfigured = notConfigured.map(n => ({
+    ...n,
+    lastSeenAt: null,
+    lastWatermark: null,
+    status: 'not_configured' as const,
+    alertCount24h: 0,
+  }))
+
+  return NextResponse.json({ sources: [...result, ...unconfigured] })
 }

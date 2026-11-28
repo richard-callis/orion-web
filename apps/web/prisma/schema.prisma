@@ -172,6 +172,8 @@ model Environment {
   correlationRules         CorrelationRule[]
   sourceHealths            SourceHealth[]
   environmentSourceHealths EnvironmentSourceHealth[]
+  assets                   Asset[]
+  workloadAddresses        WorkloadAddress[]
   vulnerabilityFindings    VulnerabilityFinding[]
   vulnerabilityScans       VulnerabilityScan[]
   suppressions             Suppression[]
@@ -2100,4 +2102,150 @@ model NotificationChannel {
   agentFilter String? // JSON array of agent IDs to filter on, null = all agents
   enabled     Boolean  @default(true)
   createdAt   DateTime @default(now())
+}
+
+// ── DCO visibility (docs/design/dco-visibility.md §5.2, §7) ───────────────────
+
+// One row per physical/virtual device. `key` is assigned once at creation and never
+// re-derived (ladder: manual:<slug> > k8s:<envId>/<node> > bmc:<serial> > vip:<ip> > mac:<mac>).
+model Asset {
+  id            String       @id @default(uuid())
+  key           String       @unique
+  environmentId String? // set for k8s nodes
+  environment   Environment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  kind          String // host | k8s_node | nas | network | iot | vip | unknown
+  name          String
+  primaryMac    String? // display only, never identity
+  macRandomised Boolean      @default(false)
+  primaryIp     String?
+  vendor        String? // OUI
+  vlan          String?
+  tags          String[] // e.g. "static"
+  k8sNodeName   String?
+  expectedPower String       @default("unknown") // always_on | scheduled | on_demand | unknown; only always_on raises host.down
+  known         Boolean      @default(false) // set on the Inventory/host page only, never by acking an alert
+  state         String       @default("unknown") // up | down | unknown
+  powerState    String? // BMC: on | off
+  stateSince    DateTime?
+  muteUntil     DateTime? // maintenance mute for host/power alerts
+  mergedIntoId  String? // redirect after a merge
+  probe         Json? // { tcpPort, bmcRef }: references only, credentials stay in Vault
+  firstSeen     DateTime     @default(now())
+  lastSeen      DateTime?
+
+  addresses          AssetAddress[]
+  workloadAddresses  WorkloadAddress[]
+  stateChanges       AssetStateChange[]
+  powerWindows       PowerWindow[]
+  expectedContainers ExpectedContainer[]
+
+  @@index([primaryIp])
+  @@index([environmentId])
+}
+
+// MAC / IP / hostname / alias bindings, time-bounded. Raw SQL in the migration adds a partial
+// unique index on (kind, value) WHERE "validTo" IS NULL: at most one live owner per value.
+model AssetAddress {
+  id        String    @id @default(uuid())
+  assetId   String
+  asset     Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  kind      String // mac | ipv4 | ipv6 | hostname | k8s_node | bmc_serial
+  value     String
+  source    String // unifi | k8s | bmc | arp ...
+  firstSeen DateTime
+  lastSeen  DateTime
+  validTo   DateTime?
+
+  @@index([kind, value, validTo])
+  @@index([assetId])
+}
+
+// Pod IP -> workload, so flows are attributed to the pod that held the IP at flow time.
+model WorkloadAddress {
+  id            String      @id @default(uuid())
+  environmentId String
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  podUid        String
+  ip            String
+  namespace     String
+  pod           String
+  ownerKind     String?
+  ownerName     String?
+  nodeAssetId   String?
+  nodeAsset     Asset?      @relation(fields: [nodeAssetId], references: [id], onDelete: SetNull)
+  hostNetwork   Boolean
+  validFrom     DateTime
+  validTo       DateTime?
+
+  @@unique([environmentId, podUid, ip])
+  @@index([ip, validFrom])
+  @@index([nodeAssetId])
+}
+
+model AssetStateChange {
+  id      String   @id @default(uuid())
+  assetId String
+  asset   Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  from    String
+  to      String
+  at      DateTime
+  source  String
+  reason  String?
+
+  @@index([assetId, at])
+}
+
+// The plan: a recurring, owned reason for an asset to be on (e.g. a nightly backup window).
+model PowerWindow {
+  id                String           @id @default(uuid())
+  assetId           String
+  asset             Asset            @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  name              String
+  ownerRef          String // e.g. "systemd:backup-window@mgmt"
+  maxDurationMin    Int
+  graceMin          Int              @default(30)
+  heartbeatEveryMin Int              @default(5)
+  linkBackups       Boolean          @default(false)
+  runs              PowerWindowRun[]
+
+  @@index([assetId])
+}
+
+// One occurrence of a window.
+model PowerWindowRun {
+  id              String      @id @default(uuid())
+  windowId        String
+  window          PowerWindow @relation(fields: [windowId], references: [id], onDelete: Cascade)
+  openedAt        DateTime
+  expectedOffAt   DateTime?
+  lastHeartbeatAt DateTime?
+  closedAt        DateTime?
+  status          String // open | closed | overdue | orphaned | unplanned
+  detail          Json? // linked backup names, close reason
+
+  @@index([windowId, openedAt])
+  @@index([status])
+}
+
+// Container health (owner addition, slice 1c consumes it). One row per container the operator
+// expects on a host asset: what should run (expected*) plus the latest observation (observed*).
+// No per-sample history: transitions surface as alert events, and `restartCount` deltas between
+// observations expose a crash loop.
+model ExpectedContainer {
+  id            String    @id @default(uuid())
+  assetId       String
+  asset         Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  project       String // compose project (or k8s namespace)
+  service       String // compose service name; the stable identity across recreate
+  expectedState String    @default("running") // running | stopped (stopped never alerts)
+  enabled       Boolean   @default(true) // false = muted without deleting the expectation
+  observedState String? // running | restarting | exited | paused | dead | created | missing; null = never observed
+  health        String? // healthy | unhealthy | starting | none
+  restartCount  Int       @default(0)
+  exitCode      Int? // last exit code, to tell a crash from a clean stop
+  lastSeenAt    DateTime? // last successful observation of this host (stale = watcher blind, not "missing")
+  stateSince    DateTime? // last observedState/health change
+  createdAt     DateTime  @default(now())
+
+  @@unique([assetId, project, service])
 }

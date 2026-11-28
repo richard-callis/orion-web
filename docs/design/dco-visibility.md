@@ -270,6 +270,32 @@ and `dns` health and maps `subtype` to the event source (the host-agent route ha
 health is not taken from the goflow2 input heartbeat. It is updated from each accepted flow batch, keyed by exporter address: gateway → `flows_edge`, a node of env E → `flows_cluster` for E. So a silent gateway goes stale even while node exporters keep sending. Catalog `staleAfterMs`: `unifi`, `flows_edge`, `flows_cluster`,
 `hubble` 5 min · `k8s_inventory`, `longhorn_backups`, `power_probe` 3 min · `udm_ids`, `udm_fw`, `dns`, `bmc` 10 min.
 
+### Container health (owner addition, 2026-11-28)
+
+Incident: Orion's own Postgres container on `mgmt` was removed by accident. Orion ran with no database for 3.5 days with no alert, and a later reboot turned it into a crash loop. The owner wants expected containers per host, with alerting that does not depend on Orion being up.
+
+**Schema (slice 1a): one table, `ExpectedContainer`**, tied to a host `Asset` (cascade delete), unique on (`assetId`, `project`, `service`). It holds the expectation and the latest observation. There is no per-sample history table: alert events carry the transitions, and `restartCount` deltas between observations show a crash loop.
+
+| Field | Why |
+|---|---|
+| `assetId`, `project`, `service` | Identity: compose project + service name survive container recreate, unlike the container id/name. `project` also holds a k8s namespace if later wanted |
+| `expectedState` (`running` default, `stopped`) | A `stopped` row is a known-off service that must not alert; "missing" only means something against an expectation |
+| `enabled` | Mute one expectation without deleting it |
+| `observedState` (`running`, `restarting`, `exited`, `paused`, `dead`, `created`, `missing`; null = never observed) | `missing` is the removed-Postgres case; `restarting` is the crash loop |
+| `health` (`healthy`, `unhealthy`, `starting`, `none`) | Docker HEALTHCHECK result: up but broken |
+| `restartCount`, `exitCode` | Crash-loop detection (count rising between observations) and crash vs clean stop |
+| `lastSeenAt` | Last successful observation of the host. A stale value means the watcher is blind, which is not the same as `missing` |
+| `stateSince` | Last change of `observedState` or `health`; drives "for more than N minutes" thresholds |
+
+**Slice 1c (not in 1a)** adds detection: an observer on the host reports the compose project's container states for each expectation, and the rules raise `missing`, `exited`, `restarting`/crash-looping and `unhealthy` events. **The alert path must not depend on Orion being up**, since the incident was Orion's own database being down. The watchdog must page when Orion or its DB is unreachable, so 1c picks one of:
+
+1. A host-level systemd timer on `mgmt` that runs `docker ps`/`docker compose ps` against a small expected list and notifies out of band (ntfy/Slack/mail) on failure. The list is exported from `ExpectedContainer` while the DB is up, and cached in a file.
+2. A dead-man's switch: Orion, or the host agent, pings an external heartbeat service on a schedule. The external service alerts when pings stop.
+3. An external prober on another host that checks Orion's health endpoint and the container list.
+4. A Docker restart policy plus `docker events` to a notifier. This covers removal and crash loops but not "Docker itself is down".
+
+A host timer plus a dead-man's switch is probably the minimum combination. Option 1 sees containers go missing, and option 2 sees the whole host or Orion die. The 1a schema supports every option, because the watchdog only needs the (project, service, expectedState) list.
+
 ## 8. UI surfaces
 
 | Surface | Content | Notes |

@@ -4,11 +4,11 @@
 > Migration workflow: `apps/web/prisma/MIGRATIONS.md`.
 > Referenced by: [[web-call-graph]], [[api-routes]]
 
-97 models, 8 enums.
+104 models, 8 enums.
 
 ## Index
 
-[Conversation](#conversation) · [Message](#message) · [ClaudeInvocation](#claudeinvocation) · [Memory](#memory) · [Agent](#agent) · [AgentTokenUsage](#agenttokenusage) · [Environment](#environment) · [EnvironmentGitCredential](#environmentgitcredential) · [GitOpsPR](#gitopspr) · [McpTool](#mcptool) · [AgentEnvironment](#agentenvironment) · [EnvironmentJoinToken](#environmentjointoken) · [AgentMessage](#agentmessage) · [Epic](#epic) · [Feature](#feature) · [Task](#task) · [FederatedDispatch](#federateddispatch) · [TaskEvent](#taskevent) · [AuditLog](#auditlog) · [SavedView](#savedview) · [SystemSetting](#systemsetting) · [SystemPrompt](#systemprompt) · [Note](#note) · [NoteEmbedding](#noteembedding) · [SemanticConnection](#semanticconnection) · [User](#user) · [ApiKey](#apikey) · [Session](#session) · [VerificationToken](#verificationtoken) · [Bug](#bug) · [ExternalModel](#externalmodel) · [OIDCProvider](#oidcprovider) · [ToolGroup](#toolgroup) · [ToolGroupTool](#toolgrouptool) · [AgentGroup](#agentgroup) · [AgentGroupMember](#agentgroupmember) · [AgentGroupToolAccess](#agentgrouptoolaccess) · [ToolAgentRestriction](#toolagentrestriction) · [EnvironmentUserTier](#environmentusertier) · [ToolApprovalRequest](#toolapprovalrequest) · [ToolExecutionGrant](#toolexecutiongrant) · [Domain](#domain) · [DnsRecord](#dnsrecord) · [IngressPoint](#ingresspoint) · [IngressRoute](#ingressroute) · [BackgroundJob](#backgroundjob) · [IngressMiddleware](#ingressmiddleware) · [Nova](#nova) · [NovaDeployment](#novadeployment) · [NovaRevision](#novarevision) · [ChatRoom](#chatroom) · [RoomGoal](#roomgoal) · [ChatRoomMember](#chatroommember) · [ChatMessage](#chatmessage) · [ManagedSecret](#managedsecret) · [SecurityEvent](#securityevent) · [SecurityConfig](#securityconfig) · [Incident](#incident) · [ContainmentRequest](#containmentrequest) · [ActionAudit](#actionaudit) · [ActionPolicy](#actionpolicy) · [CorrelationRule](#correlationrule) · [SourceHealth](#sourcehealth) · [EnvironmentSourceHealth](#environmentsourcehealth) · [VulnerabilityFinding](#vulnerabilityfinding) · [VulnerabilityScan](#vulnerabilityscan) · [Suppression](#suppression) · [AgentProfile](#agentprofile) · [RoomKnowledge](#roomknowledge) · [AgentKnowledge](#agentknowledge) · [NovaDefinition](#novadefinition) · [NebulaInstance](#nebulainstance) · [NebulaEmbedding](#nebulaembedding) · [HookExecutionLog](#hookexecutionlog) · [SkillExecutionLog](#skillexecutionlog) · [AgentTrace](#agenttrace) · [Eval](#eval) · [Ruleset](#ruleset) · [Nebula](#nebula) · [AgentScore](#agentscore) · [Investigation](#investigation) · [InvestigationNote](#investigationnote) · [InvestigationObservable](#investigationobservable) · [InvestigationTimeline](#investigationtimeline) · [InvestigationAudit](#investigationaudit) · [TaskCheckpoint](#taskcheckpoint) · [ToolExecution](#toolexecution) · [EvalSuite](#evalsuite) · [EvalCase](#evalcase) · [EvalRun](#evalrun) · [EvalCaseResult](#evalcaseresult) · [DriftReport](#driftreport) · [ScheduledTask](#scheduledtask) · [WebhookTrigger](#webhooktrigger) · [WebhookDelivery](#webhookdelivery) · [JobRun](#jobrun) · [NotificationChannel](#notificationchannel)
+[Conversation](#conversation) · [Message](#message) · [ClaudeInvocation](#claudeinvocation) · [Memory](#memory) · [Agent](#agent) · [AgentTokenUsage](#agenttokenusage) · [Environment](#environment) · [EnvironmentGitCredential](#environmentgitcredential) · [GitOpsPR](#gitopspr) · [McpTool](#mcptool) · [AgentEnvironment](#agentenvironment) · [EnvironmentJoinToken](#environmentjointoken) · [AgentMessage](#agentmessage) · [Epic](#epic) · [Feature](#feature) · [Task](#task) · [FederatedDispatch](#federateddispatch) · [TaskEvent](#taskevent) · [AuditLog](#auditlog) · [SavedView](#savedview) · [SystemSetting](#systemsetting) · [SystemPrompt](#systemprompt) · [Note](#note) · [NoteEmbedding](#noteembedding) · [SemanticConnection](#semanticconnection) · [User](#user) · [ApiKey](#apikey) · [Session](#session) · [VerificationToken](#verificationtoken) · [Bug](#bug) · [ExternalModel](#externalmodel) · [OIDCProvider](#oidcprovider) · [ToolGroup](#toolgroup) · [ToolGroupTool](#toolgrouptool) · [AgentGroup](#agentgroup) · [AgentGroupMember](#agentgroupmember) · [AgentGroupToolAccess](#agentgrouptoolaccess) · [ToolAgentRestriction](#toolagentrestriction) · [EnvironmentUserTier](#environmentusertier) · [ToolApprovalRequest](#toolapprovalrequest) · [ToolExecutionGrant](#toolexecutiongrant) · [Domain](#domain) · [DnsRecord](#dnsrecord) · [IngressPoint](#ingresspoint) · [IngressRoute](#ingressroute) · [BackgroundJob](#backgroundjob) · [IngressMiddleware](#ingressmiddleware) · [Nova](#nova) · [NovaDeployment](#novadeployment) · [NovaRevision](#novarevision) · [ChatRoom](#chatroom) · [RoomGoal](#roomgoal) · [ChatRoomMember](#chatroommember) · [ChatMessage](#chatmessage) · [ManagedSecret](#managedsecret) · [SecurityEvent](#securityevent) · [SecurityConfig](#securityconfig) · [Incident](#incident) · [ContainmentRequest](#containmentrequest) · [ActionAudit](#actionaudit) · [ActionPolicy](#actionpolicy) · [CorrelationRule](#correlationrule) · [SourceHealth](#sourcehealth) · [EnvironmentSourceHealth](#environmentsourcehealth) · [VulnerabilityFinding](#vulnerabilityfinding) · [VulnerabilityScan](#vulnerabilityscan) · [Suppression](#suppression) · [AgentProfile](#agentprofile) · [RoomKnowledge](#roomknowledge) · [AgentKnowledge](#agentknowledge) · [NovaDefinition](#novadefinition) · [NebulaInstance](#nebulainstance) · [NebulaEmbedding](#nebulaembedding) · [HookExecutionLog](#hookexecutionlog) · [SkillExecutionLog](#skillexecutionlog) · [AgentTrace](#agenttrace) · [Eval](#eval) · [Ruleset](#ruleset) · [Nebula](#nebula) · [AgentScore](#agentscore) · [Investigation](#investigation) · [InvestigationNote](#investigationnote) · [InvestigationObservable](#investigationobservable) · [InvestigationTimeline](#investigationtimeline) · [InvestigationAudit](#investigationaudit) · [TaskCheckpoint](#taskcheckpoint) · [ToolExecution](#toolexecution) · [EvalSuite](#evalsuite) · [EvalCase](#evalcase) · [EvalRun](#evalrun) · [EvalCaseResult](#evalcaseresult) · [DriftReport](#driftreport) · [ScheduledTask](#scheduledtask) · [WebhookTrigger](#webhooktrigger) · [WebhookDelivery](#webhookdelivery) · [JobRun](#jobrun) · [NotificationChannel](#notificationchannel) · [Asset](#asset) · [AssetAddress](#assetaddress) · [WorkloadAddress](#workloadaddress) · [AssetStateChange](#assetstatechange) · [PowerWindow](#powerwindow) · [PowerWindowRun](#powerwindowrun) · [ExpectedContainer](#expectedcontainer)
 
 ## Models
 
@@ -178,6 +178,8 @@
 | correlationRules | → CorrelationRule[] |  |  |
 | sourceHealths | → SourceHealth[] |  |  |
 | environmentSourceHealths | → EnvironmentSourceHealth[] |  |  |
+| assets | → Asset[] |  |  |
+| workloadAddresses | → WorkloadAddress[] |  |  |
 | vulnerabilityFindings | → VulnerabilityFinding[] |  |  |
 | vulnerabilityScans | → VulnerabilityScan[] |  |  |
 | suppressions | → Suppression[] |  |  |
@@ -1838,6 +1840,147 @@
 | agentFilter | String? |  | JSON array of agent IDs to filter on, null = all agents |
 | enabled | Boolean | `@default(true)` |  |
 | createdAt | DateTime | `@default(now())` |  |
+
+### Asset
+
+| Field | Type | Attributes | Notes |
+|---|---|---|---|
+| id | String | `@id @default(uuid())` |  |
+| key | String | `@unique` |  |
+| environmentId | String? |  | set for k8s nodes |
+| environment | → Environment? | `@relation(fields: [environmentId], references: [id], onDelete: SetNull)` |  |
+| kind | String |  | host \| k8s_node \| nas \| network \| iot \| vip \| unknown |
+| name | String |  |  |
+| primaryMac | String? |  | display only, never identity |
+| macRandomised | Boolean | `@default(false)` |  |
+| primaryIp | String? |  |  |
+| vendor | String? |  | OUI |
+| vlan | String? |  |  |
+| tags | String[] |  | e.g. "static" |
+| k8sNodeName | String? |  |  |
+| expectedPower | String | `@default("unknown")` | always_on \| scheduled \| on_demand \| unknown; only always_on raises host.down |
+| known | Boolean | `@default(false)` | set on the Inventory/host page only, never by acking an alert |
+| state | String | `@default("unknown")` | up \| down \| unknown |
+| powerState | String? |  | BMC: on \| off |
+| stateSince | DateTime? |  |  |
+| muteUntil | DateTime? |  | maintenance mute for host/power alerts |
+| mergedIntoId | String? |  | redirect after a merge |
+| probe | Json? |  | { tcpPort, bmcRef }: references only, credentials stay in Vault |
+| firstSeen | DateTime | `@default(now())` |  |
+| lastSeen | DateTime? |  |  |
+| addresses | → AssetAddress[] |  |  |
+| workloadAddresses | → WorkloadAddress[] |  |  |
+| stateChanges | → AssetStateChange[] |  |  |
+| powerWindows | → PowerWindow[] |  |  |
+| expectedContainers | → ExpectedContainer[] |  |  |
+
+`@@index([primaryIp])` · `@@index([environmentId])`
+
+### AssetAddress
+
+| Field | Type | Attributes | Notes |
+|---|---|---|---|
+| id | String | `@id @default(uuid())` |  |
+| assetId | String |  |  |
+| asset | → Asset | `@relation(fields: [assetId], references: [id], onDelete: Cascade)` |  |
+| kind | String |  | mac \| ipv4 \| ipv6 \| hostname \| k8s_node \| bmc_serial |
+| value | String |  |  |
+| source | String |  | unifi \| k8s \| bmc \| arp ... |
+| firstSeen | DateTime |  |  |
+| lastSeen | DateTime |  |  |
+| validTo | DateTime? |  |  |
+
+`@@index([kind, value, validTo])` · `@@index([assetId])`
+
+### WorkloadAddress
+
+| Field | Type | Attributes | Notes |
+|---|---|---|---|
+| id | String | `@id @default(uuid())` |  |
+| environmentId | String |  |  |
+| environment | → Environment | `@relation(fields: [environmentId], references: [id], onDelete: Cascade)` |  |
+| podUid | String |  |  |
+| ip | String |  |  |
+| namespace | String |  |  |
+| pod | String |  |  |
+| ownerKind | String? |  |  |
+| ownerName | String? |  |  |
+| nodeAssetId | String? |  |  |
+| nodeAsset | → Asset? | `@relation(fields: [nodeAssetId], references: [id], onDelete: SetNull)` |  |
+| hostNetwork | Boolean |  |  |
+| validFrom | DateTime |  |  |
+| validTo | DateTime? |  |  |
+
+`@@unique([environmentId, podUid, ip])` · `@@index([ip, validFrom])` · `@@index([nodeAssetId])`
+
+### AssetStateChange
+
+| Field | Type | Attributes | Notes |
+|---|---|---|---|
+| id | String | `@id @default(uuid())` |  |
+| assetId | String |  |  |
+| asset | → Asset | `@relation(fields: [assetId], references: [id], onDelete: Cascade)` |  |
+| from | String |  |  |
+| to | String |  |  |
+| at | DateTime |  |  |
+| source | String |  |  |
+| reason | String? |  |  |
+
+`@@index([assetId, at])`
+
+### PowerWindow
+
+| Field | Type | Attributes | Notes |
+|---|---|---|---|
+| id | String | `@id @default(uuid())` |  |
+| assetId | String |  |  |
+| asset | → Asset | `@relation(fields: [assetId], references: [id], onDelete: Cascade)` |  |
+| name | String |  |  |
+| ownerRef | String |  | e.g. "systemd:backup-window@mgmt" |
+| maxDurationMin | Int |  |  |
+| graceMin | Int | `@default(30)` |  |
+| heartbeatEveryMin | Int | `@default(5)` |  |
+| linkBackups | Boolean | `@default(false)` |  |
+| runs | → PowerWindowRun[] |  |  |
+
+`@@index([assetId])`
+
+### PowerWindowRun
+
+| Field | Type | Attributes | Notes |
+|---|---|---|---|
+| id | String | `@id @default(uuid())` |  |
+| windowId | String |  |  |
+| window | → PowerWindow | `@relation(fields: [windowId], references: [id], onDelete: Cascade)` |  |
+| openedAt | DateTime |  |  |
+| expectedOffAt | DateTime? |  |  |
+| lastHeartbeatAt | DateTime? |  |  |
+| closedAt | DateTime? |  |  |
+| status | String |  | open \| closed \| overdue \| orphaned \| unplanned |
+| detail | Json? |  | linked backup names, close reason |
+
+`@@index([windowId, openedAt])` · `@@index([status])`
+
+### ExpectedContainer
+
+| Field | Type | Attributes | Notes |
+|---|---|---|---|
+| id | String | `@id @default(uuid())` |  |
+| assetId | String |  |  |
+| asset | → Asset | `@relation(fields: [assetId], references: [id], onDelete: Cascade)` |  |
+| project | String |  | compose project (or k8s namespace) |
+| service | String |  | compose service name; the stable identity across recreate |
+| expectedState | String | `@default("running")` | running \| stopped (stopped never alerts) |
+| enabled | Boolean | `@default(true)` | false = muted without deleting the expectation |
+| observedState | String? |  | running \| restarting \| exited \| paused \| dead \| created \| missing; null = never observed |
+| health | String? |  | healthy \| unhealthy \| starting \| none |
+| restartCount | Int | `@default(0)` |  |
+| exitCode | Int? |  | last exit code, to tell a crash from a clean stop |
+| lastSeenAt | DateTime? |  | last successful observation of this host (stale = watcher blind, not "missing") |
+| stateSince | DateTime? |  | last observedState/health change |
+| createdAt | DateTime | `@default(now())` |  |
+
+`@@unique([assetId, project, service])`
 
 ## Enums
 
