@@ -1,6 +1,6 @@
 import type { OAuthConfig } from 'next-auth/providers/oauth'
 import { prisma } from './db'
-import { readVaultSecret, NoVaultTokenError } from './vault'
+import { readVaultSecret, NoVaultTokenError, VaultHttpError } from './vault'
 
 /**
  * Authentik OIDC login (authorization code + PKCE; NextAuth verifies the ID token).
@@ -45,7 +45,7 @@ async function tryLoad(path: string, read: typeof readVaultSecret, onError: (e: 
     return 'done'
   } catch (e) {
     onError(e)
-    return e instanceof NoVaultTokenError ? 'no-token' : 'unavailable'
+    return e instanceof NoVaultTokenError || (e instanceof VaultHttpError && e.status < 500) ? 'no-token' : 'unavailable'
   }
 }
 

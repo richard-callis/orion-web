@@ -481,8 +481,8 @@ fi
 # See docs/AUTHENTIK_OIDC.md.
 if [[ -n "${AUTHENTIK_BOOTSTRAP_URL:-}" && -n "${AUTHENTIK_BOOTSTRAP_TOKEN_FILE:-}" && -z "${VAULT_TOKEN:-}" ]]; then
   echo "NOTE: VAULT_TOKEN not set — skipping Authentik OIDC bootstrap."
-elif [[ -n "${AUTHENTIK_BOOTSTRAP_URL:-}" && -n "${AUTHENTIK_BOOTSTRAP_TOKEN_FILE:-}" && ! -f "$AUTHENTIK_BOOTSTRAP_TOKEN_FILE" ]]; then
-  echo "NOTE: Authentik token file not found — skipping Authentik OIDC bootstrap."
+elif [[ -n "${AUTHENTIK_BOOTSTRAP_URL:-}" && -n "${AUTHENTIK_BOOTSTRAP_TOKEN_FILE:-}" && ! -r "$AUTHENTIK_BOOTSTRAP_TOKEN_FILE" ]]; then
+  echo "NOTE: Authentik token file not found or not readable by $(id -un) — skipping Authentik OIDC bootstrap (run deploy/authentik-oidc-bootstrap.sh as root)."
 elif [[ -n "${AUTHENTIK_BOOTSTRAP_URL:-}" && -n "${AUTHENTIK_BOOTSTRAP_TOKEN_FILE:-}" ]]; then
   echo ""
   echo "Bootstrapping Authentik OIDC login..."

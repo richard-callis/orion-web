@@ -11,7 +11,7 @@ login page's password form, so the break-glass account should not rely on TOTP).
 the credentials in Vault. It is optional, idempotent (re-running updates in place; existing
 objects are matched by slug/name client-side) and runs inside the `orion` container, so the stack
 must be up and Vault unsealed. It writes to Vault with the `VAULT_TOKEN` in `deploy/.env`, which
-therefore must be set and have write access on `secret/orion/*` (without it the step is skipped).
+therefore must be set and have write access on `secret/orion/*` (without it `bootstrap.sh` skips the step, and the script run by hand stops with an error before contacting Authentik).
 
 1. In Authentik create an API token for a user that may manage providers, applications, flows,
    groups, policies, property mappings and certificate key pairs (read)
@@ -30,6 +30,8 @@ therefore must be set and have write access on `secret/orion/*` (without it the 
    It is never taken from argv and never printed. `deploy/bootstrap.sh` runs the same step when
    `AUTHENTIK_BOOTSTRAP_URL` and `AUTHENTIK_BOOTSTRAP_TOKEN_FILE` are set in `deploy/.env`
    (optionally `AUTHENTIK_BOOTSTRAP_SLUG` / `AUTHENTIK_BOOTSTRAP_GROUP`), and skips it otherwise.
+   The `bootstrap.sh` route only runs when `bootstrap.sh` itself runs as root (the token file is
+   root-only); otherwise it skips the step and you run the script above as root.
    Without `--token-file` on a terminal the token is prompted for (hidden). After a successful run the
    `AUTHENTIK_BOOTSTRAP_*` lines and the token file can be removed (`bootstrap.sh` then skips the
    step); keep them only if you want every deploy to re-converge Authentik.
@@ -94,7 +96,6 @@ values (or has the provider off if you removed them) only until Vault answers, a
 background every 15s, so the Vault config appears without a restart. Once read it is cached, so
 after changing the secret run `docker compose restart orion` (`orion-worker` does not read it).
 The token used is the wizard-minted admin token, else `VAULT_TOKEN`.
-
 
 **Migrating an install that has the values in `.env`:** run the automated step above (it creates or
 reuses the Authentik provider and writes Vault; or write the three existing values into Vault by

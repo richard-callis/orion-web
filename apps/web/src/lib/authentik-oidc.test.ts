@@ -6,8 +6,9 @@ const db = vi.hoisted(() => ({
 }))
 vi.mock('./db', () => ({ prisma: db }))
 
-vi.mock('./vault', () => ({ readVaultSecret: vi.fn(), NoVaultTokenError: class NoVaultTokenError extends Error {} }))
-import { NoVaultTokenError } from './vault'
+vi.mock('./vault', () => ({ readVaultSecret: vi.fn(), NoVaultTokenError: class NoVaultTokenError extends Error {},
+  VaultHttpError: class VaultHttpError extends Error { constructor(public status: number) { super(`Vault read responded ${status}`) } } }))
+import { NoVaultTokenError, VaultHttpError } from './vault'
 
 import {
   getAuthentikConfig, authentikProviders, isAuthentikEnabled, mapGroupsToRole, resolveAuthentikUser,
@@ -97,6 +98,14 @@ describe('Vault-first config', () => {
   it('does not retry when no Vault token can be resolved (even with VAULT_TOKEN unset or set)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const read = vi.fn().mockRejectedValue(new NoVaultTokenError('No Vault token available'))
+    await loadAuthentikVaultConfig({}, read, 0)
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(g.__orionAuthentikVaultTimer).toBeUndefined()
+  })
+
+  it('does not retry on a Vault 403 (a token that is denied never recovers)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const read = vi.fn().mockRejectedValue(new VaultHttpError(403))
     await loadAuthentikVaultConfig({}, read, 0)
     expect(read).toHaveBeenCalledTimes(1)
     expect(g.__orionAuthentikVaultTimer).toBeUndefined()

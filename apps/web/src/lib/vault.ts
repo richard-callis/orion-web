@@ -151,6 +151,10 @@ async function resolveVaultAdminToken(): Promise<string> {
 // ── Secret reader ─────────────────────────────────────────────────────────────
 
 /** Thrown by readVaultSecret when no Vault token can be resolved (retrying cannot help). */
+export class VaultHttpError extends Error {
+  constructor(public status: number) { super(`Vault read responded ${status}`); this.name = 'VaultHttpError' }
+}
+
 export class NoVaultTokenError extends Error {
   constructor() { super('No Vault token available'); this.name = 'NoVaultTokenError' }
 }
@@ -171,7 +175,7 @@ export async function readVaultSecret(
   const normalised = kvPath.replace(/^secret\/(data\/)?/, '')
   const res = await vaultFetch(`${VAULT_ADDR}/v1/secret/data/${normalised}`, { headers: { 'X-Vault-Token': token } })
   if (res.status === 404) return null
-  if (!res.ok) throw new Error(`Vault read responded ${res.status}`)
+  if (!res.ok) throw new VaultHttpError(res.status)
   const body = await res.json() as { data?: { data?: Record<string, string> | null } }
   return body.data?.data ?? null
 }

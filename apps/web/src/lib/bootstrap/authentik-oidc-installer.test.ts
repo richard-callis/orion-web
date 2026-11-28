@@ -94,7 +94,7 @@ describe('Authentik provisioning payloads', () => {
     await provisionAuthentik(api, opts)
     expect(calls.find((c) => c.path === '/providers/oauth2/' && c.method === 'POST')!.body!.property_mappings).toContain('m-profile')
     const none = fakeAuthentik({ '/propertymappings/provider/scope/': [] })
-    await expect(provisionAuthentik(none.api, opts)).rejects.toThrow(/openid scope mapping not found/)
+    await expect(provisionAuthentik(none.api, opts)).rejects.toThrow(/openid scope mapping \(requires Authentik 2024.10\+\) not found/)
     expect(none.calls.filter((c) => c.method !== 'GET')).toEqual([])
   })
 

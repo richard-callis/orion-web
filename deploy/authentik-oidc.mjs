@@ -51,7 +51,7 @@ export class AuthentikApi {
         headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
       })
-    } catch (e) { throw new Error(`Authentik ${method} ${path}: ${e.cause?.code ?? e.message}`) }
+    } catch (e) { throw new Error(`Authentik ${method} ${path}: ${e.cause?.code ?? e.message}`, { cause: e }) }
     const text = await res.text()
     if (!res.ok) throw new Error(`Authentik ${method} ${path} -> ${res.status}: ${text.slice(0, 300)}`)
     try { return text ? JSON.parse(text) : {} } catch { throw new Error(`Not an Authentik API response from ${this.base}${path}`) }
@@ -79,20 +79,20 @@ async function upsert(api, listPath, match, payload, key = 'pk') {
 
 function need(items, pred, what) {
   const hit = items.find(pred)
-  if (!hit) throw new Error(`Authentik: ${what} not found (requires Authentik 2024.10+)`)
+  if (!hit) throw new Error(`Authentik: ${what} not found`)
   return hit
 }
 
 export async function provisionAuthentik(api, { orionHost, slug = 'orion', group = 'authentik Admins', authorizationFlowSlug = 'default-provider-authorization-explicit-consent', invalidationFlowSlug = 'default-provider-invalidation-flow' }) {
   const flows = await api.list('/flows/instances/')
   const authorizationFlow = need(flows, (f) => f.slug === authorizationFlowSlug, `flow ${authorizationFlowSlug}`).pk
-  const invalidationFlow = need(flows, (f) => f.slug === invalidationFlowSlug, `flow ${invalidationFlowSlug}`).pk
+  const invalidationFlow = need(flows, (f) => f.slug === invalidationFlowSlug, `flow ${invalidationFlowSlug} (requires Authentik 2024.10+)`).pk
   const signingKey = need(await api.list('/crypto/certificatekeypairs/'), (c) => c.name === DEFAULT_CERT, `certificate "${DEFAULT_CERT}"`).pk
   const groupObj = need(await api.list('/core/groups/?include_users=false'), (g) => g.name === group, `group "${group}"`)
 
   const scopes = await api.list('/propertymappings/provider/scope/')
   // Prefer Authentik's managed mapping over a custom one with the same scope name.
-  const standard = (s) => (scopes.find((m) => m.managed === MANAGED(s)) ?? need(scopes, (m) => !m.managed && m.scope_name === s, `${s} scope mapping`)).pk
+  const standard = (s) => (scopes.find((m) => m.managed === MANAGED(s)) ?? need(scopes, (m) => !m.managed && m.scope_name === s, `${s} scope mapping (requires Authentik 2024.10+)`)).pk
   const openid = standard('openid'), profile = standard('profile')
   // Prefer the provider already bound to the app, then fall back to the provider name.
   const existingApp = (await api.list('/core/applications/')).find((a) => a.slug === slug)
