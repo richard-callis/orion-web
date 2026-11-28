@@ -25,6 +25,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import { logAudit } from './audit'
 import { decrypt, decryptStrict } from './encryption'
 import { sendNotification } from './security/notification-service'
+import { authentikProviders, isAuthentikEnabled, resolveAuthentikUser, type AuthentikClaims } from './authentik-oidc'
 
 export interface AppUser {
   id: string
@@ -245,9 +246,26 @@ export const authOptions: NextAuthOptions = {
         }
       },
     }),
+    // Authentik OIDC — empty unless AUTHENTIK_OIDC_* env is fully set (see authentik-oidc.ts)
+    ...authentikProviders(),
   ],
   callbacks: {
-    async jwt({ token, user }) {
+    async signIn({ user, account, profile }) {
+      if (account?.provider !== 'authentik') return true
+      // Checked per login so OIDCProvider.enabled=false works without a restart.
+      if (!(await isAuthentikEnabled())) return false
+      const row = await prisma.oIDCProvider.findFirst({ select: { groupMapping: true } })
+      const result = await resolveAuthentikUser(profile as unknown as AuthentikClaims, row?.groupMapping)
+      if (!result.ok) {
+        void logAudit({ userId: 'ANONYMOUS', action: 'user_login_failure', target: 'authentik-oidc', detail: { reason: result.reason } })
+        return false
+      }
+      // NextAuth hands this same object to the jwt callback; swap the OIDC `sub` for the Orion user.
+      Object.assign(user, result.user)
+      void logAudit({ userId: result.user.id, action: 'user_login', target: result.user.id, detail: { provider: 'authentik' } })
+      return true
+    },
+    async jwt({ token, user, account }) {
       if (user) {
         // Fresh login — populate token from the authorized user object
         token.sub = user.id
@@ -258,6 +276,9 @@ export const authOptions: NextAuthOptions = {
         token.mfaVerifiedAt = Date.now()
         // SOC2: [CRITICAL-1] Propagate totpEnabled so the session callback gate is live
         token.totpEnabled = (user as AppUser & { totpEnabled?: boolean }).totpEnabled ?? false
+        // OIDC logins: Authentik enforces MFA, so Orion's local TOTP gate never applies.
+        token.oidc = account?.provider === 'authentik'
+        if (token.oidc) token.mfaVerified = true
       } else if (token.sub) {
         // Subsequent requests — verify the user still exists in the DB.
         // If the DB was wiped the user row is gone, so we invalidate the token
@@ -273,7 +294,7 @@ export const authOptions: NextAuthOptions = {
           token.role = dbUser.role
           // SOC2 [M-002]: Re-sync totpEnabled so MFA enforcement activates immediately
           // after a user enables MFA, without waiting for session expiry.
-          token.totpEnabled = dbUser.totpEnabled
+          token.totpEnabled = token.oidc ? false : dbUser.totpEnabled
         }
         // MFA verification expires after 15 minutes
         if (token.mfaVerifiedAt && token.mfaVerified) {
